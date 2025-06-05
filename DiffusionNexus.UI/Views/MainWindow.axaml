@@ -3,18 +3,41 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d"
         x:Class="DiffusionNexus.UI.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="DiffusionNexus.UI">
-
+        Width="900" Height="600"
+        Title="Diffusion Nexus">
     <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <TextBlock Text="{Binding Greeting}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    <DockPanel>
+        <Grid DockPanel.Dock="Left" Width="180" Background="#333">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
+            <ItemsControl Items="{Binding Modules}" Margin="4">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Content="{Binding Title}"
+                                Command="{Binding DataContext.SwitchModuleCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding}"
+                                Margin="0,0,0,4"/>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Grid.Row="1" Margin="4" Spacing="4">
+                <Button Content="Options" Command="{Binding OpenOptionsCommand}"/>
+                <Button Content="Patreon" Command="{Binding OpenPatreonCommand}"/>
+                <Button Content="YouTube" Command="{Binding OpenYouTubeCommand}"/>
+            </StackPanel>
+        </Grid>
+
+        <ContentControl Content="{Binding CurrentModule.View}"/>
+    </DockPanel>
 </Window>
