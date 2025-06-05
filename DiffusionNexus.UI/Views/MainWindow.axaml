@@ -20,9 +20,9 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <ItemsControl Items="{Binding Modules}" Margin="4">
+            <ItemsControl ItemsSource="{Binding Modules}" Margin="4">
                 <ItemsControl.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate DataType="{x:Type vm:Module}">
                         <Button Content="{Binding Title}"
                                 Command="{Binding DataContext.SwitchModuleCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding}"
