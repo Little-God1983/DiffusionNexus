@@ -6,11 +6,14 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AvaloniaUseCompiledXaml>true</AvaloniaUseCompiledXaml>
   </PropertyGroup>
 
   <ItemGroup>
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
+    <AvaloniaResource Include="App.axaml" />
+    <AvaloniaResource Include="Views\**\*.axaml" />
   </ItemGroup>
 
   <ItemGroup>
