@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -8,5 +9,7 @@ namespace DiffusionNexus.UI.Views
         {
             InitializeComponent();
         }
+
+        private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
     }
 }
