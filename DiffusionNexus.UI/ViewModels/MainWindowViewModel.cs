@@ -41,34 +41,29 @@ namespace DiffusionNexus.UI.ViewModels
 
         public MainWindowViewModel()
         {
-            ToggleMenuCommand = ReactiveCommand.CreateFromObservable(() =>
+            ToggleMenuCommand = ReactiveCommand.Create(() =>
             {
                 IsMenuOpen = !IsMenuOpen;
-                return Observable.Return(Unit.Default);
             });
 
-            ChangeModuleCommand = ReactiveCommand.CreateFromObservable<ModuleItem, Unit>(mod =>
+            ChangeModuleCommand = ReactiveCommand.Create<ModuleItem>(mod =>
             {
                 CurrentModuleView = mod.View;
-                return Observable.Return(Unit.Default);
             });
 
-            OpenYoutubeCommand = ReactiveCommand.CreateFromObservable(() =>
+            OpenYoutubeCommand = ReactiveCommand.Create(() =>
             {
                 OpenUrl("https://youtube.com/@AIKnowledge2Go");
-                return Observable.Return(Unit.Default);
             });
 
-            OpenCivitaiCommand = ReactiveCommand.CreateFromObservable(() =>
+            OpenCivitaiCommand = ReactiveCommand.Create(() =>
             {
                 OpenUrl("https://civitai.com/");
-                return Observable.Return(Unit.Default);
             });
 
-            OpenSettingsCommand = ReactiveCommand.CreateFromObservable(() =>
+            OpenSettingsCommand = ReactiveCommand.Create(() =>
             {
                 CurrentModuleView = new SettingsView();
-                return Observable.Return(Unit.Default);
             });
 
             CurrentModuleView = Modules.First().View;
