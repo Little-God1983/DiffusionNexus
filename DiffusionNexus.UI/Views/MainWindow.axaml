@@ -2,11 +2,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:local="using:DiffusionNexus.UI.Views"
+        xmlns:classes="clr-namespace:DiffusionNexus.UI.Classes"
         x:Class="DiffusionNexus.UI.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Name="MainWin"
         Width="1100" Height="700"
         Icon="/Assets/avalonia-logo.ico"
-        Title="DiffusionNexus.UI"
-        >
+        Title="DiffusionNexus.UI">
 
   <Window.DataContext>
     <vm:MainWindowViewModel/>
@@ -24,15 +26,15 @@
         <Button Content="☰" Command="{Binding ToggleMenuCommand}" HorizontalAlignment="Left"/>
 
         <!-- Module buttons -->
-        <ItemsControl Items="{Binding Modules}">
+        <ItemsControl ItemsSource="{Binding Modules}">
           <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Button Command="{Binding DataContext.ChangeModuleCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                      CommandParameter="{Binding}">
+            <DataTemplate x:DataType="classes:ModuleItem">
+              <Button Command="{Binding DataContext.ChangeModuleCommand, ElementName=MainWin}"
+                      CommandParameter="{Binding .}">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <Image Source="{Binding Icon}" Width="24" Height="24"/>
                   <TextBlock Text="{Binding Name}"
-                             IsVisible="{Binding DataContext.IsMenuOpen, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                             IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
                 </StackPanel>
               </Button>
             </DataTemplate>
