@@ -3,8 +3,8 @@
              x:Class="DiffusionNexus.UI.Views.PromptEditView">
   <Grid ColumnDefinitions="2*,3*" Margin="10" RowDefinitions="*">
     <!-- Image drop area -->
-    <Border Grid.Column="0" AllowDrop="True" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
-      <TextBlock Text="Drop image here" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
+      <TextBlock Text="Drop image here"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Border>
 
     <!-- Right side for prompts -->
