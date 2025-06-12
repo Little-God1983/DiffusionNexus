@@ -3,7 +3,9 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using ReactiveUI;
-using DiffusionNexus.UI.Models;
+using System.Reactive;
+using System.Reactive.Linq;
+using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Views;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -17,11 +19,11 @@ namespace DiffusionNexus.UI.ViewModels
             new ModuleItem("Lora Helper", "/Assets/help.png", new LoraHelperView())
         };
 
-        public ReactiveCommand<Unit, Unit> ToggleMenuCommand { get; }
-        public ReactiveCommand<ModuleItem, Unit> ChangeModuleCommand { get; }
-        public ReactiveCommand<Unit, Unit> OpenYoutubeCommand { get; }
-        public ReactiveCommand<Unit, Unit> OpenCivitaiCommand { get; }
-        public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; }
+        public ReactiveCommand<Unit, Unit> ToggleMenuCommand { get; private set; }
+        public ReactiveCommand<ModuleItem, Unit> ChangeModuleCommand { get; private set; }
+        public ReactiveCommand<Unit, Unit> OpenYoutubeCommand { get; private set; }
+        public ReactiveCommand<Unit, Unit> OpenCivitaiCommand { get; private set; }
+        public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; private set; }
 
         private bool _isMenuOpen = true;
         public bool IsMenuOpen
@@ -30,7 +32,7 @@ namespace DiffusionNexus.UI.ViewModels
             set => this.RaiseAndSetIfChanged(ref _isMenuOpen, value);
         }
 
-        private object _currentModuleView;
+        private object _currentModuleView = null!;
         public object CurrentModuleView
         {
             get => _currentModuleView;
@@ -39,11 +41,35 @@ namespace DiffusionNexus.UI.ViewModels
 
         public MainWindowViewModel()
         {
-            ToggleMenuCommand = ReactiveCommand.Create(() => IsMenuOpen = !IsMenuOpen);
-            ChangeModuleCommand = ReactiveCommand.Create<ModuleItem>(mod => CurrentModuleView = mod.View);
-            OpenYoutubeCommand = ReactiveCommand.Create(() => OpenUrl("https://youtube.com/@AIKnowledge2Go"));
-            OpenCivitaiCommand = ReactiveCommand.Create(() => OpenUrl("https://civitai.com/"));
-            OpenSettingsCommand = ReactiveCommand.Create(() => CurrentModuleView = new SettingsView());
+            ToggleMenuCommand = ReactiveCommand.CreateFromObservable(() =>
+            {
+                IsMenuOpen = !IsMenuOpen;
+                return Observable.Return(Unit.Default);
+            });
+
+            ChangeModuleCommand = ReactiveCommand.CreateFromObservable<ModuleItem, Unit>(mod =>
+            {
+                CurrentModuleView = mod.View;
+                return Observable.Return(Unit.Default);
+            });
+
+            OpenYoutubeCommand = ReactiveCommand.CreateFromObservable(() =>
+            {
+                OpenUrl("https://youtube.com/@AIKnowledge2Go");
+                return Observable.Return(Unit.Default);
+            });
+
+            OpenCivitaiCommand = ReactiveCommand.CreateFromObservable(() =>
+            {
+                OpenUrl("https://civitai.com/");
+                return Observable.Return(Unit.Default);
+            });
+
+            OpenSettingsCommand = ReactiveCommand.CreateFromObservable(() =>
+            {
+                CurrentModuleView = new SettingsView();
+                return Observable.Return(Unit.Default);
+            });
 
             CurrentModuleView = Modules.First().View;
         }
