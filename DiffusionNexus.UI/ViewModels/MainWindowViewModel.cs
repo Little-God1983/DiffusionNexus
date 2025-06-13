@@ -12,11 +12,11 @@ namespace DiffusionNexus.UI.ViewModels
 {
     public class MainWindowViewModel : ReactiveObject
     {
-        public ObservableCollection<ModuleItem> Modules { get; } = new()
+        public ObservableCollection<ModuleItem> Modules { get; } = new ObservableCollection<ModuleItem>
         {
-            new ModuleItem("Lora Sort", "/Assets/sort.png", new LoraSortView()),
-            new ModuleItem("Prompt Edit", "/Assets/edit.png", new PromptEditView()),
-            new ModuleItem("Lora Helper", "/Assets/help.png", new LoraHelperView())
+            new("Lora Sort", "/Assets/LoraSort.png", new LoraSortView()),
+            new("Prompt Edit", "/Assets/PromptEdit.png", new PromptEditView()),
+            new("Lora Helper", "/Assets/HumanCogwheel.png", new LoraHelperView())
         };
 
         public ReactiveCommand<Unit, Unit> ToggleMenuCommand { get; private set; }

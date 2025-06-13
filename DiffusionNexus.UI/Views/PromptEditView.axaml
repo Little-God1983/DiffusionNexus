@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DiffusionNexus.UI.Views.PromptEditView">
+  <Grid ColumnDefinitions="2*,3*" Margin="10" RowDefinitions="*">
+    <!-- Image drop area -->
+    <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
+      <TextBlock Text="Drop image here"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Border>
+
+    <!-- Right side for prompts -->
+    <StackPanel Grid.Column="1" Spacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Blacklist"/>
+        <TextBox Name="BlacklistBox" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+      </StackPanel>
+      <StackPanel Spacing="2">
+        <TextBlock Text="Prompt"/>
+        <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+      </StackPanel>
+      <StackPanel Spacing="2">
+        <TextBlock Text="Negative Prompt"/>
+        <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button Content="Save" Width="80"/>
+        <Button Content="Save As" Width="80"/>
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</UserControl>
