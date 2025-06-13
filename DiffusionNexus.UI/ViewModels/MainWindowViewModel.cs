@@ -5,8 +5,8 @@ using System.Linq;
 using ReactiveUI;
 using System.Reactive;
 using System.Reactive.Linq;
-using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Views;
+using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {

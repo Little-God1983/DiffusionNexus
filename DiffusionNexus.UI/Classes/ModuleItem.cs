@@ -1,24 +1,22 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using System;
 
 namespace DiffusionNexus.UI.Classes
 {
-
     public class ModuleItem
     {
         public string Name { get; }
-        public string Icon { get; }
+        public IImage Icon { get; }
         public object View { get; }
 
-        public ModuleItem(string name, string icon, object view)
+        public ModuleItem(string name, string iconUri, object view)
         {
             Name = name;
-            Icon = icon;
             View = view;
+            using var stream = AssetLoader.Open(new Uri(iconUri));
+            Icon = new Bitmap(stream);
         }
-
     }
 }

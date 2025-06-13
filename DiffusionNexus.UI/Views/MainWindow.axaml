@@ -3,6 +3,7 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:local="using:DiffusionNexus.UI.Views"
         xmlns:classes="clr-namespace:DiffusionNexus.UI.Classes"
+        xmlns:media="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Visuals"
         x:Class="DiffusionNexus.UI.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Name="MainWin"
