@@ -14,9 +14,9 @@ namespace DiffusionNexus.UI.ViewModels
     {
         public ObservableCollection<ModuleItem> Modules { get; } = new ObservableCollection<ModuleItem>
         {
-            new("Lora Sort", "/Assets/LoraSort.png", new LoraSortView()),
-            new("Prompt Edit", "/Assets/PromptEdit.png", new PromptEditView()),
-            new("Lora Helper", "/Assets/HumanCogwheel.png", new LoraHelperView())
+            new("Lora Sort", "avares://DiffusionNexus.UI/Assets/LoraSort.png", new LoraSortView()),
+            new("Prompt Edit", "avares://DiffusionNexus.UI/Assets/PromptEdit.png", new PromptEditView()),
+            new("Lora Helper", "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png", new LoraHelperView())
         };
 
         public ReactiveCommand<Unit, Unit> ToggleMenuCommand { get; private set; }

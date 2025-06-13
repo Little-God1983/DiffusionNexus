@@ -7,7 +7,7 @@
         x:DataType="vm:MainWindowViewModel"
         Name="MainWin"
         Width="1100" Height="700"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="avares://DiffusionNexus.UI/Assets/avalonia-logo.ico"
         Title="DiffusionNexus.UI">
 
   <Window.DataContext>
