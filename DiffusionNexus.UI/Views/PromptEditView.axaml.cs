@@ -11,6 +11,7 @@ using System.Text;
 using DiffusionNexus.UI.Classes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Png.Chunks;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -18,13 +19,13 @@ namespace DiffusionNexus.UI.Views
     {
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
-        private Image? _previewImage;
+        private Avalonia.Controls.Image? _previewImage;
         private TextBox? _promptBox;
         private TextBox? _negativePromptBox;
         private TextBox? _blacklistBox;
         private string? _currentImagePath;
         private StableDiffusionMetadata? _metadata;
-        private readonly IBrush _defaultBorderBrush = Brushes.Transparent;
+        private IBrush _defaultBorderBrush = Brushes.Transparent;
 
         public PromptEditView()
         {
@@ -32,7 +33,7 @@ namespace DiffusionNexus.UI.Views
 
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
-            _previewImage = this.FindControl<Image>("PreviewImage");
+            _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
             _promptBox = this.FindControl<TextBox>("PromptBox");
             _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
             _blacklistBox = this.FindControl<TextBox>("BlacklistBox");
@@ -48,7 +49,7 @@ namespace DiffusionNexus.UI.Views
                 _imageDropBorder.AddHandler(DragDrop.DropEvent, Border_Drop);
             }
 
-            if (_previewImage != null)
+            if (_previewImage is not null)
             {
                 _previewImage.IsVisible = false;
             }
@@ -94,7 +95,7 @@ namespace DiffusionNexus.UI.Views
                 {
                     try
                     {
-                        if (_previewImage != null)
+                        if (_previewImage is not null)
                         {
                             using var stream = File.OpenRead(file);
                             var bitmap = new Bitmap(stream);
@@ -137,8 +138,6 @@ namespace DiffusionNexus.UI.Views
 
         private bool IsImageFile(DragEventArgs e)
         {
-            // if (!e.Data.Contains(DataFormats.FileNames)) return false;
-
             var files = e.Data.GetFileNames()?.ToList();
             return files?.Count > 0 && IsImagePath(files[0]);
         }
@@ -157,7 +156,7 @@ namespace DiffusionNexus.UI.Views
                 _dropText.Text = "Drop image here";
                 _dropText.IsVisible = true;
             }
-            ClearImageAre();
+            ClearImageArea();
         }
 
         private void ResetBorderBrush()
@@ -168,9 +167,9 @@ namespace DiffusionNexus.UI.Views
             }
         }
 
-        private void ClearImageAre()
+        private void ClearImageArea()
         {
-            if (_previewImage != null)
+            if (_previewImage is not null)
             {
                 _previewImage.Source = null;
                 _previewImage.IsVisible = false;
@@ -207,16 +206,18 @@ namespace DiffusionNexus.UI.Views
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
 
-            using var image = Image.Load(_currentImagePath);
-            var pngMeta = image.Metadata.GetPngMetadata();
-            var parameters = BuildParametersString();
-            var existing = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
-            if (existing != null)
-                existing.Value = parameters;
-            else
+            using (var image = SixLabors.ImageSharp.Image.Load(_currentImagePath))
+            {
+                var pngMeta = image.Metadata.GetPngMetadata();
+                var parameters = BuildParametersString();
+                // Remove old entry if it exists
+                var old = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
+                if (old != null)
+                    pngMeta.TextData.Remove(old);
+                // Add new entry as PngTextData
                 pngMeta.TextData.Add(new PngTextData("parameters", parameters, null, null));
-
-            image.Save(path);
+                image.Save(path);
+            }
         }
 
         private void OnSave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
