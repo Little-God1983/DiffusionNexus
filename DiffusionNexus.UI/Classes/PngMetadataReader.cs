@@ -1,7 +1,9 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Png;
 
 namespace DiffusionNexus.UI.Classes
@@ -10,10 +12,14 @@ namespace DiffusionNexus.UI.Classes
     {
         public static StableDiffusionMetadata? ReadMetadata(string path)
         {
-            using var image = Image.Load(path, out var format);
+            using var stream = File.OpenRead(path);
+            var info = Image.Identify(stream);
+            var format = info?.Metadata.DecodedImageFormat;
             if (format is not PngFormat)
                 return null;
 
+            stream.Position = 0; // Reset stream position for loading
+            using var image = Image.Load(stream);
             var pngMeta = image.Metadata.GetPngMetadata();
             var textData = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
             if (textData == null)
