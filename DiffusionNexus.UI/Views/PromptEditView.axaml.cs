@@ -12,6 +12,7 @@ using DiffusionNexus.UI.Classes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
+using System.Text.Json;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -23,6 +24,24 @@ namespace DiffusionNexus.UI.Views
         private TextBox? _promptBox;
         private TextBox? _negativePromptBox;
         private TextBox? _blacklistBox;
+        private TextBox? _stepsBox;
+        private TextBox? _samplerBox;
+        private TextBox? _scheduleTypeBox;
+        private TextBox? _cfgScaleBox;
+        private TextBox? _seedBox;
+        private TextBox? _faceRestorationBox;
+        private TextBox? _sizeBox;
+        private TextBox? _modelHashBox;
+        private TextBox? _modelBox;
+        private TextBox? _tiBox;
+        private TextBox? _versionBox;
+        private TextBox? _sourceIdentifierBox;
+        private TextBox? _loraHashesBox;
+        private TextBox? _widthBox;
+        private TextBox? _heightBox;
+        private TextBox? _hashesBox;
+        private TextBox? _resourcesBox;
+        private Button? _copyMetadataButton;
         private string? _currentImagePath;
         private StableDiffusionMetadata? _metadata;
         private IBrush _defaultBorderBrush = Brushes.Transparent;
@@ -37,6 +56,27 @@ namespace DiffusionNexus.UI.Views
             _promptBox = this.FindControl<TextBox>("PromptBox");
             _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
             _blacklistBox = this.FindControl<TextBox>("BlacklistBox");
+            _stepsBox = this.FindControl<TextBox>("StepsBox");
+            _samplerBox = this.FindControl<TextBox>("SamplerBox");
+            _scheduleTypeBox = this.FindControl<TextBox>("ScheduleTypeBox");
+            _cfgScaleBox = this.FindControl<TextBox>("CFGScaleBox");
+            _seedBox = this.FindControl<TextBox>("SeedBox");
+            _faceRestorationBox = this.FindControl<TextBox>("FaceRestorationBox");
+            _sizeBox = this.FindControl<TextBox>("SizeBox");
+            _modelHashBox = this.FindControl<TextBox>("ModelHashBox");
+            _modelBox = this.FindControl<TextBox>("ModelBox");
+            _tiBox = this.FindControl<TextBox>("TIBox");
+            _versionBox = this.FindControl<TextBox>("VersionBox");
+            _sourceIdentifierBox = this.FindControl<TextBox>("SourceIdentifierBox");
+            _loraHashesBox = this.FindControl<TextBox>("LoRAHashesBox");
+            _widthBox = this.FindControl<TextBox>("WidthBox");
+            _heightBox = this.FindControl<TextBox>("HeightBox");
+            _hashesBox = this.FindControl<TextBox>("HashesBox");
+            _resourcesBox = this.FindControl<TextBox>("ResourcesBox");
+            _copyMetadataButton = this.FindControl<Button>("CopyMetadataButton");
+
+            if (_copyMetadataButton is not null)
+                _copyMetadataButton.Click += OnCopyMetadata;
 
             if (_imageDropBorder != null)
             {
@@ -116,10 +156,12 @@ namespace DiffusionNexus.UI.Views
                             if (_negativePromptBox != null)
                                 _negativePromptBox.Text = meta.NegativePrompt ?? string.Empty;
                             _metadata = meta;
+                            DisplayMetadata();
                         }
                         else
                         {
                             _metadata = null;
+                            ClearMetadata();
                         }
 
                         _currentImagePath = file;
@@ -157,6 +199,7 @@ namespace DiffusionNexus.UI.Views
                 _dropText.IsVisible = true;
             }
             ClearImageArea();
+            ClearMetadata();
         }
 
         private void ResetBorderBrush()
@@ -176,6 +219,39 @@ namespace DiffusionNexus.UI.Views
             }
         }
 
+        private void DisplayMetadata()
+        {
+            if (_metadata == null)
+                return;
+
+            if (_stepsBox != null) _stepsBox.Text = _metadata.Steps.ToString();
+            if (_samplerBox != null) _samplerBox.Text = _metadata.Sampler ?? string.Empty;
+            if (_scheduleTypeBox != null) _scheduleTypeBox.Text = _metadata.ScheduleType ?? string.Empty;
+            if (_cfgScaleBox != null) _cfgScaleBox.Text = _metadata.CFGScale.ToString();
+            if (_seedBox != null) _seedBox.Text = _metadata.Seed.ToString();
+            if (_faceRestorationBox != null) _faceRestorationBox.Text = _metadata.FaceRestoration ?? string.Empty;
+            if (_sizeBox != null) _sizeBox.Text = _metadata.Width > 0 && _metadata.Height > 0 ? $"{_metadata.Width}x{_metadata.Height}" : string.Empty;
+            if (_modelHashBox != null) _modelHashBox.Text = _metadata.ModelHash ?? string.Empty;
+            if (_modelBox != null) _modelBox.Text = _metadata.Model ?? string.Empty;
+            if (_tiBox != null) _tiBox.Text = _metadata.TI ?? string.Empty;
+            if (_versionBox != null) _versionBox.Text = _metadata.Version ?? string.Empty;
+            if (_sourceIdentifierBox != null) _sourceIdentifierBox.Text = _metadata.SourceIdentifier ?? string.Empty;
+            if (_loraHashesBox != null) _loraHashesBox.Text = _metadata.LoRAHashes ?? string.Empty;
+            if (_widthBox != null) _widthBox.Text = _metadata.Width.ToString();
+            if (_heightBox != null) _heightBox.Text = _metadata.Height.ToString();
+            if (_hashesBox != null) _hashesBox.Text = _metadata.Hashes ?? string.Empty;
+            if (_resourcesBox != null) _resourcesBox.Text = _metadata.Resources ?? string.Empty;
+        }
+
+        private void ClearMetadata()
+        {
+            var boxes = new TextBox?[] { _stepsBox, _samplerBox, _scheduleTypeBox, _cfgScaleBox, _seedBox, _faceRestorationBox, _sizeBox, _modelHashBox, _modelBox, _tiBox, _versionBox, _sourceIdentifierBox, _loraHashesBox, _widthBox, _heightBox, _hashesBox, _resourcesBox };
+            foreach (var box in boxes)
+            {
+                if (box != null) box.Text = string.Empty;
+            }
+        }
+
         private string BuildParametersString()
         {
             var prompt = _promptBox?.Text ?? string.Empty;
@@ -190,10 +266,21 @@ namespace DiffusionNexus.UI.Views
                 var parts = new System.Collections.Generic.List<string>();
                 if (_metadata.Steps > 0) parts.Add($"Steps: {_metadata.Steps}");
                 if (!string.IsNullOrWhiteSpace(_metadata.Sampler)) parts.Add($"Sampler: {_metadata.Sampler}");
+                if (!string.IsNullOrWhiteSpace(_metadata.ScheduleType)) parts.Add($"Schedule type: {_metadata.ScheduleType}");
                 if (_metadata.CFGScale != 0) parts.Add($"CFG scale: {_metadata.CFGScale}");
                 if (_metadata.Seed != 0) parts.Add($"Seed: {_metadata.Seed}");
+                if (!string.IsNullOrWhiteSpace(_metadata.FaceRestoration)) parts.Add($"Face restoration: {_metadata.FaceRestoration}");
                 if (_metadata.Width > 0 && _metadata.Height > 0) parts.Add($"Size: {_metadata.Width}x{_metadata.Height}");
                 if (!string.IsNullOrWhiteSpace(_metadata.ModelHash)) parts.Add($"Model hash: {_metadata.ModelHash}");
+                if (!string.IsNullOrWhiteSpace(_metadata.Model)) parts.Add($"Model: {_metadata.Model}");
+                if (!string.IsNullOrWhiteSpace(_metadata.TI)) parts.Add($"TI: {_metadata.TI}");
+                if (!string.IsNullOrWhiteSpace(_metadata.Version)) parts.Add($"Version: {_metadata.Version}");
+                if (!string.IsNullOrWhiteSpace(_metadata.SourceIdentifier)) parts.Add($"Source Identifier: {_metadata.SourceIdentifier}");
+                if (!string.IsNullOrWhiteSpace(_metadata.LoRAHashes)) parts.Add($"LoRA hashes: {_metadata.LoRAHashes}");
+                if (_metadata.Width > 0) parts.Add($"Width: {_metadata.Width}");
+                if (_metadata.Height > 0) parts.Add($"Height: {_metadata.Height}");
+                if (!string.IsNullOrWhiteSpace(_metadata.Hashes)) parts.Add($"Hashes: {_metadata.Hashes}");
+                if (!string.IsNullOrWhiteSpace(_metadata.Resources)) parts.Add($"Resources: {_metadata.Resources}");
                 if (parts.Count > 0)
                     sb.AppendLine(string.Join(", ", parts));
             }
@@ -267,6 +354,36 @@ namespace DiffusionNexus.UI.Views
                              .Select(p => p.Trim());
             var filtered = parts.Where(p => !words.Contains(p, StringComparer.OrdinalIgnoreCase));
             return string.Join(", ", filtered);
+        }
+
+        private async void OnCopyMetadata(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (_metadata == null)
+                return;
+
+            var meta = new
+            {
+                _metadata.Steps,
+                _metadata.Sampler,
+                ScheduleType = _metadata.ScheduleType,
+                CFGScale = _metadata.CFGScale,
+                _metadata.Seed,
+                FaceRestoration = _metadata.FaceRestoration,
+                Size = _metadata.Width > 0 && _metadata.Height > 0 ? $"{_metadata.Width}x{_metadata.Height}" : null,
+                _metadata.ModelHash,
+                _metadata.Model,
+                _metadata.TI,
+                _metadata.Version,
+                SourceIdentifier = _metadata.SourceIdentifier,
+                LoRAHashes = _metadata.LoRAHashes,
+                _metadata.Width,
+                _metadata.Height,
+                _metadata.Hashes,
+                _metadata.Resources
+            };
+
+            var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
+            await Application.Current!.Clipboard.SetTextAsync(json);
         }
     }
 }
