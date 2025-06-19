@@ -24,11 +24,11 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Image>("PreviewImage");
-            
+
             if (_imageDropBorder != null)
             {
                 _defaultBorderBrush = _imageDropBorder.BorderBrush;
-                
+
                 // Set up drag drop handlers
                 _imageDropBorder.AddHandler(DragDrop.DragEnterEvent, Border_DragEnter);
                 _imageDropBorder.AddHandler(DragDrop.DragLeaveEvent, Border_DragLeave);
@@ -72,7 +72,7 @@ namespace DiffusionNexus.UI.Views
 
         private void Border_Drop(object? sender, DragEventArgs e)
         {
-            if (!e.Data.Contains(DataFormats.FileNames)) return;
+            if (!IsImageFile(e)) return;
 
             var files = e.Data.GetFileNames()?.ToList();
             if (files?.Count > 0)
@@ -98,14 +98,18 @@ namespace DiffusionNexus.UI.Views
                     {
                         ResetDropArea();
                     }
+                    finally
+                    {
+                        ResetBorderBrush();
+                    }
                 }
             }
         }
 
         private bool IsImageFile(DragEventArgs e)
         {
-           // if (!e.Data.Contains(DataFormats.FileNames)) return false;
-            
+            // if (!e.Data.Contains(DataFormats.FileNames)) return false;
+
             var files = e.Data.GetFileNames()?.ToList();
             return files?.Count > 0 && IsImagePath(files[0]);
         }
@@ -118,15 +122,25 @@ namespace DiffusionNexus.UI.Views
 
         private void ResetDropArea()
         {
-            if (_imageDropBorder != null)
-            {
-                _imageDropBorder.BorderBrush = _defaultBorderBrush;
-            }
+            ResetBorderBrush();
             if (_dropText != null)
             {
                 _dropText.Text = "Drop image here";
                 _dropText.IsVisible = true;
             }
+            ClearImageAre();
+        }
+
+        private void ResetBorderBrush()
+        {
+            if (_imageDropBorder != null)
+            {
+                _imageDropBorder.BorderBrush = _defaultBorderBrush;
+            }
+        }
+
+        private void ClearImageAre()
+        {
             if (_previewImage != null)
             {
                 _previewImage.Source = null;
