@@ -46,6 +46,8 @@ namespace DiffusionNexus.UI.Views
 
         private void Border_DragEnter(object? sender, DragEventArgs e)
         {
+            var files = e.Data.GetFileNames()?.ToList();
+
             if (!IsImageFile(e)) return;
 
             if (_imageDropBorder != null)
@@ -102,7 +104,7 @@ namespace DiffusionNexus.UI.Views
 
         private bool IsImageFile(DragEventArgs e)
         {
-            if (!e.Data.Contains(DataFormats.FileNames)) return false;
+           // if (!e.Data.Contains(DataFormats.FileNames)) return false;
             
             var files = e.Data.GetFileNames()?.ToList();
             return files?.Count > 0 && IsImagePath(files[0]);
