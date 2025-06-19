@@ -383,7 +383,9 @@ namespace DiffusionNexus.UI.Views
             };
 
             var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
-            await Application.Current!.Clipboard.SetTextAsync(json);
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel != null)
+                await topLevel.Clipboard.SetTextAsync(json);
         }
     }
 }

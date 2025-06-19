@@ -24,6 +24,11 @@
         <TextBlock Text="Negative Prompt"/>
         <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
       </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button Content="Apply Blacklist" Width="110" Click="OnApplyBlacklist"/>
+        <Button Content="Save" Width="80" Click="OnSave"/>
+        <Button Content="Save As" Width="80" Click="OnSaveAs"/>
+      </StackPanel>
       <Expander Header="Metadata" IsExpanded="True">
         <StackPanel x:Name="MetadataPanel" Spacing="4">
           <StackPanel Orientation="Horizontal" Spacing="5">
@@ -97,11 +102,7 @@
           <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
         </StackPanel>
       </Expander>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="Apply Blacklist" Width="110" Click="OnApplyBlacklist"/>
-        <Button Content="Save" Width="80" Click="OnSave"/>
-        <Button Content="Save As" Width="80" Click="OnSaveAs"/>
-      </StackPanel>
+
     </StackPanel>
   </Grid>
 </UserControl>
