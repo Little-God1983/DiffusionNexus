@@ -7,6 +7,7 @@ using Avalonia.Media.Imaging;
 using System;
 using System.IO;
 using System.Linq;
+using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -15,6 +16,8 @@ namespace DiffusionNexus.UI.Views
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
         private Image? _previewImage;
+        private TextBox? _promptBox;
+        private TextBox? _negativePromptBox;
         private readonly IBrush _defaultBorderBrush;
 
         public PromptEditView()
@@ -24,6 +27,8 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Image>("PreviewImage");
+            _promptBox = this.FindControl<TextBox>("PromptBox");
+            _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
 
             if (_imageDropBorder != null)
             {
@@ -92,6 +97,16 @@ namespace DiffusionNexus.UI.Views
                         if (_dropText != null)
                         {
                             _dropText.IsVisible = false;
+                        }
+
+                        // extract metadata and populate prompt boxes
+                        var meta = PngMetadataReader.ReadMetadata(file);
+                        if (meta != null)
+                        {
+                            if (_promptBox != null)
+                                _promptBox.Text = meta.Prompt ?? string.Empty;
+                            if (_negativePromptBox != null)
+                                _negativePromptBox.Text = meta.NegativePrompt ?? string.Empty;
                         }
                     }
                     catch (Exception)
