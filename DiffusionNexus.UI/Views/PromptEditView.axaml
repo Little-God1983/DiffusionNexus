@@ -30,7 +30,8 @@
         <Button Content="Save As" Width="80" Click="OnSaveAs"/>
       </StackPanel>
       <Expander Header="Metadata" IsExpanded="True">
-        <StackPanel x:Name="MetadataPanel" Spacing="4">
+        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="MetadataPanel" Spacing="4">
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Steps" Width="120"/>
             <TextBox Name="StepsBox" IsReadOnly="True" Width="200"/>
@@ -99,8 +100,9 @@
             <TextBlock Text="Resources"/>
             <TextBox Name="ResourcesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
           </StackPanel>
-          <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
-        </StackPanel>
+            <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
+          </StackPanel>
+        </ScrollViewer>
       </Expander>
 
     </StackPanel>
