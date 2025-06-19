@@ -29,7 +29,25 @@ namespace DiffusionNexus.UI.ViewModels
         public bool IsMenuOpen
         {
             get => _isMenuOpen;
-            set => this.RaiseAndSetIfChanged(ref _isMenuOpen, value);
+            set
+            {
+                this.RaiseAndSetIfChanged(ref _isMenuOpen, value);
+                UpdateLayoutFromMenuState();
+            }
+        }
+
+        private double _sidebarWidth = 200;
+        public double SidebarWidth
+        {
+            get => _sidebarWidth;
+            set => this.RaiseAndSetIfChanged(ref _sidebarWidth, value);
+        }
+
+        private double _mainContentScale = 1.0;
+        public double MainContentScale
+        {
+            get => _mainContentScale;
+            set => this.RaiseAndSetIfChanged(ref _mainContentScale, value);
         }
 
         private object _currentModuleView = null!;
@@ -67,6 +85,13 @@ namespace DiffusionNexus.UI.ViewModels
             });
 
             CurrentModuleView = Modules.First().View;
+            UpdateLayoutFromMenuState();
+        }
+
+        private void UpdateLayoutFromMenuState()
+        {
+            SidebarWidth = IsMenuOpen ? 200 : 0;
+            MainContentScale = IsMenuOpen ? 0.9 : 1.0;
         }
 
         private void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

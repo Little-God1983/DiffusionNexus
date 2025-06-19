@@ -5,6 +5,8 @@ VisualStudioVersion = 17.14.36127.28 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI", "DiffusionNexus.UI\DiffusionNexus.UI.csproj", "{19C60AE1-F065-40A4-913F-3F19BDA229FF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.Tests", "DiffusionNexus.Tests\DiffusionNexus.Tests.csproj", "{27C7CAAA-3691-4B17-AD04-0C52104FD3C4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -13,9 +15,13 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{19C60AE1-F065-40A4-913F-3F19BDA229FF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{19C60AE1-F065-40A4-913F-3F19BDA229FF}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{19C60AE1-F065-40A4-913F-3F19BDA229FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{19C60AE1-F065-40A4-913F-3F19BDA229FF}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
+                {19C60AE1-F065-40A4-913F-3F19BDA229FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {19C60AE1-F065-40A4-913F-3F19BDA229FF}.Release|Any CPU.Build.0 = Release|Any CPU
+                {27C7CAAA-3691-4B17-AD04-0C52104FD3C4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                {27C7CAAA-3691-4B17-AD04-0C52104FD3C4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                {27C7CAAA-3691-4B17-AD04-0C52104FD3C4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {27C7CAAA-3691-4B17-AD04-0C52104FD3C4}.Release|Any CPU.Build.0 = Release|Any CPU
+        EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection

@@ -1,5 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Avalonia.Input;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -11,5 +13,11 @@ namespace DiffusionNexus.UI.Views
         }
 
         private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+        private void ContentArea_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            if (DataContext is MainWindowViewModel vm && vm.IsMenuOpen)
+                vm.IsMenuOpen = false;
+        }
     }
 }
