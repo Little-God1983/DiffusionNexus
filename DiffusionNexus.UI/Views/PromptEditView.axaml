@@ -25,8 +25,9 @@
         <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="Save" Width="80"/>
-        <Button Content="Save As" Width="80"/>
+        <Button Content="Apply Blacklist" Width="110" Click="OnApplyBlacklist"/>
+        <Button Content="Save" Width="80" Click="OnSave"/>
+        <Button Content="Save As" Width="80" Click="OnSaveAs"/>
       </StackPanel>
     </StackPanel>
   </Grid>

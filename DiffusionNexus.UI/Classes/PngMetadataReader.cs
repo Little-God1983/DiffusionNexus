@@ -29,6 +29,10 @@ namespace DiffusionNexus.UI.Classes
 
         private static StableDiffusionMetadata Parse(string input)
         {
+            // Return an empty/default metadata if there's nothing to parse
+            if (string.IsNullOrWhiteSpace(input))
+                return new StableDiffusionMetadata();
+
             var meta = new StableDiffusionMetadata();
             var lines = input.Split('\n');
             if (lines.Length > 0)
