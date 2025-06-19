@@ -29,8 +29,9 @@
         <Button Content="Save" Width="80" Click="OnSave"/>
         <Button Content="Save As" Width="80" Click="OnSaveAs"/>
       </StackPanel>
+      <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
       <Expander Header="Metadata" IsExpanded="True">
-        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+        
           <StackPanel x:Name="MetadataPanel" Spacing="4">
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Steps" Width="120"/>
@@ -102,9 +103,9 @@
           </StackPanel>
             <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
           </StackPanel>
-        </ScrollViewer>
-      </Expander>
 
+      </Expander>
+    </ScrollViewer>
     </StackPanel>
   </Grid>
 </UserControl>
