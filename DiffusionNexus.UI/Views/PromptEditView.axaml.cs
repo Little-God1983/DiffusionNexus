@@ -13,6 +13,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -307,10 +308,17 @@ namespace DiffusionNexus.UI.Views
             }
         }
 
-        private void OnSave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        private async void OnSave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
+
+            if (File.Exists(_currentImagePath) && this.VisualRoot is Window window)
+            {
+                var confirm = await ConfirmOverwriteAsync(window);
+                if (!confirm)
+                    return;
+            }
 
             SaveImage(_currentImagePath);
         }
@@ -336,12 +344,54 @@ namespace DiffusionNexus.UI.Views
             }
         }
 
+        private async Task<bool> ConfirmOverwriteAsync(Window owner)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+
+            var dialog = new Window
+            {
+                Width = 300,
+                Height = 150,
+                Title = "Confirm Save",
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+
+            var yesButton = new Button { Content = "Yes", Width = 80 };
+            var noButton = new Button { Content = "No", Width = 80 };
+
+            yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+            noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+
+            dialog.Content = new StackPanel
+            {
+                Spacing = 10,
+                Margin = new Thickness(10),
+                Children =
+                {
+                    new TextBlock { Text = "Overwrite the existing file?", TextWrapping = TextWrapping.Wrap },
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                        Spacing = 10,
+                        Children = { yesButton, noButton }
+                    }
+                }
+            };
+
+            await dialog.ShowDialog(owner);
+            return await tcs.Task;
+        }
+
         private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
             if (_blacklistBox == null)
                 return;
 
-            var words = _blacklistBox.Text?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
+            var words = _blacklistBox.Text?
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(w => w.ToLowerInvariant())
+                .ToArray() ?? Array.Empty<string>();
             if (_promptBox != null)
                 _promptBox.Text = ApplyBlacklist(_promptBox.Text, words);
             if (_negativePromptBox != null)
@@ -350,9 +400,10 @@ namespace DiffusionNexus.UI.Views
 
         private static string ApplyBlacklist(string text, string[] words)
         {
+            var blacklist = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
             var parts = text.Split(',', StringSplitOptions.RemoveEmptyEntries)
                              .Select(p => p.Trim());
-            var filtered = parts.Where(p => !words.Contains(p, StringComparer.OrdinalIgnoreCase));
+            var filtered = parts.Where(p => !blacklist.Contains(p));
             return string.Join(", ", filtered);
         }
 
