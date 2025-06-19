@@ -48,22 +48,29 @@ namespace DiffusionNexus.UI.Classes
                     if (kv.Length != 2) continue;
                     var key = kv[0].Trim();
                     var value = kv[1].Trim();
+                    var keyLower = key.ToLowerInvariant();
 
-                    switch (key)
+                    switch (keyLower)
                     {
-                        case "Steps":
+                        case "steps":
                             if (int.TryParse(value, out var steps)) meta.Steps = steps;
                             break;
-                        case "Sampler":
+                        case "sampler":
                             meta.Sampler = value;
                             break;
-                        case "CFG scale":
+                        case "schedule type":
+                            meta.ScheduleType = value;
+                            break;
+                        case "cfg scale":
                             if (float.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var cfg)) meta.CFGScale = cfg;
                             break;
-                        case "Seed":
+                        case "seed":
                             if (long.TryParse(value, out var seed)) meta.Seed = seed;
                             break;
-                        case "Size":
+                        case "face restoration":
+                            meta.FaceRestoration = value;
+                            break;
+                        case "size":
                             var dims = value.Split('x');
                             if (dims.Length == 2)
                             {
@@ -73,8 +80,35 @@ namespace DiffusionNexus.UI.Classes
                                 meta.Height = h;
                             }
                             break;
-                        case "Model hash":
+                        case "model hash":
                             meta.ModelHash = value;
+                            break;
+                        case "model":
+                            meta.Model = value;
+                            break;
+                        case "ti":
+                            meta.TI = value;
+                            break;
+                        case "version":
+                            meta.Version = value;
+                            break;
+                        case "source identifier":
+                            meta.SourceIdentifier = value;
+                            break;
+                        case "lora hashes":
+                            meta.LoRAHashes = value;
+                            break;
+                        case "width":
+                            if (int.TryParse(value, out var width)) meta.Width = width;
+                            break;
+                        case "height":
+                            if (int.TryParse(value, out var height)) meta.Height = height;
+                            break;
+                        case "hashes":
+                            meta.Hashes = value;
+                            break;
+                        case "resources":
+                            meta.Resources = value;
                             break;
                     }
                 }

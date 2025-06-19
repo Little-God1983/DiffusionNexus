@@ -29,6 +29,80 @@
         <Button Content="Save" Width="80" Click="OnSave"/>
         <Button Content="Save As" Width="80" Click="OnSaveAs"/>
       </StackPanel>
+      <Expander Header="Metadata" IsExpanded="True">
+        <StackPanel x:Name="MetadataPanel" Spacing="4">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Steps" Width="120"/>
+            <TextBox Name="StepsBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Sampler" Width="120"/>
+            <TextBox Name="SamplerBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Schedule Type" Width="120"/>
+            <TextBox Name="ScheduleTypeBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="CFG Scale" Width="120"/>
+            <TextBox Name="CFGScaleBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Seed" Width="120"/>
+            <TextBox Name="SeedBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Face Restoration" Width="120"/>
+            <TextBox Name="FaceRestorationBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Size" Width="120"/>
+            <TextBox Name="SizeBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Model Hash" Width="120"/>
+            <TextBox Name="ModelHashBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Model" Width="120"/>
+            <TextBox Name="ModelBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="TI" Width="120"/>
+            <TextBox Name="TIBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Version" Width="120"/>
+            <TextBox Name="VersionBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Source Identifier" Width="120"/>
+            <TextBox Name="SourceIdentifierBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="LoRA Hashes" Width="120"/>
+            <TextBox Name="LoRAHashesBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Width" Width="120"/>
+            <TextBox Name="WidthBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Height" Width="120"/>
+            <TextBox Name="HeightBox" IsReadOnly="True" Width="200"/>
+          </StackPanel>
+          <StackPanel Spacing="2">
+            <TextBlock Text="Hashes"/>
+            <TextBox Name="HashesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+          </StackPanel>
+          <StackPanel Spacing="2">
+            <TextBlock Text="Resources"/>
+            <TextBox Name="ResourcesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+          </StackPanel>
+          <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
+        </StackPanel>
+      </Expander>
+
     </StackPanel>
   </Grid>
 </UserControl>
