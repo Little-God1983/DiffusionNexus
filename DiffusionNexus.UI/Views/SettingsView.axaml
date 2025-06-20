@@ -1,0 +1,36 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.SettingsView">
+    <UserControl.DataContext>
+        <vm:SettingsViewModel/>
+    </UserControl.DataContext>
+    <ScrollViewer>
+        <StackPanel Margin="10" Spacing="20">
+            <GroupBox Header="General">
+                <StackPanel Spacing="5">
+                    <TextBlock Text="Civitai API Key"/>
+                    <PasswordBox Password="{Binding CivitaiApiKey, Mode=TwoWay}"/>
+                    <Button Content="Delete" Command="{Binding ClearApiKeyCommand}" Width="80"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Lora Sort">
+                <TextBlock Text="No settings available."/>
+            </GroupBox>
+
+            <GroupBox Header="Lora Helper">
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                    <TextBox Width="300" Text="{Binding LoraHelperFolderPath, Mode=TwoWay}"/>
+                    <Button Content="Browse" Command="{Binding BrowseLoraHelperFolderCommand}"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Prompt Edit">
+                <TextBlock Text="No settings available."/>
+            </GroupBox>
+
+            <Button Content="Save Settings" HorizontalAlignment="Right" Command="{Binding SaveSettingsCommand}"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
