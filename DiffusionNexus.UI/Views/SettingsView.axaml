@@ -13,7 +13,7 @@
         <StackPanel Spacing="5" Margin="10">
           <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
             <TextBlock Text="Civitai API Key" Width="120"/>
-            <PasswordBox Password="{Binding CivitaiApiKey, Mode=TwoWay}" Width="200"/>
+           
             <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>
           </StackPanel>
         </StackPanel>
