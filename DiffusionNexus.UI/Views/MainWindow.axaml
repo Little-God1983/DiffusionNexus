@@ -16,7 +16,7 @@
   </Window.DataContext>
 
   <SplitView IsPaneOpen="{Binding IsMenuOpen}"
-             DisplayMode="CompactOverlay"
+             DisplayMode="CompactInline"
              CompactPaneLength="60"
              OpenPaneLength="200"
              PanePlacement="Left">
