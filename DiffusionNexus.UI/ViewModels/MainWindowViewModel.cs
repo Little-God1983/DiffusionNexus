@@ -65,7 +65,7 @@ namespace DiffusionNexus.UI.ViewModels
 
             OpenPatreonCommand = ReactiveCommand.Create(() =>
             {
-                OpenUrl("https://www.patreon.com/c/AIKnowledgeCentral");
+                OpenUrl("https://patreon.com/AIKnowledgeCentral?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink");
             });
 
             OpenSettingsCommand = ReactiveCommand.Create(() =>
