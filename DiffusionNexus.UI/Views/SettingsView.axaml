@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DiffusionNexus.UI.Views.SettingsView"
+             xmlns:d="https://github.com/avaloniaui"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:DataType="vm:SettingsViewModel">
+  <UserControl.DataContext>
+    <vm:SettingsViewModel/>
+  </UserControl.DataContext>
+  <ScrollViewer>
+    <StackPanel Margin="10" Spacing="10">
+      <Expander Header="General" IsExpanded="True">
+        <StackPanel Spacing="5" Margin="10">
+          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="Civitai API Key" Width="120"/>
+           
+            <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>
+          </StackPanel>
+        </StackPanel>
+      </Expander>
+
+      <Expander Header="Lora Sort" IsExpanded="False">
+        <TextBlock Margin="10" Text="No settings available."/>
+      </Expander>
+
+      <Expander Header="Lora Helper" IsExpanded="False">
+        <StackPanel Spacing="5" Margin="10">
+          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="Folder Path" Width="120"/>
+            <TextBox Text="{Binding LoraHelperFolderPath, Mode=TwoWay}" Width="250"/>
+          </StackPanel>
+        </StackPanel>
+      </Expander>
+
+      <Expander Header="Prompt Edit" IsExpanded="False">
+        <TextBlock Margin="10" Text="No settings available."/>
+      </Expander>
+
+      <Button Content="Save Settings" Command="{Binding SaveCommand}" HorizontalAlignment="Right" Width="120" Margin="0,10"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
