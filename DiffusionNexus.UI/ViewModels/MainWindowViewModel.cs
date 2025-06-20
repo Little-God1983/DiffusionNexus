@@ -25,6 +25,7 @@ namespace DiffusionNexus.UI.ViewModels
         public ReactiveCommand<Unit, Unit> OpenCivitaiCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenPatreonCommand { get; private set; }
+        public ReactiveCommand<Unit, Unit> OpenAboutCommand { get; private set; }
 
         private bool _isMenuOpen = true;
         public bool IsMenuOpen
@@ -68,6 +69,11 @@ namespace DiffusionNexus.UI.ViewModels
             });
 
             OpenSettingsCommand = ReactiveCommand.Create(() =>
+            {
+                CurrentModuleView = new SettingsView();
+            });
+
+            OpenAboutCommand = ReactiveCommand.Create(() =>
             {
                 CurrentModuleView = new SettingsView();
             });
