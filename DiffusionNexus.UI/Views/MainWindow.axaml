@@ -43,9 +43,30 @@
         </ItemsControl>
 
         <StackPanel VerticalAlignment="Bottom" Spacing="5" Margin="0,40,0,0">
-          <Button Content="YouTube" Command="{Binding OpenYoutubeCommand}"/>
-          <Button Content="Civitai" Command="{Binding OpenCivitaiCommand}"/>
-          <Button Content="⚙ Settings" Command="{Binding OpenSettingsCommand}"/>
+          <Button Command="{Binding OpenYoutubeCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Image Source="avares://DiffusionNexus.UI/Assets/yt.png" Width="24" Height="24"/>
+              <TextBlock Text="Youtube" IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding OpenPatreonCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Image Source="avares://DiffusionNexus.UI/Assets/patreon.png" Width="24" Height="24"/>
+              <TextBlock Text="Patreon" IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding OpenCivitaiCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Image Source="avares://DiffusionNexus.UI/Assets/civitai.png" Width="24" Height="24"/>
+              <TextBlock Text="Civitai" IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding OpenSettingsCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Image Source="avares://DiffusionNexus.UI/Assets/settings.png" Width="24" Height="24"/>
+              <TextBlock Text="Settings" IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+            </StackPanel>
+          </Button>
         </StackPanel>
       </StackPanel>
     </SplitView.Pane>

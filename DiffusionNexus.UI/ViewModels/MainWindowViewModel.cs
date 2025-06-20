@@ -24,6 +24,7 @@ namespace DiffusionNexus.UI.ViewModels
         public ReactiveCommand<Unit, Unit> OpenYoutubeCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenCivitaiCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; private set; }
+        public ReactiveCommand<Unit, Unit> OpenPatreonCommand { get; private set; }
 
         private bool _isMenuOpen = true;
         public bool IsMenuOpen
@@ -58,7 +59,12 @@ namespace DiffusionNexus.UI.ViewModels
 
             OpenCivitaiCommand = ReactiveCommand.Create(() =>
             {
-                OpenUrl("https://civitai.com/");
+                OpenUrl("https://civitai.com/user/AIknowlege2go");
+            });
+
+            OpenPatreonCommand = ReactiveCommand.Create(() =>
+            {
+                OpenUrl("https://www.patreon.com/c/AIKnowledgeCentral");
             });
 
             OpenSettingsCommand = ReactiveCommand.Create(() =>
