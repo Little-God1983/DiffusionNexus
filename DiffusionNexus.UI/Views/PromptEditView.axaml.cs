@@ -25,7 +25,8 @@ namespace DiffusionNexus.UI.Views
         private Avalonia.Controls.Image? _previewImage;
         private TextBox? _promptBox;
         private TextBox? _negativePromptBox;
-        private TextBox? _blacklistBox;
+        // Text boxes bound via XAML
+        private TextBox? _whitelistBox;
         private TextBox? _stepsBox;
         private TextBox? _samplerBox;
         private TextBox? _scheduleTypeBox;
@@ -44,6 +45,8 @@ namespace DiffusionNexus.UI.Views
         private TextBox? _hashesBox;
         private TextBox? _resourcesBox;
         private Button? _copyMetadataButton;
+        private Button? _saveProfileButton;
+        private Button? _deleteProfileButton;
         private string? _currentImagePath;
         private StableDiffusionMetadata? _metadata;
         private IBrush _defaultBorderBrush = Brushes.Transparent;
@@ -57,7 +60,7 @@ namespace DiffusionNexus.UI.Views
             _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
             _promptBox = this.FindControl<TextBox>("PromptBox");
             _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
-            _blacklistBox = this.FindControl<TextBox>("BlacklistBox");
+            _whitelistBox = this.FindControl<TextBox>("WhitelistBox");
             _stepsBox = this.FindControl<TextBox>("StepsBox");
             _samplerBox = this.FindControl<TextBox>("SamplerBox");
             _scheduleTypeBox = this.FindControl<TextBox>("ScheduleTypeBox");
@@ -76,6 +79,8 @@ namespace DiffusionNexus.UI.Views
             _hashesBox = this.FindControl<TextBox>("HashesBox");
             _resourcesBox = this.FindControl<TextBox>("ResourcesBox");
             _copyMetadataButton = this.FindControl<Button>("CopyMetadataButton");
+            _saveProfileButton = this.FindControl<Button>("SaveProfileButton");
+            _deleteProfileButton = this.FindControl<Button>("DeleteProfileButton");
 
             if (_copyMetadataButton is not null)
                 _copyMetadataButton.Click += OnCopyMetadata;
@@ -386,10 +391,8 @@ namespace DiffusionNexus.UI.Views
 
         private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            if (_blacklistBox == null)
-                return;
-
-            var words = _blacklistBox.Text?
+            var vm = DataContext as ViewModels.PromptEditViewModel;
+            var words = vm?.Blacklist?
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
@@ -438,6 +441,30 @@ namespace DiffusionNexus.UI.Views
             var topLevel = TopLevel.GetTopLevel(this);
             if (topLevel != null)
                 await topLevel.Clipboard.SetTextAsync(json);
+        }
+
+        private async void OnSaveProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (this.VisualRoot is not Window window)
+                return;
+
+            if (DataContext is ViewModels.PromptEditViewModel vm)
+            {
+                var dialog = new DialogService(window);
+                await vm.SaveProfileAsync(dialog);
+            }
+        }
+
+        private async void OnDeleteProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (this.VisualRoot is not Window window)
+                return;
+
+            if (DataContext is ViewModels.PromptEditViewModel vm)
+            {
+                var dialog = new DialogService(window);
+                await vm.DeleteProfileAsync(dialog);
+            }
         }
     }
 }
