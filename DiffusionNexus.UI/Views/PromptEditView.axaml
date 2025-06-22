@@ -1,6 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DiffusionNexus.UI.Views.PromptEditView">
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.PromptEditView"
+             x:DataType="vm:PromptEditViewModel">
+  <UserControl.DataContext>
+    <vm:PromptEditViewModel/>
+  </UserControl.DataContext>
   <Grid ColumnDefinitions="2*,3*" Margin="10" RowDefinitions="*">
     <!-- Image drop area -->
     <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
@@ -12,9 +17,27 @@
 
     <!-- Right side for prompts -->
     <StackPanel Grid.Column="1" Spacing="10">
-      <StackPanel Spacing="2">
-        <TextBlock Text="Blacklist"/>
-        <TextBox Name="BlacklistBox" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <StackPanel Spacing="2">
+          <TextBlock Text="Profile"/>
+          <ComboBox Name="ProfileComboBox" Width="150"
+                    ItemsSource="{Binding Profiles}"
+                    SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
+          <Button Name="SaveProfileButton" Content="Save" Width="80" Click="OnSaveProfile"/>
+          <Button Name="DeleteProfileButton" Content="Delete" Width="80" Click="OnDeleteProfile"/>
+        </StackPanel>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <StackPanel Spacing="2">
+          <TextBlock Text="Blacklist"/>
+          <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+        </StackPanel>
+        <StackPanel Spacing="2">
+          <TextBlock Text="Whitelist"/>
+          <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+        </StackPanel>
       </StackPanel>
       <StackPanel Spacing="2">
         <TextBlock Text="Prompt"/>
