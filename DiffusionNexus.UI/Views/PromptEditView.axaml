@@ -21,7 +21,7 @@
         <StackPanel Spacing="2">
           <TextBlock Text="Profile"/>
           <ComboBox Name="ProfileComboBox" Width="150"
-                    Items="{Binding Profiles}"
+                    ItemsSource="{Binding Profiles}"
                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
