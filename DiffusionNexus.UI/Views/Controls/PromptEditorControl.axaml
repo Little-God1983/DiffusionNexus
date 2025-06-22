@@ -1,6 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DiffusionNexus.UI.Views.Controls.PromptEditorControl">
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.PromptEditorControl"
+             x:DataType="vm:PromptEditViewModel">
   <StackPanel Spacing="10">
     <StackPanel Orientation="Horizontal" Spacing="10">
       <StackPanel Spacing="2">
