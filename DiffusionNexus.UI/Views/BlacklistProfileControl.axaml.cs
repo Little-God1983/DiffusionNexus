@@ -5,9 +5,9 @@ using System;
 
 namespace DiffusionNexus.UI.Views.Controls
 {
-    public partial class PromptEditorControl : UserControl
+    public partial class BlacklistProfileControl : UserControl
     {
-        public PromptEditorControl()
+        public BlacklistProfileControl()
         {
             InitializeComponent();
 

@@ -2,7 +2,7 @@
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class BatchPromptEditViewModel : ObservableObject
+    public partial class BlacklistProfileViewModel : ObservableObject
     {
         [ObservableProperty]
         private string? _sourceFolder;
