@@ -24,9 +24,8 @@ namespace DiffusionNexus.UI.Views
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
         private Avalonia.Controls.Image? _previewImage;
-        private TextBox? _promptBox;
-        private TextBox? _negativePromptBox;
-        // Text boxes bound via XAML
+        private Controls.BlacklistProfileControl? _blacklistProfileControl;
+        private Controls.BlacklistProfileControl? _batchBlacklistProfileControl;
         private TextBox? _whitelistBox;
         private TextBox? _stepsBox;
         private TextBox? _samplerBox;
@@ -59,8 +58,8 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
-            _promptBox = this.FindControl<TextBox>("PromptBox");
-            _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
+            _blacklistProfileControl = this.FindControl<Controls.BlacklistProfileControl>("BlacklistProfileControl");
+            _batchBlacklistProfileControl = this.FindControl<Controls.BlacklistProfileControl>("BatchBlacklistProfileControl");
             _whitelistBox = this.FindControl<TextBox>("WhitelistBox");
             _stepsBox = this.FindControl<TextBox>("StepsBox");
             _samplerBox = this.FindControl<TextBox>("SamplerBox");
@@ -159,10 +158,11 @@ namespace DiffusionNexus.UI.Views
                         var meta = PngMetadataReader.ReadMetadata(file);
                         if (meta != null)
                         {
-                            if (_promptBox != null)
-                                _promptBox.Text = meta.Prompt ?? string.Empty;
-                            if (_negativePromptBox != null)
-                                _negativePromptBox.Text = meta.NegativePrompt ?? string.Empty;
+                            if (_blacklistProfileControl != null)
+                            {
+                                _blacklistProfileControl.PromptText = meta.Prompt ?? string.Empty;
+                                _blacklistProfileControl.NegativePromptText = meta.NegativePrompt ?? string.Empty;
+                            }
                             _metadata = meta;
                             DisplayMetadata();
                         }
@@ -262,8 +262,8 @@ namespace DiffusionNexus.UI.Views
 
         private string BuildParametersString()
         {
-            var prompt = _promptBox?.Text ?? string.Empty;
-            var negPrompt = _negativePromptBox?.Text ?? string.Empty;
+            var prompt = _blacklistProfileControl?.PromptText ?? string.Empty;
+            var negPrompt = _blacklistProfileControl?.NegativePromptText ?? string.Empty;
 
             var sb = new StringBuilder();
             sb.AppendLine($"Prompt: {prompt}");
@@ -398,16 +398,12 @@ namespace DiffusionNexus.UI.Views
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
 
-            if (_promptBox != null)
+            if (_blacklistProfileControl != null)
             {
-                var prompt = ApplyBlacklist(_promptBox.Text, words);
+                var prompt = ApplyBlacklist(_blacklistProfileControl.PromptText, words);
                 var whitelist = _whitelistBox?.Text ?? vm?.Whitelist ?? string.Empty;
-                _promptBox.Text = AppendWhitelist(prompt, whitelist);
-            }
-
-            if (_negativePromptBox != null)
-            {
-                _negativePromptBox.Text = ApplyBlacklist(_negativePromptBox.Text, words);
+                _blacklistProfileControl.PromptText = AppendWhitelist(prompt, whitelist);
+                _blacklistProfileControl.NegativePromptText = ApplyBlacklist(_blacklistProfileControl.NegativePromptText, words);
             }
         }
 
@@ -430,7 +426,6 @@ namespace DiffusionNexus.UI.Views
             text = Regex.Replace(text, @",\s*,", ",");
             text = Regex.Replace(text, @"\s{2,}", " ");
             text = Regex.Replace(text, @"\s*,\s*", ", ");
-
 
             return text.Trim(' ', ',');
         }

@@ -7,9 +7,15 @@ namespace DiffusionNexus.UI.Views.Controls
 {
     public partial class BlacklistProfileControl : UserControl
     {
+        private TextBox? _promptBox;
+        private TextBox? _negativePromptBox;
+
         public BlacklistProfileControl()
         {
             InitializeComponent();
+
+            _promptBox = this.FindControl<TextBox>("PromptBox");
+            _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
 
             this.FindControl<Button>("SaveButton")?.AddHandler(Button.ClickEvent, (_, e) => SaveClicked?.Invoke(this, e));
             this.FindControl<Button>("SaveAsButton")?.AddHandler(Button.ClickEvent, (_, e) => SaveAsClicked?.Invoke(this, e));
@@ -25,5 +31,17 @@ namespace DiffusionNexus.UI.Views.Controls
         public event EventHandler<RoutedEventArgs>? ApplyListClicked;
         public event EventHandler<RoutedEventArgs>? SaveProfileClicked;
         public event EventHandler<RoutedEventArgs>? DeleteProfileClicked;
+
+        public string PromptText
+        {
+            get => _promptBox?.Text ?? string.Empty;
+            set { if (_promptBox != null) _promptBox.Text = value; }
+        }
+
+        public string NegativePromptText
+        {
+            get => _negativePromptBox?.Text ?? string.Empty;
+            set { if (_negativePromptBox != null) _negativePromptBox.Text = value; }
+        }
     }
 }
