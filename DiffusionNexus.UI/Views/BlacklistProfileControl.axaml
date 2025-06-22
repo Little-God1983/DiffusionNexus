@@ -12,8 +12,14 @@
                   SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
-        <Button Name="SaveProfileButton" Content="Save" Width="80"/>
-        <Button Name="DeleteProfileButton" Content="Delete" Width="80"/>
+        <Button Content="Save"
+        Command="{Binding SaveProfileCommand}"
+        CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+        Width="80"/>
+        <Button Content="Delete"
+                Command="{Binding DeleteProfileCommand}"
+                CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+                Width="80"/>
       </StackPanel>
     </StackPanel>
     <StackPanel Orientation="Horizontal" Spacing="10">
@@ -35,9 +41,15 @@
       <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
     </StackPanel>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-      <Button Name="ApplyButton" Content="Apply List" Width="110"/>
-      <Button Name="SaveButton" Content="Save" Width="80"/>
-      <Button Name="SaveAsButton" Content="Save As" Width="80"/>
+      <Button Content="Apply List"
+        Command="{Binding ApplyListCommand}"
+        Width="110"/>
+      <Button Content="Save"
+              Command="{Binding SaveCommand}"
+              Width="80"/>
+      <Button Content="Save As"
+              Command="{Binding SaveAsCommand}"
+              Width="80"/>
     </StackPanel>
   </StackPanel>
 </UserControl>

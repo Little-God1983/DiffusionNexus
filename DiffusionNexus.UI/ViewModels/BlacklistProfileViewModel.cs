@@ -1,9 +1,12 @@
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Threading.Tasks;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -22,6 +25,12 @@ namespace DiffusionNexus.UI.ViewModels
 
         [ObservableProperty]
         private string? _whitelist;
+        public IAsyncRelayCommand<Window?> SaveProfileCommand { get; }
+        public IAsyncRelayCommand<Window?> DeleteProfileCommand { get; }
+        public IRelayCommand ApplyListCommand { get; }
+        public IRelayCommand SaveCommand { get; }
+        public IRelayCommand SaveAsCommand { get; }
+
 
         public BlacklistProfileViewModel() : this(new PromptProfileService())
         {
@@ -31,6 +40,23 @@ namespace DiffusionNexus.UI.ViewModels
         {
             _service = service;
             _ = LoadProfilesAsync();
+
+            // wire them up to your existing methods
+            SaveProfileCommand = new AsyncRelayCommand<Window?>(async w => {
+                if (w is null) return;
+                var dlg = new DialogService(w);
+                await SaveProfileAsync(dlg);
+            });
+
+            DeleteProfileCommand = new AsyncRelayCommand<Window?>(async w => {
+                if (w is null) return;
+                var dlg = new DialogService(w);
+                await DeleteProfileAsync(dlg);
+            });
+
+            ApplyListCommand = new RelayCommand(OnApplyList);
+            SaveCommand = new RelayCommand(OnSave);
+            SaveAsCommand = new RelayCommand(OnSaveAs);
         }
 
         private async Task LoadProfilesAsync()
@@ -102,6 +128,19 @@ namespace DiffusionNexus.UI.ViewModels
             await _service.DeleteAsync(SelectedProfile);
             SelectedProfile = null;
             await LoadProfilesAsync();
+        }
+
+        private void OnSave()
+        {
+            // your existing “Save” logic (parameters into the image)…
+        }
+        private void OnApplyList()
+        {
+            // whatever your old ApplyListClicked handler did…
+        }
+        private void OnSaveAs()
+        {
+            // your existing “Save As” logic…
         }
     }
 }

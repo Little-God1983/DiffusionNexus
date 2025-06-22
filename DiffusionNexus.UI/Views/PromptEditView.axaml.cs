@@ -5,6 +5,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.Views.Controls;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
@@ -100,6 +101,16 @@ namespace DiffusionNexus.UI.Views
             {
                 _previewImage.IsVisible = false;
             }
+
+            //var blacklistProfileControl = this.FindControl<BlacklistProfileControl>("BlacklistProfileControl");
+            //if (blacklistProfileControl is not null)
+            //{
+            //    blacklistProfileControl.ApplyListClicked += BlacklistProfileControl_ApplyListClicked;
+            //    blacklistProfileControl.SaveClicked += BlacklistProfileControlSaveClicked;
+            //    blacklistProfileControl.SaveAsClicked += BlacklistProfileControl_SaveAsClicked;
+            //    blacklistProfileControl.SaveProfileClicked += BlacklistProfileControl_SaveProfileClicked;
+            //    blacklistProfileControl.DeleteProfileClicked += BlacklistProfileControl_DeleteProfileClicked;
+            //}
         }
 
         private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
