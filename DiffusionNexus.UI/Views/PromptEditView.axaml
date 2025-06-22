@@ -104,7 +104,7 @@ xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
     <TabItem Header="Batch Processing">
       <Grid x:DataType="vm:BatchProcessingViewModel"
       Margin="10"
-      ColumnDefinitions="250,*">
+      ColumnDefinitions="400,*">
         <StackPanel Spacing="10" Grid.Column="0">
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Source Folder" Width="100"/>
@@ -121,6 +121,14 @@ xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
             <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}"/>
           </StackPanel>
         </StackPanel>
+        <StackPanel Grid.Column="1" Spacing="10">
+          <controls:BlacklistProfileControl x:Name="BatchBlacklistProfileControl" Margin="0,0,0,10"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Name="ApplyBatchButton" Content="Apply List to Batch" Width="150"/>
+            <Button Name="SaveBatchButton" Content="Save Batch" Width="80"/>
+            <Button Name="SaveAsBatchButton" Content="Save Batch As" Width="80"/>
+          </StackPanel>
+          </StackPanel>
         </Grid>
     </TabItem>
   </TabControl>
