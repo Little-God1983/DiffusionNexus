@@ -1,6 +1,7 @@
-﻿using Avalonia.Controls;
-using Avalonia.Interactivity;
+﻿using System.Threading.Tasks;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -18,6 +19,15 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private bool _replaceAll;
 
+        public IAsyncRelayCommand<Window?> BrowseSourceFolderCommand { get; }
+        public IAsyncRelayCommand<Window?> BrowseTargetFolderCommand { get; }
+
+        public BatchProcessingViewModel()
+        {
+            BrowseSourceFolderCommand = new AsyncRelayCommand<Window?>(OnBrowseSourceFolder);
+            BrowseTargetFolderCommand = new AsyncRelayCommand<Window?>(OnBrowseTargetFolder);
+        }
+
         partial void OnUseListOnlyChanged(bool value)
         {
             if (value)
@@ -28,27 +38,26 @@ namespace DiffusionNexus.UI.ViewModels
             if (value)
                 UseListOnly = false;
         }
-        private async void OnBrowseSourceFolder(object? sender, RoutedEventArgs e)
+
+        private async Task OnBrowseSourceFolder(Window? window)
         {
-            if (this.VisualRoot is not Window window) return;
+            if (window is null) return;
             var dlg = new OpenFolderDialog();
             var result = await dlg.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result)
-             && (sender as Button)?.DataContext is BatchProcessingViewModel vm)
+            if (!string.IsNullOrEmpty(result))
             {
-                vm.SourceFolder = result;
+                SourceFolder = result;
             }
         }
 
-        private async void OnBrowseTargetFolder(object? sender, RoutedEventArgs e)
+        private async Task OnBrowseTargetFolder(Window? window)
         {
-            if (this.VisualRoot is not Window window) return;
+            if (window is null) return;
             var dlg = new OpenFolderDialog();
             var result = await dlg.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result)
-             && (sender as Button)?.DataContext is BatchProcessingViewModel vm)
+            if (!string.IsNullOrEmpty(result))
             {
-                vm.TargetFolder = result;
+                TargetFolder = result;
             }
         }
     }

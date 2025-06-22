@@ -109,12 +109,12 @@ xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Source Folder" Width="100"/>
             <TextBox x:Name="SourceFolderBox" Width="140" Text="{Binding SourceFolder, Mode=TwoWay}"/>
-            <Button Content="Browse..." Click="OnBrowseSourceFolder"/>
+            <Button Content="Browse..." Command="{Binding BrowseSourceFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Target Folder" Width="100"/>
             <TextBox x:Name="TargetFolderBox" Width="140" Text="{Binding TargetFolder, Mode=TwoWay}"/>
-            <Button Content="Browse..." Click="OnBrowseTargetFolder"/>
+            <Button Content="Browse..." Command="{Binding BrowseTargetFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
           <StackPanel Orientation="Vertical" Spacing="5">
             <RadioButton Content="Blacklist / Whitelist only" IsChecked="{Binding UseListOnly, Mode=TwoWay}"/>
