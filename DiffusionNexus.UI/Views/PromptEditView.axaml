@@ -2,12 +2,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
 xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
-             x:Class="DiffusionNexus.UI.Views.PromptEditView"
-             x:DataType="vm:PromptEditViewModel">
+             x:Class="DiffusionNexus.UI.Views.PromptEditView">
   <TabControl>
     <TabItem Header="Single Image">
-      <Grid x:DataType="vm:PromptEditViewModel"
-            Margin="10">
+      <Grid Margin="10">
         <Grid.ColumnDefinitions>
           <ColumnDefinition MinWidth="200"/>
           <ColumnDefinition MinWidth="150"/>

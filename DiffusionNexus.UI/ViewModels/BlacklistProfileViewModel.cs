@@ -7,7 +7,7 @@ using DiffusionNexus.UI.Models;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class PromptEditViewModel : ObservableObject
+    public partial class BlacklistProfileViewModel : ObservableObject
     {
         private readonly PromptProfileService _service;
 
@@ -23,11 +23,11 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private string? _whitelist;
 
-        public PromptEditViewModel() : this(new PromptProfileService())
+        public BlacklistProfileViewModel() : this(new PromptProfileService())
         {
         }
 
-        public PromptEditViewModel(PromptProfileService service)
+        public BlacklistProfileViewModel(PromptProfileService service)
         {
             _service = service;
             _ = LoadProfilesAsync();

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using DiffusionNexus.UI.ViewModels;
 using System;
 
 namespace DiffusionNexus.UI.Views.Controls
@@ -13,6 +14,7 @@ namespace DiffusionNexus.UI.Views.Controls
         public BlacklistProfileControl()
         {
             InitializeComponent();
+            DataContext = new BlacklistProfileViewModel();
 
             _promptBox = this.FindControl<TextBox>("PromptBox");
             _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");

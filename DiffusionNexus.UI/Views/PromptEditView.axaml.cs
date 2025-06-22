@@ -392,7 +392,7 @@ namespace DiffusionNexus.UI.Views
 
         private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            var vm = DataContext as ViewModels.PromptEditViewModel;
+            var vm = DataContext as ViewModels.BlacklistProfileViewModel;
             var words = vm?.Blacklist?
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
@@ -487,7 +487,7 @@ namespace DiffusionNexus.UI.Views
             if (this.VisualRoot is not Window window)
                 return;
 
-            if (DataContext is ViewModels.PromptEditViewModel vm)
+            if (DataContext is ViewModels.BlacklistProfileViewModel vm)
             {
                 var dialog = new DialogService(window);
                 await vm.SaveProfileAsync(dialog);
@@ -499,7 +499,7 @@ namespace DiffusionNexus.UI.Views
             if (this.VisualRoot is not Window window)
                 return;
 
-            if (DataContext is ViewModels.PromptEditViewModel vm)
+            if (DataContext is ViewModels.BlacklistProfileViewModel vm)
             {
                 var dialog = new DialogService(window);
                 await vm.DeleteProfileAsync(dialog);
