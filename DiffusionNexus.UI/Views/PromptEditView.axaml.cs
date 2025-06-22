@@ -24,6 +24,9 @@ namespace DiffusionNexus.UI.Views
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
         private Avalonia.Controls.Image? _previewImage;
+        // prompt editor references
+        private Controls.PromptEditorControl? _singleEditor;
+        private Controls.PromptEditorControl? _batchEditor;
         private TextBox? _promptBox;
         private TextBox? _negativePromptBox;
         // Text boxes bound via XAML
@@ -46,8 +49,8 @@ namespace DiffusionNexus.UI.Views
         private TextBox? _hashesBox;
         private TextBox? _resourcesBox;
         private Button? _copyMetadataButton;
-        private Button? _saveProfileButton;
-        private Button? _deleteProfileButton;
+        private TextBox? _sourceFolderBox;
+        private TextBox? _targetFolderBox;
         private string? _currentImagePath;
         private StableDiffusionMetadata? _metadata;
         private IBrush _defaultBorderBrush = Brushes.Transparent;
@@ -59,9 +62,19 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
-            _promptBox = this.FindControl<TextBox>("PromptBox");
-            _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
-            _whitelistBox = this.FindControl<TextBox>("WhitelistBox");
+
+            _singleEditor = this.FindControl<Controls.PromptEditorControl>("SingleEditor");
+            _batchEditor = this.FindControl<Controls.PromptEditorControl>("BatchEditor");
+
+            if (_singleEditor != null)
+            {
+                _promptBox = _singleEditor.FindControl<TextBox>("PromptBox");
+                _negativePromptBox = _singleEditor.FindControl<TextBox>("NegativePromptBox");
+                _whitelistBox = _singleEditor.FindControl<TextBox>("WhitelistBox");
+            }
+
+            _sourceFolderBox = this.FindControl<TextBox>("SourceFolderBox");
+            _targetFolderBox = this.FindControl<TextBox>("TargetFolderBox");
             _stepsBox = this.FindControl<TextBox>("StepsBox");
             _samplerBox = this.FindControl<TextBox>("SamplerBox");
             _scheduleTypeBox = this.FindControl<TextBox>("ScheduleTypeBox");
@@ -80,8 +93,6 @@ namespace DiffusionNexus.UI.Views
             _hashesBox = this.FindControl<TextBox>("HashesBox");
             _resourcesBox = this.FindControl<TextBox>("ResourcesBox");
             _copyMetadataButton = this.FindControl<Button>("CopyMetadataButton");
-            _saveProfileButton = this.FindControl<Button>("SaveProfileButton");
-            _deleteProfileButton = this.FindControl<Button>("DeleteProfileButton");
 
             if (_copyMetadataButton is not null)
                 _copyMetadataButton.Click += OnCopyMetadata;
@@ -392,7 +403,7 @@ namespace DiffusionNexus.UI.Views
 
         private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            var vm = DataContext as ViewModels.PromptEditViewModel;
+            var vm = (sender as Control)?.DataContext as ViewModels.PromptEditViewModel;
             var words = vm?.Blacklist?
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
@@ -492,7 +503,7 @@ namespace DiffusionNexus.UI.Views
             if (this.VisualRoot is not Window window)
                 return;
 
-            if (DataContext is ViewModels.PromptEditViewModel vm)
+            if (sender is Control control && control.DataContext is ViewModels.PromptEditViewModel vm)
             {
                 var dialog = new DialogService(window);
                 await vm.SaveProfileAsync(dialog);
@@ -504,11 +515,33 @@ namespace DiffusionNexus.UI.Views
             if (this.VisualRoot is not Window window)
                 return;
 
-            if (DataContext is ViewModels.PromptEditViewModel vm)
+            if (sender is Control control && control.DataContext is ViewModels.PromptEditViewModel vm)
             {
                 var dialog = new DialogService(window);
                 await vm.DeleteProfileAsync(dialog);
             }
+        }
+
+        private async void OnBrowseSourceFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (this.VisualRoot is not Window window)
+                return;
+
+            var dlg = new OpenFolderDialog();
+            var result = await dlg.ShowAsync(window);
+            if (!string.IsNullOrEmpty(result))
+                _sourceFolderBox?.SetCurrentValue(TextBox.TextProperty, result);
+        }
+
+        private async void OnBrowseTargetFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (this.VisualRoot is not Window window)
+                return;
+
+            var dlg = new OpenFolderDialog();
+            var result = await dlg.ShowAsync(window);
+            if (!string.IsNullOrEmpty(result))
+                _targetFolderBox?.SetCurrentValue(TextBox.TextProperty, result);
         }
     }
 }

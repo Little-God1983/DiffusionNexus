@@ -1,0 +1,41 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DiffusionNexus.UI.Views.Controls.PromptEditorControl">
+  <StackPanel Spacing="10">
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Profile"/>
+        <ComboBox Name="ProfileComboBox" Width="150"
+                  ItemsSource="{Binding Profiles}"
+                  SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
+        <Button Name="SaveProfileButton" Content="Save" Width="80"/>
+        <Button Name="DeleteProfileButton" Content="Delete" Width="80"/>
+      </StackPanel>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Blacklist"/>
+        <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
+      </StackPanel>
+      <StackPanel Spacing="2">
+        <TextBlock Text="Whitelist"/>
+        <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
+      </StackPanel>
+    </StackPanel>
+    <StackPanel Spacing="2">
+      <TextBlock Text="Prompt"/>
+      <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+    </StackPanel>
+    <StackPanel Spacing="2">
+      <TextBlock Text="Negative Prompt"/>
+      <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+      <Button Name="ApplyButton" Content="Apply List" Width="110"/>
+      <Button Name="SaveButton" Content="Save" Width="80"/>
+      <Button Name="SaveAsButton" Content="Save As" Width="80"/>
+    </StackPanel>
+  </StackPanel>
+</UserControl>
