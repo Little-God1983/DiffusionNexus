@@ -4,17 +4,18 @@ using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using System;
-using System.IO;
-using System.Linq;
-using System.Text;
 using DiffusionNexus.UI.Classes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
-using System.Text.Json;
-using System.Threading.Tasks;
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -396,19 +397,62 @@ namespace DiffusionNexus.UI.Views
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
+
             if (_promptBox != null)
-                _promptBox.Text = ApplyBlacklist(_promptBox.Text, words);
+            {
+                var prompt = ApplyBlacklist(_promptBox.Text, words);
+                var whitelist = _whitelistBox?.Text ?? vm?.Whitelist ?? string.Empty;
+                _promptBox.Text = AppendWhitelist(prompt, whitelist);
+            }
+
             if (_negativePromptBox != null)
+            {
                 _negativePromptBox.Text = ApplyBlacklist(_negativePromptBox.Text, words);
+            }
         }
 
         private static string ApplyBlacklist(string text, string[] words)
         {
-            var blacklist = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
-            var parts = text.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                             .Select(p => p.Trim());
-            var filtered = parts.Where(p => !blacklist.Contains(p));
-            return string.Join(", ", filtered);
+            if (string.IsNullOrWhiteSpace(text) || words.Length == 0)
+                return text;
+
+            foreach (var word in words)
+            {
+                if (string.IsNullOrWhiteSpace(word))
+                    continue;
+
+                var pattern = $"\\b{System.Text.RegularExpressions.Regex.Escape(word)}\\b";
+                text = System.Text.RegularExpressions.Regex.Replace(text, pattern, string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
+
+            // Normalize commas and spaces
+            text = Regex.Replace(text, @"\s+,", ",");
+            text = Regex.Replace(text, @",\s*,", ",");
+            text = Regex.Replace(text, @"\s{2,}", " ");
+            text = Regex.Replace(text, @"\s*,\s*", ", ");
+
+
+            return text.Trim(' ', ',');
+        }
+
+        private static string AppendWhitelist(string text, string whitelist)
+        {
+            if (string.IsNullOrWhiteSpace(whitelist))
+                return text.Trim(' ', ',');
+
+            text = text.Trim(' ', ',');
+            var trimmedWhitelist = whitelist.Trim();
+
+            if (text.EndsWith(trimmedWhitelist, StringComparison.OrdinalIgnoreCase))
+                return text;
+
+            if (string.IsNullOrWhiteSpace(text))
+                return trimmedWhitelist;
+
+            if (!text.EndsWith(","))
+                text += ",";
+
+            return $"{text} {trimmedWhitelist}";
         }
 
         private async void OnCopyMetadata(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
