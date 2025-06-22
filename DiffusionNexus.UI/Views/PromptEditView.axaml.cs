@@ -4,17 +4,18 @@ using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using System;
-using System.IO;
-using System.Linq;
-using System.Text;
 using DiffusionNexus.UI.Classes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
-using System.Text.Json;
-using System.Threading.Tasks;
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.Views
 {
@@ -425,10 +426,11 @@ namespace DiffusionNexus.UI.Views
             }
 
             // Normalize commas and spaces
-            text = System.Text.RegularExpressions.Regex.Replace(text, "\s+,", ",");
-            text = System.Text.RegularExpressions.Regex.Replace(text, ",\s*,", ",");
-            text = System.Text.RegularExpressions.Regex.Replace(text, "\s{2,}", " ");
-            text = System.Text.RegularExpressions.Regex.Replace(text, "\s*,\s*", ", ");
+            text = Regex.Replace(text, @"\s+,", ",");
+            text = Regex.Replace(text, @",\s*,", ",");
+            text = Regex.Replace(text, @"\s{2,}", " ");
+            text = Regex.Replace(text, @"\s*,\s*", ", ");
+
 
             return text.Trim(' ', ',');
         }
