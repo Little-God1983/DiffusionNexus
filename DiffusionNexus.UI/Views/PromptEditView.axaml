@@ -6,7 +6,12 @@
   <UserControl.DataContext>
     <vm:PromptEditViewModel/>
   </UserControl.DataContext>
-  <Grid ColumnDefinitions="2*,3*" Margin="10" RowDefinitions="*">
+  <Grid Margin="10" RowDefinitions="*">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition MinWidth="200"/>
+      <ColumnDefinition MinWidth="150"/>
+      <ColumnDefinition MinWidth="250"/>
+      </Grid.ColumnDefinitions>
     <!-- Image drop area -->
     <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
       <Grid>
@@ -15,8 +20,84 @@
       </Grid>
     </Border>
 
+    <!-- Middle side for Meta Data -->
+    <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
+          <StackPanel x:Name="MetadataPanel" Spacing="4" Margin="0,10,0,0">
+            <TextBlock Text="Metadata" Width="120"/>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Steps" Width="120"/>
+              <TextBox Name="StepsBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Sampler" Width="120"/>
+              <TextBox Name="SamplerBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Schedule Type" Width="120"/>
+              <TextBox Name="ScheduleTypeBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="CFG Scale" Width="120"/>
+              <TextBox Name="CFGScaleBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Seed" Width="120"/>
+              <TextBox Name="SeedBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Face Restoration" Width="120"/>
+              <TextBox Name="FaceRestorationBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Size" Width="120"/>
+              <TextBox Name="SizeBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Model Hash" Width="120"/>
+              <TextBox Name="ModelHashBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Model" Width="120"/>
+              <TextBox Name="ModelBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="TI" Width="120"/>
+              <TextBox Name="TIBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Version" Width="120"/>
+              <TextBox Name="VersionBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Source Identifier" Width="120"/>
+              <TextBox Name="SourceIdentifierBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="LoRA Hashes" Width="120"/>
+              <TextBox Name="LoRAHashesBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Width" Width="120"/>
+              <TextBox Name="WidthBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBlock Text="Height" Width="120"/>
+              <TextBox Name="HeightBox" IsReadOnly="True" Width="200"/>
+            </StackPanel>
+            <StackPanel Spacing="2">
+              <TextBlock Text="Hashes"/>
+              <TextBox Name="HashesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+            </StackPanel>
+            <StackPanel Spacing="2">
+              <TextBlock Text="Resources"/>
+              <TextBox Name="ResourcesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+            </StackPanel>
+            <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
+          </StackPanel>
+  </Border>
+    
     <!-- Right side for prompts -->
-    <StackPanel Grid.Column="1" Spacing="10">
+    <StackPanel Grid.Column="2" Spacing="10">
       <StackPanel Orientation="Horizontal" Spacing="10">
         <StackPanel Spacing="2">
           <TextBlock Text="Profile"/>
@@ -32,11 +113,11 @@
       <StackPanel Orientation="Horizontal" Spacing="10">
         <StackPanel Spacing="2">
           <TextBlock Text="Blacklist"/>
-          <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+          <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
         </StackPanel>
         <StackPanel Spacing="2">
           <TextBlock Text="Whitelist"/>
-          <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+          <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
         </StackPanel>
       </StackPanel>
       <StackPanel Spacing="2">
@@ -48,87 +129,11 @@
         <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="Apply Blacklist" Width="110" Click="OnApplyBlacklist"/>
+        <Button Content="Apply List" Width="110" Click="OnApplyBlacklist"/>
         <Button Content="Save" Width="80" Click="OnSave"/>
         <Button Content="Save As" Width="80" Click="OnSaveAs"/>
       </StackPanel>
-      <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
-      <Expander Header="Metadata" IsExpanded="True">
-        
-          <StackPanel x:Name="MetadataPanel" Spacing="4">
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Steps" Width="120"/>
-            <TextBox Name="StepsBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Sampler" Width="120"/>
-            <TextBox Name="SamplerBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Schedule Type" Width="120"/>
-            <TextBox Name="ScheduleTypeBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="CFG Scale" Width="120"/>
-            <TextBox Name="CFGScaleBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Seed" Width="120"/>
-            <TextBox Name="SeedBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Face Restoration" Width="120"/>
-            <TextBox Name="FaceRestorationBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Size" Width="120"/>
-            <TextBox Name="SizeBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Model Hash" Width="120"/>
-            <TextBox Name="ModelHashBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Model" Width="120"/>
-            <TextBox Name="ModelBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="TI" Width="120"/>
-            <TextBox Name="TIBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Version" Width="120"/>
-            <TextBox Name="VersionBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Source Identifier" Width="120"/>
-            <TextBox Name="SourceIdentifierBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="LoRA Hashes" Width="120"/>
-            <TextBox Name="LoRAHashesBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Width" Width="120"/>
-            <TextBox Name="WidthBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Height" Width="120"/>
-            <TextBox Name="HeightBox" IsReadOnly="True" Width="200"/>
-          </StackPanel>
-          <StackPanel Spacing="2">
-            <TextBlock Text="Hashes"/>
-            <TextBox Name="HashesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
-          </StackPanel>
-          <StackPanel Spacing="2">
-            <TextBlock Text="Resources"/>
-            <TextBox Name="ResourcesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
-          </StackPanel>
-            <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
-          </StackPanel>
 
-      </Expander>
-    </ScrollViewer>
     </StackPanel>
   </Grid>
 </UserControl>
