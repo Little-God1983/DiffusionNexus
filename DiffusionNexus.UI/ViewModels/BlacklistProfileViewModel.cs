@@ -3,9 +3,12 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
+using DiffusionNexus.UI.Views.Controls;
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -42,13 +45,15 @@ namespace DiffusionNexus.UI.ViewModels
             _ = LoadProfilesAsync();
 
             // wire them up to your existing methods
-            SaveProfileCommand = new AsyncRelayCommand<Window?>(async w => {
+            SaveProfileCommand = new AsyncRelayCommand<Window?>(async w =>
+            {
                 if (w is null) return;
                 var dlg = new DialogService(w);
                 await SaveProfileAsync(dlg);
             });
 
-            DeleteProfileCommand = new AsyncRelayCommand<Window?>(async w => {
+            DeleteProfileCommand = new AsyncRelayCommand<Window?>(async w =>
+            {
                 if (w is null) return;
                 var dlg = new DialogService(w);
                 await DeleteProfileAsync(dlg);
@@ -136,11 +141,64 @@ namespace DiffusionNexus.UI.ViewModels
         }
         private void OnApplyList()
         {
-            // whatever your old ApplyListClicked handler did…
+            var words = _blacklist?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(w => w.ToLowerInvariant())
+            .ToArray() ?? Array.Empty<string>();
+
+
+            var prompt = ApplyBlacklist(PromptText, words);
+            var whitelist = _whitelistBox?.Text ?? vm?.Whitelist ?? string.Empty;
+            _blacklistProfileControl.PromptText = AppendWhitelist(prompt, whitelist);
+            _blacklistProfileControl.NegativePromptText = ApplyBlacklist(_blacklistProfileControl.NegativePromptText, words);
         }
         private void OnSaveAs()
         {
             // your existing “Save As” logic…
+        }
+
+
+        private static string ApplyBlacklist(string text, string[] words)
+        {
+            if (string.IsNullOrWhiteSpace(text) || words.Length == 0)
+                return text;
+
+            foreach (var word in words)
+            {
+                if (string.IsNullOrWhiteSpace(word))
+                    continue;
+
+                var pattern = $"\\b{System.Text.RegularExpressions.Regex.Escape(word)}\\b";
+                text = System.Text.RegularExpressions.Regex.Replace(text, pattern, string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
+
+            // Normalize commas and spaces
+            text = Regex.Replace(text, @"\s+,", ",");
+            text = Regex.Replace(text, @",\s*,", ",");
+            text = Regex.Replace(text, @"\s{2,}", " ");
+            text = Regex.Replace(text, @"\s*,\s*", ", ");
+
+            return text.Trim(' ', ',');
+        }
+
+        private static string AppendWhitelist(string text, string whitelist)
+        {
+            if (string.IsNullOrWhiteSpace(whitelist))
+                return text.Trim(' ', ',');
+
+            text = text.Trim(' ', ',');
+            var trimmedWhitelist = whitelist.Trim();
+
+            if (text.EndsWith(trimmedWhitelist, StringComparison.OrdinalIgnoreCase))
+                return text;
+
+            if (string.IsNullOrWhiteSpace(text))
+                return trimmedWhitelist;
+
+            if (!text.EndsWith(","))
+                text += ",";
+
+            return $"{text} {trimmedWhitelist}";
         }
     }
 }
