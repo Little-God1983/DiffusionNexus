@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.PromptEditView"
+             xmlns:local="using:DiffusionNexus.UI.Views"
              x:DataType="vm:PromptEditViewModel">
   <UserControl.DataContext>
     <vm:PromptEditViewModel/>
@@ -160,13 +161,20 @@
             <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}"/>
           </StackPanel>
         </StackPanel>
-        <StackPanel Grid.Column="1" Spacing="10">        
+        <StackPanel Grid.Column="0" Spacing="10">        
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
             
             <Button Name="ApplyBatchButton" Content="Apply List to Batch" Width="150"/>
             <Button Name="SaveBatchButton" Content="Save Batch" Width="80"/>
             <Button Name="SaveAsBatchButton" Content="Save Batch As" Width="80"/>
           </StackPanel>
+
+        </StackPanel>
+        <StackPanel Grid.Column="1">
+        <local:PromptEditorControl x:Name="BatchPromptEditor" 
+          Margin="10" 
+          HorizontalAlignment="Stretch" 
+          VerticalAlignment="Stretch"/>
         </StackPanel>
       </Grid>
     </TabItem>

@@ -2,7 +2,6 @@
 using DiffusionNexus.UI.Models;
 using ReactiveUI;
 using System.Collections.ObjectModel;
-using System.Linq;
 using System.Reactive;
 using System.Threading.Tasks;
 
@@ -17,19 +16,19 @@ namespace DiffusionNexus.UI.ViewModels
         public string Prompt { get; set; }
         public string NegativePrompt { get; set; }
 
-        public ReactiveCommand<Unit, Unit> SaveCommand { get; }
-        public ReactiveCommand<Unit, Unit> LoadCommand { get; }
+        public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
+        public ReactiveCommand<Unit, Unit> LoadProfileCommand { get; }
         public ReactiveCommand<Unit, Unit> ClearCommand { get; }
-        public ReactiveCommand<Unit, Unit> DeleteCommand { get; }
+        public ReactiveCommand<Unit, Unit> DeleteProfileCommand { get; }
         private readonly PromptProfileService _service;
 
 
         public PromptEditorControlViewModel()
         {
-            SaveCommand = ReactiveCommand.Create(SavePrompt);
-            LoadCommand = ReactiveCommand.Create(LoadPrompt);
+            SaveProfileCommand = ReactiveCommand.Create(SavePrompt);
+            LoadProfileCommand = ReactiveCommand.Create(LoadPrompt);
             ClearCommand = ReactiveCommand.Create(ClearPrompt);
-            DeleteCommand = ReactiveCommand.Create(() =>
+            DeleteProfileCommand = ReactiveCommand.Create(() =>
             {
                 if (SelectedProfile != null)
                 {

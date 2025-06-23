@@ -3,7 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
-             x:Class="DiffusionNexus.UI.PromptEditorControl"
+             x:Class="DiffusionNexus.UI.Views.PromptEditorControl"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:DataType="vm:PromptEditorControlViewModel">
   
@@ -18,10 +18,10 @@
       <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
         <Button Content="Save"
                 Width="80"
-                Command="{Binding SaveCommand}"/>
+                Command="{Binding SaveProfileCommand}"/>
         <Button Content="Delete"
                 Width="80"
-                Command="{Binding DeleteCommand}"/>
+                Command="{Binding DeleteProfileCommand}"/>
       </StackPanel>
     </StackPanel>
     <StackPanel Orientation="Horizontal" Spacing="10">
