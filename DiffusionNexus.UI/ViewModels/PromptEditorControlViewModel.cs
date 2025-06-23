@@ -2,6 +2,7 @@
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
 using ReactiveUI;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Threading.Tasks;
@@ -13,7 +14,7 @@ namespace DiffusionNexus.UI.ViewModels
         public IDialogService DialogService { get; set; }
         public PromptProfileService PromptProfileService { get; set; } = new PromptProfileService();
 
-        public ObservableCollection<PromptProfileModel> Profiles { get; } = new ObservableCollection<PromptProfileModel>();
+        public ObservableCollection<PromptProfileModel> Profiles { get; set; } 
         public PromptProfileModel SelectedProfile { get; set; }
         public string Blacklist { get; set; }
         public string Whitelist { get; set; }
@@ -25,7 +26,6 @@ namespace DiffusionNexus.UI.ViewModels
         public ReactiveCommand<Unit, Unit> LoadProfileCommand { get; }
         public ReactiveCommand<Unit, Unit> ClearCommand { get; }
         public ReactiveCommand<Unit, Unit> DeleteProfileCommand { get; }
-        private readonly PromptProfileService _service;
 
 
         public PromptEditorControlViewModel()
@@ -51,6 +51,8 @@ namespace DiffusionNexus.UI.ViewModels
                     /* …use it… */
                 }
             });
+
+            _ = LoadProfilesAsync();
         }
 
         private async Task SavePrompt() 
@@ -83,7 +85,7 @@ namespace DiffusionNexus.UI.ViewModels
                 Blacklist = Blacklist ?? string.Empty,
                 Whitelist = Whitelist ?? string.Empty
             };
-            await _service.SaveAsync(profile);
+            await PromptProfileService.SaveAsync(profile);
             SelectedProfile = profile;
             await LoadProfilesAsync();
         }
@@ -91,12 +93,22 @@ namespace DiffusionNexus.UI.ViewModels
         { 
         
         }
+
         private void ClearPrompt() { Prompt = string.Empty; NegativePrompt = string.Empty; }
 
 
         private async Task LoadProfilesAsync()
         {
-            var list = await _service.LoadAllAsync();
+            var list = await PromptProfileService.LoadAllAsync();
+
+            Profiles ??=  new ObservableCollection<PromptProfileModel>();
+            Profiles.Clear();
+            foreach (var p in list)
+                Profiles.Add(p);
+            if (SelectedProfile == null && Profiles.Count > 0)
+            {
+                SelectedProfile = Profiles[0];
+            }
         }
 
         void OnSelectedProfileChanged(string? value)
@@ -107,7 +119,7 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task LoadSelectedProfileAsync(string name)
         {
-            var profile = await _service.GetAsync(name);
+            var profile = await PromptProfileService.GetAsync(name);
             if (profile != null)
             {
                 Blacklist = profile.Blacklist;
@@ -160,7 +172,7 @@ namespace DiffusionNexus.UI.ViewModels
             if (confirm != true)
                 return;
 
-            await _service.DeleteAsync(SelectedProfile);
+            await PromptProfileService.DeleteAsync(SelectedProfile);
             SelectedProfile = null;
             await LoadProfilesAsync();
         }
