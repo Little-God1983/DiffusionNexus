@@ -162,19 +162,13 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Grid.Column="0" Spacing="10">        
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            
-            <Button Name="ApplyBatchButton" Content="Apply List to Batch" Width="150"/>
-            <Button Name="SaveBatchButton" Content="Save Batch" Width="80"/>
-            <Button Name="SaveAsBatchButton" Content="Save Batch As" Width="80"/>
-          </StackPanel>
-
         </StackPanel>
         <StackPanel Grid.Column="1">
-        <local:PromptEditorControl x:Name="BatchPromptEditor" 
-          Margin="10" 
-          HorizontalAlignment="Stretch" 
-          VerticalAlignment="Stretch"/>
+          <local:PromptEditorControl x:Name="BatchPromptEditor"
+            Margin="10"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"/>
+          <Button Name="ApplyBatchButton" Content="Apply to Batch" Width="120"/>
         </StackPanel>
       </Grid>
     </TabItem>
