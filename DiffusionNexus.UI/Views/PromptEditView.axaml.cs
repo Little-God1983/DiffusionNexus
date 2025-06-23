@@ -5,11 +5,10 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.ViewModels;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -24,10 +23,7 @@ namespace DiffusionNexus.UI.Views
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
         private Avalonia.Controls.Image? _previewImage;
-        private TextBox? _promptBox;
-        private TextBox? _negativePromptBox;
         // Text boxes bound via XAML
-        private TextBox? _whitelistBox;
         private TextBox? _stepsBox;
         private TextBox? _samplerBox;
         private TextBox? _scheduleTypeBox;
@@ -59,12 +55,6 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
-
-            _promptBox = this.FindControl<TextBox>("PromptBox");
-            _negativePromptBox = this.FindControl<TextBox>("NegativePromptBox");
-            _whitelistBox = this.FindControl<TextBox>("WhitelistBox");
-
-
             _stepsBox = this.FindControl<TextBox>("StepsBox");
             _samplerBox = this.FindControl<TextBox>("SamplerBox");
             _scheduleTypeBox = this.FindControl<TextBox>("ScheduleTypeBox");
@@ -162,12 +152,15 @@ namespace DiffusionNexus.UI.Views
                         var meta = PngMetadataReader.ReadMetadata(file);
                         if (meta != null)
                         {
-                            if (_promptBox != null)
-                                _promptBox.Text = meta.Prompt ?? string.Empty;
-                            if (_negativePromptBox != null)
-                                _negativePromptBox.Text = meta.NegativePrompt ?? string.Empty;
-                            _metadata = meta;
-                            DisplayMetadata();
+                            if (SinglePromptEditor.DataContext is PromptEditorControlViewModel vm)
+                            {
+                                if (vm.Prompt != null)
+                                    vm.Prompt = meta.Prompt ?? string.Empty;
+                                if (vm.NegativePrompt != null)
+                                    vm.NegativePrompt = meta.NegativePrompt ?? string.Empty;
+                                _metadata = meta;
+                                DisplayMetadata();
+                            }
                         }
                         else
                         {
@@ -265,13 +258,16 @@ namespace DiffusionNexus.UI.Views
 
         private string BuildParametersString()
         {
-            var prompt = _promptBox?.Text ?? string.Empty;
-            var negPrompt = _negativePromptBox?.Text ?? string.Empty;
-
             var sb = new StringBuilder();
+            if (SinglePromptEditor.DataContext is PromptEditorControlViewModel vm)
+            {
+                var prompt = vm.Prompt ?? string.Empty;
+                var negPrompt = vm.Prompt ?? string.Empty;
+            
+            
             sb.AppendLine($"Prompt: {prompt}");
             sb.AppendLine($"Negative prompt: {negPrompt}");
-
+            }
             if (_metadata != null)
             {
                 var parts = new System.Collections.Generic.List<string>();
@@ -395,22 +391,22 @@ namespace DiffusionNexus.UI.Views
 
         private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            var vm = DataContext as ViewModels.PromptEditViewModel;
+            var vm = DataContext as PromptEditorControlViewModel;
             var words = vm?.Blacklist?
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
 
-            if (_promptBox != null)
+            if (vm.Prompt != null)
             {
-                var prompt = ApplyBlacklist(_promptBox.Text, words);
-                var whitelist = _whitelistBox?.Text ?? vm?.Whitelist ?? string.Empty;
-                _promptBox.Text = AppendWhitelist(prompt, whitelist);
+                var prompt = ApplyBlacklist(vm.Prompt, words);
+                var whitelist = vm.Whitelist ?? vm?.Whitelist ?? string.Empty;
+                vm.Prompt = AppendWhitelist(prompt, whitelist);
             }
 
-            if (_negativePromptBox != null)
+            if (vm.NegativePrompt != null)
             {
-                _negativePromptBox.Text = ApplyBlacklist(_negativePromptBox.Text, words);
+                vm.NegativePrompt = ApplyBlacklist(vm.NegativePrompt, words);
             }
         }
 
@@ -490,28 +486,5 @@ namespace DiffusionNexus.UI.Views
                 await topLevel.Clipboard.SetTextAsync(json);
         }
 
-        private async void OnSaveProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (this.VisualRoot is not Window window)
-                return;
-
-            if (DataContext is ViewModels.PromptEditViewModel vm)
-            {
-                var dialog = new DialogService(window);
-                await vm.SaveProfileAsync(dialog);
-            }
-        }
-
-        private async void OnDeleteProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (this.VisualRoot is not Window window)
-                return;
-
-            if (DataContext is ViewModels.PromptEditViewModel vm)
-            {
-                var dialog = new DialogService(window);
-                await vm.DeleteProfileAsync(dialog);
-            }
-        }
     }
 }
