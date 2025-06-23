@@ -141,7 +141,34 @@
       </Grid>
     </TabItem>
     <TabItem Header="Batch Control">
-
+      <Grid x:DataType="vm:BatchProcessingViewModel"
+      Margin="10"
+      ColumnDefinitions="400,*">
+        <StackPanel Spacing="10" Grid.Column="0">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Source Folder" Width="100"/>
+            <TextBox x:Name="SourceFolderBox" Width="140" Text="{Binding SourceFolder, Mode=TwoWay}"/>
+            <Button Content="Browse..." Command="{Binding BrowseSourceFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Target Folder" Width="100"/>
+            <TextBox x:Name="TargetFolderBox" Width="140" Text="{Binding TargetFolder, Mode=TwoWay}"/>
+            <Button Content="Browse..." Command="{Binding BrowseTargetFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+          <StackPanel Orientation="Vertical" Spacing="5">
+            <RadioButton Content="Blacklist / Whitelist only" IsChecked="{Binding UseListOnly, Mode=TwoWay}"/>
+            <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}"/>
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Spacing="10">
+          
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Name="ApplyBatchButton" Content="Apply List to Batch" Width="150"/>
+            <Button Name="SaveBatchButton" Content="Save Batch" Width="80"/>
+            <Button Name="SaveAsBatchButton" Content="Save Batch As" Width="80"/>
+          </StackPanel>
+        </StackPanel>
+      </Grid>
     </TabItem>
   </TabControl>
 </UserControl>
