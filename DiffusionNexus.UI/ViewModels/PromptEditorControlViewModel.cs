@@ -24,8 +24,11 @@ namespace DiffusionNexus.UI.ViewModels
 
         [ObservableProperty]
         private string? _whitelist;
-        public string Prompt { get; set; }
-        public string NegativePrompt { get; set; }
+
+        [ObservableProperty]
+        private string? _prompt;
+        [ObservableProperty]
+        private string? _negativePrompt;
         public ReactiveCommand<Unit, Unit> AskForTextCommand { get; }
 
         public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }

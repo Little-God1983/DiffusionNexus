@@ -44,11 +44,11 @@
     </StackPanel>
     <StackPanel Spacing="2">
       <TextBlock Text="Prompt"/>
-      <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+      <TextBox Name="PromptBox" Text="{Binding Prompt, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
     </StackPanel>
     <StackPanel Spacing="2">
       <TextBlock Text="Negative Prompt"/>
-      <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+      <TextBox Name="NegativePromptBox" Text="{Binding NegativePrompt, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
     </StackPanel>
   </StackPanel>
 </UserControl>
