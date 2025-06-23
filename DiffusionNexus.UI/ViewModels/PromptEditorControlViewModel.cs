@@ -1,4 +1,5 @@
-﻿using DiffusionNexus.UI.Classes;
+﻿using Avalonia.Controls;
+using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
 using ReactiveUI;
 using System.Collections.ObjectModel;
@@ -9,12 +10,16 @@ namespace DiffusionNexus.UI.ViewModels
 {
     public class PromptEditorControlViewModel : ReactiveObject
     {
+        public IDialogService DialogService { get; set; }
+        public PromptProfileService PromptProfileService { get; set; } = new PromptProfileService();
+
         public ObservableCollection<PromptProfileModel> Profiles { get; } = new ObservableCollection<PromptProfileModel>();
         public PromptProfileModel SelectedProfile { get; set; }
         public string Blacklist { get; set; }
         public string Whitelist { get; set; }
         public string Prompt { get; set; }
         public string NegativePrompt { get; set; }
+        public ReactiveCommand<Unit, Unit> AskForTextCommand { get; }
 
         public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
         public ReactiveCommand<Unit, Unit> LoadProfileCommand { get; }
@@ -25,7 +30,7 @@ namespace DiffusionNexus.UI.ViewModels
 
         public PromptEditorControlViewModel()
         {
-            SaveProfileCommand = ReactiveCommand.Create(SavePrompt);
+            SaveProfileCommand = ReactiveCommand.CreateFromTask(SavePrompt);
             LoadProfileCommand = ReactiveCommand.Create(LoadPrompt);
             ClearCommand = ReactiveCommand.Create(ClearPrompt);
             DeleteProfileCommand = ReactiveCommand.Create(() =>
@@ -36,10 +41,56 @@ namespace DiffusionNexus.UI.ViewModels
                     SelectedProfile = null;
                 }
             });
+
+            AskForTextCommand = ReactiveCommand.CreateFromTask(async () =>
+            {
+                // this knows nothing about Windows…
+                var result = await DialogService.ShowInputAsync("Enter something:");
+                if (result != null)
+                {
+                    /* …use it… */
+                }
+            });
         }
 
-        private void SavePrompt() { /* … */ }
-        private void LoadPrompt() { /* … */ }
+        private async Task SavePrompt() 
+        {
+            var name = SelectedProfile?.Name;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = await DialogService.ShowInputAsync("Enter name for new profile");
+                if (string.IsNullOrWhiteSpace(name))
+                    return;
+            }
+            else if (await PromptProfileService.ExistsByNameAsync(name))
+            {
+                var confirm = await DialogService.ShowConfirmationAsync($"Profile '{name}' already exists. Overwrite?", true);
+                if (confirm == false)
+                {
+                    name = await DialogService.ShowInputAsync("Enter name for new profile");
+                    if (string.IsNullOrWhiteSpace(name))
+                        return;
+                }
+                else if (confirm == null)
+                {
+                    return;
+                }
+            }
+
+            var profile = new PromptProfileModel
+            {
+                Name = name,
+                Blacklist = Blacklist ?? string.Empty,
+                Whitelist = Whitelist ?? string.Empty
+            };
+            await _service.SaveAsync(profile);
+            SelectedProfile = profile;
+            await LoadProfilesAsync();
+        }
+        private void LoadPrompt() 
+        { 
+        
+        }
         private void ClearPrompt() { Prompt = string.Empty; NegativePrompt = string.Empty; }
 
 
@@ -64,39 +115,40 @@ namespace DiffusionNexus.UI.ViewModels
             }
         }
 
-        public async Task SaveProfileAsync(IDialogService dialog)
+        public async Task SaveProfileAsync()
         {
-            var name = SelectedProfile.Name;
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                name = await dialog.ShowInputAsync("Enter name for new profile");
-                if (string.IsNullOrWhiteSpace(name))
-                    return;
-            }
-            else if (await _service.ExistsByNameAsync(name))
-            {
-                var confirm = await dialog.ShowConfirmationAsync($"Profile '{name}' already exists. Overwrite?", true);
-                if (confirm == false)
-                {
-                    name = await dialog.ShowInputAsync("Enter name for new profile");
-                    if (string.IsNullOrWhiteSpace(name))
-                        return;
-                }
-                else if (confirm == null)
-                {
-                    return;
-                }
-            }
 
-            var profile = new PromptProfileModel
-            {
-                Name = name,
-                Blacklist = Blacklist ?? string.Empty,
-                Whitelist = Whitelist ?? string.Empty
-            };
-            await _service.SaveAsync(profile);
-            SelectedProfile = profile;
-            await LoadProfilesAsync();
+            //var name = SelectedProfile.Name;
+            //if (string.IsNullOrWhiteSpace(name))
+            //{
+            //    name = await dialog.ShowInputAsync("Enter name for new profile");
+            //    if (string.IsNullOrWhiteSpace(name))
+            //        return;
+            //}
+            //else if (await _service.ExistsByNameAsync(name))
+            //{
+            //    var confirm = await dialog.ShowConfirmationAsync($"Profile '{name}' already exists. Overwrite?", true);
+            //    if (confirm == false)
+            //    {
+            //        name = await dialog.ShowInputAsync("Enter name for new profile");
+            //        if (string.IsNullOrWhiteSpace(name))
+            //            return;
+            //    }
+            //    else if (confirm == null)
+            //    {
+            //        return;
+            //    }
+            //}
+
+            //var profile = new PromptProfileModel
+            //{
+            //    Name = name,
+            //    Blacklist = Blacklist ?? string.Empty,
+            //    Whitelist = Whitelist ?? string.Empty
+            //};
+            //await _service.SaveAsync(profile);
+            //SelectedProfile = profile;
+            //await LoadProfilesAsync();
         }
 
         public async Task DeleteProfileAsync(IDialogService dialog)
