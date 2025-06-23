@@ -307,159 +307,101 @@ namespace DiffusionNexus.UI.Views
             return sb.ToString();
         }
 
-        private void SaveImage(string path)
-        {
-            if (string.IsNullOrEmpty(_currentImagePath))
-                return;
+        //private void SaveImage(string path)
+        //{
+        //    if (string.IsNullOrEmpty(_currentImagePath))
+        //        return;
 
-            using (var image = SixLabors.ImageSharp.Image.Load(_currentImagePath))
-            {
-                var pngMeta = image.Metadata.GetPngMetadata();
-                var parameters = BuildParametersString();
-                // Remove old entry if it exists
-                var old = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
-                if (old != null)
-                    pngMeta.TextData.Remove(old);
-                // Add new entry as PngTextData
-                pngMeta.TextData.Add(new PngTextData("parameters", parameters, null, null));
-                image.Save(path);
-            }
-        }
+        //    using (var image = SixLabors.ImageSharp.Image.Load(_currentImagePath))
+        //    {
+        //        var pngMeta = image.Metadata.GetPngMetadata();
+        //        var parameters = BuildParametersString();
+        //        // Remove old entry if it exists
+        //        var old = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
+        //        if (old != null)
+        //            pngMeta.TextData.Remove(old);
+        //        // Add new entry as PngTextData
+        //        pngMeta.TextData.Add(new PngTextData("parameters", parameters, null, null));
+        //        image.Save(path);
+        //    }
+        //}
 
-        private async void OnSave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_currentImagePath))
-                return;
+        //private async void OnSave(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        //{
+        //    if (string.IsNullOrEmpty(_currentImagePath))
+        //        return;
 
-            if (File.Exists(_currentImagePath) && this.VisualRoot is Window window)
-            {
-                var confirm = await ConfirmOverwriteAsync(window);
-                if (!confirm)
-                    return;
-            }
+        //    if (File.Exists(_currentImagePath) && this.VisualRoot is Window window)
+        //    {
+        //        var confirm = await ConfirmOverwriteAsync(window);
+        //        if (!confirm)
+        //            return;
+        //    }
 
-            SaveImage(_currentImagePath);
-        }
+        //    SaveImage(_currentImagePath);
+        //}
 
-        private async void OnSaveAs(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_currentImagePath))
-                return;
+        //private async void OnSaveAs(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        //{
+        //    if (string.IsNullOrEmpty(_currentImagePath))
+        //        return;
 
-            var dialog = new SaveFileDialog
-            {
-                Filters = { new FileDialogFilter { Name = "PNG", Extensions = { "png" } } },
-                InitialFileName = Path.GetFileName(_currentImagePath)
-            };
+        //    var dialog = new SaveFileDialog
+        //    {
+        //        Filters = { new FileDialogFilter { Name = "PNG", Extensions = { "png" } } },
+        //        InitialFileName = Path.GetFileName(_currentImagePath)
+        //    };
 
-            if (this.VisualRoot is not Window window)
-                return;
+        //    if (this.VisualRoot is not Window window)
+        //        return;
 
-            var result = await dialog.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result))
-            {
-                SaveImage(result);
-            }
-        }
+        //    var result = await dialog.ShowAsync(window);
+        //    if (!string.IsNullOrEmpty(result))
+        //    {
+        //        SaveImage(result);
+        //    }
+        //}
 
-        private async Task<bool> ConfirmOverwriteAsync(Window owner)
-        {
-            var tcs = new TaskCompletionSource<bool>();
+        //private async Task<bool> ConfirmOverwriteAsync(Window owner)
+        //{
+        //    var tcs = new TaskCompletionSource<bool>();
 
-            var dialog = new Window
-            {
-                Width = 300,
-                Height = 150,
-                Title = "Confirm Save",
-                WindowStartupLocation = WindowStartupLocation.CenterOwner
-            };
+        //    var dialog = new Window
+        //    {
+        //        Width = 300,
+        //        Height = 150,
+        //        Title = "Confirm Save",
+        //        WindowStartupLocation = WindowStartupLocation.CenterOwner
+        //    };
 
-            var yesButton = new Button { Content = "Yes", Width = 80 };
-            var noButton = new Button { Content = "No", Width = 80 };
+        //    var yesButton = new Button { Content = "Yes", Width = 80 };
+        //    var noButton = new Button { Content = "No", Width = 80 };
 
-            yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
-            noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+        //    yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+        //    noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
 
-            dialog.Content = new StackPanel
-            {
-                Spacing = 10,
-                Margin = new Thickness(10),
-                Children =
-                {
-                    new TextBlock { Text = "Overwrite the existing file?", TextWrapping = TextWrapping.Wrap },
-                    new StackPanel
-                    {
-                        Orientation = Avalonia.Layout.Orientation.Horizontal,
-                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                        Spacing = 10,
-                        Children = { yesButton, noButton }
-                    }
-                }
-            };
+        //    dialog.Content = new StackPanel
+        //    {
+        //        Spacing = 10,
+        //        Margin = new Thickness(10),
+        //        Children =
+        //        {
+        //            new TextBlock { Text = "Overwrite the existing file?", TextWrapping = TextWrapping.Wrap },
+        //            new StackPanel
+        //            {
+        //                Orientation = Avalonia.Layout.Orientation.Horizontal,
+        //                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+        //                Spacing = 10,
+        //                Children = { yesButton, noButton }
+        //            }
+        //        }
+        //    };
 
-            await dialog.ShowDialog(owner);
-            return await tcs.Task;
-        }
+        //    await dialog.ShowDialog(owner);
+        //    return await tcs.Task;
+        //}
 
-        private void OnApplyBlacklist(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            var vm = DataContext as ViewModels.BlacklistProfileViewModel;
-            var words = vm?.Blacklist?
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(w => w.ToLowerInvariant())
-                .ToArray() ?? Array.Empty<string>();
-
-            if (_blacklistProfileControl != null)
-            {
-                var prompt = ApplyBlacklist(_blacklistProfileControl.PromptText, words);
-                var whitelist = _whitelistBox?.Text ?? vm?.Whitelist ?? string.Empty;
-                _blacklistProfileControl.PromptText = AppendWhitelist(prompt, whitelist);
-                _blacklistProfileControl.NegativePromptText = ApplyBlacklist(_blacklistProfileControl.NegativePromptText, words);
-            }
-        }
-
-        private static string ApplyBlacklist(string text, string[] words)
-        {
-            if (string.IsNullOrWhiteSpace(text) || words.Length == 0)
-                return text;
-
-            foreach (var word in words)
-            {
-                if (string.IsNullOrWhiteSpace(word))
-                    continue;
-
-                var pattern = $"\\b{System.Text.RegularExpressions.Regex.Escape(word)}\\b";
-                text = System.Text.RegularExpressions.Regex.Replace(text, pattern, string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            }
-
-            // Normalize commas and spaces
-            text = Regex.Replace(text, @"\s+,", ",");
-            text = Regex.Replace(text, @",\s*,", ",");
-            text = Regex.Replace(text, @"\s{2,}", " ");
-            text = Regex.Replace(text, @"\s*,\s*", ", ");
-
-            return text.Trim(' ', ',');
-        }
-
-        private static string AppendWhitelist(string text, string whitelist)
-        {
-            if (string.IsNullOrWhiteSpace(whitelist))
-                return text.Trim(' ', ',');
-
-            text = text.Trim(' ', ',');
-            var trimmedWhitelist = whitelist.Trim();
-
-            if (text.EndsWith(trimmedWhitelist, StringComparison.OrdinalIgnoreCase))
-                return text;
-
-            if (string.IsNullOrWhiteSpace(text))
-                return trimmedWhitelist;
-
-            if (!text.EndsWith(","))
-                text += ",";
-
-            return $"{text} {trimmedWhitelist}";
-        }
+       
 
         private async void OnCopyMetadata(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
@@ -493,28 +435,28 @@ namespace DiffusionNexus.UI.Views
                 await topLevel.Clipboard.SetTextAsync(json);
         }
 
-        private async void OnSaveProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (this.VisualRoot is not Window window)
-                return;
+        //private async void OnSaveProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        //{
+        //    if (this.VisualRoot is not Window window)
+        //        return;
 
-            if (DataContext is ViewModels.BlacklistProfileViewModel vm)
-            {
-                var dialog = new DialogService(window);
-                await vm.SaveProfileAsync(dialog);
-            }
-        }
+        //    if (DataContext is ViewModels.BlacklistProfileViewModel vm)
+        //    {
+        //        var dialog = new DialogService(window);
+        //        await vm.SaveProfileAsync(dialog);
+        //    }
+        //}
 
-        private async void OnDeleteProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            if (this.VisualRoot is not Window window)
-                return;
+        //private async void OnDeleteProfile(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        //{
+        //    if (this.VisualRoot is not Window window)
+        //        return;
 
-            if (DataContext is ViewModels.BlacklistProfileViewModel vm)
-            {
-                var dialog = new DialogService(window);
-                await vm.DeleteProfileAsync(dialog);
-            }
-        }
+        //    if (DataContext is ViewModels.BlacklistProfileViewModel vm)
+        //    {
+        //        var dialog = new DialogService(window);
+        //        await vm.DeleteProfileAsync(dialog);
+        //    }
+        //}
     }
 }
