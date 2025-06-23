@@ -1,11 +1,6 @@
 ﻿using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -31,19 +26,20 @@ namespace DiffusionNexus.UI.ViewModels
         {
             BrowseSourceFolderCommand = new AsyncRelayCommand<Window?>(OnBrowseSourceFolder);
             BrowseTargetFolderCommand = new AsyncRelayCommand<Window?>(OnBrowseTargetFolder);
+            OnUseListOnlyChanged(true);
         }
 
-        //partial void OnUseListOnlyChanged(bool value)
-        //{
-        //    if (value)
-        //        ReplaceAll = false;
-        //}
+        partial void OnUseListOnlyChanged(bool value)
+        {
+            if (value)
+                ReplaceAll = false;
+        }
 
-        //partial void OnReplaceAllChanged(bool value)
-        //{
-        //    if (value)
-        //        UseListOnly = false;
-        //}
+        partial void OnReplaceAllChanged(bool value)
+        {
+            if (value)
+                UseListOnly = false;
+        }
 
         private async Task OnBrowseSourceFolder(Window? window)
         {
