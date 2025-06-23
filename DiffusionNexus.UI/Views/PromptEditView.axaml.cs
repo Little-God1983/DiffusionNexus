@@ -23,6 +23,7 @@ namespace DiffusionNexus.UI.Views
         private Border? _imageDropBorder;
         private TextBlock? _dropText;
         private Avalonia.Controls.Image? _previewImage;
+        private PromptEditorControl? _singlePromptEditor;
         // Text boxes bound via XAML
         private TextBox? _stepsBox;
         private TextBox? _samplerBox;
@@ -55,6 +56,8 @@ namespace DiffusionNexus.UI.Views
             _imageDropBorder = this.FindControl<Border>("ImageDropBorder");
             _dropText = this.FindControl<TextBlock>("DropText");
             _previewImage = this.FindControl<Avalonia.Controls.Image>("PreviewImage");
+            _singlePromptEditor = this.FindControl<PromptEditorControl>("SinglePromptEditor");
+
             _stepsBox = this.FindControl<TextBox>("StepsBox");
             _samplerBox = this.FindControl<TextBox>("SamplerBox");
             _scheduleTypeBox = this.FindControl<TextBox>("ScheduleTypeBox");
@@ -152,12 +155,10 @@ namespace DiffusionNexus.UI.Views
                         var meta = PngMetadataReader.ReadMetadata(file);
                         if (meta != null)
                         {
-                            if (SinglePromptEditor.DataContext is PromptEditorControlViewModel vm)
+                            if (_singlePromptEditor?.DataContext is PromptEditorControlViewModel vm)
                             {
-                                if (vm.Prompt != null)
-                                    vm.Prompt = meta.Prompt ?? string.Empty;
-                                if (vm.NegativePrompt != null)
-                                    vm.NegativePrompt = meta.NegativePrompt ?? string.Empty;
+                                vm.Prompt = meta.Prompt ?? string.Empty;
+                                vm.NegativePrompt = meta.NegativePrompt ?? string.Empty;
                                 _metadata = meta;
                                 DisplayMetadata();
                             }
@@ -259,14 +260,13 @@ namespace DiffusionNexus.UI.Views
         private string BuildParametersString()
         {
             var sb = new StringBuilder();
-            if (SinglePromptEditor.DataContext is PromptEditorControlViewModel vm)
+            if (_singlePromptEditor?.DataContext is PromptEditorControlViewModel vm)
             {
                 var prompt = vm.Prompt ?? string.Empty;
-                var negPrompt = vm.Prompt ?? string.Empty;
-            
-            
-            sb.AppendLine($"Prompt: {prompt}");
-            sb.AppendLine($"Negative prompt: {negPrompt}");
+                var negPrompt = vm.NegativePrompt ?? string.Empty;
+
+                sb.AppendLine($"Prompt: {prompt}");
+                sb.AppendLine($"Negative prompt: {negPrompt}");
             }
             if (_metadata != null)
             {

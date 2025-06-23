@@ -3,9 +3,9 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.PromptEditView"
              xmlns:local="using:DiffusionNexus.UI.Views"
-             x:DataType="vm:PromptEditViewModel">
+             x:DataType="vm:PromptEditorControlViewModel">
   <UserControl.DataContext>
-    <vm:PromptEditViewModel/>
+    <vm:PromptEditorControlViewModel/>
   </UserControl.DataContext>
   <TabControl>
     <TabItem Header="Single Image">
