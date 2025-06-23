@@ -39,10 +39,10 @@ namespace DiffusionNexus.UI.Classes
             return await LoadProfilesAsync();
         }
 
-        public async Task<PromptProfileModel?> GetAsync(string name)
+        public async Task<PromptProfileModel?> GetProfileAsync(PromptProfileModel profile)
         {
-            IList<PromptProfileModel> dict = await LoadProfilesAsync();
-            return dict.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            IList<PromptProfileModel> list = await LoadProfilesAsync();
+            return list.FirstOrDefault(profile);
         }
 
         public async Task<bool> ExistsByNameAsync(string name)

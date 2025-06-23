@@ -18,11 +18,15 @@ namespace DiffusionNexus.UI.ViewModels
 
         [ObservableProperty]
         private ObservableCollection<PromptProfileModel>? _profiles;
-        
+
         [ObservableProperty]
-        public PromptProfileModel? _selectedProfile;
-        public string Blacklist { get; set; }
-        public string Whitelist { get; set; }
+        private PromptProfileModel? _selectedProfile;
+
+        [ObservableProperty]
+        private string? _blacklist;
+
+        [ObservableProperty]
+        private string? _whitelist;
         public string Prompt { get; set; }
         public string NegativePrompt { get; set; }
         public ReactiveCommand<Unit, Unit> AskForTextCommand { get; }
@@ -60,7 +64,7 @@ namespace DiffusionNexus.UI.ViewModels
             _ = LoadProfilesAsync();
         }
 
-        private async Task SavePrompt() 
+        private async Task SavePrompt()
         {
             var name = SelectedProfile?.Name;
             if (string.IsNullOrWhiteSpace(name))
@@ -94,9 +98,9 @@ namespace DiffusionNexus.UI.ViewModels
             SelectedProfile = profile;
             await LoadProfilesAsync();
         }
-        private void LoadPrompt() 
-        { 
-        
+        private void LoadPrompt()
+        {
+
         }
 
         private void ClearPrompt() { Prompt = string.Empty; NegativePrompt = string.Empty; }
@@ -106,7 +110,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             var list = await PromptProfileService.LoadAllAsync();
 
-            Profiles ??=  new ObservableCollection<PromptProfileModel>();
+            Profiles ??= new ObservableCollection<PromptProfileModel>();
             Profiles.Clear();
             foreach (var p in list)
                 Profiles.Add(p);
@@ -116,15 +120,16 @@ namespace DiffusionNexus.UI.ViewModels
             }
         }
 
-        void OnSelectedProfileChanged(string? value)
+        partial void OnSelectedProfileChanged(PromptProfileModel? value)
         {
-            if (!string.IsNullOrWhiteSpace(value))
+            if (value != null)
                 _ = LoadSelectedProfileAsync(value);
         }
 
-        private async Task LoadSelectedProfileAsync(string name)
+
+        private async Task LoadSelectedProfileAsync(PromptProfileModel profile)
         {
-            var profile = await PromptProfileService.GetAsync(name);
+            var PromptProfileModel = await PromptProfileService.GetProfileAsync(profile);
             if (profile != null)
             {
                 Blacklist = profile.Blacklist;

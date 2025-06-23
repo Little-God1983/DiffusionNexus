@@ -47,12 +47,12 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task LoadSelectedProfileAsync(string name)
         {
-            var profile = await _service.GetAsync(name);
-            if (profile != null)
-            {
-                Blacklist = profile.Blacklist;
-                Whitelist = profile.Whitelist;
-            }
+            //var profile = await _service.GetProfileAsync(name);
+            //if (profile != null)
+            //{
+            //    Blacklist = profile.Blacklist;
+            //    Whitelist = profile.Whitelist;
+            //}
         }
 
         public async Task SaveProfileAsync(IDialogService dialog)
