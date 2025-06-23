@@ -31,4 +31,10 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.6" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Views\PromptEditorControl.axaml.cs">
+      <DependentUpon>PromptEditorControl.axaml</DependentUpon>
+    </Compile>
+  </ItemGroup>
 </Project>

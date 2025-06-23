@@ -2,26 +2,29 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.PromptEditView"
-             x:DataType="vm:PromptEditViewModel">
+             xmlns:local="using:DiffusionNexus.UI.Views"
+             x:DataType="vm:PromptEditorControlViewModel">
   <UserControl.DataContext>
-    <vm:PromptEditViewModel/>
+    <vm:PromptEditorControlViewModel/>
   </UserControl.DataContext>
-  <Grid Margin="10" RowDefinitions="*">
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition MinWidth="200"/>
-      <ColumnDefinition MinWidth="150"/>
-      <ColumnDefinition MinWidth="250"/>
-      </Grid.ColumnDefinitions>
-    <!-- Image drop area -->
-    <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
-      <Grid>
-        <Image x:Name="PreviewImage"  Stretch="Uniform" Margin="5" IsVisible="False"/>
-        <TextBlock x:Name="DropText" Text="Drop image here"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
-      </Grid>
-    </Border>
+  <TabControl>
+    <TabItem Header="Single Image">
+      <Grid Margin="10" RowDefinitions="*">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition MinWidth="200"/>
+          <ColumnDefinition MinWidth="150"/>
+          <ColumnDefinition MinWidth="250"/>
+        </Grid.ColumnDefinitions>
+        <!-- Image drop area -->
+        <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
+          <Grid>
+            <Image x:Name="PreviewImage"  Stretch="Uniform" Margin="5" IsVisible="False"/>
+            <TextBlock x:Name="DropText" Text="Drop image here"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
 
-    <!-- Middle side for Meta Data -->
-    <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
+        <!-- Middle side for Meta Data -->
+        <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
           <StackPanel x:Name="MetadataPanel" Spacing="4" Margin="0,10,0,0">
             <TextBlock Text="Metadata" Width="120"/>
             <StackPanel Orientation="Horizontal" Spacing="5">
@@ -94,46 +97,54 @@
             </StackPanel>
             <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
           </StackPanel>
-  </Border>
-    
-    <!-- Right side for prompts -->
-    <StackPanel Grid.Column="2" Spacing="10">
-      <StackPanel Orientation="Horizontal" Spacing="10">
-        <StackPanel Spacing="2">
-          <TextBlock Text="Profile"/>
-          <ComboBox Name="ProfileComboBox" Width="150"
-                    ItemsSource="{Binding Profiles}"
-                    SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
-          <Button Name="SaveProfileButton" Content="Save" Width="80" Click="OnSaveProfile"/>
-          <Button Name="DeleteProfileButton" Content="Delete" Width="80" Click="OnDeleteProfile"/>
-        </StackPanel>
-      </StackPanel>
-      <StackPanel Orientation="Horizontal" Spacing="10">
-        <StackPanel Spacing="2">
-          <TextBlock Text="Blacklist"/>
-          <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
-        </StackPanel>
-        <StackPanel Spacing="2">
-          <TextBlock Text="Whitelist"/>
-          <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
-        </StackPanel>
-      </StackPanel>
-      <StackPanel Spacing="2">
-        <TextBlock Text="Prompt"/>
-        <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-      </StackPanel>
-      <StackPanel Spacing="2">
-        <TextBlock Text="Negative Prompt"/>
-        <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-      </StackPanel>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="Apply List" Width="110" Click="OnApplyBlacklist"/>
-        <Button Content="Save" Width="80" Click="OnSave"/>
-        <Button Content="Save As" Width="80" Click="OnSaveAs"/>
-      </StackPanel>
+        </Border>
 
-    </StackPanel>
-  </Grid>
+        <!-- Right side for prompts -->
+        <StackPanel Grid.Column="2" Spacing="10">
+          <local:PromptEditorControl x:Name="SinglePromptEditor"
+             Margin="10"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Content="Apply List" Width="110" Click="OnApplyBlacklist"/>
+            <Button Content="Save" Width="80" Click="OnSave"/>
+            <Button Content="Save As" Width="80" Click="OnSaveAs"/>
+          </StackPanel>
+
+        </StackPanel>
+
+      </Grid>
+    </TabItem>
+    <TabItem Header="Batch Process">
+      <Grid x:DataType="vm:BatchProcessingViewModel"
+      Margin="10"
+      ColumnDefinitions="400,*">
+        <StackPanel Spacing="10" Grid.Column="0">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Source Folder" Width="100"/>
+            <TextBox x:Name="SourceFolderBox" Width="140" Text="{Binding SourceFolder, Mode=TwoWay}"/>
+            <Button Content="Browse..." Command="{Binding BrowseSourceFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Target Folder" Width="100"/>
+            <TextBox x:Name="TargetFolderBox" Width="140" Text="{Binding TargetFolder, Mode=TwoWay}"/>
+            <Button Content="Browse..." Command="{Binding BrowseTargetFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+          <StackPanel Orientation="Vertical" Spacing="5">
+            <RadioButton Content="Blacklist / Whitelist only" IsChecked="{Binding UseListOnly, Mode=TwoWay}"/>
+            <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}"/>
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="0" Spacing="10">        
+        </StackPanel>
+        <StackPanel Grid.Column="1">
+          <local:PromptEditorControl x:Name="BatchPromptEditor"
+            Margin="10"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"/>
+          <Button Name="ApplyBatchButton" Content="Apply to Batch" Width="120"/>
+        </StackPanel>
+      </Grid>
+    </TabItem>
+  </TabControl>
 </UserControl>
