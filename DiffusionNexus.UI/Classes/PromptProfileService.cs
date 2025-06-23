@@ -19,16 +19,16 @@ namespace DiffusionNexus.UI.Classes
             _filePath = Path.Combine(folder, "prompt_profiles.json");
         }
 
-        private async Task<Dictionary<string, PromptProfileModel>> LoadDictionaryAsync()
+        private async Task<List<PromptProfileModel>> LoadProfilesAsync()
         {
             if (!File.Exists(_filePath))
-                return new();
+                return new List<PromptProfileModel>();
 
             var json = await File.ReadAllTextAsync(_filePath);
-            return JsonSerializer.Deserialize<Dictionary<string, PromptProfileModel>>(json) ?? new();
+            return JsonSerializer.Deserialize<List<PromptProfileModel>>(json) ?? new();
         }
 
-        private async Task SaveDictionaryAsync(Dictionary<string, PromptProfileModel> dict)
+        private async Task SaveProfilesToDiskAsync(List<PromptProfileModel> dict)
         {
             var json = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(_filePath, json);
@@ -36,34 +36,33 @@ namespace DiffusionNexus.UI.Classes
 
         public async Task<List<PromptProfileModel>> LoadAllAsync()
         {
-            var dict = await LoadDictionaryAsync();
-            return dict.Values.ToList();
+            return await LoadProfilesAsync();
         }
 
         public async Task<PromptProfileModel?> GetAsync(string name)
         {
-            var dict = await LoadDictionaryAsync();
-            return dict.TryGetValue(name, out var profile) ? profile : null;
+            IList<PromptProfileModel> dict = await LoadProfilesAsync();
+            return dict.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         }
 
-        public async Task<bool> ExistsAsync(string name)
+        public async Task<bool> ExistsByNameAsync(string name)
         {
-            var dict = await LoadDictionaryAsync();
-            return dict.ContainsKey(name);
+            IList<PromptProfileModel> dict = await LoadProfilesAsync();
+            return dict.Select(x => x.Name == name) == null ? false : true;
         }
 
         public async Task SaveAsync(PromptProfileModel profile)
         {
-            var dict = await LoadDictionaryAsync();
-            dict[profile.Name] = profile;
-            await SaveDictionaryAsync(dict);
+            List<PromptProfileModel> dict = await LoadProfilesAsync();
+            dict.Add(profile);
+            await SaveProfilesToDiskAsync(dict);
         }
 
-        public async Task DeleteAsync(string name)
+        public async Task DeleteAsync(PromptProfileModel profile)
         {
-            var dict = await LoadDictionaryAsync();
-            if (dict.Remove(name))
-                await SaveDictionaryAsync(dict);
+            List<PromptProfileModel> list = await LoadProfilesAsync();
+            if (list.Remove(profile))
+                await SaveProfilesToDiskAsync(list);
         }
     }
 }

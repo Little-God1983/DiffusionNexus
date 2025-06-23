@@ -64,7 +64,7 @@ namespace DiffusionNexus.UI.ViewModels
                 if (string.IsNullOrWhiteSpace(name))
                     return;
             }
-            else if (await _service.ExistsAsync(name))
+            else if (await _service.ExistsByNameAsync(name))
             {
                 var confirm = await dialog.ShowConfirmationAsync($"Profile '{name}' already exists. Overwrite?", true);
                 if (confirm == false)
@@ -92,16 +92,16 @@ namespace DiffusionNexus.UI.ViewModels
 
         public async Task DeleteProfileAsync(IDialogService dialog)
         {
-            if (string.IsNullOrWhiteSpace(SelectedProfile))
-                return;
+            //if (string.IsNullOrWhiteSpace(SelectedProfile))
+            //    return;
 
-            var confirm = await dialog.ShowConfirmationAsync($"Do you really want to delete profile '{SelectedProfile}'?");
-            if (confirm != true)
-                return;
+            //var confirm = await dialog.ShowConfirmationAsync($"Do you really want to delete profile '{SelectedProfile.Name}'?");
+            //if (confirm != true)
+            //    return;
 
-            await _service.DeleteAsync(SelectedProfile);
-            SelectedProfile = null;
-            await LoadProfilesAsync();
+            //await _service.DeleteAsync(SelectedProfile);
+            //SelectedProfile = null;
+            //await LoadProfilesAsync();
         }
     }
 }
