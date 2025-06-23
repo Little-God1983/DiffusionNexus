@@ -162,35 +162,7 @@
         </StackPanel>
         <StackPanel Grid.Column="1" Spacing="10">        
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            <StackPanel Spacing="2">
-              <TextBlock Text="Profile"/>
-              <ComboBox Name="ProfileComboBox" Width="150"
-                        ItemsSource="{Binding Profiles}"
-                        SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
-              <Button Name="SaveProfileButton" Content="Save" Width="80" Click="OnSaveProfile"/>
-              <Button Name="DeleteProfileButton" Content="Delete" Width="80" Click="OnDeleteProfile"/>
-            </StackPanel>
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="10">
-            <StackPanel Spacing="2">
-              <TextBlock Text="Blacklist"/>
-              <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
-            </StackPanel>
-            <StackPanel Spacing="2">
-              <TextBlock Text="Whitelist"/>
-              <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
-            </StackPanel>
-          </StackPanel>
-          <StackPanel Spacing="2">
-            <TextBlock Text="Prompt"/>
-            <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-          </StackPanel>
-          <StackPanel Spacing="2">
-            <TextBlock Text="Negative Prompt"/>
-            <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-          </StackPanel>
+            
             <Button Name="ApplyBatchButton" Content="Apply List to Batch" Width="150"/>
             <Button Name="SaveBatchButton" Content="Save Batch" Width="80"/>
             <Button Name="SaveAsBatchButton" Content="Save Batch As" Width="80"/>

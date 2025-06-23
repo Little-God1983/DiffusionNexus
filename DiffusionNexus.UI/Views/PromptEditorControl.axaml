@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="DiffusionNexus.UI.PromptEditorControl"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:DataType="vm:PromptEditorControlViewModel">
+  
+  <StackPanel Orientation="Vertical" Spacing="10" Margin="10">
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Profile"/>
+        <ComboBox Name="ProfileComboBox" Width="150"
+                  ItemsSource="{Binding Profiles}"
+                  SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
+        <Button Content="Save"
+                Width="80"
+                Command="{Binding SaveCommand}"/>
+        <Button Content="Delete"
+                Width="80"
+                Command="{Binding DeleteCommand}"/>
+      </StackPanel>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Blacklist"/>
+        <TextBox Name="BlacklistBox" Text="{Binding Blacklist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
+      </StackPanel>
+      <StackPanel Spacing="2">
+        <TextBlock Text="Whitelist"/>
+        <TextBox Name="WhitelistBox" Text="{Binding Whitelist, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="60" Width="150"/>
+      </StackPanel>
+    </StackPanel>
+    <StackPanel Spacing="2">
+      <TextBlock Text="Prompt"/>
+      <TextBox Name="PromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+    </StackPanel>
+    <StackPanel Spacing="2">
+      <TextBlock Text="Negative Prompt"/>
+      <TextBox Name="NegativePromptBox" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
+    </StackPanel>
+  </StackPanel>
+</UserControl>
