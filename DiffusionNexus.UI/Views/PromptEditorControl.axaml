@@ -5,15 +5,23 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="DiffusionNexus.UI.Views.PromptEditorControl"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:models="using:DiffusionNexus.UI.Models"
              x:DataType="vm:PromptEditorControlViewModel">
   
   <StackPanel Orientation="Vertical" Spacing="10" Margin="10">
     <StackPanel Orientation="Horizontal" Spacing="10">
       <StackPanel Spacing="2">
         <TextBlock Text="Profile"/>
-        <ComboBox Name="ProfileComboBox" Width="150"
-                  ItemsSource="{Binding Profiles}"
-                  SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"/>
+        <ComboBox
+          ItemsSource="{Binding Profiles}"
+          SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+          Width="150">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="models:PromptProfileModel">
+              <TextBlock Text="{Binding Name}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
         <Button Content="Save"

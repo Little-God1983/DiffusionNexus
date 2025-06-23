@@ -1,21 +1,26 @@
 ﻿using Avalonia.Controls;
+using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
 using ReactiveUI;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Reactive;
 using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public class PromptEditorControlViewModel : ReactiveObject
+    public partial class PromptEditorControlViewModel : ObservableObject
     {
         public IDialogService DialogService { get; set; }
         public PromptProfileService PromptProfileService { get; set; } = new PromptProfileService();
 
-        public ObservableCollection<PromptProfileModel> Profiles { get; set; } 
-        public PromptProfileModel SelectedProfile { get; set; }
+        [ObservableProperty]
+        private ObservableCollection<PromptProfileModel>? _profiles;
+        
+        [ObservableProperty]
+        public PromptProfileModel? _selectedProfile;
         public string Blacklist { get; set; }
         public string Whitelist { get; set; }
         public string Prompt { get; set; }
@@ -35,7 +40,7 @@ namespace DiffusionNexus.UI.ViewModels
             ClearCommand = ReactiveCommand.Create(ClearPrompt);
             DeleteProfileCommand = ReactiveCommand.Create(() =>
             {
-                if (SelectedProfile != null)
+                if (_selectedProfile != null)
                 {
                     Profiles.Remove(SelectedProfile);
                     SelectedProfile = null;

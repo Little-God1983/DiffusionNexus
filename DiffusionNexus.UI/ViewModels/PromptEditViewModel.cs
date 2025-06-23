@@ -12,7 +12,7 @@ namespace DiffusionNexus.UI.ViewModels
         private readonly PromptProfileService _service;
 
         [ObservableProperty]
-        private ObservableCollection<string> _profiles = new();
+        private ObservableCollection<PromptProfileModel>? profiles = new();
 
         [ObservableProperty]
         private string? _selectedProfile;
@@ -36,7 +36,7 @@ namespace DiffusionNexus.UI.ViewModels
         private async Task LoadProfilesAsync()
         {
             var list = await _service.LoadAllAsync();
-            Profiles = new ObservableCollection<string>(list.Select(p => p.Name));
+            Profiles = new ObservableCollection<PromptProfileModel>(list);
         }
 
         partial void OnSelectedProfileChanged(string? value)
