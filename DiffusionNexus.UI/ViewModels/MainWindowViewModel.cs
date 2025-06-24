@@ -7,6 +7,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using DiffusionNexus.UI.Views;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -26,6 +27,8 @@ namespace DiffusionNexus.UI.ViewModels
         public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenPatreonCommand { get; private set; }
         public ReactiveCommand<Unit, Unit> OpenAboutCommand { get; private set; }
+
+        public LogViewModel LogViewModel { get; } = new LogViewModel();
 
         private bool _isMenuOpen = true;
         public bool IsMenuOpen

@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:models="using:DiffusionNexus.UI.Models"
+             x:Class="DiffusionNexus.UI.Views.Controls.LogOverlayControl"
+             x:DataType="vm:LogViewModel">
+    <UserControl.Resources>
+        <conv:LogLevelToBrushConverter x:Key="LogLevelToBrushConverter" />
+    </UserControl.Resources>
+    <Border Background="#80000000" Grid.RowSpan="2">
+        <Border Background="#FF2D2D30" Padding="10" Width="600" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,40">
+            <ScrollViewer Height="200">
+                <ItemsControl ItemsSource="{Binding Entries}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:LogEntry">
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,2">
+                                <TextBlock Width="150" Text="{Binding Timestamp, StringFormat=HH:mm:ss dd.MM.yyyy}"/>
+                                <TextBlock Width="70" Text="{Binding Level}" Foreground="White" Background="{Binding Level, Converter={StaticResource LogLevelToBrushConverter}}" HorizontalAlignment="Center" TextAlignment="Center"/>
+                                <TextBlock Text="{Binding Message}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+    </Border>
+</UserControl>

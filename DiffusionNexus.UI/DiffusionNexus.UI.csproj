@@ -33,6 +33,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Update="Views\Controls\LogControl.axaml.cs">
+      <DependentUpon>LogControl.axaml</DependentUpon>
+    </Compile>
     <Compile Update="Views\PromptEditorControl.axaml.cs">
       <DependentUpon>PromptEditorControl.axaml</DependentUpon>
     </Compile>
