@@ -4,45 +4,24 @@
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              x:Class="DiffusionNexus.UI.Views.LoraSortView">
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <!-- Top Left - Main Settings -->
-        <Border Grid.Row="0" Grid.Column="0" 
+        <Border Grid.Column="0" 
                 BorderBrush="Gray" BorderThickness="1" 
                 Margin="5" CornerRadius="4">
             <controls:LoraSortMainSettingsControl/>
         </Border>
 
         <!-- Top Right - Custom Mappings -->
-        <Border Grid.Row="0" Grid.Column="1" 
+        <Border Grid.Column="1" 
                 BorderBrush="Gray" BorderThickness="1" 
                 Margin="5" CornerRadius="4">
             <controls:LoraSortCustomMappingsControl/>
         </Border>
-
-        <!-- Bottom Left -->
-        <Border Grid.Row="1" Grid.Column="0" 
-                BorderBrush="Gray" BorderThickness="1" 
-                Margin="5" CornerRadius="4">
-            <TextBlock Text="Bottom Left" 
-                       HorizontalAlignment="Center" 
-                       VerticalAlignment="Center"/>
-        </Border>
-
-        <!-- Bottom Right -->
-        <Border Grid.Row="1" Grid.Column="1" 
-                BorderBrush="Gray" BorderThickness="1" 
-                Margin="5" CornerRadius="4">
-            <TextBlock Text="Bottom Right" 
-                       HorizontalAlignment="Center" 
-                       VerticalAlignment="Center"/>
-        </Border>
+        
     </Grid>
 </UserControl>
