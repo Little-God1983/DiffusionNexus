@@ -14,7 +14,7 @@ namespace DiffusionNexus.UI.Converters
             {
                 return level switch
                 {
-                    LogLevel.Success => Brushes.LawnGreen,
+                    LogLevel.Success => Brushes.DarkGreen,
                     LogLevel.Warning => Brushes.Gold,
                     LogLevel.Error => Brushes.IndianRed,
                     _ => Brushes.Gray,

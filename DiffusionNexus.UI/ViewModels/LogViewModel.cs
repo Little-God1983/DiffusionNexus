@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -24,6 +24,12 @@ namespace DiffusionNexus.UI.ViewModels
         public ObservableCollection<LogEntry> Entries => _service.Entries;
 
         public LogEntry? LatestEntry => _service.LatestEntry;
+        
+        [ObservableProperty]
+        private string _buttonText = OverlayButtonText;
+
+        public const string OverlayButtonText = "↑ Expand log";
+        public const string HideOverlayButtonText = "↓ Hide log";
 
         private bool _isOverlayVisible;
         public bool IsOverlayVisible
@@ -34,18 +40,11 @@ namespace DiffusionNexus.UI.ViewModels
                 if (_isOverlayVisible != value)
                 {
                     _isOverlayVisible = value;
+                    ButtonText = value == true ? HideOverlayButtonText : OverlayButtonText;
                     System.Diagnostics.Debug.WriteLine($"IsOverlayVisible changed to: {value}");
                     OnPropertyChanged();  // Explicit notification
                 }
             }
-        }
-
-        [RelayCommand]
-        private void ToggleOverlay()
-        {
-            System.Diagnostics.Debug.WriteLine($"ToggleOverlay called, current value: {IsOverlayVisible}");
-            IsOverlayVisible = !IsOverlayVisible;
-            System.Diagnostics.Debug.WriteLine($"ToggleOverlay completed, new value: {IsOverlayVisible}");
         }
 
         private void ServiceOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
