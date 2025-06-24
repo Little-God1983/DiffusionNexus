@@ -1,0 +1,16 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.StatusBarControl"
+             x:DataType="vm:LogViewModel">
+    <UserControl.Resources>
+        <conv:LogLevelToBrushConverter x:Key="LogLevelToBrushConverter" />
+    </UserControl.Resources>
+    <Border Background="{Binding LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
+        <Grid ColumnDefinitions="*,Auto" Height="24" VerticalAlignment="Center">
+            <TextBlock Text="{Binding LatestEntry.Message}" Margin="5,0" VerticalAlignment="Center" />
+            <ToggleButton Width="20" Content="^" IsChecked="{Binding IsOverlayVisible, Mode=TwoWay}" Command="{Binding ToggleOverlayCommand}" />
+        </Grid>
+    </Border>
+</UserControl>

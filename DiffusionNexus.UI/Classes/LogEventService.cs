@@ -1,0 +1,37 @@
+using System;
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Models;
+
+namespace DiffusionNexus.UI.Classes
+{
+    public class LogEventService : ObservableObject, ILogEventService
+    {
+        private readonly ObservableCollection<LogEntry> _entries = new();
+        private LogEntry? _latestEntry;
+
+        public static LogEventService Instance { get; } = new LogEventService();
+
+        private LogEventService() { }
+
+        public ObservableCollection<LogEntry> Entries => _entries;
+
+        public LogEntry? LatestEntry
+        {
+            get => _latestEntry;
+            private set => SetProperty(ref _latestEntry, value);
+        }
+
+        public void Publish(LogLevel level, string message)
+        {
+            var entry = new LogEntry
+            {
+                Timestamp = DateTime.Now,
+                Level = level,
+                Message = message
+            };
+            _entries.Add(entry);
+            LatestEntry = entry;
+        }
+    }
+}
