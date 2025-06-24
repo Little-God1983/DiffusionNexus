@@ -91,6 +91,6 @@
     </SplitView>
 
     <controls:StatusBarControl Grid.Row="1" DataContext="{Binding LogViewModel}" />
-    <controls:LogOverlayControl Grid.RowSpan="2" DataContext="{Binding LogViewModel}" IsVisible="{Binding LogViewModel.IsOverlayVisible}" />
+    <controls:LogOverlayControl Grid.RowSpan="2" DataContext="{Binding LogViewModel}" IsVisible="{Binding IsOverlayVisible}" />
   </Grid>
 </Window>
