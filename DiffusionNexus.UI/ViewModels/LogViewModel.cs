@@ -25,11 +25,28 @@ namespace DiffusionNexus.UI.ViewModels
 
         public LogEntry? LatestEntry => _service.LatestEntry;
 
-        [ObservableProperty]
         private bool _isOverlayVisible;
+        public bool IsOverlayVisible
+        {
+            get => _isOverlayVisible;
+            set
+            {
+                if (_isOverlayVisible != value)
+                {
+                    _isOverlayVisible = value;
+                    System.Diagnostics.Debug.WriteLine($"IsOverlayVisible changed to: {value}");
+                    OnPropertyChanged();  // Explicit notification
+                }
+            }
+        }
 
         [RelayCommand]
-        private void ToggleOverlay() => IsOverlayVisible = !IsOverlayVisible;
+        private void ToggleOverlay()
+        {
+            System.Diagnostics.Debug.WriteLine($"ToggleOverlay called, current value: {IsOverlayVisible}");
+            IsOverlayVisible = !IsOverlayVisible;
+            System.Diagnostics.Debug.WriteLine($"ToggleOverlay completed, new value: {IsOverlayVisible}");
+        }
 
         private void ServiceOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
         {

@@ -10,7 +10,7 @@
     <Border Background="{Binding LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
         <Grid ColumnDefinitions="*,Auto" Height="24" VerticalAlignment="Center">
             <TextBlock Text="{Binding LatestEntry.Message}" Margin="5,0" VerticalAlignment="Center" />
-            <ToggleButton Width="20" Content="^" IsChecked="{Binding IsOverlayVisible, Mode=TwoWay}" Command="{Binding ToggleOverlayCommand}" />
+            <ToggleButton Width="100" Content="^" IsChecked="{Binding IsOverlayVisible, Mode=TwoWay}" Command="{Binding ToggleOverlayCommand}" />
         </Grid>
     </Border>
 </UserControl>

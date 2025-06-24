@@ -90,7 +90,7 @@
     </SplitView.Content>
     </SplitView>
 
-    <controls:StatusBarControl Grid.Row="1" DataContext="{Binding LogViewModel}" />
-    <controls:LogOverlayControl Grid.RowSpan="2" DataContext="{Binding LogViewModel}" IsVisible="{Binding IsOverlayVisible}" />
+    <!-- With this single line -->
+    <controls:LogControl Grid.Row="1" Grid.RowSpan="2" DataContext="{Binding LogViewModel}" />
   </Grid>
 </Window>
