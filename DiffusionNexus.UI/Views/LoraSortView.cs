@@ -1,12 +1,18 @@
 using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
 
 namespace DiffusionNexus.UI.Views
 {
-    public class LoraSortView : UserControl
+    public partial class LoraSortView : UserControl
     {
         public LoraSortView()
         {
-            // TODO: Implement the view
+            InitializeComponent();
+        }
+
+        private void InitializeComponent()
+        {
+            AvaloniaXamlLoader.Load(this);
         }
     }
 }
