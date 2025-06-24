@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.LoraSortCustomMappingsControl"
+             x:DataType="vm:LoraSortCustomMappingsViewModel">
+    <UserControl.Resources>
+        <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+        <conv:IndexToPriorityConverter x:Key="IndexToPriorityConverter" />
+    </UserControl.Resources>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <!-- ListBox for mappings -->
+        <ListBox x:Name="lvMappings" Grid.Row="0" ItemsSource="{Binding CustomTagMappings}"
+                 IsEnabled="{Binding IsCustomEnabled}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:CustomTagMapping">
+                    <Grid ColumnDefinitions="*,*,*,*" Margin="0,2">
+                        <!-- Tags column with converter -->
+                        <TextBlock Grid.Column="0" Text="{Binding LookForTag, Converter={StaticResource TagsDisplayConverter}}"/>
+                        <!-- Target Folder column -->
+                        <TextBlock Grid.Column="1" Text="{Binding MapToFolder}"/>
+                        <!-- Priority column using MultiBinding -->
+                        <TextBlock Grid.Column="2">
+                            <TextBlock.Text>
+                                <MultiBinding Converter="{StaticResource IndexToPriorityConverter}">
+                                    <Binding Path="."/>
+                                    <Binding Path="$parent[ItemsControl].ItemsSource"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                        <!-- Actions column: Up, Down, Edit -->
+                        <StackPanel Grid.Column="3" Orientation="Horizontal">
+                            <Button Content="Up"
+                                    Command="{Binding $parent[UserControl].DataContext.MoveUpCommand}"
+                                    CommandParameter="{Binding .}" />
+                            <Button Content="Down"
+                                    Command="{Binding $parent[UserControl].DataContext.MoveDownCommand}"
+                                    CommandParameter="{Binding .}" Margin="5,0,0,0" />
+                            <Button Content="Edit" Margin="5,0,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <!-- Button Panel -->
+        <Grid Grid.Row="1" Margin="0,10,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <!-- First row: Add and Remove -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Add Mapping" Width="130" Margin="0,0,10,0"
+                        Command="{Binding AddMappingCommand}"/>
+                <Button Content="Remove Mapping" Width="130"
+                        Command="{Binding RemoveMappingCommand}"/>
+            </StackPanel>
+            <!-- Second row: Save All and Delete All -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <Button Content="Save All Mappings" Width="130" Margin="0,0,10,0"
+                        Command="{Binding SaveAllMappingsCommand}"/>
+                <Button Content="Delete All" Width="130"
+                        Command="{Binding DeleteAllMappingsCommand}"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>
