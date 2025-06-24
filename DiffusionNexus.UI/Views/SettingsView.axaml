@@ -9,30 +9,32 @@
   </UserControl.DataContext>
   <ScrollViewer>
     <StackPanel Margin="10" Spacing="10">
-      <Expander Header="General" IsExpanded="True">
+      <Expander Header="General" IsExpanded="True" Width="300">
         <StackPanel Spacing="5" Margin="10">
-          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-            <TextBlock Text="Civitai API Key" Width="120"/>
-           
-            <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>
+          <StackPanel Orientation="Vertical" Spacing="5" VerticalAlignment="Center">
+              <TextBlock Text="Civitai API Key" Width="120"/>
+            <StackPanel Orientation="Horizontal" Spacing="5">
+              <TextBox></TextBox>
+              <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>  
+            </StackPanel>
           </StackPanel>
         </StackPanel>
       </Expander>
 
-      <Expander Header="Lora Sort" IsExpanded="False">
+      <Expander Header="Lora Sort" IsExpanded="False" Width="300">
         <TextBlock Margin="10" Text="No settings available."/>
       </Expander>
 
-      <Expander Header="Lora Helper" IsExpanded="False">
+      <Expander Header="Lora Helper" IsExpanded="False" Width="300">
         <StackPanel Spacing="5" Margin="10">
-          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+          <StackPanel Orientation="Vertical" Spacing="5">
             <TextBlock Text="Folder Path" Width="120"/>
             <TextBox Text="{Binding LoraHelperFolderPath, Mode=TwoWay}" Width="250"/>
           </StackPanel>
         </StackPanel>
       </Expander>
 
-      <Expander Header="Prompt Edit" IsExpanded="False">
+      <Expander Header="Prompt Edit" IsExpanded="False" Width="300">
         <TextBlock Margin="10" Text="No settings available."/>
       </Expander>
 
