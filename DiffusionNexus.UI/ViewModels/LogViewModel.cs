@@ -17,6 +17,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             _service = service;
             _service.PropertyChanged += ServiceOnPropertyChanged;
+            _service.Publish(LogLevel.Info, "Log service initialized.");
         }
 
         public ObservableCollection<LogEntry> Entries => _service.Entries;
