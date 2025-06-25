@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class BatchProcessingViewModel : ObservableObject
+    public partial class BatchProcessingViewModel : ViewModelBase
     {
         [ObservableProperty]
         private string? _sourceFolder;

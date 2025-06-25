@@ -12,8 +12,6 @@ public partial class PromptEditorControl : UserControl
     public PromptEditorControl()
     {
         InitializeComponent();
-        DataContext = new PromptEditorControlViewModel();
-
         this.AttachedToVisualTree += OnAttached;
 
     }

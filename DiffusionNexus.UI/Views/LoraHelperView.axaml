@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.LoraHelperView"
+             x:DataType="vm:LoraHelperViewModel">
+  <UserControl.DataContext>
+    <vm:LoraHelperViewModel/>
+  </UserControl.DataContext>
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="200,*" Margin="10">
+    <TextBox Grid.ColumnSpan="2" Watermark="Search loras..." Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+    <TreeView Grid.Row="1" Items="{Binding FolderItems}"/>
+    <ItemsControl Grid.Column="1" Grid.Row="1" Items="{Binding Cards}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:LoraCard">
+          <Border Background="#333333" Padding="10" Margin="5" Width="200" Height="200">
+            <StackPanel Spacing="5">
+              <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+              <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <WrapPanel/>
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+    </ItemsControl>
+  </Grid>
+</UserControl>

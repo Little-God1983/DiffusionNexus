@@ -4,6 +4,9 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.Controls.LoraSortCustomMappingsControl"
              x:DataType="vm:LoraSortCustomMappingsViewModel">
+    <UserControl.DataContext>
+        <vm:LoraSortCustomMappingsViewModel/>
+    </UserControl.DataContext>
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
         <conv:IndexToPriorityConverter x:Key="IndexToPriorityConverter" />

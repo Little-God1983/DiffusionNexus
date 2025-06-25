@@ -4,7 +4,7 @@ using System.Collections.ObjectModel;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class LoraSortCustomMappingsViewModel : ObservableObject
+    public partial class LoraSortCustomMappingsViewModel : ViewModelBase
     {
         [ObservableProperty]
         private ObservableCollection<CustomTagMapping> customTagMappings = new();

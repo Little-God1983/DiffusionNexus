@@ -3,9 +3,9 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.PromptEditView"
              xmlns:local="using:DiffusionNexus.UI.Views"
-             x:DataType="vm:PromptEditorControlViewModel">
+             x:DataType="vm:PromptEditViewModel">
   <UserControl.DataContext>
-    <vm:PromptEditorControlViewModel/>
+    <vm:PromptEditViewModel/>
   </UserControl.DataContext>
   <TabControl>
     <TabItem Header="Single Image">
@@ -18,8 +18,8 @@
         <!-- Image drop area -->
         <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
           <Grid>
-            <Image x:Name="PreviewImage"  Stretch="Uniform" Margin="5" IsVisible="False"/>
-            <TextBlock x:Name="DropText" Text="Drop image here"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Image Stretch="Uniform" Margin="5" Source="{Binding PreviewImage}" IsVisible="{Binding IsPreviewVisible}" />
+            <TextBlock Text="{Binding DropText}"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Grid>
         </Border>
 
@@ -29,86 +29,86 @@
             <TextBlock Text="Metadata" Width="120"/>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Steps" Width="120"/>
-              <TextBox Name="StepsBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Steps}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Sampler" Width="120"/>
-              <TextBox Name="SamplerBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Sampler}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Schedule Type" Width="120"/>
-              <TextBox Name="ScheduleTypeBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding ScheduleType}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="CFG Scale" Width="120"/>
-              <TextBox Name="CFGScaleBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding CfgScale}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Seed" Width="120"/>
-              <TextBox Name="SeedBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Seed}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Face Restoration" Width="120"/>
-              <TextBox Name="FaceRestorationBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding FaceRestoration}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Size" Width="120"/>
-              <TextBox Name="SizeBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Size}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Model Hash" Width="120"/>
-              <TextBox Name="ModelHashBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding ModelHash}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Model" Width="120"/>
-              <TextBox Name="ModelBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Model}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="TI" Width="120"/>
-              <TextBox Name="TIBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Ti}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Version" Width="120"/>
-              <TextBox Name="VersionBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Version}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Source Identifier" Width="120"/>
-              <TextBox Name="SourceIdentifierBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding SourceIdentifier}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="LoRA Hashes" Width="120"/>
-              <TextBox Name="LoRAHashesBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding LoRAHashes}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Width" Width="120"/>
-              <TextBox Name="WidthBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Width}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Height" Width="120"/>
-              <TextBox Name="HeightBox" IsReadOnly="True" Width="200"/>
+              <TextBox Text="{Binding Height}" IsReadOnly="True" Width="200"/>
             </StackPanel>
             <StackPanel Spacing="2">
               <TextBlock Text="Hashes"/>
-              <TextBox Name="HashesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+              <TextBox FontFamily="Consolas" Text="{Binding Hashes}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
             </StackPanel>
             <StackPanel Spacing="2">
               <TextBlock Text="Resources"/>
-              <TextBox Name="ResourcesBox" FontFamily="Consolas" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
+              <TextBox FontFamily="Consolas" Text="{Binding Resources}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
             </StackPanel>
-            <Button Name="CopyMetadataButton" Content="Copy all metadata" HorizontalAlignment="Right" Width="150"/>
+            <Button Content="Copy all metadata" HorizontalAlignment="Right" Width="150" Command="{Binding CopyMetadataCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
           </StackPanel>
         </Border>
 
         <!-- Right side for prompts -->
         <StackPanel Grid.Column="2" Spacing="10">
-          <local:PromptEditorControl x:Name="SinglePromptEditor"
-             Margin="10"
+          <local:PromptEditorControl Margin="10"
+             DataContext="{Binding SinglePromptVm}"
              HorizontalAlignment="Stretch"
              VerticalAlignment="Stretch"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            <Button Content="Apply List" Width="110" Click="OnApplyBlacklist"/>
-            <Button Content="Save" Width="80" Click="OnSave"/>
-            <Button Content="Save As" Width="80" Click="OnSaveAs"/>
+            <Button Content="Apply List" Width="110" Command="{Binding ApplyBlacklistCommand}"/>
+            <Button Content="Save" Width="80" Command="{Binding SaveCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
+            <Button Content="Save As" Width="80" Command="{Binding SaveAsCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
           </StackPanel>
 
         </StackPanel>
@@ -116,7 +116,7 @@
       </Grid>
     </TabItem>
     <TabItem Header="Batch Process">
-      <Grid x:DataType="vm:BatchProcessingViewModel"
+      <Grid x:DataType="vm:BatchProcessingViewModel" DataContext="{Binding BatchViewModel}"
       Margin="10"
       ColumnDefinitions="400,*">
         <StackPanel Spacing="10" Grid.Column="0">
@@ -138,8 +138,8 @@
         <StackPanel Grid.Column="0" Spacing="10">        
         </StackPanel>
         <StackPanel Grid.Column="1">
-          <local:PromptEditorControl x:Name="BatchPromptEditor"
-            Margin="10"
+          <local:PromptEditorControl Margin="10"
+            DataContext="{Binding BatchPromptVm}"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"/>
           <Button Name="ApplyBatchButton" Content="Apply to Batch" Width="120"/>
