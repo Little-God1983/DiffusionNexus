@@ -1,14 +1,13 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
-using ReactiveUI;
 using System.Collections.ObjectModel;
-using System.Reactive;
 using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.Input;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class PromptEditorControlViewModel : ObservableObject
+    public partial class PromptEditorControlViewModel : ViewModelBase
     {
         public IDialogService DialogService { get; set; }
         public PromptProfileService PromptProfileService { get; set; } = new PromptProfileService();
@@ -29,19 +28,19 @@ namespace DiffusionNexus.UI.ViewModels
         private string? _prompt;
         [ObservableProperty]
         private string? _negativePrompt;
-        public ReactiveCommand<Unit, Unit> AskForTextCommand { get; }
+        public IAsyncRelayCommand AskForTextCommand { get; }
 
-        public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
-        public ReactiveCommand<Unit, Unit> LoadProfileCommand { get; }
-        public ReactiveCommand<Unit, Unit> ClearCommand { get; }
-        public ReactiveCommand<Unit, Unit> DeleteProfileCommand { get; }
+        public IAsyncRelayCommand SaveProfileCommand { get; }
+        public IAsyncRelayCommand LoadProfileCommand { get; }
+        public IRelayCommand ClearCommand { get; }
+        public IRelayCommand DeleteProfileCommand { get; }
 
 
         public PromptEditorControlViewModel()
         {
-            SaveProfileCommand = ReactiveCommand.CreateFromTask(SavePrompt);
-            ClearCommand = ReactiveCommand.Create(ClearPrompt);
-            DeleteProfileCommand = ReactiveCommand.Create(() =>
+            SaveProfileCommand = new AsyncRelayCommand(SavePrompt);
+            ClearCommand = new RelayCommand(ClearPrompt);
+            DeleteProfileCommand = new RelayCommand(() =>
             {
                 if (SelectedProfile != null)
                 {
@@ -50,15 +49,16 @@ namespace DiffusionNexus.UI.ViewModels
                 }
             });
 
-            AskForTextCommand = ReactiveCommand.CreateFromTask(async () =>
+            AskForTextCommand = new AsyncRelayCommand(async () =>
             {
-                // this knows nothing about Windows…
                 var result = await DialogService.ShowInputAsync("Enter something:");
                 if (result != null)
                 {
-                    /* …use it… */
+                    // use result
                 }
             });
+
+            LoadProfileCommand = new AsyncRelayCommand(LoadProfilesAsync);
 
             _ = LoadProfilesAsync();
         }

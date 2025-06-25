@@ -7,7 +7,7 @@ using DiffusionNexus.UI.Models;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class LogViewModel : ObservableObject
+    public partial class LogViewModel : ViewModelBase
     {
         private readonly ILogEventService _service;
 

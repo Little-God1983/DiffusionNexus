@@ -6,7 +6,7 @@ using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class SettingsViewModel : ObservableObject
+    public partial class SettingsViewModel : ViewModelBase
     {
         private readonly ISettingsService _settingsService;
 

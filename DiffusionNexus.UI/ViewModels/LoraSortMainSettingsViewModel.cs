@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
 {
-    public partial class LoraSortMainSettingsViewModel : ObservableObject
+    public partial class LoraSortMainSettingsViewModel : ViewModelBase
     {
         [ObservableProperty]
         private string? basePath;
