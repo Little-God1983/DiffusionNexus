@@ -8,8 +8,8 @@
   </UserControl.DataContext>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="200,*" Margin="10">
     <TextBox Grid.ColumnSpan="2" Watermark="Search loras..." Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
-    <TreeView Grid.Row="1" Items="{Binding FolderItems}"/>
-    <ItemsControl Grid.Column="1" Grid.Row="1" Items="{Binding Cards}">
+    <TreeView Grid.Row="1" ItemsSource="{Binding FolderItems}"/>
+    <ItemsControl Grid.Column="1" Grid.Row="1" ItemsSource="{Binding Cards}">
       <ItemsControl.ItemTemplate>
         <DataTemplate x:DataType="vm:LoraCard">
           <Border Background="#333333" Padding="10" Margin="5" Width="200" Height="200">

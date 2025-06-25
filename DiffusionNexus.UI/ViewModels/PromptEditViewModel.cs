@@ -5,6 +5,8 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
+using SixLabors.ImageSharp.Formats.Png.Chunks;
+using SixLabors.ImageSharp;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,6 +15,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Avalonia.Media;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -199,7 +202,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
-            using var image = Image.Load(_currentImagePath);
+            using var image = SixLabors.ImageSharp.Image.Load(_currentImagePath);
             var pngMeta = image.Metadata.GetPngMetadata();
             var parameters = BuildParametersString();
             var old = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
