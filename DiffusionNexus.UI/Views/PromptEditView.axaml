@@ -139,7 +139,6 @@
         </StackPanel>
         <StackPanel Grid.Column="1">
           <local:PromptEditorControl Margin="10"
-            DataContext="{Binding BatchPromptVm}"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"/>
           <Button Name="ApplyBatchButton" Content="Apply to Batch" Width="120"/>
