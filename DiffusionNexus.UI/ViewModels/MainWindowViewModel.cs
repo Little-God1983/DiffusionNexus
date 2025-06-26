@@ -51,7 +51,7 @@ namespace DiffusionNexus.UI.ViewModels
 
             ChangeModuleCommand = new RelayCommand<ModuleItem>(mod =>
             {
-                CurrentModuleView = mod.View;
+                CurrentModuleView = mod!.View;
             });
 
             OpenYoutubeCommand = new RelayCommand(() =>

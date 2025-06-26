@@ -1,6 +1,8 @@
 ﻿using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -44,22 +46,24 @@ namespace DiffusionNexus.UI.ViewModels
         private async Task OnBrowseSourceFolder(Window? window)
         {
             if (window is null) return;
-            var dlg = new OpenFolderDialog();
-            var result = await dlg.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result))
+
+            var folders = await window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            var path = folders.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
             {
-                SourceFolder = result;
+                SourceFolder = path;
             }
         }
 
         private async Task OnBrowseTargetFolder(Window? window)
         {
             if (window is null) return;
-            var dlg = new OpenFolderDialog();
-            var result = await dlg.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result))
+
+            var folders = await window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            var path = folders.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
             {
-                TargetFolder = result;
+                TargetFolder = path;
             }
         }
 
