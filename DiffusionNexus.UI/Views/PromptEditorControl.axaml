@@ -27,6 +27,9 @@
         </ComboBox>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Bottom">
+        <Button Content="New"
+                Width="80"
+                Command="{Binding NewProfileCommand}"/>
         <Button Content="Save"
                 Width="80"
                 Command="{Binding SaveProfileCommand}"/>

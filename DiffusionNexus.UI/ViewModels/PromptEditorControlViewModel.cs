@@ -2,6 +2,7 @@
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.Models;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
 
@@ -33,21 +34,16 @@ namespace DiffusionNexus.UI.ViewModels
         public IAsyncRelayCommand SaveProfileCommand { get; }
         public IAsyncRelayCommand LoadProfileCommand { get; }
         public IRelayCommand ClearCommand { get; }
-        public IRelayCommand DeleteProfileCommand { get; }
+        public IRelayCommand NewProfileCommand { get; }
+        public IAsyncRelayCommand DeleteProfileCommand { get; }
 
 
         public PromptEditorControlViewModel()
         {
             SaveProfileCommand = new AsyncRelayCommand(SavePrompt);
             ClearCommand = new RelayCommand(ClearPrompt);
-            DeleteProfileCommand = new RelayCommand(() =>
-            {
-                if (SelectedProfile != null)
-                {
-                    Profiles.Remove(SelectedProfile);
-                    SelectedProfile = null;
-                }
-            });
+            NewProfileCommand = new RelayCommand(NewProfile);
+            DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync);
 
             AskForTextCommand = new AsyncRelayCommand(async () =>
             {
@@ -65,7 +61,18 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task SavePrompt()
         {
-            var name = SelectedProfile?.Name;
+            string? name = SelectedProfile?.Name;
+
+            if (SelectedProfile != null &&
+                SelectedProfile.Blacklist == (Blacklist ?? string.Empty) &&
+                SelectedProfile.Whitelist == (Whitelist ?? string.Empty))
+            {
+                var copy = await DialogService.ShowConfirmationAsync("No new values detected - Do you want to create a copy?", false);
+                if (copy != true)
+                    return;
+                name = null; // force new name
+            }
+
             if (string.IsNullOrWhiteSpace(name))
             {
                 name = await DialogService.ShowInputAsync("Enter name for new profile");
@@ -94,11 +101,44 @@ namespace DiffusionNexus.UI.ViewModels
                 Whitelist = Whitelist ?? string.Empty
             };
             await PromptProfileService.SaveAsync(profile);
-            SelectedProfile = profile;
             await LoadProfilesAsync();
+            SelectedProfile = Profiles.FirstOrDefault(p => p.Name == name);
         }
 
         private void ClearPrompt() { Prompt = string.Empty; NegativePrompt = string.Empty; }
+
+        private void NewProfile()
+        {
+            Profiles ??= new ObservableCollection<PromptProfileModel>();
+            var profile = new PromptProfileModel();
+            Profiles.Add(profile);
+            SelectedProfile = profile;
+            Blacklist = string.Empty;
+            Whitelist = string.Empty;
+            Prompt = string.Empty;
+            NegativePrompt = string.Empty;
+        }
+
+        private async Task DeleteProfileAsync()
+        {
+            if (SelectedProfile == null)
+                return;
+
+            var confirm = await DialogService.ShowConfirmationAsync($"Do you want to delete '{SelectedProfile.Name}'?", false);
+            if (confirm != true)
+                return;
+
+            await PromptProfileService.DeleteAsync(SelectedProfile);
+            await LoadProfilesAsync();
+            SelectedProfile = Profiles.FirstOrDefault();
+            if (SelectedProfile == null)
+            {
+                Blacklist = string.Empty;
+                Whitelist = string.Empty;
+                Prompt = string.Empty;
+                NegativePrompt = string.Empty;
+            }
+        }
 
 
         private async Task LoadProfilesAsync()
