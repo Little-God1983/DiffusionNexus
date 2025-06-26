@@ -115,8 +115,6 @@ namespace DiffusionNexus.UI.ViewModels
             SelectedProfile = profile;
             Blacklist = string.Empty;
             Whitelist = string.Empty;
-            Prompt = string.Empty;
-            NegativePrompt = string.Empty;
         }
 
         private async Task DeleteProfileAsync()
