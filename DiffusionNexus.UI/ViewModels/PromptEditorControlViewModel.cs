@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
+using System;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -110,9 +111,17 @@ namespace DiffusionNexus.UI.ViewModels
         private void NewProfile()
         {
             Profiles ??= new ObservableCollection<PromptProfileModel>();
-            var profile = new PromptProfileModel();
-            Profiles.Add(profile);
-            SelectedProfile = profile;
+            var profile = Profiles.FirstOrDefault(x => String.IsNullOrEmpty(x.Name));
+            if (profile == null)
+            {
+                profile = new PromptProfileModel();
+                Profiles.Add(profile);
+                SelectedProfile = profile;  
+            }
+            else
+            {
+                SelectedProfile = profile;
+            }
             Blacklist = string.Empty;
             Whitelist = string.Empty;
         }
