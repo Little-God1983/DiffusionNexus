@@ -21,6 +21,7 @@ namespace DiffusionNexus.UI.ViewModels
 {
     public partial class PromptEditViewModel : ViewModelBase
     {
+        public IDialogService DialogService { get; set; } = null!;
         public PromptEditorControlViewModel SinglePromptVm { get; } = new();
         public PromptEditorControlViewModel BatchPromptVm { get; } = new();
         public BatchProcessingViewModel BatchViewModel { get; } = new();
@@ -139,23 +140,30 @@ namespace DiffusionNexus.UI.ViewModels
         private void DisplayMetadata()
         {
             if (_metadata == null) return;
-            Steps = _metadata.Steps.ToString();
-            Sampler = _metadata.Sampler;
-            ScheduleType = _metadata.ScheduleType;
-            CfgScale = _metadata.CFGScale.ToString();
-            Seed = _metadata.Seed.ToString();
-            FaceRestoration = _metadata.FaceRestoration;
-            Size = _metadata.Width > 0 && _metadata.Height > 0 ? $"{_metadata.Width}x{_metadata.Height}" : string.Empty;
-            ModelHash = _metadata.ModelHash;
-            Model = _metadata.Model;
-            Ti = _metadata.TI;
-            Version = _metadata.Version;
-            SourceIdentifier = _metadata.SourceIdentifier;
-            LoRAHashes = _metadata.LoRAHashes;
-            Width = _metadata.Width.ToString();
-            Height = _metadata.Height.ToString();
-            Hashes = _metadata.Hashes;
-            Resources = _metadata.Resources;
+
+            var map = new Dictionary<Action<string?>, string?>
+            {
+                { v => Steps = v, _metadata.Steps.ToString() },
+                { v => Sampler = v, _metadata.Sampler },
+                { v => ScheduleType = v, _metadata.ScheduleType },
+                { v => CfgScale = v, _metadata.CFGScale.ToString() },
+                { v => Seed = v, _metadata.Seed.ToString() },
+                { v => FaceRestoration = v, _metadata.FaceRestoration },
+                { v => Size = v, _metadata.Width > 0 && _metadata.Height > 0 ? $"{_metadata.Width}x{_metadata.Height}" : string.Empty },
+                { v => ModelHash = v, _metadata.ModelHash },
+                { v => Model = v, _metadata.Model },
+                { v => Ti = v, _metadata.TI },
+                { v => Version = v, _metadata.Version },
+                { v => SourceIdentifier = v, _metadata.SourceIdentifier },
+                { v => LoRAHashes = v, _metadata.LoRAHashes },
+                { v => Width = v, _metadata.Width.ToString() },
+                { v => Height = v, _metadata.Height.ToString() },
+                { v => Hashes = v, _metadata.Hashes },
+                { v => Resources = v, _metadata.Resources }
+            };
+
+            foreach (var pair in map)
+                pair.Key(pair.Value);
         }
 
         private void ClearMetadata()
@@ -215,9 +223,9 @@ namespace DiffusionNexus.UI.ViewModels
         {
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
-            if (File.Exists(_currentImagePath) && window != null)
+            if (File.Exists(_currentImagePath))
             {
-                var confirm = await ConfirmOverwriteAsync(window);
+                var confirm = await DialogService.ShowOverwriteConfirmationAsync();
                 if (!confirm) return;
             }
             SaveImage(_currentImagePath);
@@ -239,39 +247,6 @@ namespace DiffusionNexus.UI.ViewModels
             }
         }
 
-        private async Task<bool> ConfirmOverwriteAsync(Window owner)
-        {
-            var tcs = new TaskCompletionSource<bool>();
-            var dialog = new Window
-            {
-                Width = 300,
-                Height = 150,
-                Title = "Confirm Save",
-                WindowStartupLocation = WindowStartupLocation.CenterOwner
-            };
-            var yesButton = new Button { Content = "Yes", Width = 80 };
-            var noButton = new Button { Content = "No", Width = 80 };
-            yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
-            noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
-            dialog.Content = new StackPanel
-            {
-                Spacing = 10,
-                Margin = new Thickness(10),
-                Children =
-                {
-                    new TextBlock { Text = "Overwrite the existing file?", TextWrapping = TextWrapping.Wrap },
-                    new StackPanel
-                    {
-                        Orientation = Avalonia.Layout.Orientation.Horizontal,
-                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                        Spacing = 10,
-                        Children = { yesButton, noButton }
-                    }
-                }
-            };
-            await dialog.ShowDialog(owner);
-            return await tcs.Task;
-        }
 
         private void OnApplyBlacklist()
         {
