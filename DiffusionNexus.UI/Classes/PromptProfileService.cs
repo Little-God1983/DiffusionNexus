@@ -53,15 +53,28 @@ namespace DiffusionNexus.UI.Classes
         public async Task SaveAsync(PromptProfileModel profile)
         {
             List<PromptProfileModel> dict = await LoadProfilesAsync();
-            dict.Add(profile);
+            var existing = dict.FirstOrDefault(p => p.Name.Equals(profile.Name, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                existing.Blacklist = profile.Blacklist;
+                existing.Whitelist = profile.Whitelist;
+            }
+            else
+            {
+                dict.Add(profile);
+            }
             await SaveProfilesToDiskAsync(dict);
         }
 
         public async Task DeleteAsync(PromptProfileModel profile)
         {
             List<PromptProfileModel> list = await LoadProfilesAsync();
-            if (list.Remove(profile))
+            var existing = list.FirstOrDefault(p => p.Name.Equals(profile.Name, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                list.Remove(existing);
                 await SaveProfilesToDiskAsync(list);
+            }
         }
     }
 }
