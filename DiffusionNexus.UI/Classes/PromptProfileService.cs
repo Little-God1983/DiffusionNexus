@@ -14,8 +14,7 @@ namespace DiffusionNexus.UI.Classes
 
         public PromptProfileService()
         {
-            var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiffusionNexus");
-            Directory.CreateDirectory(folder);
+            var folder = AppDataHelper.GetDataFolder();
             _filePath = Path.Combine(folder, "prompt_profiles.json");
         }
 
@@ -42,13 +41,13 @@ namespace DiffusionNexus.UI.Classes
         public async Task<PromptProfileModel?> GetProfileAsync(PromptProfileModel profile)
         {
             IList<PromptProfileModel> list = await LoadProfilesAsync();
-            return list.FirstOrDefault(profile);
+            return list.FirstOrDefault(x => x.Name == profile.Name);
         }
 
         public async Task<bool> ExistsByNameAsync(string name)
         {
             IList<PromptProfileModel> dict = await LoadProfilesAsync();
-            return dict.Select(x => x.Name == name) == null ? false : true;
+            return dict.Any(x => x.Name == name);
         }
 
         public async Task SaveAsync(PromptProfileModel profile)

@@ -103,5 +103,11 @@ namespace DiffusionNexus.UI.Classes
             await dialog.ShowDialog(_owner);
             return await tcs.Task;
         }
+
+        public async Task<bool> ShowOverwriteConfirmationAsync()
+        {
+            var result = await ShowConfirmationAsync("Overwrite the existing file?");
+            return result == true;
+        }
     }
 }

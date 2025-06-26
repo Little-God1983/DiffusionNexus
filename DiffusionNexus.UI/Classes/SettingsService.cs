@@ -10,8 +10,7 @@ namespace DiffusionNexus.UI.Classes
         private readonly string _filePath;
         public SettingsService()
         {
-            var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiffusionNexus");
-            Directory.CreateDirectory(folder);
+            var folder = AppDataHelper.GetDataFolder();
             _filePath = Path.Combine(folder, "settings.json");
         }
 
