@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
 using SixLabors.ImageSharp;
+using Avalonia.Platform.Storage;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -88,8 +89,9 @@ namespace DiffusionNexus.UI.ViewModels
         public void OnDrop(DragEventArgs e)
         {
             if (!IsImageFile(e)) return;
-            var file = e.Data.GetFileNames()?.FirstOrDefault();
-            if (file == null) return;
+            var storageFile = e.Data.GetFiles()?.FirstOrDefault();
+            var file = storageFile?.TryGetLocalPath();
+            if (string.IsNullOrEmpty(file)) return;
             try
             {
                 using var stream = File.OpenRead(file);
@@ -119,8 +121,9 @@ namespace DiffusionNexus.UI.ViewModels
 
         private bool IsImageFile(DragEventArgs e)
         {
-            var files = e.Data.GetFileNames()?.ToList();
-            return files?.Count > 0 && IsImagePath(files[0]);
+            var items = e.Data.GetFiles()?.ToList();
+            var path = items?.FirstOrDefault()?.TryGetLocalPath();
+            return !string.IsNullOrEmpty(path) && IsImagePath(path!);
         }
 
         private static bool IsImagePath(string path)
@@ -215,7 +218,7 @@ namespace DiffusionNexus.UI.ViewModels
             var parameters = BuildParametersString();
             var old = pngMeta.TextData.FirstOrDefault(t => t.Keyword == "parameters");
             if (old != null) pngMeta.TextData.Remove(old);
-            pngMeta.TextData.Add(new PngTextData("parameters", parameters, null, null));
+            pngMeta.TextData.Add(new PngTextData("parameters", parameters, string.Empty, string.Empty));
             image.Save(path);
         }
 
@@ -235,15 +238,17 @@ namespace DiffusionNexus.UI.ViewModels
         {
             if (string.IsNullOrEmpty(_currentImagePath) || window == null)
                 return;
-            var dialog = new SaveFileDialog
+
+            var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Filters = { new FileDialogFilter { Name = "PNG", Extensions = { "png" } } },
-                InitialFileName = Path.GetFileName(_currentImagePath)
-            };
-            var result = await dialog.ShowAsync(window);
-            if (!string.IsNullOrEmpty(result))
+                SuggestedFileName = Path.GetFileName(_currentImagePath),
+                FileTypeChoices = new[] { new FilePickerFileType("PNG") { Patterns = new[] { "*.png" } } }
+            });
+
+            var path = file?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
             {
-                SaveImage(result);
+                SaveImage(path);
             }
         }
 
@@ -324,7 +329,7 @@ namespace DiffusionNexus.UI.ViewModels
                 _metadata.Resources
             };
             var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
-            await window.Clipboard.SetTextAsync(json);
+            await window.Clipboard!.SetTextAsync(json);
         }
     }
 }
