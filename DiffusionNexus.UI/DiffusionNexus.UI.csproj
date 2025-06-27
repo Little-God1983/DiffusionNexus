@@ -43,4 +43,8 @@
       <DependentUpon>LoraHelperView.axaml</DependentUpon>
     </Compile>
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiffusionNexus.LoraSort.Service\DiffusionNexus.LoraSort.Service.csproj" />
+  </ItemGroup>
 </Project>
