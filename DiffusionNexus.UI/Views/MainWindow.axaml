@@ -20,7 +20,6 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <SplitView Grid.Row="0" IsPaneOpen="{Binding IsMenuOpen}"
@@ -93,6 +92,5 @@
 
     <!-- With this single line -->
     <controls:LogControl Grid.Row="1" DataContext="{Binding LogViewModel}" />
-    <TextBlock Grid.Row="2" HorizontalAlignment="Right" Margin="5" Text="{Binding AppVersion}" />
   </Grid>
 </Window>

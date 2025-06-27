@@ -11,13 +11,6 @@
     </UserControl.DataContext>
     <ScrollViewer Margin="10" VerticalScrollBarVisibility="Auto">
         <StackPanel>
-            <!-- No Warranty Notice -->
-            <TextBlock Text="No Warranty: This software is provided 'as is', without any warranty of any kind, express or implied."
-                      Foreground="Red"
-                      FontWeight="Bold"
-                      TextWrapping="Wrap"
-                      Margin="10" />
-            
             <!-- LoRA Source Path Group -->
             <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="5" Margin="0,0,0,10" Padding="10">
                 <StackPanel>
