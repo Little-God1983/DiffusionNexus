@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Views;
 using DiffusionNexus.UI.Classes;
@@ -11,6 +12,8 @@ namespace DiffusionNexus.UI.ViewModels
 {
     public class MainWindowViewModel : ViewModelBase
     {
+        public string AppVersion { get; } = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
         public ObservableCollection<ModuleItem> Modules { get; } = new ObservableCollection<ModuleItem>
         {
             new("Lora Sort", "avares://DiffusionNexus.UI/Assets/LoraSort.png", new LoraSortView()),
