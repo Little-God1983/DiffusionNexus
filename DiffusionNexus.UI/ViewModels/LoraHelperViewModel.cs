@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
@@ -14,6 +15,9 @@ public partial class LoraHelperViewModel : ViewModelBase
 {
     // This is the backing list of *all* cards
     private readonly List<LoraCard> _allCards = new();
+
+    [ObservableProperty]
+    private bool isLoading;
 
     [ObservableProperty]
     private string? searchText;
@@ -34,27 +38,33 @@ public LoraHelperViewModel(ISettingsService settingsService)
 
 private async Task LoadAsync()
 {
+    IsLoading = true;
     var settings = await _settingsService.LoadAsync();
     if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
-        return;
-
-    var discovery = new ModelDiscoveryService();
-    var rootNode = discovery.BuildFolderTree(settings.LoraHelperFolderPath);
-    FolderItems.Clear();
-    foreach (var child in rootNode.Children)
-        FolderItems.Add(ConvertFolder(child));
-
-    foreach (var model in discovery.CollectModels(settings.LoraHelperFolderPath))
     {
-        var card = new LoraCard
-        {
-            Name = model.ModelName,
-            Model = model
-        };
-        _allCards.Add(card);
+        IsLoading = false;
+        return;
     }
 
-    RefreshCards();
+    var discovery = new ModelDiscoveryService();
+
+    var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
+    await Dispatcher.UIThread.InvokeAsync(() =>
+    {
+        FolderItems.Clear();
+        foreach (var child in rootNode.Children)
+            FolderItems.Add(ConvertFolder(child));
+    });
+
+    var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
+    var cards = models.Select(m => new LoraCard { Name = m.ModelName, Model = m }).ToList();
+    await Dispatcher.UIThread.InvokeAsync(() =>
+    {
+        _allCards.Clear();
+        _allCards.AddRange(cards);
+        RefreshCards();
+        IsLoading = false;
+    });
 }
 
 private FolderItemViewModel ConvertFolder(FolderNode node)
@@ -98,6 +108,14 @@ public partial class LoraCard : ViewModelBase
 
     [ObservableProperty]
     private ModelClass? _model;
+
+    [ObservableProperty]
+    private string? _previewImagePath;
+
+    partial void OnModelChanged(ModelClass? value)
+    {
+        PreviewImagePath = GetPreviewImagePath();
+    }
 
     public string? GetPreviewImagePath()
     {

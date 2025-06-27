@@ -1,11 +1,15 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
     <vm:LoraHelperViewModel/>
   </UserControl.DataContext>
+  <UserControl.Resources>
+    <conv:PathToBitmapConverter x:Key="PathToBitmap"/>
+  </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="200,*" Margin="10">
     <TextBox Grid.ColumnSpan="2" Watermark="Search loras..." Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
     <TreeView Grid.Row="1" ItemsSource="{Binding FolderItems}">
@@ -15,22 +19,31 @@
         </TreeDataTemplate>
       </TreeView.ItemTemplate>
     </TreeView>
-    <ItemsControl Grid.Column="1" Grid.Row="1" ItemsSource="{Binding Cards}">
-      <ItemsControl.ItemTemplate>
-        <DataTemplate x:DataType="vm:LoraCard">
-          <Border Background="#333333" Padding="10" Margin="5" Width="200" Height="200">
-            <StackPanel Spacing="5">
-              <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
-              <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
-            </StackPanel>
-          </Border>
-        </DataTemplate>
-      </ItemsControl.ItemTemplate>
-      <ItemsControl.ItemsPanel>
-        <ItemsPanelTemplate>
-          <WrapPanel/>
-        </ItemsPanelTemplate>
-      </ItemsControl.ItemsPanel>
-    </ItemsControl>
+    <Grid Grid.Column="1" Grid.Row="1">
+      <ItemsControl ItemsSource="{Binding Cards}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:LoraCard">
+            <Border Background="#333333" Padding="10" Margin="5" Width="200" Height="230">
+              <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Top" Spacing="5">
+                  <Image Source="{Binding PreviewImagePath, Converter={StaticResource PathToBitmap}}" Height="120" Stretch="UniformToFill"/>
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold" TextWrapping="Wrap"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="5">
+                  <Button Content="🌐" Width="24" Height="24"/>
+                  <Button Content="📋" Width="24" Height="24"/>
+                </StackPanel>
+              </DockPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel/>
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+      </ItemsControl>
+      <ProgressRing IsActive="{Binding IsLoading}" Width="50" Height="50" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Grid>
   </Grid>
 </UserControl>
