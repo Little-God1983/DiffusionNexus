@@ -12,6 +12,7 @@ namespace DiffusionNexus.UI.ViewModels
     public partial class SettingsViewModel : ViewModelBase
     {
         private readonly ISettingsService _settingsService;
+        private Window? _window;
 
         [ObservableProperty]
         private string? _civitaiApiKey;
@@ -27,9 +28,9 @@ namespace DiffusionNexus.UI.ViewModels
 
         public IRelayCommand SaveCommand { get; }
         public IRelayCommand DeleteApiKeyCommand { get; }
-        public IAsyncRelayCommand<Window?> BrowseLoraSortSourceCommand { get; }
-        public IAsyncRelayCommand<Window?> BrowseLoraSortTargetCommand { get; }
-        public IAsyncRelayCommand<Window?> BrowseLoraHelperFolderCommand { get; }
+        public IAsyncRelayCommand BrowseLoraSortSourceCommand { get; }
+        public IAsyncRelayCommand BrowseLoraSortTargetCommand { get; }
+        public IAsyncRelayCommand BrowseLoraHelperFolderCommand { get; }
 
         public SettingsViewModel() : this(new SettingsService())
         {
@@ -40,10 +41,15 @@ namespace DiffusionNexus.UI.ViewModels
             _settingsService = service;
             SaveCommand = new AsyncRelayCommand(SaveAsync);
             DeleteApiKeyCommand = new RelayCommand(DeleteApiKey);
-            BrowseLoraSortSourceCommand = new AsyncRelayCommand<Window?>(BrowseLoraSortSourceAsync);
-            BrowseLoraSortTargetCommand = new AsyncRelayCommand<Window?>(BrowseLoraSortTargetAsync);
-            BrowseLoraHelperFolderCommand = new AsyncRelayCommand<Window?>(BrowseLoraHelperFolderAsync);
+            BrowseLoraSortSourceCommand = new AsyncRelayCommand(BrowseLoraSortSourceAsync);
+            BrowseLoraSortTargetCommand = new AsyncRelayCommand(BrowseLoraSortTargetAsync);
+            BrowseLoraHelperFolderCommand = new AsyncRelayCommand(BrowseLoraHelperFolderAsync);
             _ = LoadAsync();
+        }
+
+        public void SetWindow(Window window)
+        {
+            _window = window;
         }
 
         private async Task LoadAsync()
@@ -72,28 +78,28 @@ namespace DiffusionNexus.UI.ViewModels
             CivitaiApiKey = string.Empty;
         }
 
-        private async Task BrowseLoraSortSourceAsync(Window? window)
+        private async Task BrowseLoraSortSourceAsync()
         {
-            if (window is null) return;
-            var folders = await window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            if (_window is null) return;
+            var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
                 LoraSortSourcePath = path;
         }
 
-        private async Task BrowseLoraSortTargetAsync(Window? window)
+        private async Task BrowseLoraSortTargetAsync()
         {
-            if (window is null) return;
-            var folders = await window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            if (_window is null) return;
+            var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
                 LoraSortTargetPath = path;
         }
 
-        private async Task BrowseLoraHelperFolderAsync(Window? window)
+        private async Task BrowseLoraHelperFolderAsync()
         {
-            if (window is null) return;
-            var folders = await window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            if (_window is null) return;
+            var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
                 LoraHelperFolderPath = path;
