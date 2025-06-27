@@ -7,6 +7,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <WarningLevel>3</WarningLevel>
+    <!-- Base version prefix. Build number will be appended automatically. -->
+    <VersionPrefix>0.5.1</VersionPrefix>
+    <Version>$(VersionPrefix).0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,6 +31,27 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.6" />
   </ItemGroup>
+
+  <!-- Automatically read, increment and save build number on each build -->
+  <Target Name="UpdateBuildNumber" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <BuildNumberFile>$(MSBuildProjectDirectory)\..\buildnumber.txt</BuildNumberFile>
+    </PropertyGroup>
+    <ReadLinesFromFile File="$(BuildNumberFile)" Condition="Exists('$(BuildNumberFile)')">
+      <Output TaskParameter="Lines" PropertyName="_CurrentBuildNumber" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_CurrentBuildNumber Condition="'$(_CurrentBuildNumber)' == ''">0</_CurrentBuildNumber>
+      <_NewBuildNumber>$([MSBuild]::Add($(_CurrentBuildNumber), 1))</_NewBuildNumber>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(_NewBuildNumber)" Overwrite="true" />
+    <PropertyGroup>
+      <Version>$(VersionPrefix).$(_NewBuildNumber)</Version>
+      <AssemblyVersion>$(Version)</AssemblyVersion>
+      <FileVersion>$(Version)</FileVersion>
+      <InformationalVersion>$(Version)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <Compile Update="Views\Controls\LogControl.axaml.cs">
