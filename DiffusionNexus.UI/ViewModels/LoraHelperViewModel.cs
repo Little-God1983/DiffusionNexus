@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
@@ -28,12 +29,12 @@ public LoraHelperViewModel() : this(new SettingsService())
 public LoraHelperViewModel(ISettingsService settingsService)
 {
     _settingsService = settingsService;
-    Load();
+    _ = LoadAsync();
 }
 
-private void Load()
+private async Task LoadAsync()
 {
-    var settings = _settingsService.LoadAsync().GetAwaiter().GetResult();
+    var settings = await _settingsService.LoadAsync();
     if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
         return;
 
