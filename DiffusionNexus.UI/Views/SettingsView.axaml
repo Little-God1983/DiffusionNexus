@@ -14,7 +14,7 @@
           <StackPanel Orientation="Vertical" Spacing="5" VerticalAlignment="Center">
               <TextBlock Text="Civitai API Key" Width="120"/>
             <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBox></TextBox>
+              <TextBox Text="{Binding CivitaiApiKey, Mode=TwoWay}" Width="200"/>
               <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>  
             </StackPanel>
           </StackPanel>
@@ -22,14 +22,26 @@
       </Expander>
 
       <Expander Header="Lora Sort" IsExpanded="False" Width="300">
-        <TextBlock Margin="10" Text="No settings available."/>
+        <StackPanel Spacing="5" Margin="10">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Source Folder" Width="100"/>
+            <TextBox Text="{Binding LoraSortSourcePath, Mode=TwoWay}" Width="150"/>
+            <Button Content="Browse..." Command="{Binding BrowseLoraSortSourceCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Target Folder" Width="100"/>
+            <TextBox Text="{Binding LoraSortTargetPath, Mode=TwoWay}" Width="150"/>
+            <Button Content="Browse..." Command="{Binding BrowseLoraSortTargetCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          </StackPanel>
+        </StackPanel>
       </Expander>
 
       <Expander Header="Lora Helper" IsExpanded="False" Width="300">
         <StackPanel Spacing="5" Margin="10">
-          <StackPanel Orientation="Vertical" Spacing="5">
-            <TextBlock Text="Folder Path" Width="120"/>
-            <TextBox Text="{Binding LoraHelperFolderPath, Mode=TwoWay}" Width="250"/>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Folder Path" Width="100"/>
+            <TextBox Text="{Binding LoraHelperFolderPath, Mode=TwoWay}" Width="150"/>
+            <Button Content="Browse..." Command="{Binding BrowseLoraHelperFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
         </StackPanel>
       </Expander>
