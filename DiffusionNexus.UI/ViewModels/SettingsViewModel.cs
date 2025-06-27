@@ -15,16 +15,7 @@ namespace DiffusionNexus.UI.ViewModels
         private Window? _window;
 
         [ObservableProperty]
-        private string? _civitaiApiKey;
-
-        [ObservableProperty]
-        private string? _loraHelperFolderPath;
-
-        [ObservableProperty]
-        private string? _loraSortSourcePath;
-
-        [ObservableProperty]
-        private string? _loraSortTargetPath;
+        private SettingsModel _settings = new SettingsModel();
 
         public IRelayCommand SaveCommand { get; }
         public IRelayCommand DeleteApiKeyCommand { get; }
@@ -54,28 +45,17 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task LoadAsync()
         {
-            var settings = await _settingsService.LoadAsync();
-            CivitaiApiKey = SecureStorageHelper.DecryptString(settings.EncryptedCivitaiApiKey ?? string.Empty);
-            LoraHelperFolderPath = settings.LoraHelperFolderPath;
-            LoraSortSourcePath = settings.LoraSortSourcePath;
-            LoraSortTargetPath = settings.LoraSortTargetPath;
+            Settings = await _settingsService.LoadAsync();
         }
 
         private async Task SaveAsync()
         {
-            var model = new SettingsModel
-            {
-                EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey) ? null : SecureStorageHelper.EncryptString(CivitaiApiKey),
-                LoraHelperFolderPath = LoraHelperFolderPath,
-                LoraSortSourcePath = LoraSortSourcePath,
-                LoraSortTargetPath = LoraSortTargetPath
-            };
-            await _settingsService.SaveAsync(model);
+            await _settingsService.SaveAsync(Settings);
         }
 
         private void DeleteApiKey()
         {
-            CivitaiApiKey = string.Empty;
+            Settings.CivitaiApiKey = string.Empty;
         }
 
         private async Task BrowseLoraSortSourceAsync()
@@ -84,7 +64,7 @@ namespace DiffusionNexus.UI.ViewModels
             var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
-                LoraSortSourcePath = path;
+                Settings.LoraSortSourcePath = path;
         }
 
         private async Task BrowseLoraSortTargetAsync()
@@ -93,7 +73,7 @@ namespace DiffusionNexus.UI.ViewModels
             var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
-                LoraSortTargetPath = path;
+                Settings.LoraSortTargetPath = path;
         }
 
         private async Task BrowseLoraHelperFolderAsync()
@@ -102,7 +82,7 @@ namespace DiffusionNexus.UI.ViewModels
             var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
-                LoraHelperFolderPath = path;
+                Settings.LoraHelperFolderPath = path;
         }
     }
 }

@@ -8,5 +8,8 @@ namespace DiffusionNexus.UI.Classes
         public string? LoraHelperFolderPath { get; set; }
         public string? LoraSortSourcePath { get; set; }
         public string? LoraSortTargetPath { get; set; }
+
+        [JsonIgnore]
+        public string? CivitaiApiKey { get; set; }
     }
 }

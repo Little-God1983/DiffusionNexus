@@ -11,12 +11,12 @@
     <StackPanel Margin="10" Spacing="10">
       <Expander Header="General" IsExpanded="True" Width="600">
         <StackPanel Spacing="5" Margin="10">
-          <StackPanel Orientation="Vertical" Spacing="5" VerticalAlignment="Center">
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Civitai API Key"/>
-              <TextBox Text="{Binding CivitaiApiKey, Mode=TwoWay}" Width="350"/>
-              <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>  
-            </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="Civitai API Key"/>
+            <TextBox PasswordChar="*" Watermark="Paste API Key here"
+                     Text="{Binding Settings.CivitaiApiKey, Mode=TwoWay}"
+                     Width="350"/>
+            <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>
           </StackPanel>
         </StackPanel>
       </Expander>
@@ -26,12 +26,12 @@
           <TextBlock Text="Defaults"/>
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Source Folder" Width="100"/>
-            <TextBox Text="{Binding LoraSortSourcePath, Mode=TwoWay}" Width="350"/>
+            <TextBox Text="{Binding Settings.LoraSortSourcePath, Mode=TwoWay}" Width="350"/>
             <Button Content="Browse..." Command="{Binding BrowseLoraSortSourceCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Target Folder" Width="100"/>
-            <TextBox Text="{Binding LoraSortTargetPath, Mode=TwoWay}" Width="350"/>
+            <TextBox Text="{Binding Settings.LoraSortTargetPath, Mode=TwoWay}" Width="350"/>
             <Button Content="Browse..." Command="{Binding BrowseLoraSortTargetCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
         </StackPanel>
@@ -42,7 +42,7 @@
           <TextBlock Text="Lora Location"/>
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Folder Path" Width="100"/>
-            <TextBox Text="{Binding LoraHelperFolderPath, Mode=TwoWay}" Width="350"/>
+            <TextBox Text="{Binding Settings.LoraHelperFolderPath, Mode=TwoWay}" Width="350"/>
             <Button Content="Browse..." Command="{Binding BrowseLoraHelperFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
         </StackPanel>
