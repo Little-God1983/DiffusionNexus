@@ -20,11 +20,18 @@ namespace DiffusionNexus.UI.Classes
                 return new SettingsModel();
 
             var json = await File.ReadAllTextAsync(_filePath);
-            return JsonSerializer.Deserialize<SettingsModel>(json) ?? new SettingsModel();
+            var model = JsonSerializer.Deserialize<SettingsModel>(json) ?? new SettingsModel();
+            // Decrypt API key after loading
+            model.CivitaiApiKey = SecureStorageHelper.DecryptString(model.EncryptedCivitaiApiKey);
+            return model;
         }
 
         public async Task SaveAsync(SettingsModel settings)
         {
+            // Encrypt API key before saving
+            settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(settings.CivitaiApiKey)
+                ? null
+                : SecureStorageHelper.EncryptString(settings.CivitaiApiKey);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(_filePath, json);
         }

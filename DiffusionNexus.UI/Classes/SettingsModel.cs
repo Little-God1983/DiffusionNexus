@@ -1,10 +1,18 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using System.Text.Json.Serialization;
 
 namespace DiffusionNexus.UI.Classes
 {
-    public class SettingsModel
+    [ObservableObject]
+    public partial class SettingsModel
     {
-        public string? EncryptedCivitaiApiKey { get; set; }
-        public string? LoraHelperFolderPath { get; set; }
+
+        [ObservableProperty] private string? _encryptedCivitaiApiKey;
+        [ObservableProperty] private string? _loraSortSourcePath;
+        [ObservableProperty] private string? _loraSortTargetPath;
+        [ObservableProperty] private string? _loraHelperFolderPath;
+
+        [JsonIgnore]
+        public string? CivitaiApiKey { get; set; }
     }
 }

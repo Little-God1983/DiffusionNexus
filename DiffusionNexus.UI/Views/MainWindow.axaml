@@ -25,7 +25,7 @@
     <SplitView Grid.Row="0" IsPaneOpen="{Binding IsMenuOpen}"
                DisplayMode="CompactInline"
                CompactPaneLength="60"
-               OpenPaneLength="200"
+               OpenPaneLength="145"
                PanePlacement="Left">
     <!-- Sidebar Pane -->
     <SplitView.Pane>
