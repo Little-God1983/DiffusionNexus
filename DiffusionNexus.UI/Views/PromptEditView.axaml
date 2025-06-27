@@ -119,6 +119,8 @@
       <Grid x:DataType="vm:BatchProcessingViewModel" DataContext="{Binding BatchViewModel}"
       Margin="10"
       ColumnDefinitions="400,*">
+        <Image
+            Source="avares://DiffusionNexus.UI/Assets/under_construction.png" Opacity="0.75" Grid.Column="0" Grid.ColumnSpan="2"/>
         <StackPanel Spacing="10" Grid.Column="0">
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="Source Folder" Width="100"/>
