@@ -66,6 +66,9 @@
     <Compile Update="Views\LoraHelperView.axaml.cs">
       <DependentUpon>LoraHelperView.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Views\CustomTagMapWindow.axaml.cs">
+      <DependentUpon>CustomTagMapWindow.axaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
