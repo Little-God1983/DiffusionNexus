@@ -11,11 +11,9 @@
         MinWidth="1300" MinHeight="800"
         Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico"
         Title="Diffusion Nexus">
-
   <Window.DataContext>
     <vm:MainWindowViewModel/>
   </Window.DataContext>
-
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="*" />
@@ -24,7 +22,7 @@
 
     <SplitView Grid.Row="0" IsPaneOpen="{Binding IsMenuOpen}"
                DisplayMode="CompactInline"
-               CompactPaneLength="60"
+               CompactPaneLength="40"
                OpenPaneLength="145"
                PanePlacement="Left">
     <!-- Sidebar Pane -->
