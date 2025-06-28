@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.IO;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
@@ -121,6 +122,19 @@ public partial class LoraCard : ViewModelBase
     [ObservableProperty]
     private Bitmap? _previewImage;
 
+    public IRelayCommand EditCommand { get; }
+    public IRelayCommand DeleteCommand { get; }
+    public IRelayCommand OpenWebCommand { get; }
+    public IRelayCommand CopyCommand { get; }
+
+    public LoraCard()
+    {
+        EditCommand = new RelayCommand(OnEdit);
+        DeleteCommand = new RelayCommand(OnDelete);
+        OpenWebCommand = new RelayCommand(OnOpenWeb);
+        CopyCommand = new RelayCommand(OnCopy);
+    }
+
     partial void OnModelChanged(ModelClass? value)
     {
         _ = LoadPreviewImageAsync();
@@ -168,4 +182,12 @@ public partial class LoraCard : ViewModelBase
         }
         return null;
     }
+
+    private void OnEdit() => Log($"Edit {Name}");
+
+    private void OnDelete() => Log($"Delete {Name}");
+
+    private void OnOpenWeb() => Log($"Open web for {Name}");
+
+    private void OnCopy() => Log($"Copy {Name}");
 }

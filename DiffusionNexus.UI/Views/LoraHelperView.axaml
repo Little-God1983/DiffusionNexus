@@ -8,41 +8,54 @@
   </UserControl.DataContext>
   <UserControl.Resources>
   </UserControl.Resources>
-  <Grid RowDefinitions="Auto,*" ColumnDefinitions="200,*" Margin="10">
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <TextBox Grid.ColumnSpan="2" Watermark="Search loras..." Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
-    <TreeView Grid.Row="1" ItemsSource="{Binding FolderItems}">
-      <TreeView.ItemTemplate>
-        <TreeDataTemplate ItemsSource="{Binding Children}" DataType="vm:FolderItemViewModel">
-          <TextBlock Text="{Binding DisplayName}"/>
-        </TreeDataTemplate>
-      </TreeView.ItemTemplate>
-    </TreeView>
+    <ScrollViewer Grid.Row="1"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+      <TreeView ItemsSource="{Binding FolderItems}">
+        <TreeView.ItemTemplate>
+          <TreeDataTemplate ItemsSource="{Binding Children}" DataType="vm:FolderItemViewModel">
+            <TextBlock Text="{Binding DisplayName}"/>
+          </TreeDataTemplate>
+        </TreeView.ItemTemplate>
+      </TreeView>
+    </ScrollViewer>
     <Grid Grid.Column="1" Grid.Row="1">
-      <ItemsControl ItemsSource="{Binding Cards}">
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="vm:LoraCard">
-            <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
-              <Grid>
-                <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
-                <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
-                  <StackPanel>
-                    <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                      <Button Content="🌐" Width="24" Height="24" Margin="0,4,4,0"/>
-                      <Button Content="📋" Width="24" Height="24" Margin="0,4,0,0"/>
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ItemsControl ItemsSource="{Binding Cards}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:LoraCard">
+              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+                <Grid>
+                  <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+                  <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
+                    <StackPanel>
+                      <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Button Content="✏️"
+                                Width="24" Height="24" FontSize="16"
+                                Margin="0,4,4,0"
+                                Command="{Binding EditCommand}"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                          <Button Content="🌐" Width="24" Height="24" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
+                          <Button Content="📋" Width="24" Height="24" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
+                          <Button Content="❌" Width="24" Height="24" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
+                        </StackPanel>
+                      </Grid>
                     </StackPanel>
-                  </StackPanel>
-                </Border>
-              </Grid>
-            </Border>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <WrapPanel/>
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-      </ItemsControl>
+                  </Border>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel/>
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
+      </ScrollViewer>
       <ProgressBar IsVisible="{Binding IsLoading}" IsIndeterminate="True" Width="120" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Grid>
   </Grid>
