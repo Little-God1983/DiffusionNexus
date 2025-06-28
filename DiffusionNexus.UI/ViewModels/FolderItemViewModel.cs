@@ -11,6 +11,9 @@ public partial class FolderItemViewModel : ViewModelBase
     [ObservableProperty]
     private int modelCount;
 
+    [ObservableProperty]
+    private string? path;
+
     public ObservableCollection<FolderItemViewModel> Children { get; } = new();
 
     public string DisplayName => $"{Name} ({ModelCount})";
