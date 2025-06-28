@@ -154,10 +154,10 @@ public partial class LoraCard : ViewModelBase
     {
         if (Model == null) return null;
         string[] priority = [
-            ".preview.png",
             ".preview.webp",
             ".preview.jpeg",
-            ".preview.jpg"
+            ".preview.jpg",
+            ".preview.png"
         ];
 
         foreach (var ext in priority)
