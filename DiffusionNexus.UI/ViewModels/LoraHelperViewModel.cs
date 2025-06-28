@@ -25,6 +25,11 @@ public partial class LoraHelperViewModel : ViewModelBase
     [ObservableProperty]
     private string? searchText;
 
+    [ObservableProperty]
+    private FolderItemViewModel? selectedFolder;
+
+    public IRelayCommand ResetFiltersCommand { get; }
+
     // What the View actually binds to
 public ObservableCollection<LoraCard> Cards { get; } = new();
 public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
@@ -36,6 +41,7 @@ public LoraHelperViewModel() : this(new SettingsService())
 public LoraHelperViewModel(ISettingsService settingsService)
 {
     _settingsService = settingsService;
+    ResetFiltersCommand = new RelayCommand(ResetFilters);
     _ = LoadAsync();
 }
 
@@ -69,7 +75,8 @@ private async Task LoadAsync()
 
     foreach (var model in models)
     {
-        var card = new LoraCard { Name = model.ModelName, Model = model };
+        var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
+        var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder };
         _allCards.Add(card);
         Dispatcher.UIThread.Post(() => Cards.Add(card));
     }
@@ -79,7 +86,7 @@ private async Task LoadAsync()
 
 private FolderItemViewModel ConvertFolder(FolderNode node)
 {
-    var vm = new FolderItemViewModel { Name = node.Name, ModelCount = node.ModelCount };
+    var vm = new FolderItemViewModel { Name = node.Name, ModelCount = node.ModelCount, Path = node.FullPath };
     foreach (var child in node.Children)
         vm.Children.Add(ConvertFolder(child));
     return vm;
@@ -92,18 +99,36 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
         RefreshCards();
     }
 
+    partial void OnSelectedFolderChanged(FolderItemViewModel? value)
+    {
+        if (value != null)
+            SearchText = null;
+        RefreshCards();
+    }
+
     private void RefreshCards()
     {
-        // filter (case-insensitive) if there's any text, otherwise show all
-        var query = string.IsNullOrWhiteSpace(SearchText)
-            ? _allCards
-            : _allCards.Where(c =>
+        IEnumerable<LoraCard> query = _allCards;
+
+        if (SelectedFolder != null)
+            query = query.Where(c =>
+                c.FolderPath != null && c.FolderPath.StartsWith(SelectedFolder.Path!, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+            query = query.Where(c =>
                 c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
 
         // rebuild the ObservableCollection
         Cards.Clear();
         foreach (var c in query)
             Cards.Add(c);
+    }
+
+    private void ResetFilters()
+    {
+        SelectedFolder = null;
+        SearchText = null;
+        RefreshCards();
     }
 }
 
@@ -121,6 +146,9 @@ public partial class LoraCard : ViewModelBase
 
     [ObservableProperty]
     private Bitmap? _previewImage;
+
+    [ObservableProperty]
+    private string? folderPath;
 
     public IRelayCommand EditCommand { get; }
     public IRelayCommand DeleteCommand { get; }
