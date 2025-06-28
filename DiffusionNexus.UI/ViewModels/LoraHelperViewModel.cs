@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using System.IO;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
@@ -14,6 +17,9 @@ public partial class LoraHelperViewModel : ViewModelBase
 {
     // This is the backing list of *all* cards
     private readonly List<LoraCard> _allCards = new();
+
+    [ObservableProperty]
+    private bool isLoading;
 
     [ObservableProperty]
     private string? searchText;
@@ -34,27 +40,40 @@ public LoraHelperViewModel(ISettingsService settingsService)
 
 private async Task LoadAsync()
 {
+    IsLoading = true;
     var settings = await _settingsService.LoadAsync();
     if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
-        return;
-
-    var discovery = new ModelDiscoveryService();
-    var rootNode = discovery.BuildFolderTree(settings.LoraHelperFolderPath);
-    FolderItems.Clear();
-    foreach (var child in rootNode.Children)
-        FolderItems.Add(ConvertFolder(child));
-
-    foreach (var model in discovery.CollectModels(settings.LoraHelperFolderPath))
     {
-        var card = new LoraCard
-        {
-            Name = model.ModelName,
-            Model = model
-        };
-        _allCards.Add(card);
+        IsLoading = false;
+        return;
     }
 
-    RefreshCards();
+    var discovery = new ModelDiscoveryService();
+
+    var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
+    await Dispatcher.UIThread.InvokeAsync(() =>
+    {
+        FolderItems.Clear();
+        foreach (var child in rootNode.Children)
+            FolderItems.Add(ConvertFolder(child));
+    });
+
+    var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
+
+    await Dispatcher.UIThread.InvokeAsync(() =>
+    {
+        _allCards.Clear();
+        Cards.Clear();
+    });
+
+    foreach (var model in models)
+    {
+        var card = new LoraCard { Name = model.ModelName, Model = model };
+        _allCards.Add(card);
+        Dispatcher.UIThread.Post(() => Cards.Add(card));
+    }
+
+    await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
 }
 
 private FolderItemViewModel ConvertFolder(FolderNode node)
@@ -99,14 +118,46 @@ public partial class LoraCard : ViewModelBase
     [ObservableProperty]
     private ModelClass? _model;
 
+    [ObservableProperty]
+    private Bitmap? _previewImage;
+
+    partial void OnModelChanged(ModelClass? value)
+    {
+        _ = LoadPreviewImageAsync();
+    }
+
+    private async Task LoadPreviewImageAsync()
+    {
+        var path = GetPreviewImagePath();
+        if (path is null || !File.Exists(path))
+        {
+            PreviewImage = null;
+            return;
+        }
+
+        try
+        {
+            var bitmap = await Task.Run(() =>
+            {
+                using var stream = File.OpenRead(path);
+                return new Bitmap(stream);
+            });
+            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = bitmap);
+        }
+        catch
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = null);
+        }
+    }
+
     public string? GetPreviewImagePath()
     {
         if (Model == null) return null;
         string[] priority = [
-            ".preview.png",
             ".preview.webp",
             ".preview.jpeg",
-            ".preview.jpg"
+            ".preview.jpg",
+            ".preview.png"
         ];
 
         foreach (var ext in priority)
