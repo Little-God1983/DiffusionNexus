@@ -1,5 +1,9 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Avalonia.Controls;
+using DiffusionNexus.UI.Classes;
+using Avalonia.Platform.Storage;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -25,27 +29,54 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private string actionButtonText = "Go";
 
-        public IRelayCommand SelectBasePathCommand { get; }
-        public IRelayCommand SelectTargetPathCommand { get; }
+        private readonly ISettingsService _settingsService;
+        private Window? _window;
+
+        public IAsyncRelayCommand SelectBasePathCommand { get; }
+        public IAsyncRelayCommand SelectTargetPathCommand { get; }
         public IRelayCommand GoCommand { get; }
 
-        public LoraSortMainSettingsViewModel()
+        public LoraSortMainSettingsViewModel() : this(new SettingsService())
         {
-            SelectBasePathCommand = new RelayCommand(OnSelectBasePath);
-            SelectTargetPathCommand = new RelayCommand(OnSelectTargetPath);
+        }
+
+        public LoraSortMainSettingsViewModel(ISettingsService settingsService)
+        {
+            _settingsService = settingsService;
+            SelectBasePathCommand = new AsyncRelayCommand(OnSelectBasePathAsync);
+            SelectTargetPathCommand = new AsyncRelayCommand(OnSelectTargetPathAsync);
             GoCommand = new RelayCommand(OnGo);
+            _ = LoadDefaultsAsync();
         }
 
-        private void OnSelectBasePath()
+        public void SetWindow(Window window)
         {
-            // TODO: Implement folder picker logic
-            StatusText = "SelectBasePath clicked (not implemented)";
+            _window = window;
         }
 
-        private void OnSelectTargetPath()
+        private async Task LoadDefaultsAsync()
         {
-            // TODO: Implement folder picker logic
-            StatusText = "SelectTargetPath clicked (not implemented)";
+            var settings = await _settingsService.LoadAsync();
+            BasePath = settings.LoraSortSourcePath;
+            TargetPath = settings.LoraSortTargetPath;
+        }
+
+        private async Task OnSelectBasePathAsync()
+        {
+            if (_window is null) return;
+            var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            var path = folders.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
+                BasePath = path;
+        }
+
+        private async Task OnSelectTargetPathAsync()
+        {
+            if (_window is null) return;
+            var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            var path = folders.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
+                TargetPath = path;
         }
 
         private void OnGo()

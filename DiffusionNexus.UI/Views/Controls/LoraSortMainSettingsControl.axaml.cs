@@ -11,6 +11,15 @@ namespace DiffusionNexus.UI.Views.Controls
         {
             InitializeComponent();
             DataContext = new LoraSortMainSettingsViewModel();
+            this.AttachedToVisualTree += OnAttached;
+        }
+
+        private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
+        {
+            if (DataContext is LoraSortMainSettingsViewModel vm && VisualRoot is Window window)
+            {
+                vm.SetWindow(window);
+            }
         }
 
         private void InitializeComponent()
