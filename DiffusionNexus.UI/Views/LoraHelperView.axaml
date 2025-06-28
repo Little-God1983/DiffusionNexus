@@ -1,14 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             xmlns:conv="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
     <vm:LoraHelperViewModel/>
   </UserControl.DataContext>
   <UserControl.Resources>
-    <conv:PathToBitmapConverter x:Key="PathToBitmap"/>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="200,*" Margin="10">
     <TextBox Grid.ColumnSpan="2" Watermark="Search loras..." Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
@@ -23,17 +21,19 @@
       <ItemsControl ItemsSource="{Binding Cards}">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:LoraCard">
-            <Border Background="#333333" Padding="10" Margin="5" Width="200" Height="230">
-              <DockPanel LastChildFill="False">
-                <StackPanel DockPanel.Dock="Top" Spacing="5">
-                  <Image Source="{Binding PreviewImagePath, Converter={StaticResource PathToBitmap}}" Height="120" Stretch="UniformToFill"/>
-                  <TextBlock Text="{Binding Name}" FontWeight="Bold" TextWrapping="Wrap"/>
-                </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="5">
-                  <Button Content="🌐" Width="24" Height="24"/>
-                  <Button Content="📋" Width="24" Height="24"/>
-                </StackPanel>
-              </DockPanel>
+            <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+              <Grid>
+                <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+                <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                      <Button Content="🌐" Width="24" Height="24" Margin="0,4,4,0"/>
+                      <Button Content="📋" Width="24" Height="24" Margin="0,4,0,0"/>
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+              </Grid>
             </Border>
           </DataTemplate>
         </ItemsControl.ItemTemplate>

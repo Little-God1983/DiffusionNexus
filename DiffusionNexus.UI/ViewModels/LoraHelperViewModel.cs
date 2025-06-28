@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using System.IO;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
@@ -57,14 +59,21 @@ private async Task LoadAsync()
     });
 
     var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
-    var cards = models.Select(m => new LoraCard { Name = m.ModelName, Model = m }).ToList();
+
     await Dispatcher.UIThread.InvokeAsync(() =>
     {
         _allCards.Clear();
-        _allCards.AddRange(cards);
-        RefreshCards();
-        IsLoading = false;
+        Cards.Clear();
     });
+
+    foreach (var model in models)
+    {
+        var card = new LoraCard { Name = model.ModelName, Model = model };
+        _allCards.Add(card);
+        Dispatcher.UIThread.Post(() => Cards.Add(card));
+    }
+
+    await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
 }
 
 private FolderItemViewModel ConvertFolder(FolderNode node)
@@ -110,11 +119,35 @@ public partial class LoraCard : ViewModelBase
     private ModelClass? _model;
 
     [ObservableProperty]
-    private string? _previewImagePath;
+    private Bitmap? _previewImage;
 
     partial void OnModelChanged(ModelClass? value)
     {
-        PreviewImagePath = GetPreviewImagePath();
+        _ = LoadPreviewImageAsync();
+    }
+
+    private async Task LoadPreviewImageAsync()
+    {
+        var path = GetPreviewImagePath();
+        if (path is null || !File.Exists(path))
+        {
+            PreviewImage = null;
+            return;
+        }
+
+        try
+        {
+            var bitmap = await Task.Run(() =>
+            {
+                using var stream = File.OpenRead(path);
+                return new Bitmap(stream);
+            });
+            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = bitmap);
+        }
+        catch
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = null);
+        }
     }
 
     public string? GetPreviewImagePath()
