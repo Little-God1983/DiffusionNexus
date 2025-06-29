@@ -11,16 +11,14 @@
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
       <Button Grid.Column="0" Content="🔄" Width="36" Height="36" Command="{Binding ResetFiltersCommand}"/>
-      <ComboBox x:Name="SearchBox"
-                Grid.Column="1"
-                IsEditable="True"
-                Watermark="Search loras..."
-                Items="{Binding SuggestionTokens}"
-                Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                IsDropDownOpen="{Binding ShowSuggestions}"
-                SelectionChanged="OnSuggestionChosen"
-                Margin="5,0"
-                MaxDropDownHeight="200"/>
+      <AutoCompleteBox x:Name="SearchBox"
+                                  Grid.Column="1"
+                                  ItemsSource="{Binding SuggestionTokens}"
+                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                  FilterMode="Contains"
+                                  IsDropDownOpen="{Binding ShowSuggestions}"                                
+                                  Margin="5,0"
+                                  MaxDropDownHeight="200"/>
       <Button Grid.Column="2" Content="🔁" Width="36" Height="36" Margin="5,0,0,0"/>
       <Button Grid.Column="3" Content="🧩" Width="36" Height="36" Margin="5,0,0,0"/>
       <Button Grid.Column="4" Content="🧠" Width="36" Height="36" Margin="5,0,0,0"/>
