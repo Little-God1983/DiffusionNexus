@@ -100,7 +100,13 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
     {
-        var vm = new FolderItemViewModel { Name = node.Name, ModelCount = node.ModelCount, Path = node.FullPath, IsExpanded = node.IsExpanded };
+        var vm = new FolderItemViewModel 
+        { 
+            Name = node.Name, 
+            ModelCount = node.ModelCount, 
+            Path = node.FullPath,
+            IsExpanded = node.IsExpanded
+        };
         foreach (var child in node.Children)
             vm.Children.Add(ConvertFolder(child));
         return vm;
