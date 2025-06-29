@@ -5,6 +5,7 @@ using DiffusionNexus.UI.Models;
 using DiffusionNexus.DataAccess.Interfaces;
 using DiffusionNexus.DataAccess.Infrastructure;
 using DiffusionNexus.DataAccess.Infrastructure.Serialization;
+using System;
 
 namespace DiffusionNexus.UI.Classes
 {
