@@ -1,5 +1,6 @@
 ﻿using DiffusionNexus.LoraSort.Service.Classes;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Xml.Serialization;
 
 namespace DiffusionNexus.LoraSort.Service.Services
@@ -51,7 +52,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
             catch (Exception ex)
             {
                 // Handle or log the exception as needed.
-                throw new ApplicationException("Error loading mappings from XML.", ex);
+                Debug.WriteLine("Error loading mappings from XML.", ex);
+                return new ObservableCollection<CustomTagMap>();
             }
         }
         /// <summary>

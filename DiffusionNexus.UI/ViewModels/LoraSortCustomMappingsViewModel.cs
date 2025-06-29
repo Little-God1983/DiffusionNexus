@@ -76,7 +76,7 @@ public partial class LoraSortCustomMappingsViewModel : ViewModelBase
         var result = await dialog.ShowDialog<bool>(_window);
         if (result)
         {
-            _xmlService.SaveMappings(CustomTagMappings);
+            CustomTagMappings.Clear();
             LoadMappings();
         }
     }
