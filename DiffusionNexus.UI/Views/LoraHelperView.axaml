@@ -27,6 +27,14 @@
                   HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto">
       <TreeView ItemsSource="{Binding FolderItems}" SelectedItem="{Binding SelectedFolder, Mode=TwoWay}">
+        <TreeView.Styles>
+          <!-- x:DataType is optional but helps compiled bindings -->
+          <Style Selector="TreeViewItem"
+                 x:DataType="vm:FolderItemViewModel">
+            <Setter Property="IsExpanded"
+                    Value="{Binding IsExpanded, Mode=TwoWay}"/>
+          </Style>
+        </TreeView.Styles>
         <TreeView.ItemTemplate>
           <TreeDataTemplate ItemsSource="{Binding Children}" DataType="vm:FolderItemViewModel">
             <TextBlock Text="{Binding DisplayName}"/>
