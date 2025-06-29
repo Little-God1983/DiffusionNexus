@@ -1,36 +1,36 @@
-using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
 using DiffusionNexus.UI.Models;
+using DiffusionNexus.DataAccess.Interfaces;
+using DiffusionNexus.DataAccess.Infrastructure;
+using DiffusionNexus.DataAccess.Infrastructure.Serialization;
 
 namespace DiffusionNexus.UI.Classes
 {
     public class PromptProfileService
     {
-        private readonly string _filePath;
+        private readonly IConfigStore _store;
 
-        public PromptProfileService()
+        public PromptProfileService() : this(new FileConfigStore(AppDataHelper.GetDataFolder(), new JsonSerializerAdapter()))
         {
-            var folder = AppDataHelper.GetDataFolder();
-            _filePath = Path.Combine(folder, "prompt_profiles.json");
         }
 
-        private async Task<List<PromptProfileModel>> LoadProfilesAsync()
+        public PromptProfileService(IConfigStore store)
         {
-            if (!File.Exists(_filePath))
-                return new List<PromptProfileModel>();
-
-            var json = await File.ReadAllTextAsync(_filePath);
-            return JsonSerializer.Deserialize<List<PromptProfileModel>>(json) ?? new();
+            _store = store;
         }
 
-        private async Task SaveProfilesToDiskAsync(List<PromptProfileModel> dict)
+        private Task<List<PromptProfileModel>> LoadProfilesAsync()
         {
-            var json = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(_filePath, json);
+            var list = _store.Load<List<PromptProfileModel>>("prompt_profiles");
+            return Task.FromResult(list);
+        }
+
+        private Task SaveProfilesToDiskAsync(List<PromptProfileModel> dict)
+        {
+            _store.Save("prompt_profiles", dict);
+            return Task.CompletedTask;
         }
 
         public async Task<List<PromptProfileModel>> LoadAllAsync()

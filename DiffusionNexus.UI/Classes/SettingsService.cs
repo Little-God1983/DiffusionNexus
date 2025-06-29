@@ -1,26 +1,28 @@
-using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using DiffusionNexus.DataAccess.Interfaces;
+using DiffusionNexus.DataAccess.Infrastructure;
+using DiffusionNexus.DataAccess.Infrastructure.Serialization;
 
 namespace DiffusionNexus.UI.Classes
 {
     public class SettingsService : ISettingsService
     {
-        private readonly string _filePath;
-        public SettingsService()
+        private readonly IConfigStore _store;
+
+        public SettingsService() : this(new FileConfigStore(AppDataHelper.GetDataFolder(), new JsonSerializerAdapter()))
         {
-            var folder = AppDataHelper.GetDataFolder();
-            _filePath = Path.Combine(folder, "settings.json");
+        }
+
+        public SettingsService(IConfigStore store)
+        {
+            _store = store;
         }
 
         public async Task<SettingsModel> LoadAsync()
         {
-            if (!File.Exists(_filePath))
-                return new SettingsModel();
-
-            var json = await File.ReadAllTextAsync(_filePath);
-            var model = JsonSerializer.Deserialize<SettingsModel>(json) ?? new SettingsModel();
+            var model = _store.Load<SettingsModel>("settings");
             // Decrypt API key after loading
             model.CivitaiApiKey = SecureStorageHelper.DecryptString(model.EncryptedCivitaiApiKey);
             return model;
@@ -32,8 +34,8 @@ namespace DiffusionNexus.UI.Classes
             settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(settings.CivitaiApiKey)
                 ? null
                 : SecureStorageHelper.EncryptString(settings.CivitaiApiKey);
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(_filePath, json);
+            _store.Save("settings", settings);
+            await Task.CompletedTask;
         }
     }
 }
