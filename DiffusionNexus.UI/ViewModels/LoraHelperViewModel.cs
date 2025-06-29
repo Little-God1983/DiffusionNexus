@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.IO;
 using Avalonia.Media.Imaging;
@@ -11,6 +12,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.LoraSort.Service.Search;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -18,6 +20,14 @@ public partial class LoraHelperViewModel : ViewModelBase
 {
     // This is the backing list of *all* cards
     private readonly List<LoraCard> _allCards = new();
+    private readonly SearchIndex _searchIndex = new();
+    private List<string>? _indexNames;
+    private CancellationTokenSource _suggestCts = new();
+
+    [ObservableProperty]
+    private bool showSuggestions;
+
+    public ObservableCollection<string> SuggestionTokens { get; } = new();
 
     [ObservableProperty]
     private bool isLoading;
@@ -81,6 +91,8 @@ private async Task LoadAsync()
         Dispatcher.UIThread.Post(() => Cards.Add(card));
     }
 
+    StartIndexing();
+
     await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
 }
 
@@ -97,6 +109,7 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
     partial void OnSearchTextChanged(string? value)
     {
         RefreshCards();
+        DebounceSuggestions();
     }
 
     partial void OnSelectedFolderChanged(FolderItemViewModel? value)
@@ -115,8 +128,24 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
                 c.FolderPath != null && c.FolderPath.StartsWith(SelectedFolder.Path!, StringComparison.OrdinalIgnoreCase));
 
         if (!string.IsNullOrWhiteSpace(SearchText))
-            query = query.Where(c =>
-                c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+        {
+            if (_searchIndex.IsReady && _indexNames != null)
+            {
+                var matches = _searchIndex.Search(SearchText!)
+                    .Select(i => _allCards[i])
+                    .ToHashSet();
+                if (matches.Count > 0)
+                    query = query.Where(c => matches.Contains(c));
+                else
+                    query = query.Where(c =>
+                        c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+            }
+            else
+            {
+                query = query.Where(c =>
+                    c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+            }
+        }
 
         // rebuild the ObservableCollection
         Cards.Clear();
@@ -129,6 +158,65 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
         SelectedFolder = null;
         SearchText = null;
         RefreshCards();
+    }
+
+    /// <summary>
+    /// Kick off background construction of the search index. This does not block
+    /// the UI and existing filtering logic is used until indexing completes.
+    /// </summary>
+    private void StartIndexing()
+    {
+        _indexNames = _allCards.Select(c => c.Name ?? string.Empty).ToList();
+        var namesCopy = _indexNames.ToList();
+        Task.Run(() => _searchIndex.Build(namesCopy));
+    }
+
+    /// <summary>
+    /// Trigger suggestion updates with a 200ms debounce to avoid UI jank while
+    /// the user types.
+    /// </summary>
+    private void DebounceSuggestions()
+    {
+        _suggestCts.Cancel();
+        _suggestCts = new CancellationTokenSource();
+        var token = _suggestCts.Token;
+        Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(200, token);
+                await Dispatcher.UIThread.InvokeAsync(UpdateSuggestions);
+            }
+            catch (TaskCanceledException) { }
+        }, token);
+    }
+
+    /// <summary>
+    /// Refresh the autocomplete suggestion list using the search index.
+    /// </summary>
+    private void UpdateSuggestions()
+    {
+        if (!_searchIndex.IsReady || string.IsNullOrWhiteSpace(SearchText))
+        {
+            SuggestionTokens.Clear();
+            ShowSuggestions = false;
+            return;
+        }
+
+        var list = _searchIndex.Suggest(SearchText!, 10).ToList();
+        SuggestionTokens.Clear();
+        foreach (var s in list)
+            SuggestionTokens.Add(s);
+        ShowSuggestions = list.Count > 0;
+    }
+
+    /// <summary>
+    /// Called from the view when a suggestion is chosen by the user.
+    /// </summary>
+    public void ApplySuggestion(string suggestion)
+    {
+        SearchText = suggestion;
+        ShowSuggestions = false;
     }
 }
 
