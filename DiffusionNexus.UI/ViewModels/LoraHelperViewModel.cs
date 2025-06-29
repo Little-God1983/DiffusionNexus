@@ -29,6 +29,8 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public ObservableCollection<string> SuggestionTokens { get; } = new();
 
+    public IDialogService DialogService { get; set; } = null!;
+
     [ObservableProperty]
     private bool isLoading;
 
@@ -71,8 +73,7 @@ private async Task LoadAsync()
     await Dispatcher.UIThread.InvokeAsync(() =>
     {
         FolderItems.Clear();
-        foreach (var child in rootNode.Children)
-            FolderItems.Add(ConvertFolder(child));
+        FolderItems.Add(ConvertFolder(rootNode));
     });
 
     var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
@@ -86,7 +87,7 @@ private async Task LoadAsync()
     foreach (var model in models)
     {
         var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-        var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder };
+        var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder, Parent = this };
         _allCards.Add(card);
         Dispatcher.UIThread.Post(() => Cards.Add(card));
     }
@@ -218,6 +219,24 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
         SearchText = suggestion;
         ShowSuggestions = false;
     }
+
+    public async Task DeleteCardAsync(LoraCard card)
+    {
+        if (DialogService == null || card.Model == null)
+            return;
+
+        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{card.Name}'?");
+        if (confirm != true) return;
+
+        foreach (var file in card.Model.AssociatedFilesInfo)
+        {
+            try { File.Delete(file.FullName); } catch { }
+        }
+
+        _allCards.Remove(card);
+        Cards.Remove(card);
+        StartIndexing();
+    }
 }
 
 
@@ -239,14 +258,16 @@ public partial class LoraCard : ViewModelBase
     private string? folderPath;
 
     public IRelayCommand EditCommand { get; }
-    public IRelayCommand DeleteCommand { get; }
+    public IAsyncRelayCommand DeleteCommand { get; }
     public IRelayCommand OpenWebCommand { get; }
     public IRelayCommand CopyCommand { get; }
+
+    public LoraHelperViewModel? Parent { get; set; }
 
     public LoraCard()
     {
         EditCommand = new RelayCommand(OnEdit);
-        DeleteCommand = new RelayCommand(OnDelete);
+        DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new RelayCommand(OnOpenWeb);
         CopyCommand = new RelayCommand(OnCopy);
     }
@@ -301,7 +322,10 @@ public partial class LoraCard : ViewModelBase
 
     private void OnEdit() => Log($"Edit {Name}");
 
-    private void OnDelete() => Log($"Delete {Name}");
+    private Task OnDeleteAsync()
+    {
+        return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
+    }
 
     private void OnOpenWeb() => Log($"Open web for {Name}");
 
