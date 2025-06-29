@@ -26,7 +26,9 @@ namespace DiffusionNexus.LoraSort.Service.Helper
         ".preview.jpg",
         ".cm-info.json",
         ".civitai.info",
+        ".civitai",
         ".safetensors",
+        ".thumb",
         ".json",
         ".pt"];
     }
