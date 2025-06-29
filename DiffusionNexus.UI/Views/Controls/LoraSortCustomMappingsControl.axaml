@@ -10,48 +10,53 @@
     </UserControl.DataContext>
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
-        <conv:IndexToPriorityConverter x:Key="IndexToPriorityConverter" />
     </UserControl.Resources>
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+
+        <!-- Header Row -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,*,*" Margin="0,0,0,5">
+            <TextBlock Text="Tags" FontWeight="Bold" />
+            <TextBlock Grid.Column="1" Text="Folder" FontWeight="Bold" />
+            <TextBlock Grid.Column="2" Text="Actions" FontWeight="Bold" />
+        </Grid>
+
         <!-- ListBox for mappings -->
-        <ListBox x:Name="lvMappings" Grid.Row="0" ItemsSource="{Binding CustomTagMappings}"
+        <ListBox x:Name="lvMappings" Grid.Row="1" ItemsSource="{Binding CustomTagMappings}"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
                  IsEnabled="{Binding IsCustomEnabled}">
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="svc:CustomTagMap">
-                    <Grid ColumnDefinitions="*,*,*,*" Margin="0,2">
+                    <Grid ColumnDefinitions="*,*,*" Margin="0,2">
                         <!-- Tags column with converter -->
                         <TextBlock Grid.Column="0" Text="{Binding LookForTag, Converter={StaticResource TagsDisplayConverter}}"/>
                         <!-- Target Folder column -->
                         <TextBlock Grid.Column="1" Text="{Binding MapToFolder}"/>
-                        <!-- Priority column using MultiBinding -->
-                        <TextBlock Grid.Column="2">
-                            <TextBlock.Text>
-                                <MultiBinding Converter="{StaticResource IndexToPriorityConverter}">
-                                    <Binding Path="."/>
-                                    <Binding Path="$parent[ItemsControl].ItemsSource"/>
-                                </MultiBinding>
-                            </TextBlock.Text>
-                        </TextBlock>
-                        <!-- Actions column: Up, Down, Edit -->
-                        <StackPanel Grid.Column="3" Orientation="Horizontal">
+                        <!-- Actions column: Up, Down, Edit, Delete -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
                             <Button Content="Up"
                                     Command="{Binding $parent[UserControl].DataContext.MoveUpCommand}"
                                     CommandParameter="{Binding .}" />
                             <Button Content="Down"
                                     Command="{Binding $parent[UserControl].DataContext.MoveDownCommand}"
                                     CommandParameter="{Binding .}" Margin="5,0,0,0" />
-                            <Button Content="Edit" Margin="5,0,0,0"/>
+                            <Button Content="Edit" Margin="5,0,0,0"
+                                    Command="{Binding $parent[UserControl].DataContext.EditMappingCommand}"
+                                    CommandParameter="{Binding .}" />
+                            <Button Content="Delete" Margin="5,0,0,0"
+                                    Command="{Binding $parent[UserControl].DataContext.DeleteMappingCommand}"
+                                    CommandParameter="{Binding .}" />
                         </StackPanel>
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
         <!-- Button Panel -->
-        <Grid Grid.Row="1" Margin="0,10,0,0">
+        <Grid Grid.Row="2" Margin="0,10,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />

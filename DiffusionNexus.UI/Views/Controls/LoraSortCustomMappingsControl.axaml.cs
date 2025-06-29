@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.Views.Controls
 {
@@ -19,6 +20,7 @@ namespace DiffusionNexus.UI.Views.Controls
             if (DataContext is LoraSortCustomMappingsViewModel vm && VisualRoot is Window window)
             {
                 vm.SetWindow(window);
+                vm.DialogService = new DialogService(window);
             }
         }
 

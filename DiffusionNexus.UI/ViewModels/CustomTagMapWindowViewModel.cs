@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.LoraSort.Service.Helper;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,6 +23,7 @@ public partial class CustomTagMapWindowViewModel : ViewModelBase
 
     private readonly CustomTagMapXmlService _xmlService = new();
     private Window? _window;
+    private CustomTagMap? _editingMap;
 
     public IAsyncRelayCommand SaveCommand { get; }
     public IRelayCommand CancelCommand { get; }
@@ -30,6 +32,13 @@ public partial class CustomTagMapWindowViewModel : ViewModelBase
     {
         SaveCommand = new AsyncRelayCommand(SaveAsync);
         CancelCommand = new RelayCommand(Cancel);
+    }
+
+    public void SetMapping(CustomTagMap map)
+    {
+        _editingMap = map;
+        Tags = string.Join(", ", map.LookForTag);
+        Folder = map.MapToFolder;
     }
 
     public void SetWindow(Window window)
@@ -79,12 +88,28 @@ public partial class CustomTagMapWindowViewModel : ViewModelBase
         }
 
         var mappings = _xmlService.LoadMappings();
-        mappings.Add(new CustomTagMap
+
+        if (_editingMap != null)
         {
-            LookForTag = tagList,
-            MapToFolder = Folder!.Trim(),
-            Priority = 0
-        });
+            var existing = mappings.FirstOrDefault(m => m.Priority == _editingMap.Priority);
+            if (existing != null)
+            {
+                existing.LookForTag = tagList;
+                existing.MapToFolder = Folder!.Trim();
+            }
+        }
+        else
+        {
+            var max = mappings.Any() ? mappings.Max(m => m.Priority) : 0;
+            mappings.Add(new CustomTagMap
+            {
+                LookForTag = tagList,
+                MapToFolder = Folder!.Trim(),
+                Priority = max + 1
+            });
+        }
+
+        mappings = CustomTagMapPriorityHelper.Normalize(mappings);
         _xmlService.SaveMappings(mappings);
         _window?.Close(true);
     }
