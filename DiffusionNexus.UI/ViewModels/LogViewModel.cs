@@ -24,14 +24,15 @@ namespace DiffusionNexus.UI.ViewModels
         public LogViewModel(ILogEventService service)
         {
             _service = service;
-            _service.PropertyChanged += ServiceOnPropertyChanged;
             _service.Publish(LogSeverity.Info, "Log service initialized.");
-            _service.Publish(LogSeverity.Info, "Log service ready.");
+            _service.PropertyChanged += ServiceOnPropertyChanged;
+           
             Entries.CollectionChanged += (_, _) =>
             {
                 OnPropertyChanged(nameof(VisibleEntries));
                 OnPropertyChanged(nameof(HasVisibleEntries));
             };
+            _service.Publish(LogSeverity.Success, "Log service ready.");
         }
 
         public ObservableCollection<LogEntry> Entries => _service.Entries;
@@ -42,6 +43,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             null,
             LogSeverity.Info,
+            LogSeverity.Success,
             LogSeverity.Warning,
             LogSeverity.Error,
             LogSeverity.Debug

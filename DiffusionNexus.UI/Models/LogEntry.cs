@@ -7,7 +7,8 @@ namespace DiffusionNexus.UI.Models
         Info,
         Warning,
         Error,
-        Debug
+        Debug,
+        Success
     }
 
     public class LogEntry

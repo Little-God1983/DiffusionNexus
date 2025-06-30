@@ -14,6 +14,8 @@ namespace DiffusionNexus.UI.Converters
             {
                 return level switch
                 {
+                    LogSeverity.Info => Brushes.Blue,
+                    LogSeverity.Success => Brushes.Green,
                     LogSeverity.Warning => Brushes.Gold,
                     LogSeverity.Error => Brushes.IndianRed,
                     LogSeverity.Debug => Brushes.DodgerBlue,

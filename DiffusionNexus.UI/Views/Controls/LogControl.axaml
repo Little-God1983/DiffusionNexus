@@ -31,7 +31,7 @@
             IsVisible="{Binding IsOverlayVisible}">
       <Border Background="#FF2D2D30"
               Padding="10"
-              Width="600"
+              Width="800"
               HorizontalAlignment="Center"
               VerticalAlignment="Bottom"
               Margin="0,0,0,40">
