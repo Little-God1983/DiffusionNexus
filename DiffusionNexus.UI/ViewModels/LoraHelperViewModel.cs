@@ -24,6 +24,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private readonly SearchIndex _searchIndex = new();
     private List<string>? _indexNames;
     private CancellationTokenSource _suggestCts = new();
+    private CancellationTokenSource _filterCts = new();
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -101,10 +102,10 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
     {
-        var vm = new FolderItemViewModel 
-        { 
-            Name = node.Name, 
-            ModelCount = node.ModelCount, 
+        var vm = new FolderItemViewModel
+        {
+            Name = node.Name,
+            ModelCount = node.ModelCount,
             Path = node.FullPath,
             IsExpanded = node.IsExpanded
         };
@@ -117,7 +118,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     //    it runs whenever SearchText is set.
     partial void OnSearchTextChanged(string? value)
     {
-        RefreshCards();
+        _ = RefreshCardsAsync();
         DebounceSuggestions();
     }
 
@@ -125,48 +126,69 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         if (value != null)
             SearchText = null;
-        RefreshCards();
+        _ = RefreshCardsAsync();
     }
 
-    private void RefreshCards()
+    private async Task RefreshCardsAsync()
+    {
+        _filterCts.Cancel();
+        _filterCts = new CancellationTokenSource();
+        var token = _filterCts.Token;
+
+        var search = SearchText;
+        var folder = SelectedFolder;
+
+        IsLoading = true;
+
+        var list = await Task.Run(() => FilterCards(search, folder), token);
+        if (token.IsCancellationRequested)
+            return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Cards.Clear();
+            foreach (var c in list)
+                Cards.Add(c);
+            IsLoading = false;
+        });
+    }
+
+    private List<LoraCard> FilterCards(string? search, FolderItemViewModel? folder)
     {
         IEnumerable<LoraCard> query = _allCards;
 
-        if (SelectedFolder != null)
+        if (folder != null)
             query = query.Where(c =>
-                c.FolderPath != null && c.FolderPath.StartsWith(SelectedFolder.Path!, StringComparison.OrdinalIgnoreCase));
+                c.FolderPath != null && c.FolderPath.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
 
-        if (!string.IsNullOrWhiteSpace(SearchText))
+        if (!string.IsNullOrWhiteSpace(search))
         {
             if (_searchIndex.IsReady && _indexNames != null)
             {
-                var matches = _searchIndex.Search(SearchText!)
+                var matches = _searchIndex.Search(search!)
                     .Select(i => _allCards[i])
                     .ToHashSet();
                 if (matches.Count > 0)
                     query = query.Where(c => matches.Contains(c));
                 else
                     query = query.Where(c =>
-                        c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+                        c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
             else
             {
                 query = query.Where(c =>
-                    c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+                    c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
 
-        // rebuild the ObservableCollection
-        Cards.Clear();
-        foreach (var c in query)
-            Cards.Add(c);
+        return query.ToList();
     }
 
     private void ResetFilters()
     {
         SelectedFolder = null;
         SearchText = null;
-        RefreshCards();
+        _ = RefreshCardsAsync();
     }
 
     /// <summary>
