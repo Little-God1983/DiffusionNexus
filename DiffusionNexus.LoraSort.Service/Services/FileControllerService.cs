@@ -3,13 +3,14 @@
  * For non-commercial use only. See LICENSE for details.
  */
 using DiffusionNexus.LoraSort.Service.Classes;
+using System;
 using System.Security.Cryptography;
 
 namespace DiffusionNexus.LoraSort.Service.Services
 {
     public class FileControllerService
     {
-        public async Task ComputeFolder(IProgress<ProgressReport> progress, CancellationToken cancellationToken, SelectedOptions options)
+        private async Task ComputeFolderInternal(IProgress<ProgressReport> progress, CancellationToken cancellationToken, SelectedOptions options)
         {
             progress?.Report(new ProgressReport
             {
@@ -53,6 +54,12 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 StatusMessage = "==========> Finished processing.",
                 IsSuccessful = true
             });
+        }
+
+        public async Task ComputeFolder(IProgress<double>? progress, CancellationToken cancellationToken, SelectedOptions options)
+        {
+            Progress<ProgressReport>? wrapper = progress != null ? new Progress<ProgressReport>(p => progress.Report(p.Percentage ?? 0)) : null;
+            await ComputeFolderInternal(wrapper!, cancellationToken, options);
         }
 
         public bool EnoughFreeSpaceOnDisk(string sourcePath, string targetPath)

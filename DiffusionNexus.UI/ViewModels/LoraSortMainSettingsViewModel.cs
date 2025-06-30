@@ -5,6 +5,10 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
 using DiffusionNexus.UI.Classes;
+using Avalonia.Threading;
+using Avalonia;
+using Avalonia.Media;
+using DiffusionNexus.UI.Models;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -34,10 +38,16 @@ namespace DiffusionNexus.UI.ViewModels
         private string? statusText;
         [ObservableProperty]
         private string actionButtonText = "Go";
+        [ObservableProperty]
+        private bool isBusy;
+        [ObservableProperty]
+        private bool isIndeterminate = true;
 
         private readonly ISettingsService _settingsService;
         public IDialogService DialogService { get; set; } = null!;
         private Window? _window;
+        private MainWindowViewModel? _mainWindowVm;
+        private bool _originalLogExpanded;
 
         public IAsyncRelayCommand SelectBasePathCommand { get; }
         public IAsyncRelayCommand SelectTargetPathCommand { get; }
@@ -62,6 +72,37 @@ namespace DiffusionNexus.UI.ViewModels
         public void SetWindow(Window window)
         {
             _window = window;
+        }
+
+        public void SetMainWindowViewModel(MainWindowViewModel vm)
+        {
+            _mainWindowVm = vm;
+        }
+
+        private async Task ShowDialog(string message, string caption)
+        {
+            if (_window == null)
+                return;
+            var dialog = new Window
+            {
+                Width = 300,
+                Height = 150,
+                Title = caption,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+            var ok = new Button { Content = "OK", Width = 80, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center };
+            ok.Click += (_, _) => dialog.Close();
+            dialog.Content = new StackPanel
+            {
+                Margin = new Thickness(10),
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+                    ok
+                }
+            };
+            await dialog.ShowDialog(_window);
         }
 
         private async Task LoadDefaultsAsync()
@@ -99,29 +140,34 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 _cts?.Cancel();
             }
-
-            // TODO: Implement main action logic
-            StatusText = "Go clicked (not implemented)";
-            Progress = 0;
         }
 
-        private bool ValidatePaths()
+        internal bool ValidatePaths()
         {
-            return !string.IsNullOrEmpty(BasePath) && !string.IsNullOrEmpty(TargetPath);
+            return !string.IsNullOrWhiteSpace(BasePath) && !string.IsNullOrWhiteSpace(TargetPath);
         }
 
-        private void ShowMessageAndResetUI(string message, string caption)
+        private async Task ShowMessageAndResetUI(string message, string caption)
         {
-            // TODO: Write in UI log
+            Log(message, LogLevel.Warning);
+            await ShowDialog(message, caption);
             ResetUI();
+        }
+
+        private void SetStatus(string text)
+        {
+            StatusText = text;
+            Log(text);
         }
 
         private void SetProcessingUIState()
         {
             _isProcessing = true;
-            //TODO: Show Progress bar Overlay
-            //TODO: Expand log in MainView
-            //TODO: Show Cancel button
+            IsBusy = true;
+            ActionButtonText = "Cancel";
+            _originalLogExpanded = _mainWindowVm?.IsLogExpanded ?? false;
+            if (_mainWindowVm != null)
+                _mainWindowVm.IsLogExpanded = true;
             _cts = new CancellationTokenSource();
         }
 
@@ -133,62 +179,76 @@ namespace DiffusionNexus.UI.ViewModels
 
                 if (!ValidatePaths())
                 {
-                    ShowMessageAndResetUI("No path selected", "No Path");
+                    await ShowMessageAndResetUI("No path selected", "No Path");
                     return;
                 }
 
                 if (IsPathTheSame())
                 {
-                    ShowMessageAndResetUI("Select a different target than the source path.", "Source cannot be target path");
+                    await ShowMessageAndResetUI("Select a different target than the source path.", "Source cannot be target path");
                     return;
                 }
 
                 var controllerService = new FileControllerService();
 
-                //TODO: If user wants to copy files, we need to check if there is enough disk space available.
-                //if ((bool)radioCopy.IsChecked && !controllerService.EnoughFreeSpaceOnDisk(txtBasePath.Text, txtTargetPath.Text))
-                //{
-                //Todo: Write in UI log
-                //"You don't have enough disk space to copy the files.", "Insuficcent Diskspace"
-                return;
-                //}
+                if (IsCopyMode && !controllerService.EnoughFreeSpaceOnDisk(BasePath!, TargetPath!))
+                {
+                    Log("Insufficient disk space.", LogLevel.Warning);
+                    await ShowDialog("You don't have enough disk space to copy the files.", "Insufficient Disk Space");
+                    return;
+                }
 
-                bool moveOperation = false;
-                //If user selected "Move" operation instead of "Copy", we need to handle that.
-                //if (!(bool)radioCopy.IsChecked)
-                //{
-                //TODO: Show confirmation dialog "Moving instead of copying means that the original file order cannot be restored. Continue anyways?", "Are you sure?"
-                //if user selects "No" then return and reset UI;
-                //if ()
-                //{
-                //    ResetUI();
-                //    return;
-                //}
-                moveOperation = true;
-                //}
+                if (!IsCopyMode)
+                {
+                    var move = await DialogService.ShowYesNoAsync("Moving instead of copying means that the original file order cannot be restored. Continue anyways?", "Are you sure?");
+                    if (!move)
+                    {
+                        ResetUI();
+                        return;
+                    }
+                }
 
-                //TODO: Prepare progress indicator and start Pogressing
-                //await controllerService.ComputeFolder(progressIndicator, _cts.Token, new SelectedOptions()
-                //{
-                    //BasePath = BasePath,
-                    //TargetPath = TargetPath,
-                    //IsMoveOperation = moveOperation,
-                    //TODO: GET these values from UI
-                    //OverrideFiles = (bool)chbOverride.IsChecked,
-                    //CreateBaseFolders = (bool)chbBaseFolders.IsChecked,
-                    //UseCustomMappings = (bool)chbCustom.IsChecked,
-                    //ApiKey = SettingsManager.LoadApiKey()
-                //});
+                var settings = await _settingsService.LoadAsync();
+                var options = new SelectedOptions
+                {
+                    BasePath = BasePath!,
+                    TargetPath = TargetPath!,
+                    IsMoveOperation = !IsCopyMode,
+                    OverrideFiles = OverrideFiles,
+                    CreateBaseFolders = CreateBaseFolders,
+                    UseCustomMappings = UseCustomMappings,
+                    ApiKey = settings.CivitaiApiKey ?? string.Empty
+                };
+
+                SetStatus("Scanning…");
+                IsIndeterminate = true;
+                var first = true;
+                var progress = new Progress<double>(v =>
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (first)
+                        {
+                            IsIndeterminate = false;
+                            SetStatus("Copying…");
+                            first = false;
+                        }
+                        Progress = v;
+                    });
+                });
+
+                await controllerService.ComputeFolder(progress, _cts.Token, options);
+                SetStatus("Finalising…");
             }
 
             catch (OperationCanceledException)
             {
-                //TODO: Write in UI log
+                Log("Operation cancelled by user.");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Unexpected error: {ex.Message}");
-                //Log.Error($"Unexpected error: {ex.Message}");
+                Log($"Unexpected error: {ex.Message}", LogLevel.Error);
+                await ShowDialog("Unexpected error – see log for details.", "Error");
             }
             finally
             {
@@ -198,9 +258,17 @@ namespace DiffusionNexus.UI.ViewModels
         private void ResetUI()
         {
             _isProcessing = false;
+            IsBusy = false;
+            ActionButtonText = "Go";
+            Progress = 0;
+            StatusText = null;
+            _cts?.Dispose();
+            _cts = null!;
+            if (_mainWindowVm != null)
+                _mainWindowVm.IsLogExpanded = _originalLogExpanded;
         }
 
-        private bool IsPathTheSame()
+        internal bool IsPathTheSame()
         {
             return string.Compare(
                 Path.GetFullPath(BasePath).TrimEnd('\\'),

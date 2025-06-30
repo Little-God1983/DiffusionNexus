@@ -88,7 +88,8 @@
     </SplitView.Content>
     </SplitView>
 
-    <!-- With this single line -->
-    <controls:LogControl Grid.Row="1" DataContext="{Binding LogViewModel}" />
+    <Expander Grid.Row="1" IsExpanded="{Binding IsLogExpanded}">
+      <controls:LogControl DataContext="{Binding LogViewModel}" />
+    </Expander>
   </Grid>
 </Window>
