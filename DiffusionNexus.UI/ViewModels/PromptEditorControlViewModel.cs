@@ -6,7 +6,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
 using System;
-using Avalonia.Controls;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -40,9 +41,8 @@ namespace DiffusionNexus.UI.ViewModels
         public IRelayCommand NewProfileCommand { get; }
         public IAsyncRelayCommand DeleteProfileCommand { get; }
 
-        public IAsyncRelayCommand<Window?> CopyPromptCommand { get; }
-        public IAsyncRelayCommand<Window?> CopyNegativePromptCommand { get; }
-
+        public IAsyncRelayCommand CopyPromptCommand { get; }
+        public IAsyncRelayCommand CopyNegativePromptCommand { get; }
 
         public PromptEditorControlViewModel()
         {
@@ -50,8 +50,8 @@ namespace DiffusionNexus.UI.ViewModels
             ClearCommand = new RelayCommand(ClearPrompt);
             NewProfileCommand = new RelayCommand(NewProfile);
             DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync);
-            CopyPromptCommand = new AsyncRelayCommand<Window?>(CopyPromptAsync);
-            CopyNegativePromptCommand = new AsyncRelayCommand<Window?>(CopyNegativePromptAsync);
+            CopyPromptCommand = new AsyncRelayCommand(CopyPromptAsync);
+            CopyNegativePromptCommand = new AsyncRelayCommand(CopyNegativePromptAsync);
 
             AskForTextCommand = new AsyncRelayCommand(async () =>
             {
@@ -173,7 +173,6 @@ namespace DiffusionNexus.UI.ViewModels
             Log("profile deleted", LogSeverity.Success);
         }
 
-
         private async Task LoadProfilesAsync()
         {
             var list = await PromptProfileService.LoadAllAsync();
@@ -204,33 +203,37 @@ namespace DiffusionNexus.UI.ViewModels
             }
         }
 
-        private async Task CopyPromptAsync(Window? window)
+        private async Task CopyPromptAsync()
         {
-            if (window == null)
-                return;
-            try
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow is { Clipboard: { } clipboard })
             {
-                await window.Clipboard!.SetTextAsync(Prompt ?? string.Empty);
-                Log("prompt copied to clipboard", LogSeverity.Success);
-            }
-            catch (Exception ex)
-            {
-                Log($"failed to copy prompt: {ex.Message}", LogSeverity.Error);
+                try
+                {
+                    await clipboard.SetTextAsync(Prompt ?? string.Empty);
+                    Log("prompt copied to clipboard", LogSeverity.Success);
+                }
+                catch (Exception ex)
+                {
+                    Log($"failed to copy prompt: {ex.Message}", LogSeverity.Error);
+                }
             }
         }
 
-        private async Task CopyNegativePromptAsync(Window? window)
+        private async Task CopyNegativePromptAsync()
         {
-            if (window == null)
-                return;
-            try
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow is { Clipboard: { } clipboard })
             {
-                await window.Clipboard!.SetTextAsync(NegativePrompt ?? string.Empty);
-                Log("negative prompt copied to clipboard", LogSeverity.Success);
-            }
-            catch (Exception ex)
-            {
-                Log($"failed to copy negative prompt: {ex.Message}", LogSeverity.Error);
+                try
+                {
+                    await clipboard.SetTextAsync(NegativePrompt ?? string.Empty);
+                    Log("negative prompt copied to clipboard", LogSeverity.Success);
+                }
+                catch (Exception ex)
+                {
+                    Log($"failed to copy negative prompt: {ex.Message}", LogSeverity.Error);
+                }
             }
         }
     }

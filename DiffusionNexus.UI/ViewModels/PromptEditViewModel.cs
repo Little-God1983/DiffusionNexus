@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -59,16 +60,16 @@ namespace DiffusionNexus.UI.ViewModels
         private StableDiffusionMetadata? _metadata;
 
         public IRelayCommand ApplyBlacklistCommand { get; }
-        public IAsyncRelayCommand<Window?> SaveCommand { get; }
+        public IAsyncRelayCommand SaveCommand { get; }
         public IAsyncRelayCommand<Window?> SaveAsCommand { get; }
-        public IAsyncRelayCommand<Window?> CopyMetadataCommand { get; }
+        public IAsyncRelayCommand CopyMetadataCommand { get; }
 
         public PromptEditViewModel()
         {
             ApplyBlacklistCommand = new RelayCommand(OnApplyBlacklist);
-            SaveCommand = new AsyncRelayCommand<Window?>(OnSaveAsync);
+            SaveCommand = new AsyncRelayCommand(OnSaveAsync);
             SaveAsCommand = new AsyncRelayCommand<Window?>(OnSaveAsAsync);
-            CopyMetadataCommand = new AsyncRelayCommand<Window?>(OnCopyMetadataAsync);
+            CopyMetadataCommand = new AsyncRelayCommand(OnCopyMetadataAsync);
         }
 
         public void OnDragEnter(DragEventArgs e)
@@ -223,7 +224,7 @@ namespace DiffusionNexus.UI.ViewModels
             image.Save(path);
         }
 
-        private async Task OnSaveAsync(Window? window)
+        private async Task OnSaveAsync()
         {
             if (string.IsNullOrEmpty(_currentImagePath))
             {
@@ -239,7 +240,7 @@ namespace DiffusionNexus.UI.ViewModels
             Log($"image saved {_currentImagePath}", LogSeverity.Success);
         }
 
-        private async Task OnSaveAsAsync(Window? window)
+        private async Task OnSaveAsAsync(Window window)
         {
             if (string.IsNullOrEmpty(_currentImagePath) || window == null)
             {
@@ -324,14 +325,14 @@ namespace DiffusionNexus.UI.ViewModels
             return $"{text} {trimmedWhitelist}";
         }
 
-        private async Task OnCopyMetadataAsync(Window? window)
+        private async Task OnCopyMetadataAsync()
         {
-            
-            if (_metadata == null || window == null)
+            if (_metadata == null)
             {
                 Log("no metadata to copy", LogSeverity.Error);
                 return;
             }
+            
             var meta = new
             {
                 _metadata.Steps,
@@ -353,8 +354,12 @@ namespace DiffusionNexus.UI.ViewModels
                 _metadata.Resources
             };
             var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
-            await window.Clipboard!.SetTextAsync(json);
-            Log("metadata copied", LogSeverity.Success);
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow is { Clipboard: { } clipboard })
+            {
+                await clipboard.SetTextAsync(json);
+                Log("metadata copied", LogSeverity.Success);
+            }
         }
     }
 }
