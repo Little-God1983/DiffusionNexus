@@ -105,6 +105,11 @@ public partial class LoraSortCustomMappingsViewModel : ViewModelBase
     private void MoveUp(CustomTagMap? map)
     {
         if (map == null) return;
+
+        var ordered = CustomTagMappings.OrderBy(m => m.Priority).ToList();
+        var index = ordered.IndexOf(map);
+        if (index <= 0) return;
+
         CustomTagMapPriorityHelper.MoveUp(CustomTagMappings, map);
         CustomTagMappings = CustomTagMapPriorityHelper.Normalize(CustomTagMappings);
         _xmlService.SaveMappings(CustomTagMappings);
@@ -113,6 +118,11 @@ public partial class LoraSortCustomMappingsViewModel : ViewModelBase
     private void MoveDown(CustomTagMap? map)
     {
         if (map == null) return;
+
+        var ordered = CustomTagMappings.OrderBy(m => m.Priority).ToList();
+        var index = ordered.IndexOf(map);
+        if (index < 0 || index >= ordered.Count - 1) return;
+
         CustomTagMapPriorityHelper.MoveDown(CustomTagMappings, map);
         CustomTagMappings = CustomTagMapPriorityHelper.Normalize(CustomTagMappings);
         _xmlService.SaveMappings(CustomTagMappings);
