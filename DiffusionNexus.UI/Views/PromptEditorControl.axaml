@@ -52,14 +52,14 @@
       <TextBlock Text="Prompt"/>
       <Grid>
         <TextBox Name="PromptBox" Text="{Binding Prompt, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-        <Button Content="Copy" Width="60" Height="24" Margin="0,0,5,5" HorizontalAlignment="Right" VerticalAlignment="Bottom" Command="{Binding CopyPromptCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
+        <Button Content="Copy" Width="60" Height="30" Margin="0,0,5,5" HorizontalAlignment="Right" VerticalAlignment="Bottom" Command="{Binding CopyPromptCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
       </Grid>
     </StackPanel>
     <StackPanel Spacing="2">
       <TextBlock Text="Negative Prompt"/>
       <Grid>
         <TextBox Name="NegativePromptBox" Text="{Binding NegativePrompt, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="120"/>
-        <Button Content="Copy" Width="60" Height="24" Margin="0,0,5,5" HorizontalAlignment="Right" VerticalAlignment="Bottom" Command="{Binding CopyNegativePromptCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
+        <Button Content="Copy" Width="60" Height="30" Margin="0,0,5,5" HorizontalAlignment="Right" VerticalAlignment="Bottom" Command="{Binding CopyNegativePromptCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
       </Grid>
     </StackPanel>
   </StackPanel>
