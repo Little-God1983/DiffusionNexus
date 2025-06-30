@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
@@ -77,7 +78,7 @@
           </ItemsControl.ItemsPanel>
         </ItemsControl>
       </ScrollViewer>
-      <ProgressBar IsVisible="{Binding IsLoading}" IsIndeterminate="True" Width="120" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      <controls:LoadingOverlay IsVisible="{Binding IsLoading}"/>
     </Grid>
   </Grid>
 </UserControl>

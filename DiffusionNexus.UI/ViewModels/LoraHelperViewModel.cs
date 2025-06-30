@@ -24,6 +24,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private readonly SearchIndex _searchIndex = new();
     private List<string>? _indexNames;
     private CancellationTokenSource _suggestCts = new();
+    private CancellationTokenSource _filterCts = new();
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -117,7 +118,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     //    it runs whenever SearchText is set.
     partial void OnSearchTextChanged(string? value)
     {
-        RefreshCards();
+        RefreshCardsAsync();
         DebounceSuggestions();
     }
 
@@ -125,48 +126,69 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         if (value != null)
             SearchText = null;
-        RefreshCards();
+        RefreshCardsAsync();
     }
-
-    private void RefreshCards()
+    
+    private async void RefreshCardsAsync()
     {
-        IEnumerable<LoraCard> query = _allCards;
+        _filterCts.Cancel();
+        _filterCts = new CancellationTokenSource();
+        var token = _filterCts.Token;
 
-        if (SelectedFolder != null)
-            query = query.Where(c =>
-                c.FolderPath != null && c.FolderPath.StartsWith(SelectedFolder.Path!, StringComparison.OrdinalIgnoreCase));
+        IsLoading = true;
 
-        if (!string.IsNullOrWhiteSpace(SearchText))
+        var selected = SelectedFolder;
+        var text = SearchText;
+
+        var results = await Task.Run(() =>
         {
-            if (_searchIndex.IsReady && _indexNames != null)
-            {
-                var matches = _searchIndex.Search(SearchText!)
-                    .Select(i => _allCards[i])
-                    .ToHashSet();
-                if (matches.Count > 0)
-                    query = query.Where(c => matches.Contains(c));
-                else
-                    query = query.Where(c =>
-                        c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
-            }
-            else
-            {
-                query = query.Where(c =>
-                    c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
-            }
-        }
+            IEnumerable<LoraCard> query = _allCards;
 
-        // rebuild the ObservableCollection
-        Cards.Clear();
-        foreach (var c in query)
-            Cards.Add(c);
+            if (selected != null)
+                query = query.Where(c =>
+                    c.FolderPath != null && c.FolderPath.StartsWith(selected.Path!, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                if (_searchIndex.IsReady && _indexNames != null)
+                {
+                    var matches = _searchIndex.Search(text!)
+                        .Select(i => _allCards[i])
+                        .ToHashSet();
+                    if (matches.Count > 0)
+                        query = query.Where(c => matches.Contains(c));
+                    else
+                        query = query.Where(c =>
+                            c.Name?.Contains(text!, StringComparison.OrdinalIgnoreCase) == true);
+                }
+                else
+                {
+                    query = query.Where(c =>
+                        c.Name?.Contains(text!, StringComparison.OrdinalIgnoreCase) == true);
+                }
+            }
+
+            return query.ToList();
+        }, token);
+
+        if (token.IsCancellationRequested)
+            return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Cards.Clear();
+            foreach (var c in results)
+                Cards.Add(c);
+        });
+
+        IsLoading = false;
     }
 
     private void ResetFilters()
     {
         SelectedFolder = null;
         SearchText = null;
-        RefreshCards();
+        RefreshCardsAsync();
     }
 
     /// <summary>

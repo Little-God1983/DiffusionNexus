@@ -57,6 +57,9 @@
     <Compile Update="Views\Controls\LogControl.axaml.cs">
       <DependentUpon>LogControl.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Views\Controls\LoadingOverlay.axaml.cs">
+      <DependentUpon>LoadingOverlay.axaml</DependentUpon>
+    </Compile>
     <Compile Update="Views\PromptEditorControl.axaml.cs">
       <DependentUpon>PromptEditorControl.axaml</DependentUpon>
     </Compile>
