@@ -1,18 +1,19 @@
+using Avalonia.Controls.Primitives;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.LoraSort.Service.Search;
+using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.UI.Classes;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO;
-using Avalonia.Media.Imaging;
-using Avalonia.Threading;
-using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.UI.Classes;
-using DiffusionNexus.LoraSort.Service.Classes;
-using DiffusionNexus.LoraSort.Service.Services;
-using DiffusionNexus.LoraSort.Service.Search;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -312,15 +313,16 @@ public partial class LoraCard : ViewModelBase
     {
         if (Model == null) return null;
         string[] priority = [
+            ".thumb.jpg",
+            ".webp",
             ".preview.webp",
             ".preview.jpeg",
             ".preview.jpg",
-            ".preview.png"
         ];
 
         foreach (var ext in priority)
         {
-            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.Contains(ext, StringComparison.OrdinalIgnoreCase));
             if (file != null)
                 return file.FullName;
         }

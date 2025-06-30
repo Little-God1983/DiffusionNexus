@@ -16,6 +16,7 @@ namespace DiffusionNexus.LoraSort.Service.Helper
         ];
 
         public static readonly string[] GeneralExtensions = [
+        ".thumb.jpg",
         ".preview.png",
         ".preview.webp",
         ".metadata.json",
