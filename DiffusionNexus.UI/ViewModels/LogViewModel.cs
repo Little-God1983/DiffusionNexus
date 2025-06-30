@@ -31,7 +31,7 @@ namespace DiffusionNexus.UI.ViewModels
         public const string OverlayButtonText = "↑ Expand log";
         public const string HideOverlayButtonText = "↓ Hide log";
 
-        private bool _isOverlayVisible;
+        private bool _isOverlayVisible = true;
         public bool IsOverlayVisible
         {
             get => _isOverlayVisible;

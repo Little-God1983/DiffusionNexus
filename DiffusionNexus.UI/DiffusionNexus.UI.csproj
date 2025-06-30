@@ -72,6 +72,9 @@
     <Compile Update="Views\Controls\BusyOverlay.axaml.cs">
       <DependentUpon>BusyOverlay.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Views\Controls\ProcessingOverlayControl.axaml.cs">
+      <DependentUpon>ProcessingOverlayControl.axaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
