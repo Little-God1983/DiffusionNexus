@@ -5,6 +5,11 @@ using DiffusionNexus.UI.Classes;
 using Avalonia.Platform.Storage;
 using System.Linq;
 using System.Threading.Tasks;
+using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.LoraSort.Service.Classes;
+using System.Threading;
+using DiffusionNexus.UI.Models;
+using System;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -30,19 +35,21 @@ namespace DiffusionNexus.UI.ViewModels
         private string actionButtonText = "Go";
 
         private readonly ISettingsService _settingsService;
+        private readonly ILogEventService _logService;
         private Window? _window;
 
         public IAsyncRelayCommand SelectBasePathCommand { get; }
         public IAsyncRelayCommand SelectTargetPathCommand { get; }
         public IRelayCommand GoCommand { get; }
 
-        public LoraSortMainSettingsViewModel() : this(new SettingsService())
+        public LoraSortMainSettingsViewModel() : this(new SettingsService(), LogEventService.Instance)
         {
         }
 
-        public LoraSortMainSettingsViewModel(ISettingsService settingsService)
+        public LoraSortMainSettingsViewModel(ISettingsService settingsService, ILogEventService logService)
         {
             _settingsService = settingsService;
+            _logService = logService;
             SelectBasePathCommand = new AsyncRelayCommand(OnSelectBasePathAsync);
             SelectTargetPathCommand = new AsyncRelayCommand(OnSelectTargetPathAsync);
             GoCommand = new RelayCommand(OnGo);
@@ -59,6 +66,17 @@ namespace DiffusionNexus.UI.ViewModels
             var settings = await _settingsService.LoadAsync();
             BasePath = settings.LoraSortSourcePath;
             TargetPath = settings.LoraSortTargetPath;
+        }
+
+        partial void OnStatusTextChanged(string? value)
+        {
+            if (!string.IsNullOrEmpty(value))
+                _logService.Publish(LogSeverity.Info, value);
+        }
+
+        partial void OnProgressChanged(double value)
+        {
+            _logService.Publish(LogSeverity.Info, $"Progress: {value}%");
         }
 
         private async Task OnSelectBasePathAsync()
@@ -79,11 +97,39 @@ namespace DiffusionNexus.UI.ViewModels
                 TargetPath = path;
         }
 
-        private void OnGo()
+        private async void OnGo()
         {
-            // TODO: Implement main action logic
-            StatusText = "Go clicked (not implemented)";
-            Progress = 0;
+            if (string.IsNullOrEmpty(BasePath) || string.IsNullOrEmpty(TargetPath))
+            {
+                StatusText = "Base or Target path missing";
+                return;
+            }
+
+            var options = new SelectedOptions
+            {
+                BasePath = BasePath!,
+                TargetPath = TargetPath!,
+                IsMoveOperation = !IsCopyMode,
+                OverrideFiles = OverrideFiles,
+                CreateBaseFolders = CreateBaseFolders,
+                UseCustomMappings = UseCustomMappings
+            };
+
+            var controller = new FileControllerService();
+            var progress = new Progress<ProgressReport>(HandleProgress);
+            ActionButtonText = "Running";
+            await controller.ComputeFolder(progress, CancellationToken.None, options);
+            ActionButtonText = "Go";
+        }
+
+        private void HandleProgress(ProgressReport report)
+        {
+            if (report.Percentage.HasValue)
+                Progress = report.Percentage.Value;
+            if (!string.IsNullOrEmpty(report.StatusMessage))
+                StatusText = report.StatusMessage;
+            if (!string.IsNullOrEmpty(report.StatusMessage))
+                _logService.Publish(LogSeverity.Info, report.StatusMessage);
         }
     }
 }

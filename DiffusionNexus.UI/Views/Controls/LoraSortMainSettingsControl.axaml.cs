@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.Views.Controls
 {
@@ -10,7 +11,7 @@ namespace DiffusionNexus.UI.Views.Controls
         public LoraSortMainSettingsControl()
         {
             InitializeComponent();
-            DataContext = new LoraSortMainSettingsViewModel();
+            DataContext = new LoraSortMainSettingsViewModel(new SettingsService(), LogEventService.Instance);
             this.AttachedToVisualTree += OnAttached;
         }
 

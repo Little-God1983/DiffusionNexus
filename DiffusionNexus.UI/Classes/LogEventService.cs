@@ -22,12 +22,12 @@ namespace DiffusionNexus.UI.Classes
             private set => SetProperty(ref _latestEntry, value);
         }
 
-        public void Publish(LogLevel level, string message)
+        public void Publish(LogSeverity severity, string message)
         {
             var entry = new LogEntry
             {
                 Timestamp = DateTime.Now,
-                Level = level,
+                Severity = severity,
                 Message = message
             };
             _entries.Add(entry);

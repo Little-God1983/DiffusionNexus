@@ -12,7 +12,7 @@
   <Grid RowDefinitions="Auto,*">
     <!-- Status Bar -->
     <Border Grid.Row="0"
-            Background="{Binding LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
+            Background="{Binding LatestEntry.Severity, Converter={StaticResource LogLevelToBrushConverter}}">
       <Grid ColumnDefinitions="*,Auto" Height="36" VerticalAlignment="Center">
         <TextBlock Text="{Binding LatestEntry.Message}"
                  Margin="5,0"
@@ -34,8 +34,14 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Bottom"
               Margin="0,0,0,40">
-        <ScrollViewer Height="200">
-          <ItemsControl ItemsSource="{Binding Entries}">
+        <Grid RowDefinitions="Auto,*">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <ComboBox Width="100" SelectedItem="{Binding SelectedSeverity}" ItemsSource="{Binding SeverityOptions}" />
+            <Button Content="Copy" Command="{Binding CopyLogCommand}" IsEnabled="{Binding CanCopy}" />
+            <Button Content="Export" Command="{Binding ExportLogCommand}" IsEnabled="{Binding CanExport}" />
+          </StackPanel>
+          <ScrollViewer Grid.Row="1" Height="200" Name="LogScrollViewer">
+            <ItemsControl ItemsSource="{Binding VisibleEntries}">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="models:LogEntry">
                 <StackPanel Orientation="Horizontal"
@@ -44,17 +50,18 @@
                   <TextBlock Width="150"
                            Text="{Binding Timestamp, StringFormat=HH:mm:ss dd.MM.yyyy}"/>
                   <TextBlock Width="70"
-                           Text="{Binding Level}"
+                           Text="{Binding Severity}"
                            Foreground="White"
-                           Background="{Binding Level, Converter={StaticResource LogLevelToBrushConverter}}"
+                           Background="{Binding Severity, Converter={StaticResource LogLevelToBrushConverter}}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"/>
                   <TextBlock Text="{Binding Message}"/>
                 </StackPanel>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
       </Border>
     </Border>
   </Grid>
