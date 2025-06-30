@@ -4,6 +4,7 @@
         xmlns:local="using:DiffusionNexus.UI.Views"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
         xmlns:classes="clr-namespace:DiffusionNexus.UI.Classes"
+        xmlns:conv="using:DiffusionNexus.UI.Converters"
         xmlns:media="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Visuals"
         x:Class="DiffusionNexus.UI.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -14,6 +15,9 @@
   <Window.DataContext>
     <vm:MainWindowViewModel/>
   </Window.DataContext>
+  <Window.Resources>
+    <conv:LogLevelToBrushConverter x:Key="LogLevelToBrushConverter" />
+  </Window.Resources>
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="*" />
@@ -89,6 +93,15 @@
     </SplitView>
 
     <Expander Grid.Row="1" IsExpanded="{Binding IsLogExpanded}">
+      <Expander.Header>
+        <Border Background="{Binding LogViewModel.LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
+          <Grid ColumnDefinitions="*,Auto" Height="36" VerticalAlignment="Center">
+            <TextBlock Text="{Binding LogViewModel.LatestEntry.Message}"
+                     Margin="5,0"
+                     VerticalAlignment="Center" />
+          </Grid>
+        </Border>
+      </Expander.Header>
       <controls:LogControl DataContext="{Binding LogViewModel}" />
     </Expander>
   </Grid>
