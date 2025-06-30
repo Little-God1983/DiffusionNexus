@@ -9,7 +9,6 @@ using Serilog;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Diagnostics;
 
 namespace DiffusionNexus.LoraSort.Service.Services
 {
@@ -150,7 +149,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
             progress?.Report(new ProgressReport
             {
                 Percentage = 0,
-                StatusMessage = $"Number of LoRa's found: {modelDataList.Count}"
+                StatusMessage = $"Number of LoRa's found: {modelDataList.Count}",
+                LogLevel = LogSeverity.Info
             });
             int count = 1;
             foreach (ModelClass model in modelDataList)
@@ -212,14 +212,16 @@ namespace DiffusionNexus.LoraSort.Service.Services
                     {
                         IsSuccessful = false,
                         Percentage = 0,
-                        StatusMessage = $"API Call skipped for: {model.ModelName} - No safetensorsfile found"
+                        StatusMessage = $"API Call skipped for: {model.ModelName} - No safetensorsfile found",
+                        LogLevel = LogSeverity.Warning
                     });
                     return;
                 }
                 progress?.Report(new ProgressReport
                 {
                     Percentage = 0,
-                    StatusMessage = $"Calling API for metadata of {model.ModelName}"
+                    StatusMessage = $"Calling API for metadata of {model.ModelName}",
+                    LogLevel = LogSeverity.Info
                 });
 
 
@@ -245,7 +247,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 {
                     IsSuccessful = false,
                     Percentage = 0,
-                    StatusMessage = $"Error on Retrieving Meta Data from API for {model.ModelName} - {ex.Message}"
+                    StatusMessage = $"Error on Retrieving Meta Data from API for {model.ModelName} - {ex.Message}",
+                    LogLevel = LogSeverity.Error
                 });
 
                 model.ErrorOnRetrievingMetaData = true;

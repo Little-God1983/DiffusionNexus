@@ -20,13 +20,13 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 if (!Directory.Exists(directoryPath))
                 {
                     Directory.CreateDirectory(directoryPath);
-                    progress?.Report(new ProgressReport { IsSuccessful = true, StatusMessage = $"Directory '{directoryPath}' created successfully." });
+                    progress?.Report(new ProgressReport { IsSuccessful = true, StatusMessage = $"Directory '{directoryPath}' created successfully.", LogLevel = LogSeverity.Success });
                 }
             }
             catch (Exception ex)
             {
                 Log.Error($"Failed to create directory '{directoryPath}' {ex.Message}");
-                progress?.Report(new ProgressReport { IsSuccessful = false, StatusMessage = $"Failed to create directory '{directoryPath}'" });
+                progress?.Report(new ProgressReport { IsSuccessful = false, StatusMessage = $"Failed to create directory '{directoryPath}'", LogLevel = LogSeverity.Error });
             }
         }
 
@@ -46,7 +46,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
 
                 if (model.NoMetaData)
                 {
-                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' has no metaData => File is skipped." });
+                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' has no metaData => File is skipped.", LogLevel = LogSeverity.Warning });
                     hasErrors = true;
                     continue;
                 }
@@ -59,7 +59,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
 
                 if (model.ModelType != DiffusionTypes.LORA && model.ModelType != DiffusionTypes.LOCON)
                 {
-                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' is not a Lora. It is of Type: {model.ModelType.ToString()} => File is skipped." });
+                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' is not a Lora. It is of Type: {model.ModelType.ToString()} => File is skipped.", LogLevel = LogSeverity.Warning });
                     hasErrors = true;
                     continue;
                 }
@@ -84,17 +84,17 @@ namespace DiffusionNexus.LoraSort.Service.Services
                     if (options.IsMoveOperation)
                     {
                         File.Move(source, target, options.OverrideFiles);
-                        progress?.Report(new ProgressReport { IsSuccessful = true, Percentage = percentage, StatusMessage = $"File '{modelFile.Name}' moved to '{modelDirectory}'." });
+                        progress?.Report(new ProgressReport { IsSuccessful = true, Percentage = percentage, StatusMessage = $"File '{modelFile.Name}' moved to '{modelDirectory}'.", LogLevel = LogSeverity.Success });
                     }
                     else
                     {
                         File.Copy(source, target, options.OverrideFiles);
-                        progress?.Report(new ProgressReport { IsSuccessful = true, Percentage = percentage, StatusMessage = $"File '{modelFile.Name}' copied to '{modelDirectory}'." });
+                        progress?.Report(new ProgressReport { IsSuccessful = true, Percentage = percentage, StatusMessage = $"File '{modelFile.Name}' copied to '{modelDirectory}'.", LogLevel = LogSeverity.Success });
                     }
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"Error copying file '{modelFile.Name}' Reason: {ex.Message}" });
+                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"Error copying file '{modelFile.Name}' Reason: {ex.Message}", LogLevel = LogSeverity.Error });
                     hasErrors = true;
                 }
             }

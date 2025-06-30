@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -6,6 +5,7 @@ using DiffusionNexus.UI.Classes;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Linq;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -23,12 +23,15 @@ namespace DiffusionNexus.UI.ViewModels
         public IAsyncRelayCommand BrowseLoraSortTargetCommand { get; }
         public IAsyncRelayCommand BrowseLoraHelperFolderCommand { get; }
 
-        public SettingsViewModel() : this(new SettingsService())
+        private readonly ILogEventService _logEventService;
+
+        public SettingsViewModel() : this(new SettingsService(), LogEventService.Instance)
         {
         }
 
-        public SettingsViewModel(ISettingsService service)
+        public SettingsViewModel(ISettingsService service, ILogEventService logEventService)
         {
+            _logEventService = logEventService;
             _settingsService = service;
             SaveCommand = new AsyncRelayCommand(SaveAsync);
             DeleteApiKeyCommand = new RelayCommand(DeleteApiKey);
@@ -51,6 +54,7 @@ namespace DiffusionNexus.UI.ViewModels
         private async Task SaveAsync()
         {
             await _settingsService.SaveAsync(Settings);
+            _logEventService.Publish(LogSeverity.Success, "Settings Saved");
         }
 
         private void DeleteApiKey()
