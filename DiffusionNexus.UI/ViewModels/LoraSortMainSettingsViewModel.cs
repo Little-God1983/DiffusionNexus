@@ -253,6 +253,7 @@ namespace DiffusionNexus.UI.ViewModels
             finally
             {
                 ResetUI();
+                SetStatus("Done Processing");
             }
         }
         private void ResetUI()
