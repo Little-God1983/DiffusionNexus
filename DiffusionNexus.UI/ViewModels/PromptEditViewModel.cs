@@ -236,7 +236,7 @@ namespace DiffusionNexus.UI.ViewModels
                 if (!confirm) return;
             }
             SaveImage(_currentImagePath);
-            Log("image saved", LogSeverity.Success);
+            Log($"image saved {_currentImagePath}", LogSeverity.Success);
         }
 
         private async Task OnSaveAsAsync(Window? window)
@@ -257,11 +257,11 @@ namespace DiffusionNexus.UI.ViewModels
             if (!string.IsNullOrEmpty(path))
             {
                 SaveImage(path);
-                Log("image saved", LogSeverity.Success);
+                Log($"image saved {path}", LogSeverity.Success);
             }
             else
             {
-                Log("save as cancelled", LogSeverity.Warning);
+                Log("Save as... cancelled by user", LogSeverity.Warning);
             }
         }
 
@@ -272,23 +272,29 @@ namespace DiffusionNexus.UI.ViewModels
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
+
             if (SinglePromptVm.Prompt != null)
             {
-                var prompt = ApplyBlacklist(SinglePromptVm.Prompt, words);
-                var whitelist = SinglePromptVm.Whitelist ?? string.Empty;
+                string prompt = ApplyBlacklist(SinglePromptVm.Prompt, words);
+                string whitelist = SinglePromptVm.Whitelist ?? string.Empty;
                 SinglePromptVm.Prompt = AppendWhitelist(prompt, whitelist);
+                Log("whitelist applied", LogSeverity.Success);
             }
             if (SinglePromptVm.NegativePrompt != null)
             {
                 SinglePromptVm.NegativePrompt = ApplyBlacklist(SinglePromptVm.NegativePrompt, words);
             }
-            Log("list applied", LogSeverity.Success);
+            
         }
 
-        private static string ApplyBlacklist(string text, string[] words)
+        private string ApplyBlacklist(string text, string[] words)
         {
             if (string.IsNullOrWhiteSpace(text) || words.Length == 0)
+            {
+                Log("no text or blacklist words provided", LogSeverity.Warning);
                 return text;
+            }
+                
             foreach (var word in words)
             {
                 if (string.IsNullOrWhiteSpace(word))
@@ -320,6 +326,7 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task OnCopyMetadataAsync(Window? window)
         {
+            
             if (_metadata == null || window == null)
             {
                 Log("no metadata to copy", LogSeverity.Error);
