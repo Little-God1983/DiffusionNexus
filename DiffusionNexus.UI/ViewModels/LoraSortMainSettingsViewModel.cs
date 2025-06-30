@@ -8,9 +8,7 @@ using DiffusionNexus.UI.Classes;
 using Avalonia.Threading;
 using Avalonia;
 using Avalonia.Media;
-using DiffusionNexus.UI.Models;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -154,12 +152,6 @@ namespace DiffusionNexus.UI.ViewModels
             ResetUI();
         }
 
-        private void SetStatus(string text)
-        {
-            StatusText = text;
-            Log(text);
-        }
-
         private void SetProcessingUIState()
         {
             _isProcessing = true;
@@ -220,37 +212,37 @@ namespace DiffusionNexus.UI.ViewModels
                     ApiKey = settings.CivitaiApiKey ?? string.Empty
                 };
 
-                SetStatus("Scanning…");
+                Log("Scanning…", LogSeverity.Info);
                 IsIndeterminate = true;
                 var first = true;
-                var progress = new Progress<ProgressReport>(r =>
+                var progress = new Progress<ProgressReport>(report =>
                 {
                     Dispatcher.UIThread.Post(() =>
                     {
-                        if (r.Percentage.HasValue)
+                        if (report.Percentage.HasValue)
                         {
                             if (first)
                             {
                                 IsIndeterminate = false;
-                                SetStatus("Copying…");
+                                Log("Copying…", LogSeverity.Info);
                                 first = false;
                             }
-                            Progress = r.Percentage.Value;
+                            Progress = report.Percentage.Value;
                         }
-                        if (!string.IsNullOrWhiteSpace(r.StatusMessage))
+                        if (!string.IsNullOrWhiteSpace(report.StatusMessage))
                         {
-                            Log(r.StatusMessage);
+                            Log(report.StatusMessage, report.LogLevel);
                         }
                     });
                 });
 
                 await controllerService.ComputeFolder(progress, _cts.Token, options);
-                SetStatus("Finalising…");
+                Log("Finalising…", LogSeverity.Info);
             }
 
             catch (OperationCanceledException)
             {
-                Log("Operation cancelled by user.");
+                Log("Operation cancelled by user.",LogSeverity.Warning);
             }
             catch (Exception ex)
             {
@@ -260,7 +252,7 @@ namespace DiffusionNexus.UI.ViewModels
             finally
             {
                 ResetUI();
-                SetStatus("Done Processing");
+                Log("Done Processing", LogSeverity.Success);
             }
         }
         private void ResetUI()

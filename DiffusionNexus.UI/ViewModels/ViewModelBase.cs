@@ -1,14 +1,14 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.UI.Classes;
-using DiffusionNexus.UI.Models;
 
 namespace DiffusionNexus.UI.ViewModels
 {
     public class ViewModelBase : ObservableObject
     {
-        protected void Log(string message, LogSeverity level = LogSeverity.Info)
+        protected void Log(string message, LogSeverity level)
         {
             LogEventService.Instance.Publish(level, message);
             Debug.WriteLine(message);

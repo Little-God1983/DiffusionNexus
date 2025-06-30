@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using DiffusionNexus.UI.Models;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.Classes
 {

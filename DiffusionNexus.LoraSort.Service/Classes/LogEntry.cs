@@ -1,6 +1,4 @@
-using System;
-
-namespace DiffusionNexus.UI.Models
+namespace DiffusionNexus.LoraSort.Service.Classes
 {
     public enum LogSeverity
     {

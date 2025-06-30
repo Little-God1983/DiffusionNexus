@@ -1,6 +1,6 @@
 using Avalonia.Data.Converters;
 using Avalonia.Media;
-using DiffusionNexus.UI.Models;
+using DiffusionNexus.LoraSort.Service.Classes;
 using System;
 using System.Globalization;
 

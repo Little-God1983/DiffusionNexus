@@ -353,14 +353,14 @@ public partial class LoraCard : ViewModelBase
         return null;
     }
 
-    private void OnEdit() => Log($"Edit {Name}");
+    private void OnEdit() => Log($"Edit {Name}", LogSeverity.Info);
 
     private Task OnDeleteAsync()
     {
         return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
     }
 
-    private void OnOpenWeb() => Log($"Open web for {Name}");
+    private void OnOpenWeb() => Log($"Open web for {Name}", LogSeverity.Info);
 
-    private void OnCopy() => Log($"Copy {Name}");
+    private void OnCopy() => Log($"Copy {Name}", LogSeverity.Info);
 }

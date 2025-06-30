@@ -2,7 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:conv="using:DiffusionNexus.UI.Converters"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             xmlns:models="using:DiffusionNexus.UI.Models"
+             xmlns:models="using:DiffusionNexus.LoraSort.Service.Classes"
              x:Class="DiffusionNexus.UI.Views.Controls.LogControl"
              x:DataType="vm:LogViewModel">
   <UserControl.Resources>

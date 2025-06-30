@@ -1,7 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
-using DiffusionNexus.UI.Models;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.Classes
 {
