@@ -6,6 +6,8 @@ using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Services;
 using DiffusionNexus.UI.Classes;
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,6 +36,7 @@ namespace DiffusionNexus.UI.ViewModels
         private string actionButtonText = "Go";
 
         private readonly ISettingsService _settingsService;
+        public IDialogService DialogService { get; set; } = null!;
         private Window? _window;
 
         public IAsyncRelayCommand SelectBasePathCommand { get; }
@@ -104,25 +107,21 @@ namespace DiffusionNexus.UI.ViewModels
 
         private bool ValidatePaths()
         {
-            return !string.IsNullOrEmpty(txtBasePath.Text) && !string.IsNullOrEmpty(txtTargetPath.Text);
+            return !string.IsNullOrEmpty(BasePath) && !string.IsNullOrEmpty(TargetPath);
         }
 
         private void ShowMessageAndResetUI(string message, string caption)
         {
-            MessageBox.Show(message, caption, MessageBoxButton.OK, MessageBoxImage.Warning);
+            // TODO: Write in UI log
             ResetUI();
         }
 
         private void SetProcessingUIState()
         {
             _isProcessing = true;
-            btnGoCancel.Content = "Cancel";
-            if (DataContext is MainViewModel vm)
-            {
-                vm.ClearLogs();
-            }
-            btnTargetPath.IsEnabled = false;
-            btnBasePath.IsEnabled = false;
+            //TODO: Show Progress bar Overlay
+            //TODO: Expand log in MainView
+            //TODO: Show Cancel button
             _cts = new CancellationTokenSource();
         }
 
@@ -145,50 +144,69 @@ namespace DiffusionNexus.UI.ViewModels
                 }
 
                 var controllerService = new FileControllerService();
-                if ((bool)radioCopy.IsChecked && !controllerService.EnoughFreeSpaceOnDisk(txtBasePath.Text, txtTargetPath.Text))
-                {
-                    ShowMessageAndResetUI("You don't have enough disk space to copy the files.", "Insuficcent Diskspace");
-                    return;
-                }
+
+                //TODO: If user wants to copy files, we need to check if there is enough disk space available.
+                //if ((bool)radioCopy.IsChecked && !controllerService.EnoughFreeSpaceOnDisk(txtBasePath.Text, txtTargetPath.Text))
+                //{
+                //Todo: Write in UI log
+                //"You don't have enough disk space to copy the files.", "Insuficcent Diskspace"
+                return;
+                //}
 
                 bool moveOperation = false;
-                if (!(bool)radioCopy.IsChecked)
-                {
-                    if (!ShowConfirmationDialog("Moving instead of copying means that the original file order cannot be restored. Continue anyways?", "Are you sure?"))
-                    {
-                        ResetUI();
-                        return;
-                    }
-                    moveOperation = true;
-                }
+                //If user selected "Move" operation instead of "Copy", we need to handle that.
+                //if (!(bool)radioCopy.IsChecked)
+                //{
+                //TODO: Show confirmation dialog "Moving instead of copying means that the original file order cannot be restored. Continue anyways?", "Are you sure?"
+                //if user selects "No" then return and reset UI;
+                //if ()
+                //{
+                //    ResetUI();
+                //    return;
+                //}
+                moveOperation = true;
+                //}
 
-                var progressIndicator = CreateProgressIndicator();
-                await controllerService.ComputeFolder(progressIndicator, _cts.Token, new SelectedOptions()
-                {
-                    BasePath = txtBasePath.Text,
-                    TargetPath = txtTargetPath.Text,
-                    IsMoveOperation = moveOperation,
-                    OverrideFiles = (bool)chbOverride.IsChecked,
-                    CreateBaseFolders = (bool)chbBaseFolders.IsChecked,
-                    UseCustomMappings = (bool)chbCustom.IsChecked,
-                    ApiKey = SettingsManager.LoadApiKey()
-                });
+                //TODO: Prepare progress indicator and start Pogressing
+                //await controllerService.ComputeFolder(progressIndicator, _cts.Token, new SelectedOptions()
+                //{
+                    //BasePath = BasePath,
+                    //TargetPath = TargetPath,
+                    //IsMoveOperation = moveOperation,
+                    //TODO: GET these values from UI
+                    //OverrideFiles = (bool)chbOverride.IsChecked,
+                    //CreateBaseFolders = (bool)chbBaseFolders.IsChecked,
+                    //UseCustomMappings = (bool)chbCustom.IsChecked,
+                    //ApiKey = SettingsManager.LoadApiKey()
+                //});
             }
+
             catch (OperationCanceledException)
             {
-                if (DataContext is MainViewModel vm)
-                {
-                    vm.AppendLog("Operation was canceled by user.", isError: false);
-                }
+                //TODO: Write in UI log
             }
             catch (Exception ex)
             {
-                Log.Error($"Unexpected error: {ex.Message}");
+                Debug.WriteLine($"Unexpected error: {ex.Message}");
+                //Log.Error($"Unexpected error: {ex.Message}");
             }
             finally
             {
                 ResetUI();
             }
         }
+        private void ResetUI()
+        {
+            _isProcessing = false;
+        }
+
+        private bool IsPathTheSame()
+        {
+            return string.Compare(
+                Path.GetFullPath(BasePath).TrimEnd('\\'),
+                Path.GetFullPath(TargetPath).TrimEnd('\\'),
+                StringComparison.InvariantCultureIgnoreCase) == 0;
+        }
+
     }
 }
