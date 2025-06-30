@@ -109,5 +109,11 @@ namespace DiffusionNexus.UI.Classes
             var result = await ShowConfirmationAsync("Overwrite the existing file?");
             return result == true;
         }
+
+        public async Task<bool> ShowYesNoAsync(string message, string title)
+        {
+            var result = await ShowConfirmationAsync(message);
+            return result == true;
+        }
     }
 }

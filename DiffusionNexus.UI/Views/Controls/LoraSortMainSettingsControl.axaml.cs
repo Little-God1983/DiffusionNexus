@@ -19,6 +19,8 @@ namespace DiffusionNexus.UI.Views.Controls
             if (DataContext is LoraSortMainSettingsViewModel vm && VisualRoot is Window window)
             {
                 vm.SetWindow(window);
+                if (window.DataContext is MainWindowViewModel mw)
+                    vm.SetMainWindowViewModel(mw);
             }
         }
 
