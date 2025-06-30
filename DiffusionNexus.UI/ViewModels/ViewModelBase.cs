@@ -8,7 +8,7 @@ namespace DiffusionNexus.UI.ViewModels
 {
     public class ViewModelBase : ObservableObject
     {
-        protected void Log(string message, LogLevel level = LogLevel.Info)
+        protected void Log(string message, LogSeverity level = LogSeverity.Info)
         {
             LogEventService.Instance.Publish(level, message);
             Debug.WriteLine(message);

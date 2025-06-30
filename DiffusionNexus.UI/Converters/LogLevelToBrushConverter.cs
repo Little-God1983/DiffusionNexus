@@ -10,13 +10,13 @@ namespace DiffusionNexus.UI.Converters
     {
         public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
         {
-            if (value is LogLevel level)
+            if (value is LogSeverity level)
             {
                 return level switch
                 {
-                    LogLevel.Success => Brushes.DarkGreen,
-                    LogLevel.Warning => Brushes.Gold,
-                    LogLevel.Error => Brushes.IndianRed,
+                    LogSeverity.Warning => Brushes.Gold,
+                    LogSeverity.Error => Brushes.IndianRed,
+                    LogSeverity.Debug => Brushes.DodgerBlue,
                     _ => Brushes.Gray,
                 };
             }

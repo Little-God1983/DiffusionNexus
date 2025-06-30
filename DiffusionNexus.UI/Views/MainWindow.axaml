@@ -94,7 +94,7 @@
 
     <Expander Grid.Row="1" IsExpanded="{Binding IsLogExpanded}">
       <Expander.Header>
-        <Border Background="{Binding LogViewModel.LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
+        <Border Background="{Binding LogViewModel.LatestEntry.Severity, Converter={StaticResource LogLevelToBrushConverter}}">
           <Grid ColumnDefinitions="*,Auto" Height="36" VerticalAlignment="Center">
             <TextBlock Text="{Binding LogViewModel.LatestEntry.Message}"
                      Margin="5,0"

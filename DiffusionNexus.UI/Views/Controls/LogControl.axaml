@@ -7,12 +7,13 @@
              x:DataType="vm:LogViewModel">
   <UserControl.Resources>
     <conv:LogLevelToBrushConverter x:Key="LogLevelToBrushConverter" />
+    <conv:NullToAllConverter x:Key="NullToAllConverter" />
   </UserControl.Resources>
 
   <Grid RowDefinitions="Auto,*">
     <!-- Status Bar -->
     <Border Grid.Row="0"
-            Background="{Binding LatestEntry.Level, Converter={StaticResource LogLevelToBrushConverter}}">
+            Background="{Binding LatestEntry.Severity, Converter={StaticResource LogLevelToBrushConverter}}">
       <Grid ColumnDefinitions="*,Auto" Height="36" VerticalAlignment="Center">
         <TextBlock Text="{Binding LatestEntry.Message}"
                  Margin="5,0"
@@ -34,19 +35,33 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Bottom"
               Margin="0,0,0,40">
-        <ScrollViewer Height="200" x:Name="LogScroll">
-          <ItemsControl ItemsSource="{Binding Entries}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="models:LogEntry">
-                <StackPanel Orientation="Horizontal"
-                          Spacing="10"
-                          Margin="0,2">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <ComboBox Width="100"
+                      ItemsSource="{Binding SeverityOptions}"
+                      SelectedItem="{Binding SelectedSeverity, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Converter={StaticResource NullToAllConverter}}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="Copy" Command="{Binding CopyLogCommand}" IsEnabled="{Binding HasVisibleEntries}"/>
+            <Button Content="Export" Command="{Binding ExportLogCommand}" IsEnabled="{Binding HasVisibleEntries}"/>
+          </StackPanel>
+          <ScrollViewer Height="200" x:Name="LogScroll">
+            <ItemsControl ItemsSource="{Binding VisibleEntries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="models:LogEntry">
+                  <StackPanel Orientation="Horizontal"
+                            Spacing="10"
+                            Margin="0,2">
                   <TextBlock Width="150"
                            Text="{Binding Timestamp, StringFormat=HH:mm:ss dd.MM.yyyy}"/>
                   <TextBlock Width="70"
-                           Text="{Binding Level}"
+                           Text="{Binding Severity}"
                            Foreground="White"
-                           Background="{Binding Level, Converter={StaticResource LogLevelToBrushConverter}}"
+                           Background="{Binding Severity, Converter={StaticResource LogLevelToBrushConverter}}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"/>
                   <TextBlock Text="{Binding Message}"/>
@@ -54,7 +69,8 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-        </ScrollViewer>
+          </ScrollViewer>
+        </StackPanel>
       </Border>
     </Border>
   </Grid>
