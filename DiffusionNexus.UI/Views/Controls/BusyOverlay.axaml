@@ -1,0 +1,10 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DiffusionNexus.UI.Views.Controls.BusyOverlay">
+    <Border Background="#80000000">
+        <ProgressBar IsIndeterminate="True"
+                     Width="80" Height="30"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"/>
+    </Border>
+</UserControl>

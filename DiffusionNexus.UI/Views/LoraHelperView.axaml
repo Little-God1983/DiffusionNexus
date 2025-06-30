@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
@@ -27,6 +28,14 @@
                   HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto">
       <TreeView ItemsSource="{Binding FolderItems}" SelectedItem="{Binding SelectedFolder, Mode=TwoWay}">
+        <TreeView.Styles>
+          <!-- x:DataType is optional but helps compiled bindings -->
+          <Style Selector="TreeViewItem"
+                 x:DataType="vm:FolderItemViewModel">
+            <Setter Property="IsExpanded"
+                    Value="{Binding IsExpanded, Mode=TwoWay}"/>
+          </Style>
+        </TreeView.Styles>
         <TreeView.ItemTemplate>
           <TreeDataTemplate ItemsSource="{Binding Children}" DataType="vm:FolderItemViewModel">
             <TextBlock Text="{Binding DisplayName}"/>
@@ -69,7 +78,9 @@
           </ItemsControl.ItemsPanel>
         </ItemsControl>
       </ScrollViewer>
-      <ProgressBar IsVisible="{Binding IsLoading}" IsIndeterminate="True" Width="120" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      <controls:BusyOverlay IsVisible="{Binding IsLoading}"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"/>
     </Grid>
   </Grid>
 </UserControl>

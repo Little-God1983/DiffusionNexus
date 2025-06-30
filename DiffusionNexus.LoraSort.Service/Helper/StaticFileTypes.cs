@@ -16,6 +16,7 @@ namespace DiffusionNexus.LoraSort.Service.Helper
         ];
 
         public static readonly string[] GeneralExtensions = [
+        ".thumb.jpg",
         ".preview.png",
         ".preview.webp",
         ".metadata.json",
@@ -26,7 +27,9 @@ namespace DiffusionNexus.LoraSort.Service.Helper
         ".preview.jpg",
         ".cm-info.json",
         ".civitai.info",
+        ".civitai",
         ".safetensors",
+        ".thumb",
         ".json",
         ".pt"];
     }

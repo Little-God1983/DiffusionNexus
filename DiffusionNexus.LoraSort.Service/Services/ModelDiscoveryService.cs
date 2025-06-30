@@ -9,6 +9,7 @@ public class FolderNode
     public string FullPath { get; set; } = string.Empty;
     public List<FolderNode> Children { get; } = new();
     public int ModelCount { get; set; }
+    public bool IsExpanded { get; set; } = false;
 }
 
 public class ModelDiscoveryService

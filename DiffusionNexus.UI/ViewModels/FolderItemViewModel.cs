@@ -14,6 +14,9 @@ public partial class FolderItemViewModel : ViewModelBase
     [ObservableProperty]
     private string? path;
 
+    [ObservableProperty]
+    private bool isExpanded;
+
     public ObservableCollection<FolderItemViewModel> Children { get; } = new();
 
     public string DisplayName => $"{Name} ({ModelCount})";

@@ -1,18 +1,19 @@
+using Avalonia.Controls.Primitives;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.LoraSort.Service.Search;
+using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.UI.Classes;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO;
-using Avalonia.Media.Imaging;
-using Avalonia.Threading;
-using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.UI.Classes;
-using DiffusionNexus.LoraSort.Service.Classes;
-using DiffusionNexus.LoraSort.Service.Services;
-using DiffusionNexus.LoraSort.Service.Search;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -23,11 +24,14 @@ public partial class LoraHelperViewModel : ViewModelBase
     private readonly SearchIndex _searchIndex = new();
     private List<string>? _indexNames;
     private CancellationTokenSource _suggestCts = new();
+    private CancellationTokenSource _filterCts = new();
 
     [ObservableProperty]
     private bool showSuggestions;
 
     public ObservableCollection<string> SuggestionTokens { get; } = new();
+
+    public IDialogService DialogService { get; set; } = null!;
 
     [ObservableProperty]
     private bool isLoading;
@@ -41,74 +45,80 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IRelayCommand ResetFiltersCommand { get; }
 
     // What the View actually binds to
-public ObservableCollection<LoraCard> Cards { get; } = new();
-public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
-private readonly ISettingsService _settingsService;
-public LoraHelperViewModel() : this(new SettingsService())
-{
-}
-
-public LoraHelperViewModel(ISettingsService settingsService)
-{
-    _settingsService = settingsService;
-    ResetFiltersCommand = new RelayCommand(ResetFilters);
-    _ = LoadAsync();
-}
-
-private async Task LoadAsync()
-{
-    IsLoading = true;
-    var settings = await _settingsService.LoadAsync();
-    if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+    public ObservableCollection<LoraCard> Cards { get; } = new();
+    public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
+    private readonly ISettingsService _settingsService;
+    public LoraHelperViewModel() : this(new SettingsService())
     {
-        IsLoading = false;
-        return;
     }
 
-    var discovery = new ModelDiscoveryService();
-
-    var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
-    await Dispatcher.UIThread.InvokeAsync(() =>
+    public LoraHelperViewModel(ISettingsService settingsService)
     {
-        FolderItems.Clear();
-        foreach (var child in rootNode.Children)
-            FolderItems.Add(ConvertFolder(child));
-    });
-
-    var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
-
-    await Dispatcher.UIThread.InvokeAsync(() =>
-    {
-        _allCards.Clear();
-        Cards.Clear();
-    });
-
-    foreach (var model in models)
-    {
-        var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-        var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder };
-        _allCards.Add(card);
-        Dispatcher.UIThread.Post(() => Cards.Add(card));
+        _settingsService = settingsService;
+        ResetFiltersCommand = new RelayCommand(ResetFilters);
+        _ = LoadAsync();
     }
 
-    StartIndexing();
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        var settings = await _settingsService.LoadAsync();
+        if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+        {
+            IsLoading = false;
+            return;
+        }
 
-    await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
-}
+        var discovery = new ModelDiscoveryService();
 
-private FolderItemViewModel ConvertFolder(FolderNode node)
-{
-    var vm = new FolderItemViewModel { Name = node.Name, ModelCount = node.ModelCount, Path = node.FullPath };
-    foreach (var child in node.Children)
-        vm.Children.Add(ConvertFolder(child));
-    return vm;
-}
+        var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
+        rootNode.IsExpanded = true; // Expand the root folder by default
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            FolderItems.Clear();
+            FolderItems.Add(ConvertFolder(rootNode));
+        });
+
+        var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            _allCards.Clear();
+            Cards.Clear();
+        });
+
+        foreach (var model in models)
+        {
+            var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
+            var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder, Parent = this };
+            _allCards.Add(card);
+            Dispatcher.UIThread.Post(() => Cards.Add(card));
+        }
+
+        StartIndexing();
+
+        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+    }
+
+    private FolderItemViewModel ConvertFolder(FolderNode node)
+    {
+        var vm = new FolderItemViewModel
+        {
+            Name = node.Name,
+            ModelCount = node.ModelCount,
+            Path = node.FullPath,
+            IsExpanded = node.IsExpanded
+        };
+        foreach (var child in node.Children)
+            vm.Children.Add(ConvertFolder(child));
+        return vm;
+    }
 
     // 3) This partial method is generated by [ObservableProperty];
     //    it runs whenever SearchText is set.
     partial void OnSearchTextChanged(string? value)
     {
-        RefreshCards();
+        _ = RefreshCardsAsync();
         DebounceSuggestions();
     }
 
@@ -116,48 +126,69 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
     {
         if (value != null)
             SearchText = null;
-        RefreshCards();
+        _ = RefreshCardsAsync();
     }
 
-    private void RefreshCards()
+    private async Task RefreshCardsAsync()
+    {
+        _filterCts.Cancel();
+        _filterCts = new CancellationTokenSource();
+        var token = _filterCts.Token;
+
+        var search = SearchText;
+        var folder = SelectedFolder;
+
+        IsLoading = true;
+
+        var list = await Task.Run(() => FilterCards(search, folder), token);
+        if (token.IsCancellationRequested)
+            return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Cards.Clear();
+            foreach (var c in list)
+                Cards.Add(c);
+            IsLoading = false;
+        });
+    }
+
+    private List<LoraCard> FilterCards(string? search, FolderItemViewModel? folder)
     {
         IEnumerable<LoraCard> query = _allCards;
 
-        if (SelectedFolder != null)
+        if (folder != null)
             query = query.Where(c =>
-                c.FolderPath != null && c.FolderPath.StartsWith(SelectedFolder.Path!, StringComparison.OrdinalIgnoreCase));
+                c.FolderPath != null && c.FolderPath.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
 
-        if (!string.IsNullOrWhiteSpace(SearchText))
+        if (!string.IsNullOrWhiteSpace(search))
         {
             if (_searchIndex.IsReady && _indexNames != null)
             {
-                var matches = _searchIndex.Search(SearchText!)
+                var matches = _searchIndex.Search(search!)
                     .Select(i => _allCards[i])
                     .ToHashSet();
                 if (matches.Count > 0)
                     query = query.Where(c => matches.Contains(c));
                 else
                     query = query.Where(c =>
-                        c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+                        c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
             else
             {
                 query = query.Where(c =>
-                    c.Name?.Contains(SearchText!, StringComparison.OrdinalIgnoreCase) == true);
+                    c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
 
-        // rebuild the ObservableCollection
-        Cards.Clear();
-        foreach (var c in query)
-            Cards.Add(c);
+        return query.ToList();
     }
 
     private void ResetFilters()
     {
         SelectedFolder = null;
         SearchText = null;
-        RefreshCards();
+        _ = RefreshCardsAsync();
     }
 
     /// <summary>
@@ -218,6 +249,24 @@ private FolderItemViewModel ConvertFolder(FolderNode node)
         SearchText = suggestion;
         ShowSuggestions = false;
     }
+
+    public async Task DeleteCardAsync(LoraCard card)
+    {
+        if (DialogService == null || card.Model == null)
+            return;
+
+        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{card.Name}'?");
+        if (confirm != true) return;
+
+        foreach (var file in card.Model.AssociatedFilesInfo)
+        {
+            try { File.Delete(file.FullName); } catch { }
+        }
+
+        _allCards.Remove(card);
+        Cards.Remove(card);
+        StartIndexing();
+    }
 }
 
 
@@ -239,14 +288,16 @@ public partial class LoraCard : ViewModelBase
     private string? folderPath;
 
     public IRelayCommand EditCommand { get; }
-    public IRelayCommand DeleteCommand { get; }
+    public IAsyncRelayCommand DeleteCommand { get; }
     public IRelayCommand OpenWebCommand { get; }
     public IRelayCommand CopyCommand { get; }
+
+    public LoraHelperViewModel? Parent { get; set; }
 
     public LoraCard()
     {
         EditCommand = new RelayCommand(OnEdit);
-        DeleteCommand = new RelayCommand(OnDelete);
+        DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new RelayCommand(OnOpenWeb);
         CopyCommand = new RelayCommand(OnCopy);
     }
@@ -284,10 +335,13 @@ public partial class LoraCard : ViewModelBase
     {
         if (Model == null) return null;
         string[] priority = [
+            ".thumb.jpg",
+            ".webp",
+            "jpeg",
+            "jpg",
             ".preview.webp",
             ".preview.jpeg",
             ".preview.jpg",
-            ".preview.png"
         ];
 
         foreach (var ext in priority)
@@ -301,7 +355,10 @@ public partial class LoraCard : ViewModelBase
 
     private void OnEdit() => Log($"Edit {Name}");
 
-    private void OnDelete() => Log($"Delete {Name}");
+    private Task OnDeleteAsync()
+    {
+        return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
+    }
 
     private void OnOpenWeb() => Log($"Open web for {Name}");
 
