@@ -315,6 +315,8 @@ public partial class LoraCard : ViewModelBase
         string[] priority = [
             ".thumb.jpg",
             ".webp",
+            "jpeg",
+            "jpg",
             ".preview.webp",
             ".preview.jpeg",
             ".preview.jpg",
@@ -322,7 +324,7 @@ public partial class LoraCard : ViewModelBase
 
         foreach (var ext in priority)
         {
-            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.Contains(ext, StringComparison.OrdinalIgnoreCase));
+            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
             if (file != null)
                 return file.FullName;
         }
