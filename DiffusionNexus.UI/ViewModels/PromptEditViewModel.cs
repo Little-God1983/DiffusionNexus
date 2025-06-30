@@ -17,6 +17,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia.Media;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -225,19 +226,26 @@ namespace DiffusionNexus.UI.ViewModels
         private async Task OnSaveAsync(Window? window)
         {
             if (string.IsNullOrEmpty(_currentImagePath))
+            {
+                Log("no image to save", LogSeverity.Error);
                 return;
+            }
             if (File.Exists(_currentImagePath))
             {
                 var confirm = await DialogService.ShowOverwriteConfirmationAsync();
                 if (!confirm) return;
             }
             SaveImage(_currentImagePath);
+            Log("image saved", LogSeverity.Success);
         }
 
         private async Task OnSaveAsAsync(Window? window)
         {
             if (string.IsNullOrEmpty(_currentImagePath) || window == null)
+            {
+                Log("no image to save", LogSeverity.Error);
                 return;
+            }
 
             var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
@@ -249,6 +257,11 @@ namespace DiffusionNexus.UI.ViewModels
             if (!string.IsNullOrEmpty(path))
             {
                 SaveImage(path);
+                Log("image saved", LogSeverity.Success);
+            }
+            else
+            {
+                Log("save as cancelled", LogSeverity.Warning);
             }
         }
 
@@ -269,6 +282,7 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 SinglePromptVm.NegativePrompt = ApplyBlacklist(SinglePromptVm.NegativePrompt, words);
             }
+            Log("list applied", LogSeverity.Success);
         }
 
         private static string ApplyBlacklist(string text, string[] words)
@@ -307,7 +321,10 @@ namespace DiffusionNexus.UI.ViewModels
         private async Task OnCopyMetadataAsync(Window? window)
         {
             if (_metadata == null || window == null)
+            {
+                Log("no metadata to copy", LogSeverity.Error);
                 return;
+            }
             var meta = new
             {
                 _metadata.Steps,
@@ -330,6 +347,7 @@ namespace DiffusionNexus.UI.ViewModels
             };
             var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
             await window.Clipboard!.SetTextAsync(json);
+            Log("metadata copied", LogSeverity.Success);
         }
     }
 }

@@ -6,6 +6,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
 using System;
+using Avalonia.Controls;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -38,6 +40,9 @@ namespace DiffusionNexus.UI.ViewModels
         public IRelayCommand NewProfileCommand { get; }
         public IAsyncRelayCommand DeleteProfileCommand { get; }
 
+        public IAsyncRelayCommand<Window?> CopyPromptCommand { get; }
+        public IAsyncRelayCommand<Window?> CopyNegativePromptCommand { get; }
+
 
         public PromptEditorControlViewModel()
         {
@@ -45,6 +50,8 @@ namespace DiffusionNexus.UI.ViewModels
             ClearCommand = new RelayCommand(ClearPrompt);
             NewProfileCommand = new RelayCommand(NewProfile);
             DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync);
+            CopyPromptCommand = new AsyncRelayCommand<Window?>(CopyPromptAsync);
+            CopyNegativePromptCommand = new AsyncRelayCommand<Window?>(CopyNegativePromptAsync);
 
             AskForTextCommand = new AsyncRelayCommand(async () =>
             {
@@ -70,7 +77,10 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 var copy = await DialogService.ShowConfirmationAsync("No new values detected - Do you want to create a copy?", false);
                 if (copy != true)
+                {
+                    Log("save cancelled", LogSeverity.Error);
                     return;
+                }
                 name = null; // force new name
             }
 
@@ -78,7 +88,10 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 name = await DialogService.ShowInputAsync("Enter name for new profile");
                 if (string.IsNullOrWhiteSpace(name))
+                {
+                    Log("profile name required", LogSeverity.Error);
                     return;
+                }
             }
             else if (await PromptProfileService.ExistsByNameAsync(name))
             {
@@ -87,10 +100,14 @@ namespace DiffusionNexus.UI.ViewModels
                 {
                     name = await DialogService.ShowInputAsync("Enter name for new profile");
                     if (string.IsNullOrWhiteSpace(name))
+                    {
+                        Log("profile name required", LogSeverity.Error);
                         return;
+                    }
                 }
                 else if (confirm == null)
                 {
+                    Log("save cancelled", LogSeverity.Error);
                     return;
                 }
             }
@@ -104,6 +121,7 @@ namespace DiffusionNexus.UI.ViewModels
             await PromptProfileService.SaveAsync(profile);
             await LoadProfilesAsync();
             SelectedProfile = Profiles.FirstOrDefault(p => p.Name == name);
+            Log($"profile '{name}' saved", LogSeverity.Success);
         }
 
         private void ClearPrompt() { Prompt = string.Empty; NegativePrompt = string.Empty; }
@@ -116,7 +134,7 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 profile = new PromptProfileModel();
                 Profiles.Add(profile);
-                SelectedProfile = profile;  
+                SelectedProfile = profile;
             }
             else
             {
@@ -124,16 +142,23 @@ namespace DiffusionNexus.UI.ViewModels
             }
             Blacklist = string.Empty;
             Whitelist = string.Empty;
+            Log("new profile created", LogSeverity.Success);
         }
 
         private async Task DeleteProfileAsync()
         {
             if (SelectedProfile == null)
+            {
+                Log("no profile selected", LogSeverity.Error);
                 return;
+            }
 
             var confirm = await DialogService.ShowConfirmationAsync($"Do you want to delete '{SelectedProfile.Name}'?", false);
             if (confirm != true)
+            {
+                Log("delete cancelled", LogSeverity.Error);
                 return;
+            }
 
             await PromptProfileService.DeleteAsync(SelectedProfile);
             await LoadProfilesAsync();
@@ -145,6 +170,7 @@ namespace DiffusionNexus.UI.ViewModels
                 Prompt = string.Empty;
                 NegativePrompt = string.Empty;
             }
+            Log("profile deleted", LogSeverity.Success);
         }
 
 
@@ -175,6 +201,36 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 Blacklist = profile.Blacklist;
                 Whitelist = profile.Whitelist;
+            }
+        }
+
+        private async Task CopyPromptAsync(Window? window)
+        {
+            if (window == null)
+                return;
+            try
+            {
+                await window.Clipboard!.SetTextAsync(Prompt ?? string.Empty);
+                Log("prompt copied to clipboard", LogSeverity.Success);
+            }
+            catch (Exception ex)
+            {
+                Log($"failed to copy prompt: {ex.Message}", LogSeverity.Error);
+            }
+        }
+
+        private async Task CopyNegativePromptAsync(Window? window)
+        {
+            if (window == null)
+                return;
+            try
+            {
+                await window.Clipboard!.SetTextAsync(NegativePrompt ?? string.Empty);
+                Log("negative prompt copied to clipboard", LogSeverity.Success);
+            }
+            catch (Exception ex)
+            {
+                Log($"failed to copy negative prompt: {ex.Message}", LogSeverity.Error);
             }
         }
     }
