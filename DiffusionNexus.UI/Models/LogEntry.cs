@@ -2,18 +2,28 @@ using System;
 
 namespace DiffusionNexus.UI.Models
 {
-    public enum LogLevel
+    public enum LogSeverity
     {
         Info,
-        Success,
         Warning,
-        Error
+        Error,
+        Debug,
+        Success
     }
 
     public class LogEntry
     {
-        public DateTime Timestamp { get; set; }
-        public string Message { get; set; } = string.Empty;
-        public LogLevel Level { get; set; }
+        public LogEntry(DateTime timestamp, LogSeverity severity, string message)
+        {
+            Timestamp = timestamp;
+            Severity = severity;
+            Message = message;
+        }
+
+        public DateTime Timestamp { get; }
+        public LogSeverity Severity { get; }
+        public string Message { get; }
+
+        public string ToStringLine() => $"[{Timestamp:HH:mm:ss}] [{Severity.ToString().ToUpper()}] {Message}";
     }
 }

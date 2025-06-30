@@ -10,7 +10,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
 {
     public class FileControllerService
     {
-        private async Task ComputeFolderInternal(IProgress<ProgressReport> progress, CancellationToken cancellationToken, SelectedOptions options)
+        private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken cancellationToken, SelectedOptions options)
         {
             progress?.Report(new ProgressReport
             {
@@ -60,6 +60,11 @@ namespace DiffusionNexus.LoraSort.Service.Services
         {
             Progress<ProgressReport>? wrapper = progress != null ? new Progress<ProgressReport>(p => progress.Report(p.Percentage ?? 0)) : null;
             await ComputeFolderInternal(wrapper!, cancellationToken, options);
+        }
+
+        public async Task ComputeFolder(IProgress<ProgressReport>? progress, CancellationToken cancellationToken, SelectedOptions options)
+        {
+            await ComputeFolderInternal(progress, cancellationToken, options);
         }
 
         public bool EnoughFreeSpaceOnDisk(string sourcePath, string targetPath)

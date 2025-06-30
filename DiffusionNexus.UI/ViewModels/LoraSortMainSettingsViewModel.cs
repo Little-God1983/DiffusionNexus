@@ -149,7 +149,7 @@ namespace DiffusionNexus.UI.ViewModels
 
         private async Task ShowMessageAndResetUI(string message, string caption)
         {
-            Log(message, LogLevel.Warning);
+            Log(message, LogSeverity.Warning);
             await ShowDialog(message, caption);
             ResetUI();
         }
@@ -193,7 +193,7 @@ namespace DiffusionNexus.UI.ViewModels
 
                 if (IsCopyMode && !controllerService.EnoughFreeSpaceOnDisk(BasePath!, TargetPath!))
                 {
-                    Log("Insufficient disk space.", LogLevel.Warning);
+                    Log("Insufficient disk space.", LogSeverity.Warning);
                     await ShowDialog("You don't have enough disk space to copy the files.", "Insufficient Disk Space");
                     return;
                 }
@@ -223,17 +223,24 @@ namespace DiffusionNexus.UI.ViewModels
                 SetStatus("Scanning…");
                 IsIndeterminate = true;
                 var first = true;
-                var progress = new Progress<double>(v =>
+                var progress = new Progress<ProgressReport>(r =>
                 {
                     Dispatcher.UIThread.Post(() =>
                     {
-                        if (first)
+                        if (r.Percentage.HasValue)
                         {
-                            IsIndeterminate = false;
-                            SetStatus("Copying…");
-                            first = false;
+                            if (first)
+                            {
+                                IsIndeterminate = false;
+                                SetStatus("Copying…");
+                                first = false;
+                            }
+                            Progress = r.Percentage.Value;
                         }
-                        Progress = v;
+                        if (!string.IsNullOrWhiteSpace(r.StatusMessage))
+                        {
+                            Log(r.StatusMessage);
+                        }
                     });
                 });
 
@@ -247,7 +254,7 @@ namespace DiffusionNexus.UI.ViewModels
             }
             catch (Exception ex)
             {
-                Log($"Unexpected error: {ex.Message}", LogLevel.Error);
+                Log($"Unexpected error: {ex.Message}", LogSeverity.Error);
                 await ShowDialog("Unexpected error – see log for details.", "Error");
             }
             finally
