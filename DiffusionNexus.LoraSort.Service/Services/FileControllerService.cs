@@ -15,7 +15,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
             progress?.Report(new ProgressReport
             {
                 Percentage = 0,
-                StatusMessage = "Start processing LoRA's"
+                StatusMessage = "Start processing LoRA's",
+                LogLevel = LogSeverity.Info
             });
             // Throw if cancellation is requested
             cancellationToken.ThrowIfCancellationRequested();
@@ -30,7 +31,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 {
                     Percentage = 0,
                     StatusMessage = "No Models in selected folders",
-                    IsSuccessful = false
+                    IsSuccessful = false,
+                    LogLevel = LogSeverity.Error
                 });
                 return;
             }
@@ -40,7 +42,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
             progress?.Report(new ProgressReport
             {
                 Percentage = 0,
-                StatusMessage = "Starting processing copy/paste <=========="
+                StatusMessage = "Starting processing copy/paste <==========",
+                LogLevel = LogSeverity.Info
             });
 
             await Task.Run(() =>
@@ -52,7 +55,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
             {
                 Percentage = 100,
                 StatusMessage = "==========> Finished processing.",
-                IsSuccessful = true
+                IsSuccessful = true,
+                LogLevel = LogSeverity.Info
             });
         }
 

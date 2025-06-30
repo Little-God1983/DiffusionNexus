@@ -46,7 +46,6 @@ namespace DiffusionNexus.UI.ViewModels
             LogSeverity.Success,
             LogSeverity.Warning,
             LogSeverity.Error,
-            LogSeverity.Debug
         };
 
         private LogSeverity? _selectedSeverity;
@@ -83,6 +82,11 @@ namespace DiffusionNexus.UI.ViewModels
                 if (path != null)
                 {
                     File.WriteAllLines(path.Path.LocalPath, VisibleEntries.Select(e => e.ToStringLine()));
+                    _service.Publish(LogSeverity.Success, "log saved");
+                }
+                else
+                {
+                    _service.Publish(LogSeverity.Warning, "log export aborted by user");
                 }
             }
         }
@@ -95,6 +99,7 @@ namespace DiffusionNexus.UI.ViewModels
             {
                 var text = string.Join(Environment.NewLine, VisibleEntries.Select(e => e.ToStringLine()));
                 await desktop.MainWindow.Clipboard!.SetTextAsync(text);
+                _service.Publish(LogSeverity.Success, "copied to clipboard");
             }
         }
         
