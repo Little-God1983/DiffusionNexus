@@ -28,6 +28,13 @@ namespace DiffusionNexus.UI.ViewModels
 
         public LogViewModel LogViewModel { get; } = new LogViewModel();
 
+        private bool _isLogExpanded;
+        public bool IsLogExpanded
+        {
+            get => _isLogExpanded;
+            set => SetProperty(ref _isLogExpanded, value);
+        }
+
         private bool _isMenuOpen = true;
         public bool IsMenuOpen
         {

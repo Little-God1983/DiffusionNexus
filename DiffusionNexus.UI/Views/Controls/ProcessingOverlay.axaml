@@ -1,0 +1,14 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.ProcessingOverlay"
+             x:DataType="vm:LoraSortMainSettingsViewModel">
+  <Border Background="#80000000">
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+      <ProgressBar Width="200" Height="20"
+                   IsIndeterminate="{Binding IsIndeterminate}"
+                   Value="{Binding Progress}" Minimum="0" Maximum="100"/>
+      <Button Content="Cancel" Width="80" Command="{Binding GoCommand}"/>
+    </StackPanel>
+  </Border>
+</UserControl>
