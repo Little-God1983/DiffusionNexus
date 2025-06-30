@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -17,6 +18,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia.Media;
+using DiffusionNexus.LoraSort.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -58,16 +60,16 @@ namespace DiffusionNexus.UI.ViewModels
         private StableDiffusionMetadata? _metadata;
 
         public IRelayCommand ApplyBlacklistCommand { get; }
-        public IAsyncRelayCommand<Window?> SaveCommand { get; }
+        public IAsyncRelayCommand SaveCommand { get; }
         public IAsyncRelayCommand<Window?> SaveAsCommand { get; }
-        public IAsyncRelayCommand<Window?> CopyMetadataCommand { get; }
+        public IAsyncRelayCommand CopyMetadataCommand { get; }
 
         public PromptEditViewModel()
         {
             ApplyBlacklistCommand = new RelayCommand(OnApplyBlacklist);
-            SaveCommand = new AsyncRelayCommand<Window?>(OnSaveAsync);
+            SaveCommand = new AsyncRelayCommand(OnSaveAsync);
             SaveAsCommand = new AsyncRelayCommand<Window?>(OnSaveAsAsync);
-            CopyMetadataCommand = new AsyncRelayCommand<Window?>(OnCopyMetadataAsync);
+            CopyMetadataCommand = new AsyncRelayCommand(OnCopyMetadataAsync);
         }
 
         public void OnDragEnter(DragEventArgs e)
@@ -222,22 +224,29 @@ namespace DiffusionNexus.UI.ViewModels
             image.Save(path);
         }
 
-        private async Task OnSaveAsync(Window? window)
+        private async Task OnSaveAsync()
         {
             if (string.IsNullOrEmpty(_currentImagePath))
+            {
+                Log("no image to save", LogSeverity.Error);
                 return;
+            }
             if (File.Exists(_currentImagePath))
             {
                 var confirm = await DialogService.ShowOverwriteConfirmationAsync();
                 if (!confirm) return;
             }
             SaveImage(_currentImagePath);
+            Log($"image saved {_currentImagePath}", LogSeverity.Success);
         }
 
-        private async Task OnSaveAsAsync(Window? window)
+        private async Task OnSaveAsAsync(Window window)
         {
             if (string.IsNullOrEmpty(_currentImagePath) || window == null)
+            {
+                Log("no image to save", LogSeverity.Error);
                 return;
+            }
 
             var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
@@ -249,6 +258,11 @@ namespace DiffusionNexus.UI.ViewModels
             if (!string.IsNullOrEmpty(path))
             {
                 SaveImage(path);
+                Log($"image saved {path}", LogSeverity.Success);
+            }
+            else
+            {
+                Log("Save as... cancelled by user", LogSeverity.Warning);
             }
         }
 
@@ -259,22 +273,29 @@ namespace DiffusionNexus.UI.ViewModels
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
+
             if (SinglePromptVm.Prompt != null)
             {
-                var prompt = ApplyBlacklist(SinglePromptVm.Prompt, words);
-                var whitelist = SinglePromptVm.Whitelist ?? string.Empty;
+                string prompt = ApplyBlacklist(SinglePromptVm.Prompt, words);
+                string whitelist = SinglePromptVm.Whitelist ?? string.Empty;
                 SinglePromptVm.Prompt = AppendWhitelist(prompt, whitelist);
+                Log("whitelist applied", LogSeverity.Success);
             }
             if (SinglePromptVm.NegativePrompt != null)
             {
                 SinglePromptVm.NegativePrompt = ApplyBlacklist(SinglePromptVm.NegativePrompt, words);
             }
+            
         }
 
-        private static string ApplyBlacklist(string text, string[] words)
+        private string ApplyBlacklist(string text, string[] words)
         {
             if (string.IsNullOrWhiteSpace(text) || words.Length == 0)
+            {
+                Log("no text or blacklist words provided", LogSeverity.Warning);
                 return text;
+            }
+                
             foreach (var word in words)
             {
                 if (string.IsNullOrWhiteSpace(word))
@@ -304,10 +325,14 @@ namespace DiffusionNexus.UI.ViewModels
             return $"{text} {trimmedWhitelist}";
         }
 
-        private async Task OnCopyMetadataAsync(Window? window)
+        private async Task OnCopyMetadataAsync()
         {
-            if (_metadata == null || window == null)
+            if (_metadata == null)
+            {
+                Log("no metadata to copy", LogSeverity.Error);
                 return;
+            }
+            
             var meta = new
             {
                 _metadata.Steps,
@@ -329,7 +354,12 @@ namespace DiffusionNexus.UI.ViewModels
                 _metadata.Resources
             };
             var json = JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true });
-            await window.Clipboard!.SetTextAsync(json);
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow is { Clipboard: { } clipboard })
+            {
+                await clipboard.SetTextAsync(json);
+                Log("metadata copied", LogSeverity.Success);
+            }
         }
     }
 }
