@@ -77,7 +77,8 @@ public partial class LoraHelperViewModel : ViewModelBase
             FolderItems.Add(ConvertFolder(rootNode));
         });
 
-        var models = await Task.Run(() => discovery.CollectModels(settings.LoraHelperFolderPath));
+        var reader = new JsonInfoFileReaderService(settings.LoraHelperFolderPath!, settings.CivitaiApiKey ?? string.Empty);
+        var models = await reader.GetModelData(null, settings.LoraHelperFolderPath!, CancellationToken.None, fetchFromApi: false);
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {

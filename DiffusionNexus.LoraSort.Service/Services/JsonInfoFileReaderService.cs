@@ -141,7 +141,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
             }
         }
 
-        public async Task<List<ModelClass>> GetModelData(IProgress<ProgressReport>? progress, string jsonFilePath, CancellationToken cancellationToken)
+        public async Task<List<ModelClass>> GetModelData(IProgress<ProgressReport>? progress, string jsonFilePath, CancellationToken cancellationToken, bool fetchFromApi = true)
         {
             
             List<ModelClass> modelDataList = new List<ModelClass>();
@@ -164,17 +164,18 @@ namespace DiffusionNexus.LoraSort.Service.Services
 
                 if (model.NoMetaData == true)
                 {
-                    await UpdateModelDataFromCivitaiAPI(progress, model);
+                    if (fetchFromApi)
+                        await UpdateModelDataFromCivitaiAPI(progress, model);
                 }
                 else
                 {
-                    // Try to read from local file info first 
+                    // Try to read from local file info first
                     model.CivitaiCategory = GetMatchingCategory(model);
                     model.DiffusionBaseModel = GetBaseModelName(model);
                     model.ModelType = GetModelType(model);
 
                     // If local file info is insufficient try via online API
-                    if (model.DiffusionBaseModel == "UNKNOWN" || model.CivitaiCategory == CivitaiBaseCategories.UNKNOWN)
+                    if (fetchFromApi && (model.DiffusionBaseModel == "UNKNOWN" || model.CivitaiCategory == CivitaiBaseCategories.UNKNOWN))
                     {
                         await UpdateModelDataFromCivitaiAPI(progress, model);
                     }
