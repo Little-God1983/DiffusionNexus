@@ -4,12 +4,14 @@
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:conv="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
+             x:Name="RootControl"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
     <vm:LoraHelperViewModel/>
   </UserControl.DataContext>
   <UserControl.Resources>
     <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+    <conv:CollectionContainsConverter x:Key="CollectionContainsConverter" />
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
@@ -25,6 +27,22 @@
       <Button Grid.Column="2" Content="🔁" Width="36" Height="36" Margin="5,0,0,0"/>
       <Button Grid.Column="3" Content="🧩" Width="36" Height="36" Margin="5,0,0,0"/>
       <Button Grid.Column="4" Content="🧠" Width="36" Height="36" Margin="5,0,0,0"/>
+      <Button Grid.Column="5" Content="⚙" Width="36" Height="36" Margin="5,0,0,0">
+      <Button.ContextFlyout>
+        <Flyout Placement="Bottom">
+          <ItemsControl ItemsSource="{Binding DiffusionModels}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <ToggleButton Content="{Binding}" Margin="2"
+                              Command="{Binding DataContext.ToggleModelCommand, ElementName=RootControl}"
+                              CommandParameter="{Binding}"
+                              IsChecked="{Binding DataContext.SelectedDiffusionModels, ElementName=RootControl, Converter={StaticResource CollectionContainsConverter}, ConverterParameter={Binding}}"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Flyout>
+      </Button.ContextFlyout>
+      </Button>
     </Grid>
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"
