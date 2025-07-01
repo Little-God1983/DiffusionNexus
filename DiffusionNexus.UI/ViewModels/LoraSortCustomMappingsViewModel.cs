@@ -17,7 +17,7 @@ public partial class LoraSortCustomMappingsViewModel : ViewModelBase
     private ObservableCollection<CustomTagMap> customTagMappings = new();
 
     [ObservableProperty]
-    private bool isCustomEnabled = true;
+    private bool isCustomEnabled = false;
 
     private readonly CustomTagMapXmlService _xmlService = new();
     private Window? _window;
@@ -126,5 +126,10 @@ public partial class LoraSortCustomMappingsViewModel : ViewModelBase
         CustomTagMapPriorityHelper.MoveDown(CustomTagMappings, map);
         CustomTagMappings = CustomTagMapPriorityHelper.Normalize(CustomTagMappings);
         _xmlService.SaveMappings(CustomTagMappings);
+    }
+
+    public void NotifyDisabledInteraction()
+    {
+        Log("Enable Use Custom Mappings first.", LogSeverity.Warning);
     }
 }

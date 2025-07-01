@@ -10,6 +10,7 @@
     </UserControl.DataContext>
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+        <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
     </UserControl.Resources>
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -73,5 +74,10 @@
                     Command="{Binding DeleteAllMappingsCommand}"/>
           </StackPanel>
         </Grid>
+        <Border Background="Transparent"
+                Grid.RowSpan="3"
+                IsVisible="{Binding IsCustomEnabled, Converter={StaticResource BooleanNotConverter}}"
+                IsHitTestVisible="True"
+                PointerPressed="DisableOverlay_PointerPressed"/>
     </Grid>
 </UserControl>

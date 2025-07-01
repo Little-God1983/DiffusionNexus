@@ -13,14 +13,14 @@
         <Border Grid.Column="0" 
                 BorderBrush="Gray" BorderThickness="1" 
                 Margin="5" CornerRadius="4">
-            <controls:LoraSortMainSettingsControl/>
+            <controls:LoraSortMainSettingsControl x:Name="MainSettingsControl"/>
         </Border>
 
         <!-- Top Right - Custom Mappings -->
         <Border Grid.Column="1" 
                 BorderBrush="Gray" BorderThickness="1" 
                 Margin="5" CornerRadius="4">
-            <controls:LoraSortCustomMappingsControl/>
+            <controls:LoraSortCustomMappingsControl x:Name="CustomMappingsControl"/>
         </Border>
         
     </Grid>
