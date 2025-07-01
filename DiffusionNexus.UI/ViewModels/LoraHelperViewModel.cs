@@ -20,7 +20,7 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class LoraHelperViewModel : ViewModelBase
 {
     // This is the backing list of *all* cards
-    private readonly List<LoraCard> _allCards = new();
+    private readonly List<LoraCardViewModel> _allCards = new();
     private readonly SearchIndex _searchIndex = new();
     private List<string>? _indexNames;
     private CancellationTokenSource _suggestCts = new();
@@ -45,7 +45,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IRelayCommand ResetFiltersCommand { get; }
 
     // What the View actually binds to
-    public ObservableCollection<LoraCard> Cards { get; } = new();
+    public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
     public LoraHelperViewModel() : this(new SettingsService())
@@ -90,7 +90,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         foreach (var model in models)
         {
             var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-            var card = new LoraCard { Name = model.ModelName, Model = model, FolderPath = folder, Parent = this };
+            var card = new LoraCardViewModel { Name = model.ModelName, Model = model, FolderPath = folder, Parent = this };
             _allCards.Add(card);
             Dispatcher.UIThread.Post(() => Cards.Add(card));
         }
@@ -153,9 +153,9 @@ public partial class LoraHelperViewModel : ViewModelBase
         });
     }
 
-    private List<LoraCard> FilterCards(string? search, FolderItemViewModel? folder)
+    private List<LoraCardViewModel> FilterCards(string? search, FolderItemViewModel? folder)
     {
-        IEnumerable<LoraCard> query = _allCards;
+        IEnumerable<LoraCardViewModel> query = _allCards;
 
         if (folder != null)
             query = query.Where(c =>
@@ -250,7 +250,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         ShowSuggestions = false;
     }
 
-    public async Task DeleteCardAsync(LoraCard card)
+    public async Task DeleteCardAsync(LoraCardViewModel card)
     {
         if (DialogService == null || card.Model == null)
             return;
@@ -270,97 +270,3 @@ public partial class LoraHelperViewModel : ViewModelBase
 }
 
 
-public partial class LoraCard : ViewModelBase
-{
-    [ObservableProperty]
-    private string? _name;
-
-    [ObservableProperty]
-    private string? _description;
-
-    [ObservableProperty]
-    private ModelClass? _model;
-
-    [ObservableProperty]
-    private Bitmap? _previewImage;
-
-    [ObservableProperty]
-    private string? folderPath;
-
-    public IRelayCommand EditCommand { get; }
-    public IAsyncRelayCommand DeleteCommand { get; }
-    public IRelayCommand OpenWebCommand { get; }
-    public IRelayCommand CopyCommand { get; }
-
-    public LoraHelperViewModel? Parent { get; set; }
-
-    public LoraCard()
-    {
-        EditCommand = new RelayCommand(OnEdit);
-        DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
-        OpenWebCommand = new RelayCommand(OnOpenWeb);
-        CopyCommand = new RelayCommand(OnCopy);
-    }
-
-    partial void OnModelChanged(ModelClass? value)
-    {
-        _ = LoadPreviewImageAsync();
-    }
-
-    private async Task LoadPreviewImageAsync()
-    {
-        var path = GetPreviewImagePath();
-        if (path is null || !File.Exists(path))
-        {
-            PreviewImage = null;
-            return;
-        }
-
-        try
-        {
-            var bitmap = await Task.Run(() =>
-            {
-                using var stream = File.OpenRead(path);
-                return new Bitmap(stream);
-            });
-            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = bitmap);
-        }
-        catch
-        {
-            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = null);
-        }
-    }
-
-    public string? GetPreviewImagePath()
-    {
-        if (Model == null) return null;
-        string[] priority = [
-            ".thumb.jpg",
-            ".webp",
-            "jpeg",
-            "jpg",
-            ".preview.webp",
-            ".preview.jpeg",
-            ".preview.jpg",
-        ];
-
-        foreach (var ext in priority)
-        {
-            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
-            if (file != null)
-                return file.FullName;
-        }
-        return null;
-    }
-
-    private void OnEdit() => Log($"Edit {Name}", LogSeverity.Info);
-
-    private Task OnDeleteAsync()
-    {
-        return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
-    }
-
-    private void OnOpenWeb() => Log($"Open web for {Name}", LogSeverity.Info);
-
-    private void OnCopy() => Log($"Copy {Name}", LogSeverity.Info);
-}

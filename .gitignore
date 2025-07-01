@@ -426,3 +426,4 @@ config.json
 # Ignore all files in the 'logs' subfolder.
 /logs/
 >>>>>>> 13fa9c9 (first commit)
+dotnet-install.sh

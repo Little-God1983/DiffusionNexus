@@ -47,10 +47,21 @@
       <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <ItemsControl ItemsSource="{Binding Cards}">
           <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:LoraCard">
+            <DataTemplate x:DataType="vm:LoraCardViewModel">
               <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
                 <Grid>
                   <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+                  <StackPanel Orientation="Horizontal"
+                              VerticalAlignment="Top"
+                              HorizontalAlignment="Left"
+                              Margin="5">
+                    <Border BorderThickness="1" BorderBrush="White" Padding="2" Margin="0,0,4,0" Background="#66000000">
+                      <TextBlock Text="{Binding Model.ModelType}" Foreground="White" FontSize="12"/>
+                    </Border>
+                    <Border BorderThickness="1" BorderBrush="White" Padding="2" Background="#66000000">
+                      <TextBlock Text="{Binding Model.DiffusionBaseModel}" Foreground="White" FontSize="12"/>
+                    </Border>
+                  </StackPanel>
                   <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
                     <StackPanel>
                       <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
