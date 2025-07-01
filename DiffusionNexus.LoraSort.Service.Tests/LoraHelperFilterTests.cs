@@ -54,7 +54,7 @@ public class LoraHelperFilterTests
             view.Measure(new Size(300,300));
             view.Arrange(new Rect(0,0,300,300));
             var button = view.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "⚙");
-            var flyout = button.ContextFlyout as Flyout;
+            var flyout = button.Flyout as Flyout;
             Assert.NotNull(flyout);
             var itemsControl = (flyout!.Content as ItemsControl)!;
             Assert.Equal(vm.DiffusionModels.Count, itemsControl.Items.Cast<object>().Count());
