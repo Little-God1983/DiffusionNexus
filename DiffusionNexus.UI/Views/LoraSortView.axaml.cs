@@ -9,6 +9,9 @@ namespace DiffusionNexus.UI.Views
 {
     public partial class LoraSortView : UserControl
     {
+        private LoraSortMainSettingsViewModel? _mainVm;
+        private LoraSortCustomMappingsViewModel? _mapVm;
+
         public LoraSortView()
         {
             InitializeComponent();
@@ -17,17 +20,34 @@ namespace DiffusionNexus.UI.Views
 
         private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
         {
-            if (MainSettingsControl?.DataContext is LoraSortMainSettingsViewModel mainVm &&
-                CustomMappingsControl?.DataContext is LoraSortCustomMappingsViewModel mapVm)
+            HookViewModels();
+            if (MainSettingsControl is not null)
+                MainSettingsControl.DataContextChanged += (_, _) => HookViewModels();
+            if (CustomMappingsControl is not null)
+                CustomMappingsControl.DataContextChanged += (_, _) => HookViewModels();
+        }
+
+        private void HookViewModels()
+        {
+            if (_mainVm is not null)
+                _mainVm.PropertyChanged -= MainVmOnPropertyChanged;
+
+            _mainVm = MainSettingsControl?.DataContext as LoraSortMainSettingsViewModel;
+            _mapVm = CustomMappingsControl?.DataContext as LoraSortCustomMappingsViewModel;
+
+            if (_mainVm is not null && _mapVm is not null)
             {
-                mapVm.IsCustomEnabled = mainVm.UseCustomMappings;
-                mainVm.PropertyChanged += (_, args) =>
-                {
-                    if (args.PropertyName == nameof(LoraSortMainSettingsViewModel.UseCustomMappings))
-                    {
-                        mapVm.IsCustomEnabled = mainVm.UseCustomMappings;
-                    }
-                };
+                _mapVm.IsCustomEnabled = _mainVm.UseCustomMappings;
+                _mainVm.PropertyChanged += MainVmOnPropertyChanged;
+            }
+        }
+
+        private void MainVmOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(LoraSortMainSettingsViewModel.UseCustomMappings))
+            {
+                if (_mainVm is not null && _mapVm is not null)
+                    _mapVm.IsCustomEnabled = _mainVm.UseCustomMappings;
             }
         }
 
