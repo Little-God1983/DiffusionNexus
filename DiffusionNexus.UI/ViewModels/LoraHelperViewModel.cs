@@ -24,6 +24,17 @@ public partial class LoraHelperViewModel : ViewModelBase
     private CancellationTokenSource _suggestCts = new();
     private CancellationTokenSource _filterCts = new();
 
+    public ObservableCollection<string> DiffusionModels { get; } = new([
+        "SD 1.5",
+        "SDXL",
+        "FLUX",
+        "HiDream",
+        "Wan",
+        "Hunyuan"
+    ]);
+
+    public ObservableCollection<string> SelectedDiffusionModels { get; } = new();
+
     [ObservableProperty]
     private bool showSuggestions;
 
@@ -41,6 +52,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private FolderItemViewModel? selectedFolder;
 
     public IRelayCommand ResetFiltersCommand { get; }
+    public IRelayCommand<string?> ToggleModelCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
@@ -54,6 +66,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         _settingsService = settingsService;
         ResetFiltersCommand = new RelayCommand(ResetFilters);
+        ToggleModelCommand = new RelayCommand<string?>(ToggleModel);
         _ = LoadAsync();
     }
 
@@ -160,6 +173,9 @@ public partial class LoraHelperViewModel : ViewModelBase
             query = query.Where(c =>
                 c.FolderPath != null && c.FolderPath.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
 
+        if (SelectedDiffusionModels.Count > 0)
+            query = query.Where(c => SelectedDiffusionModels.Contains(c.DiffusionBaseModel));
+
         if (!string.IsNullOrWhiteSpace(search))
         {
             if (_searchIndex.IsReady && _indexNames != null)
@@ -187,6 +203,20 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         SelectedFolder = null;
         SearchText = null;
+        SelectedDiffusionModels.Clear();
+        _ = RefreshCardsAsync();
+    }
+
+    private void ToggleModel(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        if (SelectedDiffusionModels.Contains(model))
+            SelectedDiffusionModels.Remove(model);
+        else
+            SelectedDiffusionModels.Add(model);
+
         _ = RefreshCardsAsync();
     }
 
