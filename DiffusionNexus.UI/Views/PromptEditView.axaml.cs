@@ -28,6 +28,7 @@ public partial class PromptEditView : UserControl
         if (DataContext is PromptEditViewModel vm && VisualRoot is Window window)
         {
             vm.DialogService = new DialogService(window);
+            vm.SetWindow(window);
         }
     }
 
