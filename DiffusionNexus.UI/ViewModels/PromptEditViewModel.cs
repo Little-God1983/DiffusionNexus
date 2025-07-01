@@ -61,15 +61,22 @@ namespace DiffusionNexus.UI.ViewModels
 
         public IRelayCommand ApplyBlacklistCommand { get; }
         public IAsyncRelayCommand SaveCommand { get; }
-        public IAsyncRelayCommand<Window?> SaveAsCommand { get; }
+        public IAsyncRelayCommand SaveAsCommand { get; }
         public IAsyncRelayCommand CopyMetadataCommand { get; }
+
+        private Window? _window;
 
         public PromptEditViewModel()
         {
             ApplyBlacklistCommand = new RelayCommand(OnApplyBlacklist);
             SaveCommand = new AsyncRelayCommand(OnSaveAsync);
-            SaveAsCommand = new AsyncRelayCommand<Window?>(OnSaveAsAsync);
+            SaveAsCommand = new AsyncRelayCommand(OnSaveAsAsync);
             CopyMetadataCommand = new AsyncRelayCommand(OnCopyMetadataAsync);
+        }
+
+        public void SetWindow(Window window)
+        {
+            _window = window;
         }
 
         public void OnDragEnter(DragEventArgs e)
@@ -240,15 +247,15 @@ namespace DiffusionNexus.UI.ViewModels
             Log($"image saved {_currentImagePath}", LogSeverity.Success);
         }
 
-        private async Task OnSaveAsAsync(Window window)
+        private async Task OnSaveAsAsync()
         {
-            if (string.IsNullOrEmpty(_currentImagePath) || window == null)
+            if (string.IsNullOrEmpty(_currentImagePath) || _window == null)
             {
                 Log("no image to save", LogSeverity.Error);
                 return;
             }
 
-            var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            var file = await _window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
                 SuggestedFileName = Path.GetFileName(_currentImagePath),
                 FileTypeChoices = new[] { new FilePickerFileType("PNG") { Patterns = new[] { "*.png" } } }

@@ -108,7 +108,7 @@
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
             <Button Content="Apply List" Width="110" Command="{Binding ApplyBlacklistCommand}"/>
             <Button Content="Save" Width="80" Command="{Binding SaveCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
-            <Button Content="Save As" Width="80" Command="{Binding SaveAsCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
+            <Button Content="Save As" Width="80" Command="{Binding SaveAsCommand}"/>
           </StackPanel>
 
         </StackPanel>
