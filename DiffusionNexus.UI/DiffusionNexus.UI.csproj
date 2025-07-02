@@ -30,6 +30,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.6" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.0.6" />
   </ItemGroup>
 
   <!-- Automatically read, increment and save build number on each build -->
