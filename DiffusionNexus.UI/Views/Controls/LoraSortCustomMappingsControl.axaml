@@ -5,11 +5,9 @@
              xmlns:svc="clr-namespace:DiffusionNexus.LoraSort.Service.Classes;assembly=DiffusionNexus.LoraSort.Service"
              x:Class="DiffusionNexus.UI.Views.Controls.LoraSortCustomMappingsControl"
              x:DataType="vm:LoraSortCustomMappingsViewModel">
-    <UserControl.DataContext>
-        <vm:LoraSortCustomMappingsViewModel/>
-    </UserControl.DataContext>
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+        <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
     </UserControl.Resources>
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -73,5 +71,10 @@
                     Command="{Binding DeleteAllMappingsCommand}"/>
           </StackPanel>
         </Grid>
+        <Border Background="Transparent"
+                Grid.RowSpan="3"
+                IsVisible="{Binding IsCustomEnabled, Converter={StaticResource BooleanNotConverter}}"
+                IsHitTestVisible="{Binding IsCustomEnabled, Converter={StaticResource BooleanNotConverter}}"
+                PointerPressed="DisableOverlay_PointerPressed"/>
     </Grid>
 </UserControl>

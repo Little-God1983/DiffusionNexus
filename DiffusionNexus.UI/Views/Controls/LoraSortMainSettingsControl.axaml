@@ -7,9 +7,6 @@
              mc:Ignorable="d"
              x:Class="DiffusionNexus.UI.Views.Controls.LoraSortMainSettingsControl"
              x:DataType="vm:LoraSortMainSettingsViewModel">
-    <UserControl.DataContext>
-        <vm:LoraSortMainSettingsViewModel/>
-    </UserControl.DataContext>
     <Grid>
       <ScrollViewer Margin="10" VerticalScrollBarVisibility="Auto">
         <StackPanel>
