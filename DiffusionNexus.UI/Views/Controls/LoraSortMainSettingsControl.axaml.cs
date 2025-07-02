@@ -11,7 +11,6 @@ namespace DiffusionNexus.UI.Views.Controls
         public LoraSortMainSettingsControl()
         {
             InitializeComponent();
-            DataContext = new LoraSortMainSettingsViewModel();
             this.AttachedToVisualTree += OnAttached;
         }
 

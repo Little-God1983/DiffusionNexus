@@ -77,7 +77,7 @@
         <Border Background="Transparent"
                 Grid.RowSpan="3"
                 IsVisible="{Binding IsCustomEnabled, Converter={StaticResource BooleanNotConverter}}"
-                IsHitTestVisible="True"
+                IsHitTestVisible="{Binding IsCustomEnabled, Converter={StaticResource BooleanNotConverter}}"
                 PointerPressed="DisableOverlay_PointerPressed"/>
     </Grid>
 </UserControl>

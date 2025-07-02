@@ -12,7 +12,6 @@ namespace DiffusionNexus.UI.Views.Controls
         public LoraSortCustomMappingsControl()
         {
             InitializeComponent();
-            DataContext = new LoraSortCustomMappingsViewModel();
             this.AttachedToVisualTree += OnAttached;
         }
 
