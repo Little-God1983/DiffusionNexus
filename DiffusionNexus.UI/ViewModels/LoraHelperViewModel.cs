@@ -5,6 +5,8 @@ using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Search;
 using DiffusionNexus.LoraSort.Service.Services;
 using DiffusionNexus.UI.Classes;
+using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -41,6 +43,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private FolderItemViewModel? selectedFolder;
 
     public IRelayCommand ResetFiltersCommand { get; }
+    public IAsyncRelayCommand<Window?> ScanDuplicatesCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
@@ -54,6 +57,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         _settingsService = settingsService;
         ResetFiltersCommand = new RelayCommand(ResetFilters);
+        ScanDuplicatesCommand = new AsyncRelayCommand<Window?>(ScanDuplicatesAsync);
         _ = LoadAsync();
     }
 
@@ -265,6 +269,29 @@ public partial class LoraHelperViewModel : ViewModelBase
         _allCards.Remove(card);
         Cards.Remove(card);
         StartIndexing();
+    }
+
+    private async Task ScanDuplicatesAsync(Window? window)
+    {
+        if (window is null) return;
+        var settings = await _settingsService.LoadAsync();
+        var options = new FolderPickerOpenOptions();
+        if (!string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+        {
+            var start = await window.StorageProvider.TryGetFolderFromPathAsync(settings.LoraHelperFolderPath);
+            if (start != null)
+                options.SuggestedStartLocation = start;
+        }
+        var pick = await window.StorageProvider.OpenFolderPickerAsync(options);
+        var path = pick.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        IsLoading = true;
+        var scanner = new DuplicateScanner();
+        var progress = new Progress<ScanProgress>(_ => { });
+        await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
+        IsLoading = false;
     }
 }
 
