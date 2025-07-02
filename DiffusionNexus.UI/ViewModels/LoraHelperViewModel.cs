@@ -316,10 +316,15 @@ public partial class LoraHelperViewModel : ViewModelBase
             if (start != null)
                 options.SuggestedStartLocation = start;
         }
+        
         var pick = await _window.StorageProvider.OpenFolderPickerAsync(options);
         var path = pick.FirstOrDefault()?.TryGetLocalPath();
         if (string.IsNullOrWhiteSpace(path))
+        {
+            Log($"Scan folder selection Aborted by user", LogSeverity.Warning);
             return;
+        }
+            
 
         IsScanning = true;
         ScanIndeterminate = true;
@@ -345,11 +350,14 @@ public partial class LoraHelperViewModel : ViewModelBase
             });
         });
 
+        Log($"Start Scan", LogSeverity.Info);
         IReadOnlyList<DuplicateSet> result = await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
+        Log($"Scan finished {result.Count} found", LogSeverity.Info);
 
         ScanHeadline = result.Count == 0
             ? "No duplicates found." : $"{total} Loras scanned – {result.Count} duplicates found";
 
+        Log($"Create Result View", LogSeverity.Info);
         foreach (var set in result)
             DuplicateItems.Add(new DuplicateItemViewModel(this, set));
 
