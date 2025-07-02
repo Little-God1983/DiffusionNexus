@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
+using System.Net.WebSockets;
 
 namespace DiffusionNexus.UI.Views;
 
@@ -31,6 +32,7 @@ public partial class LoraHelperView : UserControl
         if (DataContext is LoraHelperViewModel vm && VisualRoot is Window window)
         {
             vm.DialogService = new DialogService(window);
+            vm.SetWindow(window);
         }
     }
 }
