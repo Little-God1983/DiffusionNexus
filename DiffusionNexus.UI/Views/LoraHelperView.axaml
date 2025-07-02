@@ -93,6 +93,8 @@
       <controls:BusyOverlay IsVisible="{Binding IsLoading}"
                             HorizontalAlignment="Stretch"
                             VerticalAlignment="Stretch"/>
+      <controls:ProcessingOverlayControl IsVisible="{Binding IsScanning}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+      <controls:DuplicateResultControl IsVisible="{Binding ShowDuplicateResults}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
     </Grid>
   </Grid>
 </UserControl>

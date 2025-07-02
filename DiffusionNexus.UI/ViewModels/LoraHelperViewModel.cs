@@ -37,6 +37,21 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool isLoading;
 
     [ObservableProperty]
+    private bool isScanning;
+
+    [ObservableProperty]
+    private double scanProgress;
+
+    [ObservableProperty]
+    private bool scanIndeterminate = true;
+
+    [ObservableProperty]
+    private bool showDuplicateResults;
+
+    [ObservableProperty]
+    private string? scanHeadline;
+
+    [ObservableProperty]
     private string? searchText;
 
     [ObservableProperty]
@@ -48,6 +63,8 @@ public partial class LoraHelperViewModel : ViewModelBase
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
+    public ObservableCollection<DuplicateItemViewModel> DuplicateItems { get; } = new();
+    public ObservableCollection<string> SelectedFiles { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
     public LoraHelperViewModel() : this(new SettingsService())
@@ -276,6 +293,18 @@ public partial class LoraHelperViewModel : ViewModelBase
         StartIndexing();
     }
 
+    internal void AddKeepFile(string path)
+    {
+        if (!SelectedFiles.Contains(path))
+            SelectedFiles.Add(path);
+    }
+
+    internal void RemoveKeepFile(string path)
+    {
+        if (SelectedFiles.Contains(path))
+            SelectedFiles.Remove(path);
+    }
+
     private async Task ScanDuplicatesAsync()
     {
         if (_window is null) return;
@@ -292,11 +321,40 @@ public partial class LoraHelperViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(path))
             return;
 
-        IsLoading = true;
+        IsScanning = true;
+        ScanIndeterminate = true;
+        ScanProgress = 0;
+        ShowDuplicateResults = false;
+        SelectedFiles.Clear();
+        DuplicateItems.Clear();
+        int total = 0;
+
         var scanner = new DuplicateScanner();
-        var progress = new Progress<ScanProgress>(_ => { });
-        await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
-        IsLoading = false;
+        var progress = new Progress<ScanProgress>(rep =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                total = rep.Total;
+                if (rep.Total > 0)
+                {
+                    ScanIndeterminate = false;
+                    ScanProgress = rep.Processed * 100d / rep.Total;
+                }
+                if (!string.IsNullOrWhiteSpace(rep.Error))
+                    Log($"Scan error: {rep.Error}", LogSeverity.Warning);
+            });
+        });
+
+        IReadOnlyList<DuplicateSet> result = await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
+
+        ScanHeadline = result.Count == 0
+            ? "No duplicates found." : $"{total} Loras scanned – {result.Count} duplicates found";
+
+        foreach (var set in result)
+            DuplicateItems.Add(new DuplicateItemViewModel(this, set));
+
+        IsScanning = false;
+        ShowDuplicateResults = true;
     }
 }
 

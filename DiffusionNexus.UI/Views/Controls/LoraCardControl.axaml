@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.LoraCardControl"
+             x:DataType="vm:LoraCardViewModel">
+  <UserControl.Resources>
+    <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+  </UserControl.Resources>
+  <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+    <Grid>
+      <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Border BorderBrush="White" BorderThickness="1" Padding="2" Margin="2">
+          <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
+        </Border>
+        <Border BorderBrush="White" BorderThickness="1" Padding="2" Margin="2,2,0,2">
+          <TextBlock Text="{Binding DiffusionBaseModel}" FontSize="12"/>
+        </Border>
+      </StackPanel>
+      <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
+        <StackPanel>
+          <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>

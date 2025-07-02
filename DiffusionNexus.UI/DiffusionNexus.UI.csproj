@@ -75,6 +75,12 @@
     <Compile Update="Views\Controls\ProcessingOverlayControl.axaml.cs">
       <DependentUpon>ProcessingOverlayControl.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Views\Controls\LoraCardControl.axaml.cs">
+      <DependentUpon>LoraCardControl.axaml</DependentUpon>
+    </Compile>
+    <Compile Update="Views\Controls\DuplicateResultControl.axaml.cs">
+      <DependentUpon>DuplicateResultControl.axaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
