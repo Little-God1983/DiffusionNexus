@@ -5,9 +5,6 @@
              xmlns:svc="clr-namespace:DiffusionNexus.LoraSort.Service.Classes;assembly=DiffusionNexus.LoraSort.Service"
              x:Class="DiffusionNexus.UI.Views.Controls.LoraSortCustomMappingsControl"
              x:DataType="vm:LoraSortCustomMappingsViewModel">
-    <UserControl.DataContext>
-        <vm:LoraSortCustomMappingsViewModel/>
-    </UserControl.DataContext>
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
         <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
