@@ -17,83 +17,106 @@ public class DuplicateScanner
 {
     public async Task<IReadOnlyList<DuplicateSet>> ScanAsync(string folder, IProgress<ScanProgress>? progress = null, CancellationToken token = default)
     {
-        var files = Directory.EnumerateFiles(folder, "*.safetensors", SearchOption.AllDirectories)
-            .Select(f => new FileInfo(f)).ToList();
+        var files = GetCandidateFiles(folder);
         var total = files.Count;
         if (total < 2) return Array.Empty<DuplicateSet>();
 
-        // load metadata once
+        var metaLookup = await BuildMetadataLookupAsync(folder, token);
+
+        var results = new List<DuplicateSet>();
+        int processed = 0;
+
+        foreach (var group in files.GroupBy(f => f.Length))
+        {
+            processed = await ProcessSizeGroupAsync(group.ToList(), metaLookup, progress, total, processed, results, token);
+        }
+
+        return results;
+    }
+
+    private static List<FileInfo> GetCandidateFiles(string folder)
+    {
+        return Directory.EnumerateFiles(folder, "*.safetensors", SearchOption.AllDirectories)
+            .Select(f => new FileInfo(f)).ToList();
+    }
+
+    private static async Task<Dictionary<string, ModelClass>> BuildMetadataLookupAsync(string folder, CancellationToken token)
+    {
         var reader = new JsonInfoFileReaderService(folder, string.Empty);
-        var metas = await reader.GetModelData(null, folder, CancellationToken.None, fetchFromApi: false);
-        var metaLookup = new Dictionary<string, ModelClass>(StringComparer.OrdinalIgnoreCase);
+        var metas = await reader.GetModelData(null, folder, token, fetchFromApi: false);
+        var lookup = new Dictionary<string, ModelClass>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in metas)
         {
             foreach (var fi in m.AssociatedFilesInfo)
             {
-                if (fi.Extension.Equals(".safetensors", System.StringComparison.OrdinalIgnoreCase))
-                    metaLookup[fi.FullName] = m;
+                if (fi.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase))
+                    lookup[fi.FullName] = m;
             }
         }
+        return lookup;
+    }
 
-        var results = new List<DuplicateSet>();
-        int processed = 0;
-        foreach (var group in files.GroupBy(f => f.Length))
+    private static async Task<int> ProcessSizeGroupAsync(List<FileInfo> files, Dictionary<string, ModelClass> metaLookup, IProgress<ScanProgress>? progress, int total, int processed, List<DuplicateSet> results, CancellationToken token)
+    {
+        if (files.Count < 2)
         {
-            var list = group.ToList();
-            if (list.Count < 2)
+            foreach (var f in files)
             {
-                foreach (var f in list)
-                {
-                    processed++;
-                    progress?.Report(new ScanProgress(f.FullName, processed, total));
-                }
-                continue;
-            }
-
-            var hashes = new Dictionary<string, List<FileInfo>>();
-            foreach (var file in list)
-            {
-                token.ThrowIfCancellationRequested();
-                progress?.Report(new ScanProgress(file.FullName, processed, total));
-                try
-                {
-                    var hash = await ComputeHashAsync(file.FullName, token);
-                    if (!hashes.TryGetValue(hash, out var hlist))
-                        hashes[hash] = hlist = new();
-                    hlist.Add(file);
-                }
-                catch (IOException ex)
-                {
-                    progress?.Report(new ScanProgress(file.FullName, processed, total, ex.Message));
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    progress?.Report(new ScanProgress(file.FullName, processed, total, ex.Message));
-                }
                 processed++;
+                progress?.Report(new ScanProgress(f.FullName, processed, total));
             }
+            return processed;
+        }
 
-            foreach (var kv in hashes)
+        var hashes = new Dictionary<string, List<FileInfo>>();
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            progress?.Report(new ScanProgress(file.FullName, processed, total));
+            try
             {
-                if (kv.Value.Count < 2) continue;
-                var cand = kv.Value;
-                for (int i = 0; i < cand.Count - 1; i++)
+                var hash = await ComputeHashAsync(file.FullName, token);
+                if (!hashes.TryGetValue(hash, out var list))
+                    hashes[hash] = list = new();
+                list.Add(file);
+            }
+            catch (IOException ex)
+            {
+                progress?.Report(new ScanProgress(file.FullName, processed, total, ex.Message));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                progress?.Report(new ScanProgress(file.FullName, processed, total, ex.Message));
+            }
+            processed++;
+        }
+
+        await CompareCandidateFilesAsync(hashes, metaLookup, results, token);
+        return processed;
+    }
+
+    private static async Task CompareCandidateFilesAsync(Dictionary<string, List<FileInfo>> hashes, Dictionary<string, ModelClass> metaLookup, List<DuplicateSet> results, CancellationToken token)
+    {
+        foreach (var kv in hashes)
+        {
+            var cand = kv.Value;
+            if (cand.Count < 2) continue;
+
+            for (int i = 0; i < cand.Count - 1; i++)
+            {
+                for (int j = i + 1; j < cand.Count; j++)
                 {
-                    for (int j = i + 1; j < cand.Count; j++)
+                    var a = cand[i];
+                    var b = cand[j];
+                    if (await FilesEqualAsync(a.FullName, b.FullName, token))
                     {
-                        var a = cand[i];
-                        var b = cand[j];
-                        if (await FilesEqualAsync(a.FullName, b.FullName, token))
-                        {
-                            metaLookup.TryGetValue(a.FullName, out var metaA);
-                            metaLookup.TryGetValue(b.FullName, out var metaB);
-                            results.Add(new DuplicateSet(a, b, a.Length, metaA, metaB));
-                        }
+                        metaLookup.TryGetValue(a.FullName, out var metaA);
+                        metaLookup.TryGetValue(b.FullName, out var metaB);
+                        results.Add(new DuplicateSet(a, b, a.Length, metaA, metaB));
                     }
                 }
             }
         }
-        return results;
     }
 
     private static async Task<string> ComputeHashAsync(string path, CancellationToken token)
