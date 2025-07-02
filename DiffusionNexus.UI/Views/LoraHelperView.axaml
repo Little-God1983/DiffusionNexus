@@ -23,7 +23,7 @@
                                   Margin="5,0"
                                   MaxDropDownHeight="200"/>
       <Button Grid.Column="2" Content="🔁" Width="36" Height="36" Margin="5,0,0,0"/>
-      <Button Grid.Column="3" Content="🧩" Width="36" Height="36" Margin="5,0,0,0"
+      <Button Grid.Column="3" Content="🧩 Find Duplicates" Width="120" Height="36" Margin="5,0,0,0"
               Command="{Binding ScanDuplicatesCommand}"
               CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
       <Button Grid.Column="4" Content="🧠" Width="36" Height="36" Margin="5,0,0,0"/>

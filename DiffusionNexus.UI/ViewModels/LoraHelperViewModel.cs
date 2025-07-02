@@ -43,12 +43,13 @@ public partial class LoraHelperViewModel : ViewModelBase
     private FolderItemViewModel? selectedFolder;
 
     public IRelayCommand ResetFiltersCommand { get; }
-    public IAsyncRelayCommand<Window?> ScanDuplicatesCommand { get; }
+    public IAsyncRelayCommand ScanDuplicatesCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
+    private Window? _window;
     public LoraHelperViewModel() : this(new SettingsService())
     {
     }
@@ -57,8 +58,12 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         _settingsService = settingsService;
         ResetFiltersCommand = new RelayCommand(ResetFilters);
-        ScanDuplicatesCommand = new AsyncRelayCommand<Window?>(ScanDuplicatesAsync);
+        ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         _ = LoadAsync();
+    }
+    public void SetWindow(Window window)
+    {
+        _window = window;
     }
 
     private async Task LoadAsync()
@@ -271,18 +276,18 @@ public partial class LoraHelperViewModel : ViewModelBase
         StartIndexing();
     }
 
-    private async Task ScanDuplicatesAsync(Window? window)
+    private async Task ScanDuplicatesAsync()
     {
-        if (window is null) return;
+        if (_window is null) return;
         var settings = await _settingsService.LoadAsync();
         var options = new FolderPickerOpenOptions();
         if (!string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
         {
-            var start = await window.StorageProvider.TryGetFolderFromPathAsync(settings.LoraHelperFolderPath);
+            var start = await _window.StorageProvider.TryGetFolderFromPathAsync(settings.LoraHelperFolderPath);
             if (start != null)
                 options.SuggestedStartLocation = start;
         }
-        var pick = await window.StorageProvider.OpenFolderPickerAsync(options);
+        var pick = await _window.StorageProvider.OpenFolderPickerAsync(options);
         var path = pick.FirstOrDefault()?.TryGetLocalPath();
         if (string.IsNullOrWhiteSpace(path))
             return;
