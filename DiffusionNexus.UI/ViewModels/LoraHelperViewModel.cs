@@ -67,6 +67,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         _settingsService = settingsService;
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ToggleModelCommand = new RelayCommand<string?>(ToggleModel);
+        SelectedDiffusionModels.CollectionChanged += (_, _) => OnPropertyChanged(nameof(SelectedDiffusionModels));
         _ = LoadAsync();
     }
 
@@ -204,6 +205,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         SelectedFolder = null;
         SearchText = null;
         SelectedDiffusionModels.Clear();
+        OnPropertyChanged(nameof(SelectedDiffusionModels));
         _ = RefreshCardsAsync();
     }
 
@@ -216,6 +218,8 @@ public partial class LoraHelperViewModel : ViewModelBase
             SelectedDiffusionModels.Remove(model);
         else
             SelectedDiffusionModels.Add(model);
+
+        OnPropertyChanged(nameof(SelectedDiffusionModels));
 
         _ = RefreshCardsAsync();
     }

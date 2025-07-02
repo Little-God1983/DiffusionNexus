@@ -36,7 +36,7 @@
                   <ToggleButton Content="{Binding}" Margin="2"
                                 Command="{Binding DataContext.ToggleModelCommand, ElementName=RootControl}"
                                 CommandParameter="{Binding}"
-                                IsChecked="{Binding DataContext.SelectedDiffusionModels, ElementName=RootControl, Converter={StaticResource CollectionContainsConverter}, ConverterParameter={Binding}}"/>
+                                IsChecked="{Binding DataContext.SelectedDiffusionModels, Mode=OneWay, ElementName=RootControl, Converter={StaticResource CollectionContainsConverter}, ConverterParameter={Binding}}"/>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>

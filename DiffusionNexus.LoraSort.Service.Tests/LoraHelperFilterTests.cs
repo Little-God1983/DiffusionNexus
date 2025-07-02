@@ -61,6 +61,26 @@ public class LoraHelperFilterTests
         }, System.Threading.CancellationToken.None);
     }
 
+    [Fact]
+    public void SelectedModelsReflectInFlyoutToggleButtons()
+    {
+        using var session = HeadlessUnitTestSession.StartNew(typeof(DiffusionNexus.UI.App));
+        session.Dispatch(() =>
+        {
+            var vm = new LoraHelperViewModel(new FakeService());
+            vm.ToggleModelCommand.Execute("SDXL");
+            var view = new LoraHelperView { DataContext = vm };
+            view.ApplyTemplate();
+            view.Measure(new Size(300,300));
+            view.Arrange(new Rect(0,0,300,300));
+            var button = view.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == "⚙");
+            var flyout = (Flyout)button.Flyout!;
+            flyout.ShowAt(button);
+            var toggle = flyout.GetVisualDescendants().OfType<ToggleButton>().First(tb => tb.Content?.ToString() == "SDXL");
+            Assert.True(toggle.IsChecked);
+        }, System.Threading.CancellationToken.None);
+    }
+
     private class FakeService : ISettingsService
     {
         public Task<SettingsModel> LoadAsync() => Task.FromResult(new SettingsModel());

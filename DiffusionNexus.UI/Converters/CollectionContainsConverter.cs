@@ -1,4 +1,5 @@
 using Avalonia.Data.Converters;
+using Avalonia.Data;
 using System;
 using System.Globalization;
 using System.Collections.Generic;
@@ -17,7 +18,8 @@ namespace DiffusionNexus.UI.Converters
 
         public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         {
-            throw new NotImplementedException();
+            // This converter is intended for one-way bindings only
+            return BindingOperations.DoNothing;
         }
     }
 }
