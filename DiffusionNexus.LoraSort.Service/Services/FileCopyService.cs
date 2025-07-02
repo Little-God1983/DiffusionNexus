@@ -46,7 +46,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
 
                 if (model.NoMetaData)
                 {
-                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' has no metaData => File is skipped.", LogLevel = LogSeverity.Warning });
+                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.SafeTensorFileName}' has no metaData => File is skipped.", LogLevel = LogSeverity.Warning });
                     hasErrors = true;
                     continue;
                 }
@@ -59,7 +59,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
 
                 if (model.ModelType != DiffusionTypes.LORA && model.ModelType != DiffusionTypes.LOCON)
                 {
-                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.ModelName}' is not a Lora. It is of Type: {model.ModelType.ToString()} => File is skipped.", LogLevel = LogSeverity.Warning });
+                    progress?.Report(new ProgressReport { IsSuccessful = false, Percentage = percentage, StatusMessage = $"File '{model.SafeTensorFileName}' is not a Lora. It is of Type: {model.ModelType.ToString()} => File is skipped.", LogLevel = LogSeverity.Warning });
                     hasErrors = true;
                     continue;
                 }

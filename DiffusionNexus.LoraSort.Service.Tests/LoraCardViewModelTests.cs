@@ -11,7 +11,7 @@ public class LoraCardViewModelTests
     {
         var model = new ModelClass
         {
-            ModelName = "test",
+            SafeTensorFileName = "test",
             DiffusionBaseModel = "SD15",
             ModelType = DiffusionTypes.LORA,
             AssociatedFilesInfo = new List<FileInfo>()

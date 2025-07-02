@@ -65,7 +65,7 @@
                     </StackPanel>
                     <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
                       <StackPanel>
-                        <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
                         <Grid ColumnDefinitions="Auto,*">
                           <Button Content="✏️"
                                   Width="36" Height="36" FontSize="16"

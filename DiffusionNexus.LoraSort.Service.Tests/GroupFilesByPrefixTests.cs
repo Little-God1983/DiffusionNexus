@@ -20,7 +20,7 @@ public class GroupFilesByPrefixTests
 
             var result = JsonInfoFileReaderService.GroupFilesByPrefix(tempDir);
             Assert.Equal(2, result.Count);
-            var first = result.First(m => m.ModelName == "model1");
+            var first = result.First(m => m.SafeTensorFileName == "model1");
             Assert.Equal(2, first.AssociatedFilesInfo.Count);
         }
         finally

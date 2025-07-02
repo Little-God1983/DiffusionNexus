@@ -6,6 +6,7 @@
 using DiffusionNexus.LoraSort.Service.Classes;
 using DiffusionNexus.LoraSort.Service.Helper;
 using Serilog;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -156,7 +157,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
             foreach (ModelClass model in modelDataList)
             {
               
-                Log.Debug($"Processing Metadata: {count} of {modelDataList.Count} - {model.ModelName}");
+                Log.Debug($"Processing Metadata: {count} of {modelDataList.Count} - {model.SafeTensorFileName}");
 
                 // Throw if cancellation is requested
                 cancellationToken.ThrowIfCancellationRequested();
@@ -166,6 +167,8 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 {
                     if (fetchFromApi)
                         await UpdateModelDataFromCivitaiAPI(progress, model);
+                    else
+                        model.ModelVersionName = model.SafeTensorFileName;
                 }
                 else
                 {
@@ -173,6 +176,11 @@ namespace DiffusionNexus.LoraSort.Service.Services
                     model.CivitaiCategory = GetMatchingCategory(model);
                     model.DiffusionBaseModel = GetBaseModelName(model);
                     model.ModelType = GetModelType(model);
+                    var versionName = GetModelVersionName(model);
+                    model.ModelVersionName = string.IsNullOrWhiteSpace(versionName)
+                        ? model.SafeTensorFileName
+                        : versionName;
+
 
                     // If local file info is insufficient try via online API
                     if (fetchFromApi && (model.DiffusionBaseModel == "UNKNOWN" || model.CivitaiCategory == CivitaiBaseCategories.UNKNOWN))
@@ -213,7 +221,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
                     {
                         IsSuccessful = false,
                         Percentage = 0,
-                        StatusMessage = $"API Call skipped for: {model.ModelName} - No safetensorsfile found",
+                        StatusMessage = $"API Call skipped for: {model.SafeTensorFileName} - No safetensorsfile found",
                         LogLevel = LogSeverity.Warning
                     });
                     return;
@@ -221,7 +229,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 progress?.Report(new ProgressReport
                 {
                     Percentage = 0,
-                    StatusMessage = $"Calling API for metadata of {model.ModelName}",
+                    StatusMessage = $"Calling API for metadata of {model.SafeTensorFileName}",
                     LogLevel = LogSeverity.Info
                 });
 
@@ -233,11 +241,13 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 string modelVersionInfoApiResponse = await service.GetModelVersionInformationFromCivitaiAsync(SHA256FromSafetensorsFile);
                 string modelId = service.GetModelId(modelVersionInfoApiResponse);
                 model.DiffusionBaseModel = service.GetBaseModelName(modelVersionInfoApiResponse);
+               
 
                 //Second API call to get basic info about the model like tags etc. These are stored on the model page not on the version page
                 string modelInfoApiResponse = await service.GetModelInformationFromCivitaiAsync(modelId);
                 model.Tags = service.GetTagsFromModelInfo(modelInfoApiResponse);
                 model.ModelType = service.GetModelType(modelInfoApiResponse);
+                model.ModelVersionName = service.GetModelVersionName(modelInfoApiResponse);
                 model.NoMetaData = false;
                 model.CivitaiCategory = GetCategoryFromTags(model.Tags);
 
@@ -248,7 +258,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 {
                     IsSuccessful = false,
                     Percentage = 0,
-                    StatusMessage = $"Error on Retrieving Meta Data from API for {model.ModelName} - {ex.Message}",
+                    StatusMessage = $"Error on Retrieving Meta Data from API for {model.SafeTensorFileName} - {ex.Message}",
                     LogLevel = LogSeverity.Error
                 });
 
@@ -296,35 +306,6 @@ namespace DiffusionNexus.LoraSort.Service.Services
             return CivitaiBaseCategories.UNKNOWN;
         }
 
-        private List<FileInfo> GetAllFiles()
-        {
-            List<FileInfo> files = new List<FileInfo>();
-            try
-            {
-                // Ensure the path is a directory and not a file path
-                if (Directory.Exists(_loraInfoBasePath))
-                {
-                    DirectoryInfo dirInfo = new DirectoryInfo(_loraInfoBasePath);
-                    //foreach (var file in dirInfo.GetFiles("*.info", SearchOption.AllDirectories))
-                    //{
-                    //    files.Add(file);
-                    //}
-                    foreach (var file in dirInfo.GetFiles("*", SearchOption.AllDirectories))
-                    {
-                        if (StaticFileTypes.ModelExtensions.Contains(Path.GetExtension(file.FullName)))
-                        {
-                            files.Add(file);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception(ex.Message);
-            }
-            return files;
-        }
-
         public static List<ModelClass> GroupFilesByPrefix(string rootDirectory)
         {
             var fileGroups = new Dictionary<string, List<FileInfo>>();
@@ -351,7 +332,7 @@ namespace DiffusionNexus.LoraSort.Service.Services
             {
                 ModelClass model = new ModelClass
                 {
-                    ModelName = group.Key,
+                    SafeTensorFileName = group.Key,
                     AssociatedFilesInfo = group.Value,
                     CivitaiCategory = CivitaiBaseCategories.UNKNOWN // Set your desired category here
                 };
@@ -364,14 +345,6 @@ namespace DiffusionNexus.LoraSort.Service.Services
             return modelClasses;
         }
 
-        private static string GetPrefix(string fileName)
-        {
-            // Extract the prefix from the file name (everything before the last underscore)
-            //var lastUnderscoreIndex = fileName.LastIndexOf('_');
-            //return lastUnderscoreIndex > 0 ? fileName.Substring(0, lastUnderscoreIndex) : fileName;
-            return Path.GetFileNameWithoutExtension(fileName);
-            //return fileName.Split('.').First();
-        }
         static string ExtractBaseName(string fileName)
         {
             // Order the known extensions descending by length.
@@ -458,6 +431,35 @@ namespace DiffusionNexus.LoraSort.Service.Services
                 {
                     tags.Add(tag);
                 }
+            }
+        }
+
+        internal string GetModelVersionName(ModelClass model)
+        {
+            try
+            {
+                var fileCivitai = model.AssociatedFilesInfo.FirstOrDefault(x => x.FullName.Contains(".civitai.info"));
+                if (fileCivitai != null)
+                {
+                    using (JsonDocument jdoc = LoadJsonDocument(fileCivitai.FullName))
+                    {
+                        JsonElement root = jdoc.RootElement;
+
+                        // Try to get the model object and its name property
+                        if (root.TryGetProperty("model", out JsonElement modelElement) &&
+                            modelElement.TryGetProperty("name", out JsonElement nameElement))
+                        {
+                            return nameElement.GetString();
+                        }
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error retrieving model version name for {ModelName}", model.SafeTensorFileName);
+                return null;
             }
         }
     }

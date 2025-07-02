@@ -23,7 +23,7 @@ public class LoraCardViewUiTests
             {
                 Model = new ModelClass
                 {
-                    ModelName = "card",
+                    SafeTensorFileName = "card",
                     DiffusionBaseModel = "SD15",
                     ModelType = DiffusionTypes.LORA,
                     AssociatedFilesInfo = new List<FileInfo>()
