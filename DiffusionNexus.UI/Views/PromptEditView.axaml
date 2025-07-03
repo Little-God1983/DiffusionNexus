@@ -25,7 +25,7 @@
 
         <!-- Middle side for Meta Data -->
         <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
-          <StackPanel x:Name="MetadataPanel" Spacing="4" Margin="0,10,0,0">
+          <StackPanel x:Name="MetadataPanel" Spacing="4" Margin="10,0,10,0">
             <TextBlock Text="Metadata" Width="120"/>
             <StackPanel Orientation="Horizontal" Spacing="5">
               <TextBlock Text="Steps" Width="120"/>

@@ -35,8 +35,6 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private string? statusText;
         [ObservableProperty]
-        private string actionButtonText = "Go";
-        [ObservableProperty]
         private bool isBusy;
         [ObservableProperty]
         private bool isIndeterminate = true;
@@ -156,7 +154,6 @@ namespace DiffusionNexus.UI.ViewModels
         {
             _isProcessing = true;
             IsBusy = true;
-            ActionButtonText = "Cancel";
             _originalLogExpanded = _mainWindowVm?.IsLogExpanded ?? false;
             if (_mainWindowVm != null)
                 _mainWindowVm.IsLogExpanded = true;
@@ -259,7 +256,6 @@ namespace DiffusionNexus.UI.ViewModels
         {
             _isProcessing = false;
             IsBusy = false;
-            ActionButtonText = "Go";
             Progress = 0;
             StatusText = null;
             _cts?.Dispose();
