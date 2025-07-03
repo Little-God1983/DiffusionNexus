@@ -190,5 +190,26 @@ namespace DiffusionNexus.LoraSort.Service.Services
             }
             return DiffusionTypes.OTHER; // Default if no match is found
         }
+
+        internal string GetModelVersionName(string modelInfoApiResponse)
+        {
+            using (JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse))
+            {
+                JsonElement root = doc.RootElement;
+
+                // Check if `name` is directly in the root
+                if (root.TryGetProperty("name", out JsonElement nameElement) &&
+                    nameElement.ValueKind == JsonValueKind.String)
+                {
+                    string? nameString = nameElement.GetString()?.Replace(" ", "").ToUpper();
+
+                    if (!string.IsNullOrEmpty(nameString))
+                    {
+                        return nameString; // Return the string directly instead of using Enum.TryParse
+                    }
+                }
+            }
+            return null;
+        }
     }
 }

@@ -98,7 +98,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         foreach (var model in models)
         {
             var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-            var card = new LoraCardViewModel { Name = model.ModelName, Model = model, FolderPath = folder, Parent = this };
+            var card = new LoraCardViewModel { Model = model, FolderPath = folder, Parent = this };
             _allCards.Add(card);
             Dispatcher.UIThread.Post(() => Cards.Add(card));
         }
@@ -180,12 +180,12 @@ public partial class LoraHelperViewModel : ViewModelBase
                     query = query.Where(c => matches.Contains(c));
                 else
                     query = query.Where(c =>
-                        c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+                        c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
             else
             {
                 query = query.Where(c =>
-                    c.Name?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+                    c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
 
@@ -205,7 +205,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     /// </summary>
     private void StartIndexing()
     {
-        _indexNames = _allCards.Select(c => c.Name ?? string.Empty).ToList();
+        _indexNames = _allCards.Select(c => c.Model.SafeTensorFileName ?? string.Empty).ToList();
         var namesCopy = _indexNames.ToList();
         Task.Run(() => _searchIndex.Build(namesCopy));
     }
@@ -263,7 +263,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         if (DialogService == null || card.Model == null)
             return;
 
-        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{card.Name}'?");
+        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{card.Model.SafeTensorFileName}'?");
         if (confirm != true) return;
 
         foreach (var file in card.Model.AssociatedFilesInfo)

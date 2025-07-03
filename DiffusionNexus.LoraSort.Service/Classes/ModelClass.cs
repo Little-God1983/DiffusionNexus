@@ -7,7 +7,7 @@ namespace DiffusionNexus.LoraSort.Service.Classes
 {
     public class ModelClass
     {
-        private string diffusionBaseModel;
+        private string diffusionBaseModel = "UNKNOWN";
 
         public string DiffusionBaseModel
         {
@@ -15,8 +15,9 @@ namespace DiffusionNexus.LoraSort.Service.Classes
             set => diffusionBaseModel = value == "SDXL 1.0" ? "SDXL" : value;
         }
 
-        public string ModelName { get; set; }
-        public DiffusionTypes ModelType { get; set; }
+        public string SafeTensorFileName { get; set; }
+        public string ModelVersionName { get; set; }
+        public DiffusionTypes ModelType { get; set; } = DiffusionTypes.OTHER;
         public List<FileInfo> AssociatedFilesInfo { get; set; }
         public List<string> Tags { get; set; } = new List<string>();
         public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
