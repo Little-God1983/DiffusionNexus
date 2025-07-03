@@ -78,7 +78,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DiffusionNexus.LoraSort.Service\DiffusionNexus.LoraSort.Service.csproj" />
+    <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
   </ItemGroup>

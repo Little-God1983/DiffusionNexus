@@ -5,7 +5,7 @@ using DiffusionNexus.UI.Classes;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Linq;
-using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {

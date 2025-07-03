@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
-using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.Service.Classes;
 using DiffusionNexus.UI.Classes;
 
 namespace DiffusionNexus.UI.ViewModels

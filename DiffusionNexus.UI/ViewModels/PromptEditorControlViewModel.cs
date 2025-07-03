@@ -8,7 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using System;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
-using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {

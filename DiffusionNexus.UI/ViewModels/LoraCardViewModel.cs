@@ -2,7 +2,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.Service.Classes;
 using System;
 using System.Collections.Generic;
 using System.IO;

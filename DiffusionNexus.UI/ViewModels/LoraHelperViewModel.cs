@@ -1,9 +1,9 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.LoraSort.Service.Classes;
-using DiffusionNexus.LoraSort.Service.Search;
-using DiffusionNexus.LoraSort.Service.Services;
+using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Search;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;

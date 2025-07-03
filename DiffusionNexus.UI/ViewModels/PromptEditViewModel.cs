@@ -18,7 +18,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia.Media;
-using DiffusionNexus.LoraSort.Service.Classes;
+using DiffusionNexus.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
 {
