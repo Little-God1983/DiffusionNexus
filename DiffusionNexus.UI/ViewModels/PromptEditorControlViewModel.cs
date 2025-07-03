@@ -208,6 +208,11 @@ namespace DiffusionNexus.UI.ViewModels
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                 desktop.MainWindow is { Clipboard: { } clipboard })
             {
+                if (String.IsNullOrEmpty(Prompt))
+                {
+                    Log("no prompt to copy", LogSeverity.Warning);
+                    return;
+                }
                 try
                 {
                     await clipboard.SetTextAsync(Prompt ?? string.Empty);
@@ -225,6 +230,11 @@ namespace DiffusionNexus.UI.ViewModels
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                 desktop.MainWindow is { Clipboard: { } clipboard })
             {
+                if(String.IsNullOrEmpty(NegativePrompt))
+                {
+                    Log("no negative prompt to copy", LogSeverity.Warning);
+                    return;
+                }
                 try
                 {
                     await clipboard.SetTextAsync(NegativePrompt ?? string.Empty);

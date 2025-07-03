@@ -9,8 +9,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.LoraSort.Ser
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.LoraSort.Service.Tests", "DiffusionNexus.LoraSort.Service.Tests\DiffusionNexus.LoraSort.Service.Tests.csproj", "{C2943CB0-6610-45ED-8B8E-EC93E4483C5C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.LoraSort.UI", "DiffusionNexus.LoraSort.UI\DiffusionNexus.LoraSort.UI.csproj", "{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess", "DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj", "{A9DD2E27-0A87-45CB-B4AD-28E3A041B3CA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess.Infrastructure", "DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj", "{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}"
@@ -63,18 +61,6 @@ Global
 		{C2943CB0-6610-45ED-8B8E-EC93E4483C5C}.Release|x64.Build.0 = Release|Any CPU
 		{C2943CB0-6610-45ED-8B8E-EC93E4483C5C}.Release|x86.ActiveCfg = Release|Any CPU
 		{C2943CB0-6610-45ED-8B8E-EC93E4483C5C}.Release|x86.Build.0 = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|x64.Build.0 = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Debug|x86.Build.0 = Debug|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|Any CPU.Build.0 = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|x64.ActiveCfg = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|x64.Build.0 = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|x86.ActiveCfg = Release|Any CPU
-		{F2E8C692-6DC2-40AD-934C-51D3729A1CEC}.Release|x86.Build.0 = Release|Any CPU
 		{A9DD2E27-0A87-45CB-B4AD-28E3A041B3CA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A9DD2E27-0A87-45CB-B4AD-28E3A041B3CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A9DD2E27-0A87-45CB-B4AD-28E3A041B3CA}.Debug|x64.ActiveCfg = Debug|Any CPU

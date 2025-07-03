@@ -281,18 +281,27 @@ namespace DiffusionNexus.UI.ViewModels
                 .Select(w => w.ToLowerInvariant())
                 .ToArray() ?? Array.Empty<string>();
 
-            if (SinglePromptVm.Prompt != null)
+            if (!String.IsNullOrWhiteSpace(SinglePromptVm.Prompt))
             {
                 string prompt = ApplyBlacklist(SinglePromptVm.Prompt, words);
                 string whitelist = SinglePromptVm.Whitelist ?? string.Empty;
                 SinglePromptVm.Prompt = AppendWhitelist(prompt, whitelist);
                 Log("whitelist applied", LogSeverity.Success);
             }
+            else
+            { 
+                Log("no prompt to apply blacklist", LogSeverity.Warning);
+            }
+
             if (SinglePromptVm.NegativePrompt != null)
             {
                 SinglePromptVm.NegativePrompt = ApplyBlacklist(SinglePromptVm.NegativePrompt, words);
             }
-            
+            else
+            {
+                Log("no negative prompt to apply blacklist", LogSeverity.Warning);
+            }
+
         }
 
         private string ApplyBlacklist(string text, string[] words)
@@ -336,7 +345,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             if (_metadata == null)
             {
-                Log("no metadata to copy", LogSeverity.Error);
+                Log("no metadata to copy", LogSeverity.Warning);
                 return;
             }
             
