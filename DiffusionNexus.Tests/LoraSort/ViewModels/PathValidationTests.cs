@@ -2,32 +2,36 @@ using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
 using System.IO;
 using System.Threading.Tasks;
+using FluentAssertions;
+using Moq;
 using Xunit;
 
 namespace DiffusionNexus.Tests.LoraSort.ViewModels;
 public class PathValidationTests
 {
-    private class DummySettingsService : ISettingsService
+    private static LoraSortMainSettingsViewModel CreateViewModel()
     {
-        public Task<SettingsModel> LoadAsync() => Task.FromResult(new SettingsModel());
-        public Task SaveAsync(SettingsModel settings) => Task.CompletedTask;
+        var mock = new Mock<ISettingsService>();
+        mock.Setup(s => s.LoadAsync()).ReturnsAsync(new SettingsModel());
+        mock.Setup(s => s.SaveAsync(It.IsAny<SettingsModel>())).Returns(Task.CompletedTask);
+        return new LoraSortMainSettingsViewModel(mock.Object);
     }
 
     [Fact]
     public void ValidatePaths_FailsForEmpty()
     {
-        var vm = new LoraSortMainSettingsViewModel(new DummySettingsService());
-        Assert.False(vm.ValidatePaths());
+        var vm = CreateViewModel();
+        vm.ValidatePaths().Should().BeFalse();
     }
 
     [Fact]
     public void IsPathTheSame_ReturnsTrue_ForIdentical()
     {
-        var vm = new LoraSortMainSettingsViewModel(new DummySettingsService());
+        var vm = CreateViewModel();
         var path = Path.Combine(Path.GetTempPath(), "samepath");
         vm.BasePath = path;
         vm.TargetPath = path;
-        Assert.True(vm.IsPathTheSame());
+        vm.IsPathTheSame().Should().BeTrue();
     }
 
     [Fact]
@@ -38,7 +42,7 @@ public class PathValidationTests
         var dir = Directory.CreateDirectory(Path.Combine(temp, "diskcheck"));
         try
         {
-            Assert.True(svc.EnoughFreeSpaceOnDisk(dir.FullName, temp));
+            svc.EnoughFreeSpaceOnDisk(dir.FullName, temp).Should().BeTrue();
         }
         finally
         {

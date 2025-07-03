@@ -2,6 +2,7 @@ using DiffusionNexus.Service.Services;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Xunit;
 
 namespace DiffusionNexus.Tests.LoraSort.Services;
@@ -23,11 +24,11 @@ public class DuplicateScannerTests
 
             var scanner = new DuplicateScanner();
             var result = await scanner.ScanAsync(dir, null);
-            Assert.Single(result);
+            result.Should().ContainSingle();
             var set = result.First();
             var paths = new[] { set.FileA.FullName, set.FileB.FullName };
-            Assert.Contains(a, paths);
-            Assert.Contains(b, paths);
+            paths.Should().Contain(a);
+            paths.Should().Contain(b);
         }
         finally
         {

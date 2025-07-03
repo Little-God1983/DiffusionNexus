@@ -2,9 +2,9 @@ using FluentAssertions;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Classes;
 
-namespace LorasAutoSort.Test
-{
-    public class JsonInfoFileReaderServiceTests : IDisposable
+namespace DiffusionNexus.Tests.LoraSort.Services;
+
+public class JsonInfoFileReaderServiceTests : IDisposable
     {
         private readonly string _testDirectoryPath;
 
@@ -129,4 +129,3 @@ namespace LorasAutoSort.Test
             }
         }
     }
-}

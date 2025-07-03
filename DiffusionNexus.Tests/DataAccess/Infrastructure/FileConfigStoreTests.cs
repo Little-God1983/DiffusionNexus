@@ -2,6 +2,7 @@ using DiffusionNexus.DataAccess.Entities;
 using DiffusionNexus.DataAccess.Infrastructure.Serialization;
 using DiffusionNexus.DataAccess.Infrastructure;
 using System.IO;
+using FluentAssertions;
 using Xunit;
 
 namespace DiffusionNexus.Tests.DataAccess.Infrastructure;
@@ -22,7 +23,7 @@ public class FileConfigStoreTests
             var setting = new AppSetting { Key = "Language", Value = "EN" };
             store.Save("settings", setting);
             var loaded = store.Load<AppSetting>("settings");
-            Assert.Equal(setting.Value, loaded.Value);
+            loaded.Value.Should().Be(setting.Value);
         }
         finally
         {

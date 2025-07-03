@@ -2,6 +2,7 @@ using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.Service.Classes;
 using System.Collections.Generic;
 using System.IO;
+using FluentAssertions;
 using Xunit;
 
 namespace DiffusionNexus.Tests.LoraSort.ViewModels;
@@ -23,9 +24,9 @@ public class LoraCardViewModelTests
 
         var vm = new LoraCardViewModel { Model = model };
 
-        Assert.Single(vm.DiffusionTypes);
-        Assert.Contains("LORA", vm.DiffusionTypes);
-        Assert.Equal("SD15", vm.DiffusionBaseModel);
+        vm.DiffusionTypes.Should().ContainSingle();
+        vm.DiffusionTypes.Should().Contain("LORA");
+        vm.DiffusionBaseModel.Should().Be("SD15");
     }
 
     [Fact]
@@ -33,7 +34,7 @@ public class LoraCardViewModelTests
     {
         var vm = new LoraCardViewModel { Model = null };
 
-        Assert.Empty(vm.DiffusionTypes);
-        Assert.Equal(string.Empty, vm.DiffusionBaseModel);
+        vm.DiffusionTypes.Should().BeEmpty();
+        vm.DiffusionBaseModel.Should().BeEmpty();
     }
 }
