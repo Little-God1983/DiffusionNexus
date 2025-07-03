@@ -2,9 +2,9 @@ using Moq;
 using FluentAssertions;
 using DiffusionNexus.Service.Services;
 
-namespace LorasAutoSort.Test
-{
-    public class CivitaiMetaDataServiceTests
+namespace DiffusionNexus.Tests.LoraSort.Services;
+
+public class CivitaiMetaDataServiceTests
     {
         private readonly Mock<ICivitaiApiClient> _mockApiClient;
         private readonly CivitaiMetaDataService _service;
@@ -155,4 +155,4 @@ namespace LorasAutoSort.Test
             result.Should().Be("12345");
         }
     }
-}
+

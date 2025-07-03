@@ -1,5 +1,6 @@
 using DiffusionNexus.DataAccess.Entities;
 using DiffusionNexus.DataAccess.Infrastructure.Serialization;
+using FluentAssertions;
 using Xunit;
 
 namespace DiffusionNexus.Tests.DataAccess.Infrastructure;
@@ -15,7 +16,7 @@ public class SerializerTests
         var original = new AppSetting { Key = "Theme", Value = "Dark" };
         string payload = serializer.Serialize(original);
         var copy = serializer.Deserialize<AppSetting>(payload);
-        Assert.Equal(original.Key, copy.Key);
-        Assert.Equal(original.Value, copy.Value);
+        copy.Key.Should().Be(original.Key);
+        copy.Value.Should().Be(original.Value);
     }
 }

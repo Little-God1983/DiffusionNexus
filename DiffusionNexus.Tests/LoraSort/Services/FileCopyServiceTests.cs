@@ -3,9 +3,9 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Services;
 using System.Collections.ObjectModel;
 
-namespace LorasAutoSort.Test
-{
-    public class FileCopyServiceTests : IDisposable
+namespace DiffusionNexus.Tests.LoraSort.Services;
+
+public class FileCopyServiceTests : IDisposable
     {
         private readonly string _testSourcePath;
         private readonly string _testTargetPath;
@@ -678,4 +678,3 @@ namespace LorasAutoSort.Test
             DeleteMappingFile();
         }
     }
-}

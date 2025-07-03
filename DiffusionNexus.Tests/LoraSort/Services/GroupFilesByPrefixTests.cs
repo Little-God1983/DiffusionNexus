@@ -1,6 +1,7 @@
 using DiffusionNexus.Service.Services;
 using System.IO;
 using System.Linq;
+using FluentAssertions;
 using Xunit;
 
 namespace DiffusionNexus.Tests.LoraSort.Services;
@@ -18,9 +19,9 @@ public class GroupFilesByPrefixTests
             File.WriteAllText(Path.Combine(tempDir, "model2.ckpt"), string.Empty);
 
             var result = JsonInfoFileReaderService.GroupFilesByPrefix(tempDir);
-            Assert.Equal(2, result.Count);
+            result.Count.Should().Be(2);
             var first = result.First(m => m.SafeTensorFileName == "model1");
-            Assert.Equal(2, first.AssociatedFilesInfo.Count);
+            first.AssociatedFilesInfo.Count.Should().Be(2);
         }
         finally
         {
