@@ -1,9 +1,9 @@
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.LoraSort.Service.Classes;
-using DiffusionNexus.LoraSort.Service.Services;
-using DiffusionNexus.LoraSort.Service.Helper;
+using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Helper;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Linq;
