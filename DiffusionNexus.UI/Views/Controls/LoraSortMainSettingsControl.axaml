@@ -96,8 +96,5 @@
         </Border>
       </StackPanel>
     </ScrollViewer>
-    <controls:ProcessingOverlayControl IsVisible="{Binding IsBusy}"
-                                HorizontalAlignment="Stretch"
-                                VerticalAlignment="Stretch"/>
   </Grid>
 </UserControl>
