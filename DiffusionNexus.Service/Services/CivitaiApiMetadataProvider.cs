@@ -31,9 +31,17 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass modelClass = null)
+    public async Task<ModelClass> GetModelMetadataAsync(string identifier, CancellationToken cancellationToken = default, ModelClass modelClass = null)
     {
-        string SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
+        string SHA256Hash;
+        if (identifier.Length == 64 && Regex.IsMatch(identifier, "^[a-fA-F0-9]+$"))
+        {
+            SHA256Hash = identifier.ToLowerInvariant();
+        }
+        else
+        {
+            SHA256Hash = await Task.Run(() => ComputeSHA256(identifier), cancellationToken);
+        }
         if (modelClass == null)
             modelClass = new();
         
@@ -51,9 +59,10 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
                 modelClass.ModelId = modelId.ValueKind switch
                 {
                     JsonValueKind.String => modelId.GetString(),
-                    JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
-                    _ => null
-                };
+            if (modelClass.ModelType == DiffusionTypes.UNASSIGNED)
+                modelClass.ModelType = DiffusionTypes.OTHER;
+        catch (Exception)
+            throw;
                 var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
                 using var modelDoc = JsonDocument.Parse(modelJson);
                 ParseModelInfo(modelDoc.RootElement, modelClass);

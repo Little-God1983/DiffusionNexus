@@ -10,7 +10,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
 
     public JsonInfoFileReaderServiceTests()
     {
-        _testDirectoryPath = Path.Combine(Path.GetTempPath(), "LoraAutoSortTests");
+        _testDirectoryPath = Path.Combine(Path.GetTempPath(), $"LoraAutoSortTests_{Guid.NewGuid()}");
         SetupTestDirectory();
     }
 

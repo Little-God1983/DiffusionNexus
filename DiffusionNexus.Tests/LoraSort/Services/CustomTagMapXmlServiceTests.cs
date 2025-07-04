@@ -15,7 +15,7 @@ namespace DiffusionNexus.Tests.Service
 
         public CustomTagMapXmlServiceTests()
         {
-            _testFilePath = Path.Combine(Path.GetTempPath(), "test_mappings.xml");
+            _testFilePath = Path.Combine(Path.GetTempPath(), $"test_mappings_{Guid.NewGuid()}.xml");
             _service = new CustomTagMapXmlService(_testFilePath);
         }
 
