@@ -93,14 +93,14 @@ public class JsonInfoFileReaderService
                 continue;
             }
 
+            var filesForModel = group.Value;
             var model = new ModelClass
             {
                 SafeTensorFileName = group.Key,
-                AssociatedFilesInfo = group.Value,
-                CivitaiCategory = CivitaiBaseCategories.UNKNOWN
+                AssociatedFilesInfo = filesForModel,
+                CivitaiCategory = CivitaiBaseCategories.UNKNOWN,
+                NoMetaData = filesForModel.Count <= 1
             };
-            if (model.AssociatedFilesInfo.Count <= 1)
-                model.NoMetaData = true;
             modelClasses.Add(model);
         }
 

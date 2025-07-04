@@ -33,15 +33,13 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         {
             await LoadFromJson(jsonFile, meta);
         }
-        else
-        {
-            meta.NoMetaData = true;
-        }
 
         if (fileInfo.Extension == ".safetensors" || fileInfo.Extension ==".pt")
         {
             meta.SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
         }
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
 
         return meta;
     }
