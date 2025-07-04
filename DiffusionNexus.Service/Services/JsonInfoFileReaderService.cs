@@ -25,10 +25,10 @@ public class JsonInfoFileReaderService
             LogLevel = LogSeverity.Info
         });
 
-        foreach (var model in models)
+        foreach (ModelClass model in models)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var safetensors = model.AssociatedFilesInfo.FirstOrDefault(f => f.Extension == ".safetensors");
+            FileInfo? safetensors = model.AssociatedFilesInfo.FirstOrDefault(f => f.Extension == ".safetensors" || f.Extension == ".pt");
             if (safetensors == null)
             {
                 model.NoMetaData = true;
@@ -37,36 +37,26 @@ public class JsonInfoFileReaderService
 
             try
             {
-                var meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
+                ModelClass meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
                 model.DiffusionBaseModel = meta.DiffusionBaseModel;
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
                 model.Tags = meta.Tags;
-                model.CivitaiCategory = GetCategoryFromTags(model.Tags);
-                model.NoMetaData = meta.NoMetaData;
+                model.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(model.Tags);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "Error retrieving metadata for {Model}", model.SafeTensorFileName);
-                model.ErrorOnRetrievingMetaData = true;
                 model.NoMetaData = true;
             }
+
+            model.NoMetaData = !model.HasAnyMetadata;
         }
 
         return models;
     }
 
-    private static CivitaiBaseCategories GetCategoryFromTags(List<string> tags)
-    {
-        foreach (var tag in tags)
-        {
-            if (Enum.TryParse(tag.Replace(" ", "_").ToUpper(), out CivitaiBaseCategories category))
-            {
-                return category;
-            }
-        }
-        return CivitaiBaseCategories.UNKNOWN;
-    }
+
 
     public static List<ModelClass> GroupFilesByPrefix(string rootDirectory)
     {
@@ -99,8 +89,7 @@ public class JsonInfoFileReaderService
                 AssociatedFilesInfo = group.Value,
                 CivitaiCategory = CivitaiBaseCategories.UNKNOWN
             };
-            if (model.AssociatedFilesInfo.Count <= 1)
-                model.NoMetaData = true;
+            model.NoMetaData = !model.HasAnyMetadata;
             modelClasses.Add(model);
         }
 

@@ -18,5 +18,6 @@
         UPSCALER,
         DETECTION,
         LOCON,
-        OTHER
+        OTHER,
+        UNASSIGNED
     }

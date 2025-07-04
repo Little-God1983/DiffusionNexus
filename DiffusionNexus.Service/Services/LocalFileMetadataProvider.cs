@@ -12,13 +12,12 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         return Task.FromResult(File.Exists(identifier));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default)
+    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass? model = null)
     {
+        model ??= new ModelClass(); // Fixes CS0841 by ensuring 'model' is initialized before usage.
+
         var fileInfo = new FileInfo(filePath);
-        var meta = new ModelClass
-        {
-            SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath)
-        };
+        model.SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath);
 
         var baseName = ExtractBaseName(fileInfo.Name);
         var directory = fileInfo.Directory;
@@ -27,23 +26,19 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
 
         if (civitaiInfoFile != null)
         {
-            await LoadFromCivitaiInfo(civitaiInfoFile, meta);
+            await LoadFromCivitaiInfo(civitaiInfoFile, model);
         }
         else if (jsonFile != null)
         {
-            await LoadFromJson(jsonFile, meta);
+            await LoadFromJson(jsonFile, model);
         }
         else
         {
-            meta.NoMetaData = true;
+            model.NoMetaData = true;
         }
 
-        if (fileInfo.Extension == ".safetensors" || fileInfo.Extension ==".pt")
-        {
-            meta.SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
-        }
-
-        return meta;
+        model.NoMetaData = !model.HasAnyMetadata;
+        return model;
     }
 
     private static async Task LoadFromCivitaiInfo(FileInfo file, ModelClass meta)
@@ -51,6 +46,15 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         var json = await File.ReadAllTextAsync(file.FullName);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
+        if (root.TryGetProperty("modelId", out var modelId))
+        {
+            meta.ModelId = modelId.ValueKind switch
+            {
+                JsonValueKind.String => modelId.GetString(),
+                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+                _ => null
+            };
+        }
 
         if (root.TryGetProperty("baseModel", out var baseModel))
             meta.DiffusionBaseModel = baseModel.GetString();
@@ -70,6 +74,8 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
 
         if (meta.Tags.Count == 0 && root.TryGetProperty("tags", out var rootTags))
             meta.Tags = ParseTags(rootTags);
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
     }
 
     private static async Task LoadFromJson(FileInfo file, ModelClass meta)
@@ -84,6 +90,8 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.ModelType = ParseModelType(type.GetString());
         if (root.TryGetProperty("tags", out var tags))
             meta.Tags = ParseTags(tags);
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
     }
 
     private static List<string> ParseTags(JsonElement tags)
@@ -116,14 +124,6 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             .OrderByDescending(e => e.Length)
             .FirstOrDefault(e => fileName.EndsWith(e, StringComparison.OrdinalIgnoreCase));
         return known != null ? fileName[..^known.Length] : fileName;
-    }
-
-    private static string ComputeSHA256(string filePath)
-    {
-        using var stream = File.OpenRead(filePath);
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(stream);
-        return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 }
 
