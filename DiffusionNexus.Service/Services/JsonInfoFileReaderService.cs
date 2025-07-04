@@ -49,6 +49,7 @@ public class JsonInfoFileReaderService
             {
                 Log.Error(ex, "Error retrieving metadata for {Model}", model.SafeTensorFileName);
                 model.ErrorOnRetrievingMetaData = true;
+                model.NoMetaData = true;
             }
         }
 
@@ -87,6 +88,11 @@ public class JsonInfoFileReaderService
         var modelClasses = new List<ModelClass>();
         foreach (var group in fileGroups)
         {
+            if (!group.Value.Any(f => StaticFileTypes.ModelExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
             var model = new ModelClass
             {
                 SafeTensorFileName = group.Key,
