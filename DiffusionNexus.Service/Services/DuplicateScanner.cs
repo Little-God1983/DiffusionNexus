@@ -42,8 +42,8 @@ public class DuplicateScanner
 
     private static async Task<Dictionary<string, ModelClass>> BuildMetadataLookupAsync(string folder, CancellationToken token)
     {
-        var metadataService = new ModelMetadataService(new CompositeMetadataProvider(new LocalFileMetadataProvider()));
-        var reader = new JsonInfoFileReaderService(folder, metadataService);
+        var localProvider = new LocalFileMetadataProvider();
+        var reader = new JsonInfoFileReaderService(folder, localProvider.GetModelMetadataAsync);
         var metas = await reader.GetModelData(null, token);
         var lookup = new Dictionary<string, ModelClass>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in metas)
@@ -113,6 +113,8 @@ public class DuplicateScanner
                     {
                         metaLookup.TryGetValue(a.FullName, out var metaA);
                         metaLookup.TryGetValue(b.FullName, out var metaB);
+                        if (string.Compare(a.FullName, b.FullName, StringComparison.OrdinalIgnoreCase) > 0)
+                            (a, b) = (b, a);
                         results.Add(new DuplicateSet(a, b, a.Length, metaA, metaB));
                     }
                 }
