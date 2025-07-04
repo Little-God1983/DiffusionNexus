@@ -7,7 +7,12 @@ namespace DiffusionNexus.Service.Services
 {
     public class CustomTagMapXmlService
     {
-        string filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mappings.xml");
+        private readonly string _filePath;
+
+        public CustomTagMapXmlService(string? filePath = null)
+        {
+            _filePath = filePath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mappings.xml");
+        }
         /// <summary>
         /// Saves the given collection of CustomTagMap objects to an XML file.
         /// </summary>
@@ -18,7 +23,7 @@ namespace DiffusionNexus.Service.Services
             try
             {
                 XmlSerializer serializer = new XmlSerializer(typeof(ObservableCollection<CustomTagMap>));
-                using (StreamWriter writer = new StreamWriter(filePath))
+                using (StreamWriter writer = new StreamWriter(_filePath))
                 {
                     serializer.Serialize(writer, mappings);
                 }
@@ -40,11 +45,11 @@ namespace DiffusionNexus.Service.Services
         {
             try
             {
-                if (!File.Exists(filePath))
+                if (!File.Exists(_filePath))
                     return new ObservableCollection<CustomTagMap>();
 
                 XmlSerializer serializer = new XmlSerializer(typeof(ObservableCollection<CustomTagMap>));
-                using (StreamReader reader = new StreamReader(filePath))
+                using (StreamReader reader = new StreamReader(_filePath))
                 {
                     return (ObservableCollection<CustomTagMap>)serializer.Deserialize(reader);
                 }
@@ -60,13 +65,14 @@ namespace DiffusionNexus.Service.Services
         /// Deletes the mappings XML file if it exists.
         /// </summary>
         /// <param name="filePath">The full path to the mappings XML file.</param>
-        public void DeleteAllMappings(string filePath)
+        public void DeleteAllMappings(string? filePath = null)
         {
             try
             {
-                if (File.Exists(filePath))
+                var path = filePath ?? _filePath;
+                if (File.Exists(path))
                 {
-                    File.Delete(filePath);
+                    File.Delete(path);
                 }
             }
             catch (Exception ex)

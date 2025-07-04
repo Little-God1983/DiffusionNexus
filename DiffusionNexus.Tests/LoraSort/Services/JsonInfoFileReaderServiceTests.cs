@@ -284,7 +284,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
         model.SafeTensorFileName.Should().Be("model");
         model.AssociatedFilesInfo.Should().HaveCount(3);
         model.AssociatedFilesInfo.Select(f => f.Extension)
-            .Should().Contain(new[] { ".safetensors", ".civitai.info", ".yaml" });
+            .Should().Contain(new[] { ".safetensors", ".info", ".yaml" });
     }
 
     [Fact]

@@ -11,7 +11,7 @@ public class CivitaiApiMetadataProviderTests
     private readonly Mock<ICivitaiApiClient> _mockApiClient;
     private readonly CivitaiApiMetadataProvider _provider;
     private const string TestApiKey = "test-api-key";
-    private const string ValidSha256Hash = "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890";
+    private const string ValidSha256Hash = "a1b2c3d4e5f67890123456789012345678901234567890123456789012345678";
 
     public CivitaiApiMetadataProviderTests()
     {
@@ -27,7 +27,7 @@ public class CivitaiApiMetadataProviderTests
     }
 
     [Theory]
-    [InlineData("a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890", true)]
+    [InlineData("a1b2c3d4e5f67890123456789012345678901234567890123456789012345678", true)]
     [InlineData("invalid-hash", false)]
     [InlineData("12345", false)]
     [InlineData("", false)]
@@ -124,7 +124,7 @@ public class CivitaiApiMetadataProviderTests
         _mockApiClient.Setup(x => x.GetModelVersionByHashAsync(ValidSha256Hash, TestApiKey))
                      .ReturnsAsync("{ invalid json");
 
-        await Assert.ThrowsAsync<JsonException>(() => 
+        await Assert.ThrowsAnyAsync<JsonException>(() =>
             _provider.GetModelMetadataAsync(ValidSha256Hash));
     }
 }

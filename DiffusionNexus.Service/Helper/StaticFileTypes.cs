@@ -31,6 +31,7 @@ namespace DiffusionNexus.Service.Helper
         ".safetensors",
         ".thumb",
         ".json",
-        ".pt"];
+        ".pt",
+        ".yaml"];
     }
 }
