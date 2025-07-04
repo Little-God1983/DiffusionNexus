@@ -101,6 +101,9 @@ public class JsonInfoFileReaderService
             };
             if (model.AssociatedFilesInfo.Count <= 1)
                 model.NoMetaData = true;
+            else
+                model.NoMetaData = !model.HasAnyMetadata;
+
             modelClasses.Add(model);
         }
 

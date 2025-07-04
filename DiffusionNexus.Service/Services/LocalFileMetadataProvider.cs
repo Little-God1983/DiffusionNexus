@@ -33,15 +33,13 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         {
             await LoadFromJson(jsonFile, meta);
         }
-        else
-        {
-            meta.NoMetaData = true;
-        }
 
         if (fileInfo.Extension == ".safetensors")
         {
             meta.SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
         }
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
 
         return meta;
     }
@@ -70,6 +68,8 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
 
         if (meta.Tags.Count == 0 && root.TryGetProperty("tags", out var rootTags))
             meta.Tags = ParseTags(rootTags);
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
     }
 
     private static async Task LoadFromJson(FileInfo file, ModelClass meta)
@@ -84,6 +84,8 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.ModelType = ParseModelType(type.GetString());
         if (root.TryGetProperty("tags", out var tags))
             meta.Tags = ParseTags(tags);
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
     }
 
     private static List<string> ParseTags(JsonElement tags)

@@ -45,6 +45,8 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         if (versionRoot.TryGetProperty("name", out var versionName))
             meta.ModelVersionName = versionName.GetString();
 
+        meta.NoMetaData = !meta.HasAnyMetadata;
+
         return meta;
     }
 
@@ -55,6 +57,8 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
 
         if (root.TryGetProperty("tags", out var tags))
             meta.Tags = ParseTags(tags);
+
+        meta.NoMetaData = !meta.HasAnyMetadata;
     }
 
     private static DiffusionTypes ParseModelType(string? type)
