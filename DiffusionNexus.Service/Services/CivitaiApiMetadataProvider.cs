@@ -1,5 +1,6 @@
 using DiffusionNexus.Service.Classes;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -42,7 +43,12 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
 
         if (versionRoot.TryGetProperty("modelId", out var modelId))
         {
-            modelClass.ModelId = modelId.GetString();
+            modelClass.ModelId = modelId.ValueKind switch
+            {
+                JsonValueKind.String => modelId.GetString(),
+                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+                _ => null
+            };
             var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
             using var modelDoc = JsonDocument.Parse(modelJson);
             ParseModelInfo(modelDoc.RootElement, modelClass);
@@ -54,16 +60,18 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         if (versionRoot.TryGetProperty("name", out var versionName))
             modelClass.ModelVersionName = versionName.GetString();
         modelClass.NoMetaData = !modelClass.HasAnyMetadata;
+        
         return modelClass;
     }
 
-    private static void ParseModelInfo(JsonElement root, ModelClass meta)
+    private static void ParseModelInfo(JsonElement root, ModelClass modelClass)
     {
         if (root.TryGetProperty("type", out var type))
-            meta.ModelType = ParseModelType(type.GetString());
+            modelClass.ModelType = ParseModelType(type.GetString());
 
         if (root.TryGetProperty("tags", out var tags))
-            meta.Tags = ParseTags(tags);
+            modelClass.Tags = ParseTags(tags);
+        modelClass.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(modelClass.Tags);
     }
 
     private static DiffusionTypes ParseModelType(string? type)
