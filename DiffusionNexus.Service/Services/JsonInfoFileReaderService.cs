@@ -97,10 +97,9 @@ public class JsonInfoFileReaderService
             {
                 SafeTensorFileName = group.Key,
                 AssociatedFilesInfo = group.Value,
-                CivitaiCategory = CivitaiBaseCategories.UNKNOWN
+                CivitaiCategory = CivitaiBaseCategories.UNKNOWN,
+                NoMetaData = group.Value.Count <= 1
             };
-            if (model.AssociatedFilesInfo.Count <= 1)
-                model.NoMetaData = true;
             modelClasses.Add(model);
         }
 

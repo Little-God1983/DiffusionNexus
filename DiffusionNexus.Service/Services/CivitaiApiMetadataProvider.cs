@@ -45,6 +45,7 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         if (versionRoot.TryGetProperty("name", out var versionName))
             meta.ModelVersionName = versionName.GetString();
 
+        meta.NoMetaData = !meta.HasAnyMetadata;
         return meta;
     }
 
