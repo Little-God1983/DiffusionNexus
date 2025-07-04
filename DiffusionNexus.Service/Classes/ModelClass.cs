@@ -24,7 +24,7 @@ namespace DiffusionNexus.Service.Classes
         public List<string> Tags { get; set; } = new List<string>();
         public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
         //Has to be set to false if metadata is found
-        public bool NoMetaData { get; set; } = true;
+        public bool NoMetaData { get; set; }
         public bool ErrorOnRetrievingMetaData { get; internal set; } = false;
     }
 }
