@@ -21,11 +21,16 @@
         </Border>
 
         <!-- Top Right - Custom Mappings -->
-        <Border Grid.Column="1" 
-                BorderBrush="Gray" BorderThickness="1" 
+        <Border Grid.Column="1"
+                BorderBrush="Gray" BorderThickness="1"
                 Margin="5" CornerRadius="4">
             <controls:LoraSortCustomMappingsControl x:Name="CustomMappingsControl" DataContext="{Binding CustomMappingsViewModel}"/>
         </Border>
-        
+
+        <controls:ProcessingOverlayControl DataContext="{Binding MainSettingsViewModel}"
+                                           IsVisible="{Binding IsBusy}"
+                                           HorizontalAlignment="Stretch"
+                                           VerticalAlignment="Stretch"/>
+
     </Grid>
 </UserControl>

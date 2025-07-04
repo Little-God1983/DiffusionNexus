@@ -61,7 +61,7 @@ namespace DiffusionNexus.UI.ViewModels
             _settingsService = settingsService;
             SelectBasePathCommand = new AsyncRelayCommand(OnSelectBasePathAsync);
             SelectTargetPathCommand = new AsyncRelayCommand(OnSelectTargetPathAsync);
-            GoCommand = new AsyncRelayCommand(OnGo);
+            GoCommand = new AsyncRelayCommand(OnGo, AsyncRelayCommandOptions.AllowConcurrentExecutions);
             _ = LoadDefaultsAsync();
         }
 
@@ -147,7 +147,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             Log(message, LogSeverity.Warning);
             await ShowDialog(message, caption);
-            ResetUI();
+            RestUIAndCloseLog();
         }
 
         private void SetProcessingUIState()
@@ -192,7 +192,7 @@ namespace DiffusionNexus.UI.ViewModels
                     var move = await DialogService.ShowYesNoAsync("Moving instead of copying means that the original file order cannot be restored. Continue anyways?", "Are you sure?");
                     if (!move)
                     {
-                        ResetUI();
+                        RestUIAndCloseLog();
                         return;
                     }
                 }
@@ -248,7 +248,7 @@ namespace DiffusionNexus.UI.ViewModels
             }
             finally
             {
-                //ResetUI();
+                ResetUI();
                 Log("Done Processing", LogSeverity.Success);
             }
         }
@@ -263,6 +263,12 @@ namespace DiffusionNexus.UI.ViewModels
             if (_mainWindowVm != null)
                 _mainWindowVm.IsLogExpanded = _originalLogExpanded;
         }
+        private void RestUIAndCloseLog()
+        {             ResetUI();
+            if (_mainWindowVm != null)
+                _mainWindowVm.IsLogExpanded = _originalLogExpanded;
+        }
+
 
         internal bool IsPathTheSame()
         {
