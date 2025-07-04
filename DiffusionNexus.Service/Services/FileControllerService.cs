@@ -59,7 +59,7 @@ namespace DiffusionNexus.Service.Services
             progress?.Report(new ProgressReport
             {
                 Percentage = 100,
-                StatusMessage = "==========> Finished processing.",
+                StatusMessage = "==========> Finished processing. To close the log click the upper right corner",
                 IsSuccessful = true,
                 LogLevel = LogSeverity.Info
             });

@@ -248,7 +248,7 @@ namespace DiffusionNexus.UI.ViewModels
             }
             finally
             {
-                ResetUI();
+                //ResetUI();
                 Log("Done Processing", LogSeverity.Success);
             }
         }
