@@ -50,12 +50,12 @@ namespace DiffusionNexus.Service.Services
                     hasErrors = true;
                     continue;
                 }
-                else if (!model.HasFullMetadata)
-                {
-                    //No neeed to make a progress report since we allready display the failed API call
-                    hasErrors = true;
-                    continue;
-                }
+                //else if (!model.HasFullMetadata)
+                //{
+                //    //No neeed to make a progress report since we allready display the failed API call
+                //    hasErrors = true;
+                //    continue;
+                //}
 
                 if (model.ModelType != DiffusionTypes.LORA && model.ModelType != DiffusionTypes.LOCON)
                 {

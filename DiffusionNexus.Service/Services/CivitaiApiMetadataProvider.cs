@@ -37,30 +37,39 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         ModelClass modelClass = new() { SHA256Hash = SHA256Hash};
 
         //calculateHash here
-        string versionJson = await _apiClient.GetModelVersionByHashAsync(modelClass.SHA256Hash, _apiKey);
-        using JsonDocument versionDoc = JsonDocument.Parse(versionJson);
-        JsonElement versionRoot = versionDoc.RootElement;
-
-        if (versionRoot.TryGetProperty("modelId", out var modelId))
+        try
         {
-            modelClass.ModelId = modelId.ValueKind switch
+            string versionJson = await _apiClient.GetModelVersionByHashAsync(modelClass.SHA256Hash, _apiKey);
+            using JsonDocument versionDoc = JsonDocument.Parse(versionJson);
+            JsonElement versionRoot = versionDoc.RootElement;
+
+            if (versionRoot.TryGetProperty("modelId", out var modelId))
             {
-                JsonValueKind.String => modelId.GetString(),
-                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
-                _ => null
-            };
-            var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
-            using var modelDoc = JsonDocument.Parse(modelJson);
-            ParseModelInfo(modelDoc.RootElement, modelClass);
+                modelClass.ModelId = modelId.ValueKind switch
+                {
+                    JsonValueKind.String => modelId.GetString(),
+                    JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+                    _ => null
+                };
+                var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
+                using var modelDoc = JsonDocument.Parse(modelJson);
+                ParseModelInfo(modelDoc.RootElement, modelClass);
+            }
+
+            if (versionRoot.TryGetProperty("baseModel", out var baseModel))
+                modelClass.DiffusionBaseModel = baseModel.GetString();
+
+            if (versionRoot.TryGetProperty("name", out var versionName))
+                modelClass.ModelVersionName = versionName.GetString();
+            modelClass.NoMetaData = !modelClass.HasAnyMetadata;
+
         }
-
-        if (versionRoot.TryGetProperty("baseModel", out var baseModel))
-            modelClass.DiffusionBaseModel = baseModel.GetString();
-
-        if (versionRoot.TryGetProperty("name", out var versionName))
-            modelClass.ModelVersionName = versionName.GetString();
-        modelClass.NoMetaData = !modelClass.HasAnyMetadata;
-        
+        catch (Exception ex)
+        {
+            //TODO:LOG Not Found
+            
+        }
+      
         return modelClass;
     }
 

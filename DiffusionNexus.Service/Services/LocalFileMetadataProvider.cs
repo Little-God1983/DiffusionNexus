@@ -47,6 +47,15 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         var json = await File.ReadAllTextAsync(file.FullName);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
+        if (root.TryGetProperty("modelId", out var modelId))
+        {
+            meta.ModelId = modelId.ValueKind switch
+            {
+                JsonValueKind.String => modelId.GetString(),
+                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+                _ => null
+            };
+        }
 
         if (root.TryGetProperty("baseModel", out var baseModel))
             meta.DiffusionBaseModel = baseModel.GetString();
