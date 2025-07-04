@@ -11,6 +11,13 @@ namespace DiffusionNexus.Service.Services
 {
     public class FileControllerService
     {
+        private readonly IModelMetadataProvider[] _metadataProviders;
+
+        public FileControllerService(params IModelMetadataProvider[] metadataProviders)
+        {
+            _metadataProviders = metadataProviders ?? Array.Empty<IModelMetadataProvider>();
+        }
+
         private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken cancellationToken, SelectedOptions options)
         {
             progress?.Report(new ProgressReport
@@ -22,11 +29,7 @@ namespace DiffusionNexus.Service.Services
             // Throw if cancellation is requested
             cancellationToken.ThrowIfCancellationRequested();
 
-            var localProvider = new LocalFileMetadataProvider();
-            var apiProvider = new CivitaiApiMetadataProvider(new CivitaiApiClient(new HttpClient()), options.ApiKey);
-            var metadataService = new ModelMetadataService(new CompositeMetadataProvider(localProvider, apiProvider));
-
-            var jsonReader = new JsonInfoFileReaderService(options.BasePath, metadataService);
+            var jsonReader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
             List<ModelClass> models = await jsonReader.GetModelData(progress, cancellationToken);
 
             if (models == null || models.Count == 0)
@@ -63,6 +66,22 @@ namespace DiffusionNexus.Service.Services
                 IsSuccessful = true,
                 LogLevel = LogSeverity.Info
             });
+        }
+
+        public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, CancellationToken cancellationToken)
+        {
+            foreach (var provider in _metadataProviders)
+            {
+                var meta = await provider.GetModelMetadataAsync(identifier, cancellationToken);
+                if (meta != null && !meta.NoMetaData)
+                    return meta;
+            }
+
+            return new ModelClass
+            {
+                SafeTensorFileName = Path.GetFileNameWithoutExtension(identifier),
+                NoMetaData = true
+            };
         }
 
         public async Task ComputeFolder(IProgress<double>? progress, CancellationToken cancellationToken, SelectedOptions options)

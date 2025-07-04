@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net.Http;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -178,9 +179,7 @@ namespace DiffusionNexus.UI.ViewModels
                     return;
                 }
 
-                var controllerService = new FileControllerService();
-
-                if (IsCopyMode && !controllerService.EnoughFreeSpaceOnDisk(BasePath!, TargetPath!))
+                if (IsCopyMode && !new FileControllerService().EnoughFreeSpaceOnDisk(BasePath!, TargetPath!))
                 {
                     Log("Insufficient disk space.", LogSeverity.Warning);
                     await ShowDialog("You don't have enough disk space to copy the files.", "Insufficient Disk Space");
@@ -208,6 +207,10 @@ namespace DiffusionNexus.UI.ViewModels
                     UseCustomMappings = UseCustomMappings,
                     ApiKey = settings.CivitaiApiKey ?? string.Empty
                 };
+
+                var controllerService = new FileControllerService(
+                    new LocalFileMetadataProvider(),
+                    new CivitaiApiMetadataProvider(new CivitaiApiClient(new HttpClient()), options.ApiKey));
 
                 Log("Scanning…", LogSeverity.Info);
                 IsIndeterminate = true;

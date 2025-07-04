@@ -87,8 +87,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         });
 
         var localProvider = new LocalFileMetadataProvider();
-        var metadataService = new ModelMetadataService(new CompositeMetadataProvider(localProvider));
-        var reader = new JsonInfoFileReaderService(settings.LoraHelperFolderPath!, metadataService);
+        var reader = new JsonInfoFileReaderService(settings.LoraHelperFolderPath!, localProvider.GetModelMetadataAsync);
         var models = await reader.GetModelData(null, CancellationToken.None);
 
         await Dispatcher.UIThread.InvokeAsync(() =>

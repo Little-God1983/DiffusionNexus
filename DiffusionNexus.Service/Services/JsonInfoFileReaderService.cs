@@ -7,12 +7,12 @@ namespace DiffusionNexus.Service.Services;
 public class JsonInfoFileReaderService
 {
     private readonly string _basePath;
-    private readonly ModelMetadataService _metadataService;
+    private readonly Func<string, CancellationToken, Task<ModelClass>> _metadataFetcher;
 
-    public JsonInfoFileReaderService(string basePath, ModelMetadataService metadataService)
+    public JsonInfoFileReaderService(string basePath, Func<string, CancellationToken, Task<ModelClass>> metadataFetcher)
     {
         _basePath = basePath;
-        _metadataService = metadataService;
+        _metadataFetcher = metadataFetcher;
     }
 
     public async Task<List<ModelClass>> GetModelData(IProgress<ProgressReport>? progress, CancellationToken cancellationToken)
@@ -37,7 +37,7 @@ public class JsonInfoFileReaderService
 
             try
             {
-                var meta = await _metadataService.GetModelMetadataAsync(safetensors.FullName, cancellationToken);
+                var meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
                 model.DiffusionBaseModel = meta.DiffusionBaseModel;
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
