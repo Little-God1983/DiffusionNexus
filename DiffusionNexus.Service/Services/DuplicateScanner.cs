@@ -1,4 +1,6 @@
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Services.Metadata;
+using System.Net.Http;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -42,7 +44,7 @@ public class DuplicateScanner
 
     private static async Task<Dictionary<string, ModelClass>> BuildMetadataLookupAsync(string folder, CancellationToken token)
     {
-        var reader = new JsonInfoFileReaderService(folder, string.Empty);
+        var reader = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), string.Empty);
         var metas = await reader.GetModelData(null, folder, token, fetchFromApi: false);
         var lookup = new Dictionary<string, ModelClass>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in metas)

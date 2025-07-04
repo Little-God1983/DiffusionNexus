@@ -1,4 +1,6 @@
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Services.Metadata;
+using System.Net.Http;
 using System.IO;
 using System.Linq;
 using FluentAssertions;
@@ -18,7 +20,8 @@ public class GroupFilesByPrefixTests
             File.WriteAllText(Path.Combine(tempDir, "model1.preview.png"), string.Empty);
             File.WriteAllText(Path.Combine(tempDir, "model2.ckpt"), string.Empty);
 
-            var result = JsonInfoFileReaderService.GroupFilesByPrefix(tempDir);
+            var service = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), string.Empty);
+            var result = service.GroupFilesByPrefix(tempDir);
             result.Count.Should().Be(2);
             var first = result.First(m => m.SafeTensorFileName == "model1");
             first.AssociatedFilesInfo.Count.Should().Be(2);

@@ -5,6 +5,8 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Search;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.Service.Services.Metadata;
+using System.Net.Http;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System;
@@ -86,7 +88,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             FolderItems.Add(ConvertFolder(rootNode));
         });
 
-        var reader = new JsonInfoFileReaderService(settings.LoraHelperFolderPath!, settings.CivitaiApiKey ?? string.Empty);
+        var reader = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), settings.CivitaiApiKey ?? string.Empty);
         var models = await reader.GetModelData(null, settings.LoraHelperFolderPath!, CancellationToken.None, fetchFromApi: false);
 
         await Dispatcher.UIThread.InvokeAsync(() =>

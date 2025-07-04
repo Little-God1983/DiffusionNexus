@@ -1,6 +1,8 @@
 using FluentAssertions;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Services.Metadata;
 using DiffusionNexus.Service.Classes;
+using System.Net.Http;
 
 namespace DiffusionNexus.Tests.LoraSort.Services;
 
@@ -41,7 +43,8 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             }
 
             // Act
-            var result = JsonInfoFileReaderService.GroupFilesByPrefix(_testDirectoryPath);
+            var service = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), string.Empty);
+            var result = service.GroupFilesByPrefix(_testDirectoryPath);
 
             // Assert
             result.Should().HaveCount(2);
@@ -77,7 +80,8 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             }
 
             // Act
-            var result = JsonInfoFileReaderService.GroupFilesByPrefix(_testDirectoryPath);
+            var service = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), string.Empty);
+            var result = service.GroupFilesByPrefix(_testDirectoryPath);
 
             // Assert
             var modelWithMeta = result.First(m => m.SafeTensorFileName == "model_with_meta");
@@ -106,7 +110,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
                 File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
             }
 
-            var service = new JsonInfoFileReaderService(_testDirectoryPath, "test-api-key");
+            var service = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), "test-api-key");
             var progress = new Progress<ProgressReport>();
             var cts = new CancellationTokenSource();
 

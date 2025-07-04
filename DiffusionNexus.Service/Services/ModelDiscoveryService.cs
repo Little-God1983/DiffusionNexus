@@ -1,5 +1,7 @@
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Helper;
+using DiffusionNexus.Service.Services.Metadata;
+using System.Net.Http;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -43,7 +45,8 @@ public class ModelDiscoveryService
 
     public List<ModelClass> CollectModels(string rootDirectory)
     {
-        var models = JsonInfoFileReaderService.GroupFilesByPrefix(rootDirectory);
+        var metadataService = new ModelMetadataService(new CivitaiApiClient(new HttpClient()), string.Empty);
+        var models = metadataService.GroupFilesByPrefix(rootDirectory);
 
         foreach (var model in models)
         {
