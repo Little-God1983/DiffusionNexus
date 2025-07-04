@@ -42,8 +42,9 @@ public class DuplicateScanner
 
     private static async Task<Dictionary<string, ModelClass>> BuildMetadataLookupAsync(string folder, CancellationToken token)
     {
-        var reader = new JsonInfoFileReaderService(folder, string.Empty);
-        var metas = await reader.GetModelData(null, folder, token, fetchFromApi: false);
+        var metadataService = new ModelMetadataService(new CompositeMetadataProvider(new LocalFileMetadataProvider()));
+        var reader = new JsonInfoFileReaderService(folder, metadataService);
+        var metas = await reader.GetModelData(null, token);
         var lookup = new Dictionary<string, ModelClass>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in metas)
         {

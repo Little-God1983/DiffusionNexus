@@ -5,6 +5,7 @@
 using DiffusionNexus.Service.Classes;
 using System;
 using System.Security.Cryptography;
+using System.Net.Http;
 
 namespace DiffusionNexus.Service.Services
 {
@@ -21,8 +22,12 @@ namespace DiffusionNexus.Service.Services
             // Throw if cancellation is requested
             cancellationToken.ThrowIfCancellationRequested();
 
-            var jsonReader = new JsonInfoFileReaderService(options.BasePath, options.ApiKey);
-            List<ModelClass> models = await jsonReader.GetModelData(progress, options.BasePath, cancellationToken);
+            var localProvider = new LocalFileMetadataProvider();
+            var apiProvider = new CivitaiApiMetadataProvider(new CivitaiApiClient(new HttpClient()), options.ApiKey);
+            var metadataService = new ModelMetadataService(new CompositeMetadataProvider(localProvider, apiProvider));
+
+            var jsonReader = new JsonInfoFileReaderService(options.BasePath, metadataService);
+            List<ModelClass> models = await jsonReader.GetModelData(progress, cancellationToken);
 
             if (models == null || models.Count == 0)
             {
