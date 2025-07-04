@@ -38,7 +38,7 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.NoMetaData = true;
         }
 
-        if (fileInfo.Extension == ".safetensors")
+        if (fileInfo.Extension == ".safetensors" || fileInfo.Extension ==".pt")
         {
             meta.SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
         }

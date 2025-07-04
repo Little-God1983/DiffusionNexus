@@ -23,7 +23,8 @@ namespace DiffusionNexus.Service.Classes
         public List<FileInfo> AssociatedFilesInfo { get; set; }
         public List<string> Tags { get; set; } = new List<string>();
         public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
-        public bool NoMetaData { get; set; }
+        //Has to be set to false if metadata is found
+        public bool NoMetaData { get; set; } = true;
         public bool ErrorOnRetrievingMetaData { get; internal set; } = false;
     }
 }
