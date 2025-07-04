@@ -61,7 +61,7 @@ namespace DiffusionNexus.UI.ViewModels
             _settingsService = settingsService;
             SelectBasePathCommand = new AsyncRelayCommand(OnSelectBasePathAsync);
             SelectTargetPathCommand = new AsyncRelayCommand(OnSelectTargetPathAsync);
-            GoCommand = new AsyncRelayCommand(OnGo);
+            GoCommand = new AsyncRelayCommand(OnGo, AsyncRelayCommandOptions.AllowConcurrentExecutions);
             _ = LoadDefaultsAsync();
         }
 
