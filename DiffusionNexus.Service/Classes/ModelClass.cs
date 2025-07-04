@@ -24,15 +24,14 @@ namespace DiffusionNexus.Service.Classes
         [MetadataField] public string SafeTensorFileName { get; set; }
         [MetadataField] public string ModelVersionName { get; set; }
         [MetadataField] public string? ModelId { get; set; }
-        [MetadataField] public string? SHA256Hash { get; set; }
-        [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.OTHER;
-        [MetadataField] public List<FileInfo> AssociatedFilesInfo { get; set; }
+        public string? SHA256Hash { get; set; }
+        [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.UNASSIGNED;
+        public List<FileInfo> AssociatedFilesInfo { get; set; }
         [MetadataField] public List<string> Tags { get; set; } = new();
         [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
 
         // status flags
         public bool NoMetaData { get; set; } = true;
-        public bool ErrorOnRetrievingMetaData { get; internal set; }
 
         //------------------------------------------------------------------
         // Helper: evaluate completeness whenever you need it
@@ -56,7 +55,7 @@ namespace DiffusionNexus.Service.Classes
                     null => false,
                     string s => !string.IsNullOrWhiteSpace(s) && s != Unknown,
                     IList list => list.Count > 0,
-                    DiffusionTypes t => t != DiffusionTypes.OTHER,
+                    DiffusionTypes t => t != DiffusionTypes.UNASSIGNED,
                     CivitaiBaseCategories cat => cat != CivitaiBaseCategories.UNASSIGNED,
                     _ => true
                 })
@@ -64,6 +63,8 @@ namespace DiffusionNexus.Service.Classes
                     filled++;
                 }
             }
+
+
 
             return filled == 0 ? MetadataCompleteness.None
                  : filled == total ? MetadataCompleteness.Full

@@ -37,7 +37,7 @@ public class JsonInfoFileReaderService
 
             try
             {
-                var meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
+                ModelClass meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
                 model.DiffusionBaseModel = meta.DiffusionBaseModel;
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;

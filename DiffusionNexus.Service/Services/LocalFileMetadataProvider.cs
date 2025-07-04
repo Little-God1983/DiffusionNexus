@@ -38,11 +38,6 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.NoMetaData = true;
         }
 
-        if (fileInfo.Extension == ".safetensors" || fileInfo.Extension ==".pt")
-        {
-            meta.SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
-        }
-
         meta.NoMetaData = !meta.HasAnyMetadata;
         return meta;
     }
@@ -121,14 +116,6 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             .OrderByDescending(e => e.Length)
             .FirstOrDefault(e => fileName.EndsWith(e, StringComparison.OrdinalIgnoreCase));
         return known != null ? fileName[..^known.Length] : fileName;
-    }
-
-    private static string ComputeSHA256(string filePath)
-    {
-        using var stream = File.OpenRead(filePath);
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(stream);
-        return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 }
 

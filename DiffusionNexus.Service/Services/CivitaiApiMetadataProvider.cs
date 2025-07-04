@@ -1,4 +1,6 @@
 using DiffusionNexus.Service.Classes;
+using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -20,32 +22,39 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         return Task.FromResult(identifier.Length == 64 && Regex.IsMatch(identifier, "^[a-fA-F0-9]+$"));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string sha256Hash, CancellationToken cancellationToken = default)
+    private static string ComputeSHA256(string filePath)
     {
-        var meta = new ModelClass
-        {
-            SHA256Hash = sha256Hash
-        };
+        using var stream = File.OpenRead(filePath);
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(stream);
+        return string.Concat(hash.Select(b => b.ToString("x2")));
+    }
 
-        var versionJson = await _apiClient.GetModelVersionByHashAsync(sha256Hash, _apiKey);
-        using var versionDoc = JsonDocument.Parse(versionJson);
-        var versionRoot = versionDoc.RootElement;
+    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default)
+    {
+        string SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
+        ModelClass modelClass = new() { SHA256Hash = SHA256Hash};
+
+        //calculateHash here
+        string versionJson = await _apiClient.GetModelVersionByHashAsync(modelClass.SHA256Hash, _apiKey);
+        using JsonDocument versionDoc = JsonDocument.Parse(versionJson);
+        JsonElement versionRoot = versionDoc.RootElement;
 
         if (versionRoot.TryGetProperty("modelId", out var modelId))
         {
-            meta.ModelId = modelId.GetString();
-            var modelJson = await _apiClient.GetModelAsync(meta.ModelId, _apiKey);
+            modelClass.ModelId = modelId.GetString();
+            var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
             using var modelDoc = JsonDocument.Parse(modelJson);
-            ParseModelInfo(modelDoc.RootElement, meta);
+            ParseModelInfo(modelDoc.RootElement, modelClass);
         }
 
         if (versionRoot.TryGetProperty("baseModel", out var baseModel))
-            meta.DiffusionBaseModel = baseModel.GetString();
+            modelClass.DiffusionBaseModel = baseModel.GetString();
 
         if (versionRoot.TryGetProperty("name", out var versionName))
-            meta.ModelVersionName = versionName.GetString();
-        meta.NoMetaData = !meta.HasAnyMetadata;
-        return meta;
+            modelClass.ModelVersionName = versionName.GetString();
+        modelClass.NoMetaData = !modelClass.HasAnyMetadata;
+        return modelClass;
     }
 
     private static void ParseModelInfo(JsonElement root, ModelClass meta)

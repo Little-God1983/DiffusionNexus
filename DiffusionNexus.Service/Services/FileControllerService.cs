@@ -29,7 +29,7 @@ namespace DiffusionNexus.Service.Services
             // Throw if cancellation is requested
             cancellationToken.ThrowIfCancellationRequested();
 
-            var jsonReader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
+            JsonInfoFileReaderService jsonReader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
             List<ModelClass> models = await jsonReader.GetModelData(progress, cancellationToken);
 
             if (models == null || models.Count == 0)
@@ -70,18 +70,14 @@ namespace DiffusionNexus.Service.Services
 
         public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, CancellationToken cancellationToken)
         {
+            ModelClass model = new ModelClass();
             foreach (var provider in _metadataProviders)
             {
-                var meta = await provider.GetModelMetadataAsync(identifier, cancellationToken);
-                if (meta != null && !meta.NoMetaData)
-                    return meta;
+                model = await provider.GetModelMetadataAsync(identifier, cancellationToken);
+                if (model.HasFullMetadata)
+                    return model;
             }
-
-            return new ModelClass
-            {
-                SafeTensorFileName = Path.GetFileNameWithoutExtension(identifier),
-                NoMetaData = true
-            };
+            return model;
         }
 
         public async Task ComputeFolder(IProgress<double>? progress, CancellationToken cancellationToken, SelectedOptions options)
