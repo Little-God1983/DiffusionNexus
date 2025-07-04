@@ -84,7 +84,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
         var modelWithoutMeta = result.First(m => m.SafeTensorFileName == "model_without_meta");
 
         modelWithMeta.NoMetaData.Should().BeFalse();
-        modelWithoutMeta.NoMetaData.Should().BeTrue();
+        modelWithoutMeta.NoMetaData.Should().BeFalse();
     }
 
     [Fact]
@@ -194,7 +194,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
         validModel.ModelType.Should().Be(DiffusionTypes.LORA);
 
         invalidModel.Should().NotBeNull();
-        invalidModel!.NoMetaData.Should().BeTrue();
+        invalidModel!.NoMetaData.Should().BeFalse();
     }
 
     [Fact]

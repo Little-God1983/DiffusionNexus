@@ -43,7 +43,6 @@ public class JsonInfoFileReaderService
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
                 model.Tags = meta.Tags;
                 model.CivitaiCategory = GetCategoryFromTags(model.Tags);
-                model.NoMetaData = meta.NoMetaData;
             }
             catch (Exception ex)
             {
@@ -51,6 +50,8 @@ public class JsonInfoFileReaderService
                 model.ErrorOnRetrievingMetaData = true;
                 model.NoMetaData = true;
             }
+
+            model.NoMetaData = !model.HasAnyMetadata;
         }
 
         return models;
@@ -99,8 +100,7 @@ public class JsonInfoFileReaderService
                 AssociatedFilesInfo = group.Value,
                 CivitaiCategory = CivitaiBaseCategories.UNKNOWN
             };
-            if (model.AssociatedFilesInfo.Count <= 1)
-                model.NoMetaData = true;
+            model.NoMetaData = !model.HasAnyMetadata;
             modelClasses.Add(model);
         }
 
