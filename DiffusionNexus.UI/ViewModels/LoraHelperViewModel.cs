@@ -87,7 +87,14 @@ public partial class LoraHelperViewModel : ViewModelBase
         });
 
         var localProvider = new LocalFileMetadataProvider();
-        var reader = new JsonInfoFileReaderService(settings.LoraHelperFolderPath!, localProvider.GetModelMetadataAsync);
+        // Fix for CS1503: Argument 2: cannot convert from 'method group' to 'System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.Task<DiffusionNexus.Service.Classes.ModelClass>>'
+
+        // The issue is that the method group `localProvider.GetModelMetadataAsync` does not match the expected delegate signature.
+        // To fix this, explicitly create a lambda expression that matches the expected signature.
+        var reader = new JsonInfoFileReaderService(
+            settings.LoraHelperFolderPath!,
+            (filePath, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
+        );
         var models = await reader.GetModelData(null, CancellationToken.None);
 
         await Dispatcher.UIThread.InvokeAsync(() =>

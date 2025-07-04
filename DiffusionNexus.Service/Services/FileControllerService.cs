@@ -73,7 +73,7 @@ namespace DiffusionNexus.Service.Services
             ModelClass model = new ModelClass();
             foreach (var provider in _metadataProviders)
             {
-                model = await provider.GetModelMetadataAsync(identifier, cancellationToken);
+                model = await provider.GetModelMetadataAsync(identifier, cancellationToken, model);
                 if (model.HasFullMetadata)
                     return model;
             }

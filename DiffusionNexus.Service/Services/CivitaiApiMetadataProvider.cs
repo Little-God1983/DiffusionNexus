@@ -31,10 +31,13 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default)
+    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass modelClass = null)
     {
         string SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
-        ModelClass modelClass = new() { SHA256Hash = SHA256Hash};
+        if (modelClass == null)
+            modelClass = new();
+        
+        modelClass.SHA256Hash = SHA256Hash;
 
         //calculateHash here
         try

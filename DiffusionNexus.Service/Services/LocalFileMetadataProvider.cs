@@ -12,13 +12,12 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         return Task.FromResult(File.Exists(identifier));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default)
+    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass? model = null)
     {
+        model ??= new ModelClass(); // Fixes CS0841 by ensuring 'model' is initialized before usage.
+
         var fileInfo = new FileInfo(filePath);
-        var meta = new ModelClass
-        {
-            SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath)
-        };
+        model.SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath);
 
         var baseName = ExtractBaseName(fileInfo.Name);
         var directory = fileInfo.Directory;
@@ -27,19 +26,19 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
 
         if (civitaiInfoFile != null)
         {
-            await LoadFromCivitaiInfo(civitaiInfoFile, meta);
+            await LoadFromCivitaiInfo(civitaiInfoFile, model);
         }
         else if (jsonFile != null)
         {
-            await LoadFromJson(jsonFile, meta);
+            await LoadFromJson(jsonFile, model);
         }
         else
         {
-            meta.NoMetaData = true;
+            model.NoMetaData = true;
         }
 
-        meta.NoMetaData = !meta.HasAnyMetadata;
-        return meta;
+        model.NoMetaData = !model.HasAnyMetadata;
+        return model;
     }
 
     private static async Task LoadFromCivitaiInfo(FileInfo file, ModelClass meta)
