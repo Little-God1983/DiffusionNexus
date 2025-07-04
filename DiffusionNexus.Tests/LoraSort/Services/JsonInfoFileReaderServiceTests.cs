@@ -106,12 +106,13 @@ public class JsonInfoFileReaderServiceTests : IDisposable
                 File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
             }
 
-            var service = new JsonInfoFileReaderService(_testDirectoryPath, "test-api-key");
+            var metadataService = new ModelMetadataService(new CompositeMetadataProvider(new LocalFileMetadataProvider()));
+            var service = new JsonInfoFileReaderService(_testDirectoryPath, metadataService);
             var progress = new Progress<ProgressReport>();
             var cts = new CancellationTokenSource();
 
             // Act
-            var result = await service.GetModelData(progress, _testDirectoryPath, cts.Token);
+            var result = await service.GetModelData(progress, cts.Token);
 
             // Assert
             result.Should().NotBeEmpty();

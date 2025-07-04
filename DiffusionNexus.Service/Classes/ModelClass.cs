@@ -17,6 +17,8 @@ namespace DiffusionNexus.Service.Classes
 
         public string SafeTensorFileName { get; set; }
         public string ModelVersionName { get; set; }
+        public string? ModelId { get; set; }
+        public string? SHA256Hash { get; set; }
         public DiffusionTypes ModelType { get; set; } = DiffusionTypes.OTHER;
         public List<FileInfo> AssociatedFilesInfo { get; set; }
         public List<string> Tags { get; set; } = new List<string>();
