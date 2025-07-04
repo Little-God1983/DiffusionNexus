@@ -51,7 +51,11 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.ModelId = modelId.ValueKind switch
             {
                 JsonValueKind.String => modelId.GetString(),
-                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+        if ((meta.ModelType == DiffusionTypes.OTHER ||
+             meta.ModelType == DiffusionTypes.UNASSIGNED) &&
+            root.TryGetProperty("type", out var rootType))
+        {
+        }
                 _ => null
             };
         }
