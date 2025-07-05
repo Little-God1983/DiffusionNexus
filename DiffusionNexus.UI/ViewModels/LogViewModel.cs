@@ -39,22 +39,24 @@ namespace DiffusionNexus.UI.ViewModels
 
         public LogEntry? LatestEntry => _service.LatestEntry;
 
-        public IEnumerable<LogSeverity?> SeverityOptions { get; } = new LogSeverity?[]
+        public IEnumerable<object?> SeverityOptions { get; } = new object?[]
         {
             null,
             LogSeverity.Info,
             LogSeverity.Success,
+            new LogSeverityFilter("Info + Success", LogSeverity.Info, LogSeverity.Success),
             LogSeverity.Warning,
             LogSeverity.Error,
+            new LogSeverityFilter("Warning + Errors", LogSeverity.Warning, LogSeverity.Error),
         };
 
-        private LogSeverity? _selectedSeverity;
-        public LogSeverity? SelectedSeverity
+        private object? _selectedFilter;
+        public object? SelectedFilter
         {
-            get => _selectedSeverity;
+            get => _selectedFilter;
             set
             {
-                if (SetProperty(ref _selectedSeverity, value))
+                if (SetProperty(ref _selectedFilter, value))
                 {
                     OnPropertyChanged(nameof(VisibleEntries));
                     OnPropertyChanged(nameof(HasVisibleEntries));
@@ -62,10 +64,13 @@ namespace DiffusionNexus.UI.ViewModels
             }
         }
 
-        public IEnumerable<LogEntry> VisibleEntries =>
-            SelectedSeverity.HasValue
-                ? Entries.Where(e => e.Severity == SelectedSeverity.Value)
-                : Entries;
+        public IEnumerable<LogEntry> VisibleEntries => SelectedFilter switch
+        {
+            null => Entries,
+            LogSeverity sev => Entries.Where(e => e.Severity == sev),
+            LogSeverityFilter filter => Entries.Where(e => filter.Severities.Contains(e.Severity)),
+            _ => Entries
+        };
 
         public bool HasVisibleEntries => VisibleEntries.Any();
 
@@ -101,6 +106,12 @@ namespace DiffusionNexus.UI.ViewModels
                 await desktop.MainWindow.Clipboard!.SetTextAsync(text);
                 _service.Publish(LogSeverity.Success, "copied to clipboard");
             }
+        }
+
+        [RelayCommand]
+        private void ClearLog()
+        {
+            _service.Clear();
         }
         
         [ObservableProperty]

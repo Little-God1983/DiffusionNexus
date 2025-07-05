@@ -9,5 +9,6 @@ namespace DiffusionNexus.UI.Classes
         ObservableCollection<LogEntry> Entries { get; }
         LogEntry? LatestEntry { get; }
         void Publish(LogSeverity severity, string message);
+        void Clear();
     }
 }

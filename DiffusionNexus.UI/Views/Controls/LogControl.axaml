@@ -30,9 +30,9 @@
                         Orientation="Horizontal"
                         Spacing="10">
                         <ComboBox
-                            Width="100"
+                            Width="120"
                             ItemsSource="{Binding SeverityOptions}"
-                            SelectedItem="{Binding SelectedSeverity, Mode=TwoWay}">
+                            SelectedItem="{Binding SelectedFilter, Mode=TwoWay}">
                             <ComboBox.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Converter={StaticResource NullToAllConverter}}" />
@@ -46,6 +46,10 @@
                         <Button
                             Command="{Binding ExportLogCommand}"
                             Content="Export"
+                            IsEnabled="{Binding HasVisibleEntries}" />
+                        <Button
+                            Command="{Binding ClearLogCommand}"
+                            Content="Clear"
                             IsEnabled="{Binding HasVisibleEntries}" />
                     </StackPanel>
                     
