@@ -28,5 +28,11 @@ namespace DiffusionNexus.UI.Classes
             _entries.Add(entry);
             LatestEntry = entry;
         }
+
+        public void Clear()
+        {
+            _entries.Clear();
+            LatestEntry = null;
+        }
     }
 }
