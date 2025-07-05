@@ -89,10 +89,10 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
     private static DiffusionTypes ParseModelType(string? type)
     {
         if (string.IsNullOrWhiteSpace(type))
-            return DiffusionTypes.OTHER;
+            return DiffusionTypes.UNASSIGNED;
         if (Enum.TryParse(type.Replace(" ", string.Empty), true, out DiffusionTypes dt))
             return dt;
-        return DiffusionTypes.OTHER;
+        return DiffusionTypes.UNASSIGNED;
     }
 
     private static List<string> ParseTags(JsonElement tags)

@@ -77,7 +77,7 @@ public class CivitaiMetaDataServiceTests
             var result = _service.GetModelType(json);
 
             // Assert
-            result.Should().Be(DiffusionTypes.OTHER);
+            result.Should().Be(DiffusionTypes.UNASSIGNED);
         }
 
         [Fact]

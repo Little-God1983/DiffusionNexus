@@ -186,9 +186,9 @@ namespace DiffusionNexus.Service.Services
                     {
                         return nestedModelType;
                     }
-                }
+                }   
             }
-            return DiffusionTypes.OTHER; // Default if no match is found
+            return DiffusionTypes.UNASSIGNED; // Default if no match is found
         }
 
         internal string GetModelVersionName(string modelInfoApiResponse)
