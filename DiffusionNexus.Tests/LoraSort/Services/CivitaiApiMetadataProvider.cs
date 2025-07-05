@@ -111,11 +111,29 @@ public class CivitaiApiMetadataProviderTests
     [Fact]
     public async Task GetModelMetadataAsync_WhenApiThrows_ShouldPropagateException()
     {
-        _mockApiClient.Setup(x => x.GetModelVersionByHashAsync(ValidSha256Hash, TestApiKey))
-                     .ThrowsAsync(new HttpRequestException("Network error"));
+        // Arrange
+        var testFilePath = Path.GetTempFileName();
+        try
+        {
+            // Write some content to the test file
+            await File.WriteAllTextAsync(testFilePath, "test content");
+            
+            // Setup mock to throw for any hash
+            _mockApiClient.Setup(x => x.GetModelVersionByHashAsync(
+                It.IsAny<string>(), 
+                It.IsAny<string>()))
+                .ThrowsAsync(new HttpRequestException("Network error"));
 
-        await Assert.ThrowsAsync<HttpRequestException>(() => 
-            _provider.GetModelMetadataAsync(ValidSha256Hash));
+            // Act & Assert
+            await Assert.ThrowsAsync<HttpRequestException>(() => 
+                _provider.GetModelMetadataAsync(testFilePath));
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(testFilePath))
+                File.Delete(testFilePath);
+        }
     }
 
     [Fact]
