@@ -152,11 +152,30 @@ public class CivitaiApiMetadataProviderTests : IDisposable
         _mockApiClient.Setup(x => x.GetModelVersionByHashAsync(
             It.IsAny<string>(), 
             It.IsAny<string>()))
-            .ThrowsAsync(new HttpRequestException("Network error"));
+            .ThrowsAsync(new HttpRequestException("Network error", null, System.Net.HttpStatusCode.InternalServerError));
 
         // Act & Assert
         await Assert.ThrowsAsync<HttpRequestException>(() => 
             _provider.GetModelMetadataAsync(testFilePath));
+    }
+
+    [Fact]
+    public async Task GetModelMetadataAsync_WhenApiReturns404_ShouldSetNoMetadata()
+    {
+        // Arrange
+        var testFilePath = CreateTempFileWithContent();
+        
+        _mockApiClient.Setup(x => x.GetModelVersionByHashAsync(
+            It.IsAny<string>(), 
+            It.IsAny<string>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, System.Net.HttpStatusCode.NotFound));
+
+        // Act
+        var result = await _provider.GetModelMetadataAsync(testFilePath);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.NoMetaData.Should().BeTrue();
     }
 
     [Fact]
@@ -168,7 +187,7 @@ public class CivitaiApiMetadataProviderTests : IDisposable
                      .ReturnsAsync("{ invalid json");
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() =>
+        await Assert.ThrowsAnyAsync<JsonException>(() =>
             _provider.GetModelMetadataAsync(testFilePath));
     }
 }

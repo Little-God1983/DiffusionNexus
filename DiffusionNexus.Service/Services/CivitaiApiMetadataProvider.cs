@@ -39,7 +39,6 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         
         modelClass.SHA256Hash = SHA256Hash;
 
-        //calculateHash here
         try
         {
             string versionJson = await _apiClient.GetModelVersionByHashAsync(modelClass.SHA256Hash, _apiKey);
@@ -51,7 +50,7 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
                 modelClass.ModelId = modelId.ValueKind switch
                 {
                     JsonValueKind.String => modelId.GetString(),
-                    JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
+                    JsonValueKind.Number => modelId.GetInt64().ToString(),
                     _ => null
                 };
                 var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
@@ -64,13 +63,23 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
 
             if (versionRoot.TryGetProperty("name", out var versionName))
                 modelClass.ModelVersionName = versionName.GetString();
-            modelClass.NoMetaData = !modelClass.HasAnyMetadata;
 
+            modelClass.NoMetaData = !modelClass.HasAnyMetadata;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            //TODO:LOG Not Found
-            
+            // Model not found in API is a valid case - just mark it as no metadata
+            modelClass.NoMetaData = true;
+        }
+        catch (JsonException)
+        {
+            // Invalid JSON is a critical error - propagate it
+            throw;
+        }
+        catch (HttpRequestException)
+        {
+            // Network/API errors should be propagated
+            throw;
         }
       
         return modelClass;
