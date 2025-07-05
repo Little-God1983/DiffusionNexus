@@ -30,6 +30,8 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private bool createBaseFolders = true;
         [ObservableProperty]
+        private bool deleteEmptySourceFolders;
+        [ObservableProperty]
         private bool useCustomMappings;
         [ObservableProperty]
         private double progress;
@@ -107,6 +109,7 @@ namespace DiffusionNexus.UI.ViewModels
             var settings = await _settingsService.LoadAsync();
             BasePath = settings.LoraSortSourcePath;
             TargetPath = settings.LoraSortTargetPath;
+            DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
         }
 
         private async Task OnSelectBasePathAsync()
@@ -204,6 +207,7 @@ namespace DiffusionNexus.UI.ViewModels
                     IsMoveOperation = !IsCopyMode,
                     OverrideFiles = OverrideFiles,
                     CreateBaseFolders = CreateBaseFolders,
+                    DeleteEmptySourceFolders = DeleteEmptySourceFolders,
                     UseCustomMappings = UseCustomMappings,
                     ApiKey = settings.CivitaiApiKey ?? string.Empty
                 };
@@ -237,6 +241,11 @@ namespace DiffusionNexus.UI.ViewModels
                 });
 
                 await controllerService.ComputeFolder(progress, _cts.Token, options);
+                if (DeleteEmptySourceFolders)
+                {
+                    Log("Cleaning up empty folders…", LogSeverity.Info);
+                    await controllerService.DeleteEmptyDirectoriesAsync(BasePath!);
+                }
                 Log("Finalising…", LogSeverity.Info);
             }
 

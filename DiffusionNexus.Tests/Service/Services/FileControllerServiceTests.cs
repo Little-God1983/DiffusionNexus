@@ -30,4 +30,23 @@ public class FileControllerServiceTests
             File.Delete(tempFile);
         }
     }
+
+    [Fact]
+    public async Task DeleteEmptyDirectoriesAsync_RemovesEmptyDirs()
+    {
+        var svc = new FileControllerService();
+        var basePath = Path.Combine(Path.GetTempPath(), "DeleteEmptyTest");
+        var emptyDir = Path.Combine(basePath, "empty");
+        var nonEmptyDir = Path.Combine(basePath, "nonempty");
+        Directory.CreateDirectory(emptyDir);
+        Directory.CreateDirectory(nonEmptyDir);
+        File.WriteAllText(Path.Combine(nonEmptyDir, "file.txt"), "content");
+
+        await svc.DeleteEmptyDirectoriesAsync(basePath);
+
+        Directory.Exists(emptyDir).Should().BeFalse();
+        Directory.Exists(nonEmptyDir).Should().BeTrue();
+
+        Directory.Delete(basePath, true);
+    }
 }

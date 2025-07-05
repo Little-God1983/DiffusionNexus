@@ -135,5 +135,22 @@ namespace DiffusionNexus.Service.Services
                 }
             }
         }
+
+        private static void DeleteEmptyDirectories(string path)
+        {
+            foreach (var directory in Directory.GetDirectories(path))
+            {
+                DeleteEmptyDirectories(directory);
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory);
+                }
+            }
+        }
+
+        public Task DeleteEmptyDirectoriesAsync(string path)
+        {
+            return Task.Run(() => DeleteEmptyDirectories(path));
+        }
     }
 }
