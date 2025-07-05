@@ -56,6 +56,13 @@
                        FontSize="16"
                        Margin="35,10,0,0"/>
             </StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <CheckBox Name="DeleteEmptySourceCheck"
+                       Content="Delete Empty Source Folders"
+                       IsChecked="{Binding DeleteEmptySourceFolders}"
+                       FontSize="16"
+                       Margin="0,5,0,0"/>
+            </StackPanel>
             <TextBlock Text="Special:"
                       FontWeight="Bold"
                       FontSize="14"

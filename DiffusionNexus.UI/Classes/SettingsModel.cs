@@ -11,6 +11,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private string? _loraSortSourcePath;
         [ObservableProperty] private string? _loraSortTargetPath;
         [ObservableProperty] private string? _loraHelperFolderPath;
+        [ObservableProperty] private bool _deleteEmptySourceFolders;
 
         [JsonIgnore]
         public string? CivitaiApiKey { get; set; }
