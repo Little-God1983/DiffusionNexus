@@ -69,7 +69,7 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
                 meta.Tags = ParseTags(tags);
         }
 
-        if (meta.ModelType == DiffusionTypes.OTHER && root.TryGetProperty("type", out var rootType))
+        if (meta.ModelType == DiffusionTypes.UNASSIGNED && root.TryGetProperty("type", out var rootType))
             meta.ModelType = ParseModelType(rootType.GetString());
 
         if (meta.Tags.Count == 0 && root.TryGetProperty("tags", out var rootTags))
