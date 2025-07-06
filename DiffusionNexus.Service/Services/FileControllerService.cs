@@ -3,69 +3,43 @@
  * For non-commercial use only. See LICENSE for details.
  */
 using DiffusionNexus.Service.Classes;
-using System;
-using System.Security.Cryptography;
-using System.Net.Http;
+using DiffusionNexus.Service.Services.IO;
 
 namespace DiffusionNexus.Service.Services
 {
     public class FileControllerService
     {
         private readonly IModelMetadataProvider[] _metadataProviders;
+        private readonly DiskUtility _diskUtility;
 
-        public FileControllerService(params IModelMetadataProvider[] metadataProviders)
+        public FileControllerService(DiskUtility? diskUtility = null, params IModelMetadataProvider[] metadataProviders)
         {
+            _diskUtility = diskUtility ?? new DiskUtility();
             _metadataProviders = metadataProviders ?? Array.Empty<IModelMetadataProvider>();
         }
 
-        private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken cancellationToken, SelectedOptions options)
+        public FileControllerService(params IModelMetadataProvider[] metadataProviders)
+            : this(null, metadataProviders)
         {
-            progress?.Report(new ProgressReport
-            {
-                Percentage = 0,
-                StatusMessage = "Start processing LoRA's",
-                LogLevel = LogSeverity.Info
-            });
-            // Throw if cancellation is requested
-            cancellationToken.ThrowIfCancellationRequested();
+        }
 
-            JsonInfoFileReaderService jsonReader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
-            List<ModelClass> models = await jsonReader.GetModelData(progress, cancellationToken);
+        private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken token, SelectedOptions options)
+        {
+            progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Start processing LoRA's", LogLevel = LogSeverity.Info });
+            token.ThrowIfCancellationRequested();
+
+            var reader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
+            var models = await reader.GetModelData(progress, token);
 
             if (models == null || models.Count == 0)
             {
-                // Report error and stop processing.
-                progress?.Report(new ProgressReport
-                {
-                    Percentage = 0,
-                    StatusMessage = "No Models in selected folders",
-                    IsSuccessful = false,
-                    LogLevel = LogSeverity.Error
-                });
+                progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "No Models in selected folders", IsSuccessful = false, LogLevel = LogSeverity.Error });
                 return;
             }
 
-            var fileCopyService = new FileCopyService();
-            // ProcessModelClasses now reports progress and uses our new ProgressReport type.
-            progress?.Report(new ProgressReport
-            {
-                Percentage = 0,
-                StatusMessage = "Starting processing copy/paste <==========",
-                LogLevel = LogSeverity.Info
-            });
-
-            await Task.Run(() =>
-            {
-                fileCopyService.ProcessModelClasses(progress, cancellationToken, models, options);
-            });
-
-            progress?.Report(new ProgressReport
-            {
-                Percentage = 100,
-                StatusMessage = "==========> Finished processing. To close the log click the upper right corner",
-                IsSuccessful = true,
-                LogLevel = LogSeverity.Info
-            });
+            progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Starting processing copy/paste <==========", LogLevel = LogSeverity.Info });
+            await Task.Run(() => new FileCopyService().ProcessModelClasses(progress, token, models, options));
+            progress?.Report(new ProgressReport { Percentage = 100, StatusMessage = "==========> Finished processing. To close the log click the upper right corner", IsSuccessful = true, LogLevel = LogSeverity.Info });
         }
 
         public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, CancellationToken cancellationToken)
@@ -91,66 +65,16 @@ namespace DiffusionNexus.Service.Services
             await ComputeFolderInternal(progress, cancellationToken, options);
         }
 
-        public bool EnoughFreeSpaceOnDisk(string sourcePath, string targetPath)
-        {
-            long folderSize = GetDirectorySize(sourcePath);
-            long availableSpace = GetAvailableSpace(targetPath);
+        public bool EnoughFreeSpaceOnDisk(string sourcePath, string targetPath) =>
+            _diskUtility.EnoughFreeSpace(sourcePath, targetPath);
 
-            return folderSize <= availableSpace;
-        }
-        // Method to get the size of a directory
-        public static long GetDirectorySize(string folderPath)
-        {
-            if (!Directory.Exists(folderPath))
-            {
-                throw new DirectoryNotFoundException($"The directory '{folderPath}' does not exist.");
-            }
-
-            long size = 0;
-
-            // Get the size of files in the directory and its subdirectories
-            foreach (string file in Directory.GetFiles(folderPath, "*.*", SearchOption.AllDirectories))
-            {
-                FileInfo fileInfo = new FileInfo(file);
-                size += fileInfo.Length;
-            }
-
-            return size;
-        }
-
-        // Method to get the available space on the drive
-        public static long GetAvailableSpace(string folderPath)
-        {
-            DriveInfo drive = new DriveInfo(Path.GetPathRoot(folderPath));
-            return drive.AvailableFreeSpace;
-        }
         public string ComputeFileHash(string filePath)
         {
-            using (var md5 = MD5.Create())
-            {
-                using (var stream = File.OpenRead(filePath))
-                {
-                    byte[] hashBytes = md5.ComputeHash(stream);
-                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
-                }
-            }
+            var hashing = new HashingService();
+            return hashing.ComputeFileHash(filePath);
         }
 
-        private static void DeleteEmptyDirectories(string path)
-        {
-            foreach (var directory in Directory.GetDirectories(path))
-            {
-                DeleteEmptyDirectories(directory);
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Directory.Delete(directory);
-                }
-            }
-        }
-
-        public Task DeleteEmptyDirectoriesAsync(string path)
-        {
-            return Task.Run(() => DeleteEmptyDirectories(path));
-        }
+        public Task DeleteEmptyDirectoriesAsync(string path) =>
+            _diskUtility.DeleteEmptyDirectoriesAsync(path);
     }
 }
