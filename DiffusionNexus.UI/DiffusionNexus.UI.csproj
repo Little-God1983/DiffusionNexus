@@ -30,6 +30,8 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.6" />
+    <PackageReference Include="Xabe.FFmpeg" Version="6.0.1" />
+    <PackageReference Include="Xabe.FFmpeg.Downloader" Version="6.0.1" />
   </ItemGroup>
 
   <!-- Automatically read, increment and save build number on each build -->
