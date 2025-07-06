@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.UI.Classes;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -56,6 +57,15 @@ public partial class LoraCardViewModel : ViewModelBase
         var path = GetPreviewImagePath();
         if (path is null || !File.Exists(path))
         {
+            var media = GetPreviewMediaPath();
+            if (media is not null)
+            {
+                path = await ThumbnailGenerator.GenerateThumbnailAsync(media);
+            }
+        }
+
+        if (path is null || !File.Exists(path))
+        {
             PreviewImage = null;
             return;
         }
@@ -96,6 +106,27 @@ public partial class LoraCardViewModel : ViewModelBase
                 return file.FullName;
         }
         
+        return null;
+    }
+
+    private string? GetPreviewMediaPath()
+    {
+        if (Model == null) return null;
+        string[] exts = [
+            ".gif",
+            ".mp4",
+            ".webm",
+            ".mov",
+            ".mkv"
+        ];
+
+        foreach (var ext in exts)
+        {
+            var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+            if (file != null)
+                return file.FullName;
+        }
+
         return null;
     }
 
