@@ -1,9 +1,10 @@
+using DiffusionNexus.Service.Classes;
+using SkiaSharp;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
-using SkiaSharp;
 using Xabe.FFmpeg;
-using DiffusionNexus.Service.Classes;
 
 namespace DiffusionNexus.UI.Classes
 {
@@ -41,9 +42,14 @@ namespace DiffusionNexus.UI.Classes
                 }
                 else
                 {
+                    var mediaInfo = await FFmpeg.GetMediaInfo(mediaPath);
+                    var videoStream = mediaInfo.VideoStreams.First();
+                    var probePos = TimeSpan.FromTicks(videoStream.Duration.Ticks / 2);   // middle
+
                     var conversion = await FFmpeg.Conversions
                         .FromSnippet
-                        .Snapshot(mediaPath, outputWebp, ThumbnailSettings.VideoProbePosition);
+                        .Snapshot(mediaPath, outputWebp, probePos);
+
                     conversion.AddParameter($"-vf scale={ThumbnailSettings.MaxWidth}:-1", ParameterPosition.PostInput);
                     await conversion.Start();
                 }

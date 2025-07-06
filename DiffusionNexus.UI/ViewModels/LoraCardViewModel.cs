@@ -113,8 +113,8 @@ public partial class LoraCardViewModel : ViewModelBase
     {
         if (Model == null) return null;
         string[] exts = [
-            ".gif",
             ".mp4",
+            ".gif",
             ".webm",
             ".mov",
             ".mkv"
