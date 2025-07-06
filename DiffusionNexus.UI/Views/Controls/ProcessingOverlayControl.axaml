@@ -9,7 +9,7 @@
       <ProgressBar Width="200" Height="20"
                    IsIndeterminate="{Binding IsIndeterminate}"
                    Value="{Binding Progress}" Minimum="0" Maximum="100"/>
-      <Button Content="Cancel" Width="80" Command="{Binding GoCommand}"/>
+      <Button Content="Cancel" Width="80" Command="{Binding GoCommand}" VerticalAlignment="Center" />
     </StackPanel>
   </Border>
 </UserControl>
