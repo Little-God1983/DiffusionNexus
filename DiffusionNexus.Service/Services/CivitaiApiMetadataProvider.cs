@@ -1,5 +1,6 @@
 using DiffusionNexus.Service.Classes;
 using System.IO;
+using ModelMover.Core.Metadata;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -88,35 +89,12 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
     private static void ParseModelInfo(JsonElement root, ModelClass modelClass)
     {
         if (root.TryGetProperty("type", out var type))
-            modelClass.ModelType = ParseModelType(type.GetString());
+            modelClass.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
 
         if (root.TryGetProperty("tags", out var tags))
-            modelClass.Tags = ParseTags(tags);
+            modelClass.Tags = ModelMetadataUtils.ParseTags(tags);
         modelClass.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(modelClass.Tags);
     }
 
-    private static DiffusionTypes ParseModelType(string? type)
-    {
-        if (string.IsNullOrWhiteSpace(type))
-            return DiffusionTypes.UNASSIGNED;
-        if (Enum.TryParse(type.Replace(" ", string.Empty), true, out DiffusionTypes dt))
-            return dt;
-        return DiffusionTypes.UNASSIGNED;
-    }
-
-    private static List<string> ParseTags(JsonElement tags)
-    {
-        var result = new List<string>();
-        foreach (var t in tags.EnumerateArray())
-        {
-            if (t.ValueKind == JsonValueKind.String)
-            {
-                var s = t.GetString();
-                if (!string.IsNullOrWhiteSpace(s))
-                    result.Add(s);
-            }
-        }
-        return result;
-    }
 }
 
