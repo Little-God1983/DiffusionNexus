@@ -3,6 +3,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:conv="using:DiffusionNexus.UI.Converters"
+             xmlns:items="using:Avalonia.Controls"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
@@ -48,47 +49,48 @@
       </TreeView>
     </ScrollViewer>
     <Grid Grid.Column="1" Grid.Row="1">
-      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <ItemsControl ItemsSource="{Binding Cards}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:LoraCardViewModel">
-                <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
-                  <Grid>
-                    <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
-                      <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2" Background="Black">
-                        <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
-                      </Border>
-                      <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2,2,0,2" Background="Black">
-                        <TextBlock Text="{Binding DiffusionBaseModel}" FontSize="12"/>
-                      </Border>
-                    </StackPanel>
-                    <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
-                      <StackPanel>
-                        <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
-                        <Grid ColumnDefinitions="Auto,*">
-                          <Button Content="✏️"
-                                  Width="36" Height="36" FontSize="16"
-                                  Margin="0,4,4,0"
-                                  Command="{Binding EditCommand}"/>
-                          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
-                            <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
-                            <Button Content="❌" Width="36" Height="36" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
-                          </StackPanel>
-                        </Grid>
-                      </StackPanel>
+      <ScrollViewer x:Name="CardScrollViewer"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <items:ItemsRepeater ItemsSource="{Binding Cards}">
+          <items:ItemsRepeater.Layout>
+            <UniformGridLayout MinItemWidth="250"
+                               MinItemHeight="300" />
+          </items:ItemsRepeater.Layout>
+          <items:ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="vm:LoraCardViewModel">
+              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+                <Grid>
+                  <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
+                    <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2" Background="Black">
+                      <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
                     </Border>
-                  </Grid>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <WrapPanel/>
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-        </ItemsControl>
+                    <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2,2,0,2" Background="Black">
+                      <TextBlock Text="{Binding DiffusionBaseModel}" FontSize="12"/>
+                    </Border>
+                  </StackPanel>
+                  <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
+                    <StackPanel>
+                      <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Button Content="✏️"
+                                Width="36" Height="36" FontSize="16"
+                                Margin="0,4,4,0"
+                                Command="{Binding EditCommand}"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                          <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
+                          <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
+                          <Button Content="❌" Width="36" Height="36" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
+                        </StackPanel>
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </items:ItemsRepeater.ItemTemplate>
+        </items:ItemsRepeater>
       </ScrollViewer>
       <controls:BusyOverlay IsVisible="{Binding IsLoading}"
                             HorizontalAlignment="Stretch"
