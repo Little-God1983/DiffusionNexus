@@ -3,6 +3,7 @@ using DiffusionNexus.Service.Helper;
 using System.Security.Cryptography;
 using System.Text.Json;
 
+using ModelMover.Core.Metadata;
 namespace DiffusionNexus.Service.Services;
 
 public class LocalFileMetadataProvider : IModelMetadataProvider
@@ -19,7 +20,7 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         var fileInfo = new FileInfo(filePath);
         model.SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath);
 
-        var baseName = ExtractBaseName(fileInfo.Name);
+        var baseName = ModelMetadataUtils.ExtractBaseName(fileInfo.Name);
         var directory = fileInfo.Directory;
         var civitaiInfoFile = directory?.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
         var jsonFile = directory?.GetFiles($"{baseName}.json").FirstOrDefault();
@@ -51,45 +52,14 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
             meta.ModelId = modelId.ValueKind switch
             {
                 JsonValueKind.String => modelId.GetString(),
-                JsonValueKind.Number => modelId.GetInt64().ToString(),   // or GetInt32/GetUInt64…
-                _ => null
-            };
-        }
+                meta.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
+                meta.Tags = ModelMetadataUtils.ParseTags(tags);
+            meta.ModelType = ModelMetadataUtils.ParseModelType(rootType.GetString());
+            meta.Tags = ModelMetadataUtils.ParseTags(rootTags);
 
-        if (root.TryGetProperty("baseModel", out var baseModel))
-            meta.DiffusionBaseModel = baseModel.GetString();
+            meta.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
+            meta.Tags = ModelMetadataUtils.ParseTags(tags);
 
-        if (root.TryGetProperty("model", out var model))
-        {
-            if (model.TryGetProperty("name", out var name))
-                meta.ModelVersionName = name.GetString();
-            if (model.TryGetProperty("type", out var type))
-                meta.ModelType = ParseModelType(type.GetString());
-            if (model.TryGetProperty("tags", out var tags))
-                meta.Tags = ParseTags(tags);
-        }
-
-        if (meta.ModelType == DiffusionTypes.UNASSIGNED && root.TryGetProperty("type", out var rootType))
-            meta.ModelType = ParseModelType(rootType.GetString());
-
-        if (meta.Tags.Count == 0 && root.TryGetProperty("tags", out var rootTags))
-            meta.Tags = ParseTags(rootTags);
-
-        meta.NoMetaData = !meta.HasAnyMetadata;
-    }
-
-    private static async Task LoadFromJson(FileInfo file, ModelClass meta)
-    {
-        var json = await File.ReadAllTextAsync(file.FullName);
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        if (root.TryGetProperty("sd version", out var ver))
-            meta.DiffusionBaseModel = ver.GetString();
-        if (root.TryGetProperty("type", out var type))
-            meta.ModelType = ParseModelType(type.GetString());
-        if (root.TryGetProperty("tags", out var tags))
-            meta.Tags = ParseTags(tags);
 
         meta.NoMetaData = !meta.HasAnyMetadata;
     }
