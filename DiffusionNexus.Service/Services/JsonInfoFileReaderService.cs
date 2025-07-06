@@ -1,5 +1,6 @@
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Helper;
+using ModelMover.Core.Metadata;
 using Serilog;
 
 namespace DiffusionNexus.Service.Services;
@@ -66,7 +67,7 @@ public class JsonInfoFileReaderService
         foreach (var filePath in files)
         {
             var fileInfo = new FileInfo(filePath);
-            var prefix = ExtractBaseName(fileInfo.Name).ToLower();
+            var prefix = ModelMetadataUtils.ExtractBaseName(fileInfo.Name).ToLower();
 
             if (!fileGroups.ContainsKey(prefix))
             {
@@ -96,18 +97,5 @@ public class JsonInfoFileReaderService
         return modelClasses;
     }
 
-    private static string ExtractBaseName(string fileName)
-    {
-        var extension = StaticFileTypes.GeneralExtensions
-            .OrderByDescending(e => e.Length)
-            .FirstOrDefault(e => fileName.EndsWith(e, StringComparison.OrdinalIgnoreCase));
-
-        if (extension != null)
-        {
-            return fileName.Substring(0, fileName.Length - extension.Length);
-        }
-
-        return fileName;
-    }
 }
 

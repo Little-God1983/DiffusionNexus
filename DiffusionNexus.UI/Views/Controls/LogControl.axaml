@@ -30,7 +30,7 @@
                         Orientation="Horizontal"
                         Spacing="10">
                         <ComboBox
-                            Width="120"
+                            Width="155"
                             ItemsSource="{Binding SeverityOptions}"
                             SelectedItem="{Binding SelectedFilter, Mode=TwoWay}">
                             <ComboBox.ItemTemplate>
