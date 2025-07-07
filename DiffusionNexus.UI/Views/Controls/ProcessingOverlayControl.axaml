@@ -3,7 +3,8 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              x:Class="DiffusionNexus.UI.Views.Controls.ProcessingOverlayControl"
              IsHitTestVisible="{Binding IsBusy}"
-             x:DataType="vm:LoraSortMainSettingsViewModel">
+             x:DataType="vm:LoraSortMainSettingsViewModel"
+             DataContext="{x:Null}">
   <Border Background="#80000000">
     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
       <ProgressBar Width="200" Height="20"

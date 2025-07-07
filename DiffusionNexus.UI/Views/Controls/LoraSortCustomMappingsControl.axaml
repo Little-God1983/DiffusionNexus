@@ -4,7 +4,8 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:svc="clr-namespace:DiffusionNexus.Service.Classes;assembly=DiffusionNexus.Service"
              x:Class="DiffusionNexus.UI.Views.Controls.LoraSortCustomMappingsControl"
-             x:DataType="vm:LoraSortCustomMappingsViewModel">
+             x:DataType="vm:LoraSortCustomMappingsViewModel"
+             DataContext="{x:Null}">
     <UserControl.Resources>
         <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
         <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
