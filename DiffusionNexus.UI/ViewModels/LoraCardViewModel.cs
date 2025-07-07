@@ -88,18 +88,8 @@ public partial class LoraCardViewModel : ViewModelBase
     public string? GetPreviewImagePath()
     {
         if (Model == null) return null;
-        string[] priority = [
-            ".thumb.jpg",
-            ".webp",
-            "jpeg",
-            "jpg",
-            ".preview.webp",
-            ".preview.jpeg",
-            ".preview.jpg",
-            ".preview.png",
-        ];
-
-        foreach (var ext in priority)
+      
+        foreach (var ext in SupportedTypes.ImageTypesByPriority)
         {
             var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
             if (file != null)
@@ -112,15 +102,9 @@ public partial class LoraCardViewModel : ViewModelBase
     private string? GetPreviewMediaPath()
     {
         if (Model == null) return null;
-        string[] exts = [
-            ".mp4",
-            ".gif",
-            ".webm",
-            ".mov",
-            ".mkv"
-        ];
+        
 
-        foreach (var ext in exts)
+        foreach (var ext in SupportedTypes.VideoTypesByPriority)
         {
             var file = Model.AssociatedFilesInfo.FirstOrDefault(f => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
             if (file != null)
