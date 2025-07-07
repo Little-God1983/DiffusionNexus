@@ -4,6 +4,7 @@
  */
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Services.IO;
+using System.IO;
 
 namespace DiffusionNexus.Service.Services
 {
@@ -42,14 +43,47 @@ namespace DiffusionNexus.Service.Services
             progress?.Report(new ProgressReport { Percentage = 100, StatusMessage = "==========> Finished processing. To close the log click the upper right corner", IsSuccessful = true, LogLevel = LogSeverity.Info });
         }
 
-        public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, CancellationToken cancellationToken)
+        public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, IProgress<ProgressReport>? progress, CancellationToken cancellationToken)
         {
             ModelClass model = new ModelClass();
             foreach (var provider in _metadataProviders)
             {
-                model = await provider.GetModelMetadataAsync(identifier, cancellationToken, model);
+                progress?.Report(new ProgressReport { StatusMessage = $"Reading metadata using {provider.GetType().Name}", LogLevel = LogSeverity.Info });
+                try
+                {
+                    if (provider is CivitaiApiMetadataProvider)
+                    {
+                        var name = Path.GetFileNameWithoutExtension(identifier);
+                        progress?.Report(new ProgressReport { StatusMessage = $"Invoking Civitai API for {name}", LogLevel = LogSeverity.Info });
+                    }
+
+                    model = await provider.GetModelMetadataAsync(identifier, cancellationToken, model);
+
+                    if (provider is CivitaiApiMetadataProvider)
+                    {
+                        var outcome = model.HasAnyMetadata ? "success" : "no data";
+                        progress?.Report(new ProgressReport
+                        {
+                            StatusMessage = $"Civitai API {outcome} for {model.SafeTensorFileName}",
+                            LogLevel = model.HasAnyMetadata ? LogSeverity.Success : LogSeverity.Warning
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    progress?.Report(new ProgressReport { StatusMessage = $"Provider {provider.GetType().Name} failed: {ex.Message}", LogLevel = LogSeverity.Error });
+                    continue;
+                }
+
                 if (model.HasFullMetadata)
+                {
+                    progress?.Report(new ProgressReport { StatusMessage = $"Metadata complete for {model.SafeTensorFileName}", LogLevel = LogSeverity.Success });
                     return model;
+                }
+                else
+                {
+                    progress?.Report(new ProgressReport { StatusMessage = $"Metadata incomplete after {provider.GetType().Name} for {model.SafeTensorFileName}", LogLevel = LogSeverity.Warning });
+                }
             }
             return model;
         }

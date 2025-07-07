@@ -8,9 +8,9 @@ namespace DiffusionNexus.Service.Services;
 public class JsonInfoFileReaderService
 {
     private readonly string _basePath;
-    private readonly Func<string, CancellationToken, Task<ModelClass>> _metadataFetcher;
+    private readonly Func<string, IProgress<ProgressReport>?, CancellationToken, Task<ModelClass>> _metadataFetcher;
 
-    public JsonInfoFileReaderService(string basePath, Func<string, CancellationToken, Task<ModelClass>> metadataFetcher)
+    public JsonInfoFileReaderService(string basePath, Func<string, IProgress<ProgressReport>?, CancellationToken, Task<ModelClass>> metadataFetcher)
     {
         _basePath = basePath;
         _metadataFetcher = metadataFetcher;
@@ -38,12 +38,16 @@ public class JsonInfoFileReaderService
 
             try
             {
-                ModelClass meta = await _metadataFetcher(safetensors.FullName, cancellationToken);
+                progress?.Report(new ProgressReport { StatusMessage = $"Processing metadata for {safetensors.Name}", LogLevel = LogSeverity.Info });
+                ModelClass meta = await _metadataFetcher(safetensors.FullName, progress, cancellationToken);
                 model.DiffusionBaseModel = meta.DiffusionBaseModel;
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
                 model.Tags = meta.Tags;
                 model.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(model.Tags);
+                var completeness = meta.HasFullMetadata ? "complete" : meta.HasAnyMetadata ? "partial" : "none";
+                var level = meta.HasFullMetadata ? LogSeverity.Success : LogSeverity.Warning;
+                progress?.Report(new ProgressReport { StatusMessage = $"Metadata {completeness} for {safetensors.Name}", LogLevel = level });
             }
             catch (Exception ex)
             {
