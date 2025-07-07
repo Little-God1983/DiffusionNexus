@@ -333,7 +333,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
              id = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
             if (string.IsNullOrWhiteSpace(id))
+            {
+                Log($"Can't open Link. No Id found for {card.Model.ModelVersionName}", LogSeverity.Error);
                 return;
+
+            }
         }
         else
         {
