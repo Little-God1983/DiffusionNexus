@@ -32,7 +32,7 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 
-    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass modelClass = null)
+    public async Task<ModelClass> GetModelMetadataAsync(string filePath, CancellationToken cancellationToken = default, ModelClass? modelClass = null)
     {
         string SHA256Hash = await Task.Run(() => ComputeSHA256(filePath), cancellationToken);
         if (modelClass == null)
@@ -54,16 +54,19 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
                     JsonValueKind.Number => modelId.GetInt64().ToString(),
                     _ => null
                 };
-                var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
-                using var modelDoc = JsonDocument.Parse(modelJson);
-                ParseModelInfo(modelDoc.RootElement, modelClass);
+                if (!string.IsNullOrEmpty(modelClass.ModelId))
+                {
+                    var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
+                    using var modelDoc = JsonDocument.Parse(modelJson);
+                    ParseModelInfo(modelDoc.RootElement, modelClass);
+                }
             }
 
             if (versionRoot.TryGetProperty("baseModel", out var baseModel))
-                modelClass.DiffusionBaseModel = baseModel.GetString();
+                modelClass.DiffusionBaseModel = baseModel.GetString() ?? modelClass.DiffusionBaseModel;
 
             if (versionRoot.TryGetProperty("name", out var versionName))
-                modelClass.ModelVersionName = versionName.GetString();
+                modelClass.ModelVersionName = versionName.GetString() ?? modelClass.ModelVersionName;
 
             modelClass.NoMetaData = !modelClass.HasAnyMetadata;
         }

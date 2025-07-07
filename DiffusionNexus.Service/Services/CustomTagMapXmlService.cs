@@ -51,7 +51,8 @@ namespace DiffusionNexus.Service.Services
                 XmlSerializer serializer = new XmlSerializer(typeof(ObservableCollection<CustomTagMap>));
                 using (StreamReader reader = new StreamReader(_filePath))
                 {
-                    return (ObservableCollection<CustomTagMap>)serializer.Deserialize(reader);
+                    var result = serializer.Deserialize(reader) as ObservableCollection<CustomTagMap>;
+                    return result ?? new ObservableCollection<CustomTagMap>();
                 }
             }
             catch (Exception ex)
