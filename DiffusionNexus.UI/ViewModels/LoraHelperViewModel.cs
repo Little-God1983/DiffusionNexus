@@ -12,6 +12,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -48,6 +50,7 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
+    public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
@@ -63,6 +66,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         _settingsService = settingsService;
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
+        DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
         _ = LoadAsync();
     }
     public void SetWindow(Window window)
@@ -334,6 +338,113 @@ public partial class LoraHelperViewModel : ViewModelBase
         var scanner = new DuplicateScanner();
         var progress = new Progress<ScanProgress>(_ => { });
         await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
+        IsLoading = false;
+    }
+
+    private static string ComputeSHA256(string filePath)
+    {
+        using var stream = File.OpenRead(filePath);
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hash = sha256.ComputeHash(stream);
+        return string.Concat(hash.Select(b => b.ToString("x2")));
+    }
+
+    private async Task DownloadMissingMetadataAsync()
+    {
+        IsLoading = true;
+        var settings = await _settingsService.LoadAsync();
+        var apiClient = new CivitaiApiClient(new HttpClient());
+        var apiKey = settings.CivitaiApiKey ?? string.Empty;
+
+        foreach (var card in _allCards)
+        {
+            var model = card.Model;
+            if (model == null) continue;
+            var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
+            if (folder == null) continue;
+
+            var baseName = model.SafeTensorFileName;
+
+            bool hasInfo = model.AssociatedFilesInfo.Any(f => f.Name.EndsWith(".civitai.info", StringComparison.OrdinalIgnoreCase));
+            bool hasJson = model.AssociatedFilesInfo.Any(f => f.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase) && !f.Name.EndsWith(".civitai.info", StringComparison.OrdinalIgnoreCase));
+            bool hasMedia = model.AssociatedFilesInfo.Any(f => SupportedTypes.ImageTypesByPriority.Any(ext => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) ||
+                                                             SupportedTypes.VideoTypesByPriority.Any(ext => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+
+            if (hasInfo && hasJson && hasMedia)
+                continue; // case 1
+
+            var tensor = model.AssociatedFilesInfo.FirstOrDefault(f => f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
+                                                                       f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase))?.FullName;
+            if (tensor == null)
+                continue;
+
+            string hash = ComputeSHA256(tensor);
+            string infoJson;
+            try
+            {
+                infoJson = await apiClient.GetModelVersionByHashAsync(hash, apiKey);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var infoPath = Path.Combine(folder, baseName + ".civitai.info");
+            await File.WriteAllTextAsync(infoPath, infoJson);
+
+            string? previewUrl = null;
+            string? modelId = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(infoJson);
+                var root = doc.RootElement;
+                if(!hasMedia)
+                {
+                    if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array && images.GetArrayLength() > 0)
+                    {
+                        var first = images[0];
+                        if (first.TryGetProperty("url", out var urlEl))
+                            previewUrl = urlEl.GetString();
+                    }
+                }
+                if (root.TryGetProperty("modelId", out var modelIdEl))
+                {
+                    modelId = modelIdEl.ValueKind switch
+                    {
+                        JsonValueKind.Number => modelIdEl.GetInt64().ToString(),
+                        JsonValueKind.String => modelIdEl.GetString(),
+                        _ => null
+                    };
+                }
+            }
+            catch (JsonException) { }
+
+            if (!hasMedia && !string.IsNullOrWhiteSpace(previewUrl))
+            {
+                try
+                {
+                    var ext = Path.GetExtension(new Uri(previewUrl).AbsolutePath);
+                    var outPath = Path.Combine(folder, baseName + ext);
+                    using var http = new HttpClient();
+                    var bytes = await http.GetByteArrayAsync(previewUrl);
+                    await File.WriteAllBytesAsync(outPath, bytes);
+                }
+                catch { }
+            }
+
+            if (!hasJson && !string.IsNullOrWhiteSpace(modelId))
+            {
+                try
+                {
+                    var modelJson = await apiClient.GetModelAsync(modelId, apiKey);
+                    var jsonPath = Path.Combine(folder, baseName + ".json");
+                    await File.WriteAllTextAsync(jsonPath, modelJson);
+                }
+                catch { }
+            }
+        }
+
+        await LoadAsync();
         IsLoading = false;
     }
 }
