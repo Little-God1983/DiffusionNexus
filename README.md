@@ -2,7 +2,7 @@
 
 ## Thumbnail Generation
 
-DiffusionNexus automatically creates preview thumbnails for LoRA cards. When no static preview image is found but a matching `.gif` or `.mp4` exists, the application generates a WebP thumbnail on first load.
+DiffusionNexus automatically creates preview thumbnails for LoRA cards. When no static preview image is found but a matching `.gif` or `.mp4` exists, the application generates a WebP thumbnail on first load. This behaviour can be disabled in the **Lora Helper** settings.
 
 ### Dependencies
 - **Xabe.FFmpeg** – used to capture snapshots from video files. FFmpeg binaries are downloaded at runtime using `Xabe.FFmpeg.Downloader`.

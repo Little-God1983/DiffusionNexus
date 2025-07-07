@@ -45,6 +45,9 @@
             <TextBox Text="{Binding Settings.LoraHelperFolderPath, Mode=TwoWay}" Width="350"/>
             <Button Content="Browse..." Command="{Binding BrowseLoraHelperFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
           </StackPanel>
+          <CheckBox Content="Automatic thumbnail generation from videos"
+                   IsChecked="{Binding Settings.GenerateVideoThumbnails, Mode=TwoWay}"
+                   Margin="0,5,0,0"/>
         </StackPanel>
       </Expander>
 

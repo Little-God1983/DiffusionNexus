@@ -78,6 +78,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         IsLoading = true;
         var settings = await _settingsService.LoadAsync();
+        ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
         if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
         {
             IsLoading = false;

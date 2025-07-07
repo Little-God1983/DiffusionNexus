@@ -7,5 +7,6 @@ namespace DiffusionNexus.UI.Classes
         public static int MaxWidth { get; set; } = 320;
         public static int JpegQuality { get; set; } = 80;
         public static TimeSpan VideoProbePosition { get; set; } = TimeSpan.FromSeconds(0.5);
+        public static bool GenerateVideoThumbnails { get; set; } = true;
     }
 }
