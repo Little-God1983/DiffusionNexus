@@ -398,11 +398,14 @@ public partial class LoraHelperViewModel : ViewModelBase
             {
                 using var doc = JsonDocument.Parse(infoJson);
                 var root = doc.RootElement;
-                if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array && images.GetArrayLength() > 0)
+                if(!hasMedia)
                 {
-                    var first = images[0];
-                    if (first.TryGetProperty("url", out var urlEl))
-                        previewUrl = urlEl.GetString();
+                    if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array && images.GetArrayLength() > 0)
+                    {
+                        var first = images[0];
+                        if (first.TryGetProperty("url", out var urlEl))
+                            previewUrl = urlEl.GetString();
+                    }
                 }
                 if (root.TryGetProperty("modelId", out var modelIdEl))
                 {
