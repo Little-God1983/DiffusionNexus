@@ -191,7 +191,7 @@ namespace DiffusionNexus.Service.Services
             return DiffusionTypes.UNASSIGNED; // Default if no match is found
         }
 
-        internal string GetModelVersionName(string modelInfoApiResponse)
+        internal string? GetModelVersionName(string modelInfoApiResponse)
         {
             using (JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse))
             {

@@ -58,12 +58,12 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         }
 
         if (root.TryGetProperty("baseModel", out var baseModel))
-            meta.DiffusionBaseModel = baseModel.GetString();
+            meta.DiffusionBaseModel = baseModel.GetString() ?? meta.DiffusionBaseModel;
 
         if (root.TryGetProperty("model", out var model))
         {
             if (model.TryGetProperty("name", out var name))
-                meta.ModelVersionName = name.GetString();
+                meta.ModelVersionName = name.GetString() ?? meta.ModelVersionName;
             if (model.TryGetProperty("type", out var type))
                 meta.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
             if (model.TryGetProperty("tags", out var tags))

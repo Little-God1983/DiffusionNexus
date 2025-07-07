@@ -2,8 +2,8 @@
 {
     public class SelectedOptions
     {
-        public string BasePath { get; set; }
-        public string TargetPath { get; set; }
+        public string BasePath { get; set; } = string.Empty;
+        public string TargetPath { get; set; } = string.Empty;
         public bool IsMoveOperation { get; set; }
         public bool OverrideFiles { get; set; }
         public bool CreateBaseFolders { get; set; }
