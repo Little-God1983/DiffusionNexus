@@ -328,10 +328,18 @@ public partial class LoraHelperViewModel : ViewModelBase
 
         var settings = await _settingsService.LoadAsync();
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
-
-        var id = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
-        if (string.IsNullOrWhiteSpace(id))
-            return;
+        string? id;
+        if (string.IsNullOrWhiteSpace(card.Model.ModelId))
+        {
+             id = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            if (string.IsNullOrWhiteSpace(id))
+                return;
+        }
+        else
+        {
+            // If we already have the ID, just use it
+            id = card.Model.ModelId;
+        }
 
         var url = $"https://civitai.com/models/{id}";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
