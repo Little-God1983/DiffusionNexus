@@ -6,6 +6,8 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.UI.Classes;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
+using DiffusionNexus.Service.Services;
+using System.Net.Http;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -37,7 +39,7 @@ public class LoraCardViewUiTests
             var mock = new Mock<ISettingsService>();
             mock.Setup(s => s.LoadAsync()).ReturnsAsync(new SettingsModel());
             mock.Setup(s => s.SaveAsync(It.IsAny<SettingsModel>())).Returns(Task.CompletedTask);
-            var vm = new LoraHelperViewModel(mock.Object);
+            var vm = new LoraHelperViewModel(mock.Object, new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient())));
             vm.Cards.Add(cardVm);
             var view = new LoraHelperView { DataContext = vm };
             view.ApplyTemplate();

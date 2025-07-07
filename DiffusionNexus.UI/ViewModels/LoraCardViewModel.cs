@@ -34,7 +34,7 @@ public partial class LoraCardViewModel : ViewModelBase
 
     public IRelayCommand EditCommand { get; }
     public IAsyncRelayCommand DeleteCommand { get; }
-    public IRelayCommand OpenWebCommand { get; }
+    public IAsyncRelayCommand OpenWebCommand { get; }
     public IRelayCommand CopyCommand { get; }
 
     public LoraHelperViewModel? Parent { get; set; }
@@ -43,7 +43,7 @@ public partial class LoraCardViewModel : ViewModelBase
     {
         EditCommand = new RelayCommand(OnEdit);
         DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
-        OpenWebCommand = new RelayCommand(OnOpenWeb);
+        OpenWebCommand = new AsyncRelayCommand(OnOpenWebAsync);
         CopyCommand = new RelayCommand(OnCopy);
     }
 
@@ -121,7 +121,13 @@ public partial class LoraCardViewModel : ViewModelBase
         return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
     }
 
-    private void OnOpenWeb() => Log($"Open web for {Model.SafeTensorFileName}", LogSeverity.Info);
+    private async Task OnOpenWebAsync()
+    {
+        if (Parent == null || Model == null)
+            return;
+
+        await Parent.OpenWebForCardAsync(this);
+    }
 
     private void OnCopy() => Log($"Copy {Model.SafeTensorFileName}", LogSeverity.Info);
 }
