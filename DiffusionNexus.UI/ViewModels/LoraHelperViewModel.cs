@@ -97,7 +97,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         // To fix this, explicitly create a lambda expression that matches the expected signature.
         var reader = new JsonInfoFileReaderService(
             settings.LoraHelperFolderPath!,
-            (filePath, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
+            (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
         );
         var models = await reader.GetModelData(null, CancellationToken.None);
 

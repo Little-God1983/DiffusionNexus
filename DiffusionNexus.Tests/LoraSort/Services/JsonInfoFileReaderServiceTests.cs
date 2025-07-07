@@ -114,7 +114,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
 
         var service = new JsonInfoFileReaderService(
             _testDirectoryPath,
-            (filePath, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken)
+            (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken)
         );
         var progress = new Progress<ProgressReport>();
         var cts = new CancellationTokenSource();
@@ -187,7 +187,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
         }
 
-        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
+        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
         var cts = new CancellationTokenSource();
 
         // Act
@@ -221,7 +221,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             File.WriteAllText(Path.Combine(_testDirectoryPath, file), "");
         }
 
-        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
+        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
         var cts = new CancellationTokenSource();
         cts.Cancel(); // Cancel before execution
 
@@ -334,7 +334,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
         }
 
-        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
+        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
 
         int progressCount = 0;
         var progress = new Progress<ProgressReport>(report => progressCount++);
@@ -373,7 +373,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
             File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
         }
 
-        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
+        var service = new JsonInfoFileReaderService(_testDirectoryPath, (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken));
         var cts = new CancellationTokenSource();
 
         // Act

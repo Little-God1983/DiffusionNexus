@@ -11,10 +11,11 @@ namespace DiffusionNexus.UI.Views.Controls
         public LoraSortMainSettingsControl()
         {
             InitializeComponent();
-            this.AttachedToVisualTree += OnAttached;
+            this.AttachedToVisualTree += (_, _) => HookVm();
+            this.DataContextChanged += (_, _) => HookVm();
         }
 
-        private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
+        private void HookVm()
         {
             if (DataContext is LoraSortMainSettingsViewModel vm && VisualRoot is Window window)
             {
