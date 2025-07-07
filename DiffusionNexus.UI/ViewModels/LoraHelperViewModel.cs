@@ -7,13 +7,13 @@ using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using System.Diagnostics;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +31,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private int _nextIndex;
     private bool _isLoadingPage;
     private const int PageSize = 50;
+    private readonly LoraMetadataDownloadService _metadataDownloader;
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -57,13 +58,14 @@ public partial class LoraHelperViewModel : ViewModelBase
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
-    public LoraHelperViewModel() : this(new SettingsService())
+    public LoraHelperViewModel() : this(new SettingsService(), null)
     {
     }
 
-    public LoraHelperViewModel(ISettingsService settingsService)
+    public LoraHelperViewModel(ISettingsService settingsService, LoraMetadataDownloadService? metadataDownloader = null)
     {
         _settingsService = settingsService;
+        _metadataDownloader = metadataDownloader ?? new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient()));
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
@@ -319,6 +321,36 @@ public partial class LoraHelperViewModel : ViewModelBase
         StartIndexing();
     }
 
+    public async Task OpenWebForCardAsync(LoraCardViewModel card)
+    {
+        if (card.Model == null)
+            return;
+
+        var settings = await _settingsService.LoadAsync();
+        var apiKey = settings.CivitaiApiKey ?? string.Empty;
+        string? id;
+        if (string.IsNullOrWhiteSpace(card.Model.ModelId))
+        {
+             id = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                Log($"Can't open Link. No Id found for {card.Model.ModelVersionName}", LogSeverity.Error);
+                return;
+
+            }
+        }
+        else
+        {
+            // If we already have the ID, just use it
+            id = card.Model.ModelId;
+        }
+
+        var url = $"https://civitai.com/models/{id}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+
+        await LoadAsync();
+    }
+
     private async Task ScanDuplicatesAsync()
     {
         if (_window is null) return;
@@ -354,95 +386,12 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         IsLoading = true;
         var settings = await _settingsService.LoadAsync();
-        var apiClient = new CivitaiApiClient(new HttpClient());
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
 
         foreach (var card in _allCards)
         {
-            var model = card.Model;
-            if (model == null) continue;
-            var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-            if (folder == null) continue;
-
-            var baseName = model.SafeTensorFileName;
-
-            bool hasInfo = model.AssociatedFilesInfo.Any(f => f.Name.EndsWith(".civitai.info", StringComparison.OrdinalIgnoreCase));
-            bool hasJson = model.AssociatedFilesInfo.Any(f => f.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase) && !f.Name.EndsWith(".civitai.info", StringComparison.OrdinalIgnoreCase));
-            bool hasMedia = model.AssociatedFilesInfo.Any(f => SupportedTypes.ImageTypesByPriority.Any(ext => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) ||
-                                                             SupportedTypes.VideoTypesByPriority.Any(ext => f.Name.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
-
-            if (hasInfo && hasJson && hasMedia)
-                continue; // case 1
-
-            var tensor = model.AssociatedFilesInfo.FirstOrDefault(f => f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
-                                                                       f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase))?.FullName;
-            if (tensor == null)
-                continue;
-
-            string hash = ComputeSHA256(tensor);
-            string infoJson;
-            try
-            {
-                infoJson = await apiClient.GetModelVersionByHashAsync(hash, apiKey);
-            }
-            catch
-            {
-                continue;
-            }
-
-            var infoPath = Path.Combine(folder, baseName + ".civitai.info");
-            await File.WriteAllTextAsync(infoPath, infoJson);
-
-            string? previewUrl = null;
-            string? modelId = null;
-            try
-            {
-                using var doc = JsonDocument.Parse(infoJson);
-                var root = doc.RootElement;
-                if(!hasMedia)
-                {
-                    if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array && images.GetArrayLength() > 0)
-                    {
-                        var first = images[0];
-                        if (first.TryGetProperty("url", out var urlEl))
-                            previewUrl = urlEl.GetString();
-                    }
-                }
-                if (root.TryGetProperty("modelId", out var modelIdEl))
-                {
-                    modelId = modelIdEl.ValueKind switch
-                    {
-                        JsonValueKind.Number => modelIdEl.GetInt64().ToString(),
-                        JsonValueKind.String => modelIdEl.GetString(),
-                        _ => null
-                    };
-                }
-            }
-            catch (JsonException) { }
-
-            if (!hasMedia && !string.IsNullOrWhiteSpace(previewUrl))
-            {
-                try
-                {
-                    var ext = Path.GetExtension(new Uri(previewUrl).AbsolutePath);
-                    var outPath = Path.Combine(folder, baseName + ext);
-                    using var http = new HttpClient();
-                    var bytes = await http.GetByteArrayAsync(previewUrl);
-                    await File.WriteAllBytesAsync(outPath, bytes);
-                }
-                catch { }
-            }
-
-            if (!hasJson && !string.IsNullOrWhiteSpace(modelId))
-            {
-                try
-                {
-                    var modelJson = await apiClient.GetModelAsync(modelId, apiKey);
-                    var jsonPath = Path.Combine(folder, baseName + ".json");
-                    await File.WriteAllTextAsync(jsonPath, modelJson);
-                }
-                catch { }
-            }
+            if (card.Model == null) continue;
+            await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
         }
 
         await LoadAsync();
