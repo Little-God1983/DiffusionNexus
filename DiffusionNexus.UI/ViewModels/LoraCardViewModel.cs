@@ -58,7 +58,7 @@ public partial class LoraCardViewModel : ViewModelBase
         if (path is null || !File.Exists(path))
         {
             var media = GetPreviewMediaPath();
-            if (media is not null)
+            if (media is not null && ThumbnailSettings.GenerateVideoThumbnails)
             {
                 path = await ThumbnailGenerator.GenerateThumbnailAsync(media);
             }
