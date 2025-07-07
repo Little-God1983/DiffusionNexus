@@ -28,6 +28,8 @@
               Command="{Binding ScanDuplicatesCommand}"
               CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
       <Button Grid.Column="4" Content="🧠" Width="36" Height="36" Margin="5,0,0,0"/>
+      <Button Grid.Column="5" Content="Download Metadata" Width="150" Height="36" Margin="5,0,0,0"
+              Command="{Binding DownloadMissingMetadataCommand}"/>
     </Grid>
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"
