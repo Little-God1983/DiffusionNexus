@@ -25,6 +25,10 @@ public partial class LoraHelperViewModel : ViewModelBase
     private List<string>? _indexNames;
     private CancellationTokenSource _suggestCts = new();
     private CancellationTokenSource _filterCts = new();
+    private List<LoraCardViewModel> _filteredCards = new();
+    private int _nextIndex;
+    private bool _isLoadingPage;
+    private const int PageSize = 50;
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -108,8 +112,11 @@ public partial class LoraHelperViewModel : ViewModelBase
             var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
             var card = new LoraCardViewModel { Model = model, FolderPath = folder, Parent = this };
             _allCards.Add(card);
-            Dispatcher.UIThread.Post(() => Cards.Add(card));
         }
+
+        _filteredCards = _allCards.ToList();
+        _nextIndex = 0;
+        await LoadNextPageAsync();
 
         StartIndexing();
 
@@ -163,10 +170,12 @@ public partial class LoraHelperViewModel : ViewModelBase
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             Cards.Clear();
-            foreach (var c in list)
-                Cards.Add(c);
-            IsLoading = false;
+            _filteredCards = list;
+            _nextIndex = 0;
         });
+
+        await LoadNextPageAsync();
+        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
     }
 
     private List<LoraCardViewModel> FilterCards(string? search, FolderItemViewModel? folder)
@@ -198,6 +207,27 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
 
         return query.ToList();
+    }
+
+    public async Task LoadNextPageAsync()
+    {
+        if (_isLoadingPage)
+            return;
+
+        if (_nextIndex >= _filteredCards.Count)
+            return;
+
+        _isLoadingPage = true;
+        var slice = _filteredCards.Skip(_nextIndex).Take(PageSize).ToList();
+        _nextIndex += slice.Count;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            foreach (var card in slice)
+                Cards.Add(card);
+        });
+
+        _isLoadingPage = false;
     }
 
     private void ResetFilters()
