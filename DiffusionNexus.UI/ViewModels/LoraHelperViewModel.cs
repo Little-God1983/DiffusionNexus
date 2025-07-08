@@ -86,6 +86,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         IsLoading = true;
         var settings = await _settingsService.LoadAsync();
         ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+        ShowNsfw = settings.ShowNsfw;
         if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
         {
             IsLoading = false;
@@ -223,7 +224,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             }
         }
 
-        if (ShowNsfw)
+        if (!ShowNsfw)
             query = query.Where(c => c.Model?.Nsfw != true);
 
         return query.ToList();
