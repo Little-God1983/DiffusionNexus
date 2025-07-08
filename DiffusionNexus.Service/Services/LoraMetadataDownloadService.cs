@@ -1,5 +1,6 @@
 using DiffusionNexus.Service.Classes;
 using System.Text.Json;
+using System.Collections.Generic;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -30,12 +31,14 @@ public class LoraMetadataDownloadService
         return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 
-    internal static (string? PreviewUrl, string? ModelId) ParseInfoJson(string infoJson)
+    internal static (string? PreviewUrl, string? ModelId, List<string> TrainedWords, bool? Nsfw) ParseInfoJson(string infoJson)
     {
         using var doc = JsonDocument.Parse(infoJson);
         var root = doc.RootElement;
         string? previewUrl = null;
         string? modelId = null;
+        var trainedWords = new List<string>();
+        bool? nsfw = null;
 
         if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array && images.GetArrayLength() > 0)
         {
@@ -54,7 +57,25 @@ public class LoraMetadataDownloadService
             };
         }
 
-        return (previewUrl, modelId);
+        if (root.TryGetProperty("trainedWords", out var wordsEl) && wordsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var w in wordsEl.EnumerateArray())
+            {
+                if (w.ValueKind == JsonValueKind.String)
+                    trainedWords.Add(w.GetString()!);
+            }
+        }
+
+        if (root.TryGetProperty("model", out var modelEl))
+        {
+            if (modelEl.TryGetProperty("nsfw", out var nsfwEl) && nsfwEl.ValueKind != JsonValueKind.Null)
+            {
+                if (nsfwEl.ValueKind == JsonValueKind.True || nsfwEl.ValueKind == JsonValueKind.False)
+                    nsfw = nsfwEl.GetBoolean();
+            }
+        }
+
+        return (previewUrl, modelId, trainedWords, nsfw);
     }
 
     public async Task<string?> EnsureMetadataAsync(ModelClass model, string apiKey)
@@ -69,12 +90,15 @@ public class LoraMetadataDownloadService
         if (File.Exists(infoPath))
         {
             var json = await File.ReadAllTextAsync(infoPath);
-            var (_, id) = ParseInfoJson(json);
+            var (_, id, words, infoNsfw) = ParseInfoJson(json);
             if (!string.IsNullOrWhiteSpace(id))
-            {
                 model.ModelId = id;
+            if (words.Count > 0)
+                model.TrainedWords = words;
+            if (infoNsfw.HasValue)
+                model.Nsfw = infoNsfw;
+            if (!string.IsNullOrWhiteSpace(id))
                 return id;
-            }
         }
 
         bool hasInfo = HasInfo(model);
@@ -103,9 +127,13 @@ public class LoraMetadataDownloadService
 
         await File.WriteAllTextAsync(infoPath, infoJson);
 
-        var (previewUrl, modelId) = ParseInfoJson(infoJson);
+        var (previewUrl, modelId, words2, nsfw2) = ParseInfoJson(infoJson);
         if (!string.IsNullOrWhiteSpace(modelId))
             model.ModelId = modelId;
+        if (words2.Count > 0)
+            model.TrainedWords = words2;
+        if (nsfw2.HasValue)
+            model.Nsfw = nsfw2;
 
         if (!hasMedia && !string.IsNullOrWhiteSpace(previewUrl))
         {

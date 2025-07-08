@@ -1,4 +1,6 @@
 using Avalonia.Threading;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Service.Classes;
@@ -349,6 +351,37 @@ public partial class LoraHelperViewModel : ViewModelBase
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 
         await LoadAsync();
+    }
+
+    public async Task CopyTrainedWordsAsync(LoraCardViewModel card)
+    {
+        if (card.Model == null)
+            return;
+
+        var settings = await _settingsService.LoadAsync();
+        var apiKey = settings.CivitaiApiKey ?? string.Empty;
+        await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+
+        if (card.Model.TrainedWords.Count == 0)
+        {
+            Log($"No trained words for {card.Model.ModelVersionName}", LogSeverity.Warning);
+            return;
+        }
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+            desktop.MainWindow is { Clipboard: { } clipboard })
+        {
+            try
+            {
+                var text = string.Join(", ", card.Model.TrainedWords);
+                await clipboard.SetTextAsync(text);
+                Log("copied to clipboard", LogSeverity.Success);
+            }
+            catch (Exception ex)
+            {
+                Log($"failed to copy: {ex.Message}", LogSeverity.Error);
+            }
+        }
     }
 
     private async Task ScanDuplicatesAsync()
