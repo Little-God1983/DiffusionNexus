@@ -60,6 +60,14 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         if (root.TryGetProperty("baseModel", out var baseModel))
             meta.DiffusionBaseModel = baseModel.GetString() ?? meta.DiffusionBaseModel;
 
+        if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
+        {
+            meta.TrainedWords = trained.EnumerateArray()
+                .Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!)
+                .ToList();
+        }
+
         if (root.TryGetProperty("model", out var model))
         {
             if (model.TryGetProperty("name", out var name))
@@ -68,6 +76,8 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
                 meta.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
             if (model.TryGetProperty("tags", out var tags))
                 meta.Tags = ModelMetadataUtils.ParseTags(tags);
+            if (model.TryGetProperty("nsfw", out var nsfw) && nsfw.ValueKind != JsonValueKind.Null)
+                meta.Nsfw = nsfw.ValueKind == JsonValueKind.True || nsfw.ValueKind == JsonValueKind.False ? nsfw.GetBoolean() : null;
         }
 
         if (meta.ModelType == DiffusionTypes.UNASSIGNED && root.TryGetProperty("type", out var rootType))

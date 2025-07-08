@@ -35,7 +35,7 @@ public partial class LoraCardViewModel : ViewModelBase
     public IRelayCommand EditCommand { get; }
     public IAsyncRelayCommand DeleteCommand { get; }
     public IAsyncRelayCommand OpenWebCommand { get; }
-    public IRelayCommand CopyCommand { get; }
+    public IAsyncRelayCommand CopyCommand { get; }
 
     public LoraHelperViewModel? Parent { get; set; }
 
@@ -44,7 +44,7 @@ public partial class LoraCardViewModel : ViewModelBase
         EditCommand = new RelayCommand(OnEdit);
         DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new AsyncRelayCommand(OnOpenWebAsync);
-        CopyCommand = new RelayCommand(OnCopy);
+        CopyCommand = new AsyncRelayCommand(OnCopyAsync);
     }
 
     partial void OnModelChanged(ModelClass? value)
@@ -129,5 +129,11 @@ public partial class LoraCardViewModel : ViewModelBase
         await Parent.OpenWebForCardAsync(this);
     }
 
-    private void OnCopy() => Log($"Copy {Model.SafeTensorFileName}", LogSeverity.Info);
+    private async Task OnCopyAsync()
+    {
+        if (Parent == null || Model == null)
+            return;
+
+        await Parent.CopyTrainedWordsAsync(this);
+    }
 }

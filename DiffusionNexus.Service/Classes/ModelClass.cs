@@ -29,6 +29,8 @@ namespace DiffusionNexus.Service.Classes
         public List<FileInfo> AssociatedFilesInfo { get; set; }
         [MetadataField] public List<string> Tags { get; set; } = new();
         [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
+        [MetadataField] public List<string> TrainedWords { get; set; } = new();
+        [MetadataField] public bool? Nsfw { get; set; }
 
         // status flags
         public bool NoMetaData { get; set; } = true;
