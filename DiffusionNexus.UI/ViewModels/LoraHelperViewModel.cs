@@ -51,6 +51,9 @@ public partial class LoraHelperViewModel : ViewModelBase
     [ObservableProperty]
     private FolderItemViewModel? selectedFolder;
 
+    [ObservableProperty]
+    private bool showNsfw;
+
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
@@ -161,6 +164,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         _ = RefreshCardsAsync();
     }
 
+    partial void OnShowNsfwChanged(bool value)
+    {
+        _ = RefreshCardsAsync();
+    }
+
     private async Task RefreshCardsAsync()
     {
         _filterCts.Cancel();
@@ -214,6 +222,9 @@ public partial class LoraHelperViewModel : ViewModelBase
                     c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
+
+        if (ShowNsfw)
+            query = query.Where(c => c.Model?.Nsfw != true);
 
         return query.ToList();
     }
