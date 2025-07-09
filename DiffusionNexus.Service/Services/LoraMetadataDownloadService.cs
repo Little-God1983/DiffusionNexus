@@ -133,7 +133,29 @@ public class LoraMetadataDownloadService
                 return null;
             }
 
-            await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+            // Write file with proper error handling and flushing
+            try
+            {
+                await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+                
+                // Ensure the file is actually written to disk
+                using (var file = File.OpenRead(CivitaiInfoPath))
+                {
+                    // Verify file is accessible and not empty
+                    if (file.Length == 0)
+                    {
+                        // File is empty, wait a moment and try again
+                        await Task.Delay(50);
+                        await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // If writing fails, wait and retry once
+                await Task.Delay(100);
+                await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+            }
 
             (previewUrl, modelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
             if (!string.IsNullOrWhiteSpace(modelId))
@@ -152,7 +174,27 @@ public class LoraMetadataDownloadService
                 var outPath = Path.Combine(folder, baseName + ext);
                 using var http = new HttpClient();
                 var bytes = await http.GetByteArrayAsync(previewUrl);
-                await File.WriteAllBytesAsync(outPath, bytes);
+                
+                // Write with proper error handling
+                try
+                {
+                    await File.WriteAllBytesAsync(outPath, bytes);
+                    
+                    // Verify the file was written correctly
+                    using (var file = File.OpenRead(outPath))
+                    {
+                        if (file.Length != bytes.Length)
+                        {
+                            await Task.Delay(50);
+                            await File.WriteAllBytesAsync(outPath, bytes);
+                        }
+                    }
+                }
+                catch (IOException)
+                {
+                    await Task.Delay(100);
+                    await File.WriteAllBytesAsync(outPath, bytes);
+                }
             }
             catch { }
         }
@@ -163,10 +205,33 @@ public class LoraMetadataDownloadService
             {
                 var modelJson = await _apiClient.GetModelAsync(modelId, apiKey);
                 var jsonPath = Path.Combine(folder, baseName + ".json");
-                await File.WriteAllTextAsync(jsonPath, modelJson);
+                
+                // Write with proper error handling
+                try
+                {
+                    await File.WriteAllTextAsync(jsonPath, modelJson);
+                    
+                    // Verify the file was written correctly
+                    using (var file = File.OpenRead(jsonPath))
+                    {
+                        if (file.Length == 0)
+                        {
+                            await Task.Delay(50);
+                            await File.WriteAllTextAsync(jsonPath, modelJson);
+                        }
+                    }
+                }
+                catch (IOException)
+                {
+                    await Task.Delay(100);
+                    await File.WriteAllTextAsync(jsonPath, modelJson);
+                }
             }
             catch { }
         }
+
+        // Add a final small delay to ensure all file operations are complete
+        await Task.Delay(50);
 
         return modelId;
     }
