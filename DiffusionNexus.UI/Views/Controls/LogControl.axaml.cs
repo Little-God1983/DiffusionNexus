@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using System.Collections.Specialized;
 
 namespace DiffusionNexus.UI.Views.Controls
 {
@@ -8,6 +10,8 @@ namespace DiffusionNexus.UI.Views.Controls
     {
         private ScrollViewer? _scroll;
         private bool _autoScroll = true;
+        // Keep a reference so we can detach when the DataContext changes
+        private INotifyCollectionChanged? _currentEntries;
 
         public LogControl()
         {
@@ -26,13 +30,37 @@ namespace DiffusionNexus.UI.Views.Controls
 
         private void HookDataContext()
         {
-            if (DataContext is ViewModels.LogViewModel vm)
+            // 1) Detach from the previous collection (if any)
+            if (_currentEntries is not null)
+                _currentEntries.CollectionChanged -= OnEntriesChanged;
+
+            _currentEntries = null;
+
+            // 2) Attach to the new one (if it exists)
+            if (DataContext is ViewModels.LogViewModel { Entries: { } entries })
             {
-                vm.Entries.CollectionChanged += (_, _) =>
+                _currentEntries = entries;
+                _currentEntries.CollectionChanged += OnEntriesChanged;
+            }
+        }
+        
+        private void OnEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            // Ensure UI operations are performed on the UI thread
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                // Already on UI thread, safe to execute directly
+                if (_autoScroll)
+                    _scroll?.ScrollToEnd();
+            }
+            else
+            {
+                // Not on UI thread, dispatch to UI thread
+                Dispatcher.UIThread.Post(() =>
                 {
                     if (_autoScroll)
                         _scroll?.ScrollToEnd();
-                };
+                });
             }
         }
 

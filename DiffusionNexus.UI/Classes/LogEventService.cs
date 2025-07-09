@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Service.Classes;
 
@@ -25,14 +26,43 @@ namespace DiffusionNexus.UI.Classes
         public void Publish(LogSeverity severity, string message)
         {
             var entry = new LogEntry(DateTime.Now, severity, message);
-            _entries.Add(entry);
-            LatestEntry = entry;
+            
+            // Ensure collection modifications are always performed on the UI thread
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                // Already on UI thread, safe to execute directly
+                _entries.Add(entry);
+                LatestEntry = entry;
+            }
+            else
+            {
+                // Not on UI thread, dispatch to UI thread
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _entries.Add(entry);
+                    LatestEntry = entry;
+                });
+            }
         }
 
         public void Clear()
         {
-            _entries.Clear();
-            LatestEntry = null;
+            // Ensure collection modifications are always performed on the UI thread
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                // Already on UI thread, safe to execute directly
+                _entries.Clear();
+                LatestEntry = null;
+            }
+            else
+            {
+                // Not on UI thread, dispatch to UI thread
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _entries.Clear();
+                    LatestEntry = null;
+                });
+            }
         }
     }
 }
