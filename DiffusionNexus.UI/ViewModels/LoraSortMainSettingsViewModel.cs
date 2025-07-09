@@ -168,7 +168,7 @@ namespace DiffusionNexus.UI.ViewModels
         {
             try
             {
-                SetProcessingUIState();
+
 
                 if (!ValidatePaths())
                 {
@@ -198,6 +198,7 @@ namespace DiffusionNexus.UI.ViewModels
                         return;
                     }
                 }
+                SetProcessingUIState();
 
                 var settings = await _settingsService.LoadAsync();
                 var options = new SelectedOptions
@@ -272,9 +273,8 @@ namespace DiffusionNexus.UI.ViewModels
             StatusText = null;
             _cts?.Dispose();
             _cts = null!;
-            if (_mainWindowVm != null)
-                _mainWindowVm.IsLogExpanded = _originalLogExpanded;
         }
+
         private void RestUIAndCloseLog()
         {             ResetUI();
             if (_mainWindowVm != null)
