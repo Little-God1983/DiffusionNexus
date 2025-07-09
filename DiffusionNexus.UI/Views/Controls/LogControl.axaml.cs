@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using System.Collections.Specialized;
 
 namespace DiffusionNexus.UI.Views.Controls
 {
@@ -8,6 +9,8 @@ namespace DiffusionNexus.UI.Views.Controls
     {
         private ScrollViewer? _scroll;
         private bool _autoScroll = true;
+        // Keep a reference so we can detach when the DataContext changes
+        private INotifyCollectionChanged? _currentEntries;
 
         public LogControl()
         {
@@ -26,14 +29,23 @@ namespace DiffusionNexus.UI.Views.Controls
 
         private void HookDataContext()
         {
-            if (DataContext is ViewModels.LogViewModel vm)
+            // 1) Detach from the previous collection (if any)
+            if (_currentEntries is not null)
+                _currentEntries.CollectionChanged -= OnEntriesChanged;
+
+            _currentEntries = null;
+
+            // 2) Attach to the new one (if it exists)
+            if (DataContext is ViewModels.LogViewModel { Entries: { } entries })
             {
-                vm.Entries.CollectionChanged += (_, _) =>
-                {
-                    if (_autoScroll)
-                        _scroll?.ScrollToEnd();
-                };
+                _currentEntries = entries;
+                _currentEntries.CollectionChanged += OnEntriesChanged;
             }
+        }
+        private void OnEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (_autoScroll)
+                _scroll?.ScrollToEnd();
         }
 
         private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
