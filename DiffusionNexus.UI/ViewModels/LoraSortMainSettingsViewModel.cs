@@ -34,6 +34,8 @@ namespace DiffusionNexus.UI.ViewModels
         [ObservableProperty]
         private bool useCustomMappings;
         [ObservableProperty]
+        private bool storeDownloadedMetadata;
+        [ObservableProperty]
         private double progress;
         [ObservableProperty]
         private string? statusText;
@@ -209,6 +211,7 @@ namespace DiffusionNexus.UI.ViewModels
                     CreateBaseFolders = CreateBaseFolders,
                     DeleteEmptySourceFolders = DeleteEmptySourceFolders,
                     UseCustomMappings = UseCustomMappings,
+                    StoreDownloadedMetadata = StoreDownloadedMetadata,
                     ApiKey = settings.CivitaiApiKey ?? string.Empty
                 };
 

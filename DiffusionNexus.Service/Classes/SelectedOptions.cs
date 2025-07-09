@@ -10,6 +10,11 @@
         public bool UseCustomMappings { get; set; }
         public bool DeleteEmptySourceFolders { get; set; }
         /// <summary>
+        /// When true, downloaded metadata and preview files are persisted next
+        /// to the model files.
+        /// </summary>
+        public bool StoreDownloadedMetadata { get; set; }
+        /// <summary>
         /// Optional Civitai API key used for authenticated requests.
         /// Leave empty to perform anonymous requests.
         /// </summary>

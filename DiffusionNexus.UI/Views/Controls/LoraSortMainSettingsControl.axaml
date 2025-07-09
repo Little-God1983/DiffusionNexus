@@ -73,6 +73,12 @@
                        IsChecked="{Binding UseCustomMappings}"
                        FontSize="16"/>
             </StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <CheckBox Name="StoreMetaCheck"
+                       Content="Store downloaded Metadata"
+                       IsChecked="{Binding StoreDownloadedMetadata}"
+                       FontSize="16"/>
+            </StackPanel>
           </StackPanel>
         </Border>
 

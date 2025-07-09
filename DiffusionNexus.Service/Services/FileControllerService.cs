@@ -5,6 +5,8 @@
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Services.IO;
 using System.IO;
+using System.Linq;
+using System.Net.Http;
 
 namespace DiffusionNexus.Service.Services
 {
@@ -12,6 +14,8 @@ namespace DiffusionNexus.Service.Services
     {
         private readonly IModelMetadataProvider[] _metadataProviders;
         private readonly DiskUtility _diskUtility;
+        private readonly LoraMetadataDownloadService _metadataDownloader = new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient()));
+        private SelectedOptions? _currentOptions;
 
         public FileControllerService(DiskUtility? diskUtility = null, params IModelMetadataProvider[] metadataProviders)
         {
@@ -26,6 +30,7 @@ namespace DiffusionNexus.Service.Services
 
         private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken token, SelectedOptions options)
         {
+            _currentOptions = options;
             progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Start processing LoRA's", LogLevel = LogSeverity.Info });
             token.ThrowIfCancellationRequested();
 
@@ -41,6 +46,7 @@ namespace DiffusionNexus.Service.Services
             progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Starting processing copy/paste <==========", LogLevel = LogSeverity.Info });
             await Task.Run(() => new FileCopyService().ProcessModelClasses(progress, token, models, options));
             progress?.Report(new ProgressReport { Percentage = 100, StatusMessage = "==========> Finished processing. To close the log click the upper right corner", IsSuccessful = true, LogLevel = LogSeverity.Info });
+            _currentOptions = null;
         }
 
         public async Task<ModelClass> GetModelMetadataWithFallbackAsync(string identifier, IProgress<ProgressReport>? progress, CancellationToken cancellationToken)
@@ -85,7 +91,29 @@ namespace DiffusionNexus.Service.Services
                     progress?.Report(new ProgressReport { StatusMessage = $"Metadata incomplete after {provider.GetType().Name} for {model.SafeTensorFileName}", LogLevel = LogSeverity.Warning });
                 }
             }
+            await SaveMetadataIfRequestedAsync(identifier, model, cancellationToken);
             return model;
+        }
+
+        private async Task SaveMetadataIfRequestedAsync(string identifier, ModelClass model, CancellationToken cancellationToken)
+        {
+            if (_currentOptions?.StoreDownloadedMetadata != true)
+                return;
+
+            var folder = Path.GetDirectoryName(identifier);
+            var baseName = Path.GetFileNameWithoutExtension(identifier);
+            if (folder == null)
+                return;
+
+            model.AssociatedFilesInfo = Directory.GetFiles(folder, baseName + ".*")
+                                               .Select(f => new FileInfo(f))
+                                               .ToList();
+
+            await _metadataDownloader.EnsureMetadataAsync(model, _currentOptions.ApiKey);
+
+            model.AssociatedFilesInfo = Directory.GetFiles(folder, baseName + ".*")
+                                               .Select(f => new FileInfo(f))
+                                               .ToList();
         }
 
         public async Task ComputeFolder(IProgress<double>? progress, CancellationToken cancellationToken, SelectedOptions options)
