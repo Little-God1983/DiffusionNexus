@@ -8,6 +8,7 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Helper;
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -84,6 +85,18 @@ public partial class CustomTagMapWindowViewModel : ViewModelBase
                 };
                 await warn.ShowDialog(_window);
             }
+            return;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var invalidInFolder = Folder!
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .SelectMany(segment => segment.Where(c => invalidChars.Contains(c)))
+            .Distinct()
+            .ToList();
+        if (invalidInFolder.Count > 0)
+        {
+            Log($"Invalid characters in target folder: {string.Join(" ", invalidInFolder)}", LogSeverity.Error);
             return;
         }
 

@@ -14,7 +14,7 @@
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
-      <Button Grid.Column="0" Content="🔄" Width="36" Height="36" Command="{Binding ResetFiltersCommand}"/>
+      <Button Grid.Column="0" Content="◀️ Reset Filters" Width="120" Height="36" Command="{Binding ResetFiltersCommand}"/>
       <AutoCompleteBox x:Name="SearchBox"
                                   Grid.Column="1"
                                   ItemsSource="{Binding SuggestionTokens}"
@@ -23,10 +23,10 @@
                                   IsDropDownOpen="{Binding ShowSuggestions}"                                
                                   Margin="5,0"
                                   MaxDropDownHeight="200"/>
-      <Button Grid.Column="2" Content="🔁" Width="36" Height="36" Margin="5,0,0,0"/>
-        <Button Grid.Column="3" Content="🧩 Find Duplicates" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200"  Height="36" Margin="5,0,0,0"
+      <!--<Button Grid.Column="2" Content="ðŸ”" Width="36" Height="36" Margin="5,0,0,0"/>
+        <Button Grid.Column="3" Content="ðŸ§© Find Duplicates" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200"  Height="36" Margin="5,0,0,0"
                 Command="{Binding ScanDuplicatesCommand}"
-                CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
+                CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>-->
         <CheckBox Grid.Column="4" Content="Show NSFW" IsChecked="{Binding ShowNsfw}" VerticalAlignment="Center" Margin="5,0"/>
         <Button Grid.Column="5" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
                 Command="{Binding DownloadMissingMetadataCommand}"/>
@@ -76,10 +76,10 @@
                     <StackPanel>
                       <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
                       <Grid ColumnDefinitions="Auto,*">
-                        <Button Content="✏️"
+                        <!--<Button Content="âœï¸"
                                 Width="36" Height="36" FontSize="16"
                                 Margin="0,4,4,0"
-                                Command="{Binding EditCommand}"/>
+                                Command="{Binding EditCommand}"/>-->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                           <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
                           <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
