@@ -434,11 +434,37 @@ public partial class LoraHelperViewModel : ViewModelBase
         var settings = await _settingsService.LoadAsync();
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
 
+        Log("Starting metadata download for all cards...", LogSeverity.Info);
+        var processedCount = 0;
+        var totalCount = _allCards.Count;
+
         foreach (var card in _allCards)
         {
             if (card.Model == null) continue;
-            await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            
+            try
+            {
+                await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+                processedCount++;
+                
+                // Add a small delay between requests to avoid overwhelming the API and file system
+                await Task.Delay(50);
+                
+                if (processedCount % 10 == 0)
+                {
+                    Log($"Processed {processedCount}/{totalCount} models...", LogSeverity.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Failed to download metadata for {card.Model.SafeTensorFileName}: {ex.Message}", LogSeverity.Warning);
+            }
         }
+
+        Log($"Metadata download completed. Processed {processedCount}/{totalCount} models.", LogSeverity.Success);
+        
+        // Add a longer delay to ensure all file operations are complete before reloading
+        await Task.Delay(500);
 
         await LoadAsync();
         IsLoading = false;
