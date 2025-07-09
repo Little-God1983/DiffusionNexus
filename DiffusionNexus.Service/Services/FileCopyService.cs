@@ -106,30 +106,10 @@ namespace DiffusionNexus.Service.Services
         {
             if (options.UseCustomMappings)
             {
-                // Check if any of the CustomTagMaps Tags match the model tags.
-                // This has to be done in order by custom mapping priority; the first match wins.
-                // and returns the Path.Combine(options.TargetPath, model.DiffusionBaseModel, PathToFolder);
-                CustomTagMapXmlService customTagMapXmlService = new CustomTagMapXmlService();
-                var tagMaps = customTagMapXmlService.LoadMappings()
-                                            .OrderBy(m => m.Priority)
-                                            .ToList();
-                if (tagMaps.Count != 0 && model.Tags.Count != 0)
+                var custom = GetCustomMappingPath(model, options);
+                if (!string.IsNullOrEmpty(custom))
                 {
-                    foreach (var map in tagMaps)
-                    {
-                        if (map.LookForTag.Count != 0 && map.LookForTag.Intersect(model.Tags, StringComparer.OrdinalIgnoreCase).Any())
-                        {
-                            // If CreateBaseFolders is true, include DiffusionBaseModel in the path
-                            if (options.CreateBaseFolders)
-                            {
-                                return Path.Combine(options.TargetPath, model.DiffusionBaseModel, map.MapToFolder);
-                            }
-                            else
-                            {
-                                return Path.Combine(options.TargetPath, map.MapToFolder);
-                            }
-                        }
-                    }
+                    return custom!;
                 }
             }
             // Default behavior if no custom mappings are used or no match is found
@@ -142,5 +122,31 @@ namespace DiffusionNexus.Service.Services
                 return Path.Combine(options.TargetPath, model.CivitaiCategory.ToString());
             }
         }
-    }
-}
+
+        private static string? GetCustomMappingPath(ModelClass model, SelectedOptions options)
+        {
+            CustomTagMapXmlService customTagMapXmlService = new CustomTagMapXmlService();
+            var tagMaps = customTagMapXmlService.LoadMappings()
+                                        .OrderBy(m => m.Priority)
+                                        .ToList();
+            if (tagMaps.Count == 0 || model.Tags.Count == 0)
+                return null;
+
+            foreach (var map in tagMaps)
+            {
+                if (map.LookForTag.Count != 0 && map.LookForTag.Intersect(model.Tags, StringComparer.OrdinalIgnoreCase).Any())
+                {
+                    if (options.CreateBaseFolders)
+                    {
+                        return Path.Combine(options.TargetPath, model.DiffusionBaseModel, map.MapToFolder);
+                    }
+                    else
+                    {
+                        return Path.Combine(options.TargetPath, map.MapToFolder);
+                    }
+                }
+            }
+
+            return null;
+        }
+    }}
