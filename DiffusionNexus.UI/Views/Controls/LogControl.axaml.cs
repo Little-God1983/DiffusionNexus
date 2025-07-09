@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using System.Collections.Specialized;
 
 namespace DiffusionNexus.UI.Views.Controls
@@ -42,10 +43,25 @@ namespace DiffusionNexus.UI.Views.Controls
                 _currentEntries.CollectionChanged += OnEntriesChanged;
             }
         }
+        
         private void OnEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
-            if (_autoScroll)
-                _scroll?.ScrollToEnd();
+            // Ensure UI operations are performed on the UI thread
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                // Already on UI thread, safe to execute directly
+                if (_autoScroll)
+                    _scroll?.ScrollToEnd();
+            }
+            else
+            {
+                // Not on UI thread, dispatch to UI thread
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_autoScroll)
+                        _scroll?.ScrollToEnd();
+                });
+            }
         }
 
         private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
