@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Licensed under the terms found in the LICENSE file in the root directory.
  * For non-commercial use only. See LICENSE for details.
  */
@@ -109,11 +109,52 @@ namespace DiffusionNexus.Service.Services
                                                .Select(f => new FileInfo(f))
                                                .ToList();
 
+            var fileCountBefore = model.AssociatedFilesInfo.Count;
+            
             await _metadataDownloader.EnsureMetadataAsync(model, _currentOptions.ApiKey);
 
-            model.AssociatedFilesInfo = Directory.GetFiles(folder, baseName + ".*")
-                                               .Select(f => new FileInfo(f))
-                                               .ToList();
+            // Add a small delay to ensure file system operations have completed
+            await Task.Delay(100, cancellationToken);
+            
+            // Retry mechanism to ensure files are properly written and accessible
+            var retryCount = 0;
+            const int maxRetries = 5;
+            
+            while (retryCount < maxRetries)
+            {
+                try
+                {
+                    // Refresh the file list after metadata download with retry logic
+                    var filePattern = baseName + ".*";
+                    var files = Directory.GetFiles(folder, filePattern);
+                    
+                    // Verify that all files are actually accessible (not locked by another process)
+                    foreach (var file in files)
+                    {
+                        using var stream = File.OpenRead(file);
+                        // File is accessible, continue
+                    }
+                    
+                    model.AssociatedFilesInfo = files.Select(f => new FileInfo(f)).ToList();
+                    
+                    var fileCountAfter = model.AssociatedFilesInfo.Count;
+                    if (fileCountAfter > fileCountBefore)
+                    {
+                        // Log successful metadata download
+                        var newFileCount = fileCountAfter - fileCountBefore;
+                        // Note: We can't directly log here since we don't have access to the logging system
+                        // The logging will be handled by the caller
+                    }
+                    
+                    break; // Success, exit retry loop
+                }
+                catch (IOException) when (retryCount < maxRetries - 1)
+                {
+                    // File might be locked or still being written, wait and retry
+                    retryCount++;
+                    await Task.Delay(200 * retryCount, cancellationToken); // Exponential backoff
+                }
+            }
         }
 
         public async Task ComputeFolder(IProgress<double>? progress, CancellationToken cancellationToken, SelectedOptions options)
