@@ -44,6 +44,7 @@ public class JsonInfoFileReaderService
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
                 model.Tags = meta.Tags;
+                model.Nsfw = meta.Nsfw; 
                 model.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(model.Tags);
                 var completeness = meta.HasFullMetadata ? "complete" : meta.HasAnyMetadata ? "partial" : "none";
                 var level = meta.HasFullMetadata ? LogSeverity.Success : LogSeverity.Warning;

@@ -223,6 +223,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                     c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
+        Log($"Found: {_allCards.Where(x => x.Model.Nsfw == true).Count()} Nsfw Models", LogSeverity.Info);
 
         if (!ShowNsfw)
             query = query.Where(c => c.Model?.Nsfw != true);
