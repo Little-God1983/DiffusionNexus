@@ -85,27 +85,33 @@ public class LoraMetadataDownloadService
             return null;
 
         var baseName = model.SafeTensorFileName;
-        var infoPath = Path.Combine(folder, baseName + ".civitai.info");
+        var CivitaiInfoPath = Path.Combine(folder, baseName + ".civitai.info");
 
-        if (File.Exists(infoPath))
+        string previewUrl = String.Empty;
+        string modelId = String.Empty;
+
+        bool hasCivitaiInfo = false;
+        if (File.Exists(CivitaiInfoPath))
         {
-            var json = await File.ReadAllTextAsync(infoPath);
-            var (_, id, words, infoNsfw) = ParseInfoJson(json);
+            hasCivitaiInfo = true;
+            var CivitaiJson = await File.ReadAllTextAsync(CivitaiInfoPath);
+            (previewUrl, string id, List<string> words, bool? infoNsfw) = ParseInfoJson(CivitaiJson);
             if (!string.IsNullOrWhiteSpace(id))
+            {
+                modelId = id;
                 model.ModelId = id;
+            }
+                
             if (words.Count > 0)
                 model.TrainedWords = words;
             if (infoNsfw.HasValue)
                 model.Nsfw = infoNsfw;
-            if (!string.IsNullOrWhiteSpace(id))
-                return id;
         }
 
-        bool hasInfo = HasInfo(model);
         bool hasJson = HasJson(model);
         bool hasMedia = HasMedia(model);
 
-        if (hasInfo && hasJson && hasMedia)
+        if (hasCivitaiInfo && hasJson && hasMedia)
             return model.ModelId;
 
         var tensor = model.AssociatedFilesInfo.FirstOrDefault(f =>
@@ -114,26 +120,29 @@ public class LoraMetadataDownloadService
         if (tensor == null)
             return null;
 
-        string hash = ComputeSHA256(tensor);
-        string infoJson;
-        try
+        if (!hasCivitaiInfo)
         {
-            infoJson = await _apiClient.GetModelVersionByHashAsync(hash, apiKey);
-        }
-        catch
-        {
-            return null;
-        }
+            string hash = ComputeSHA256(tensor);
+            string CivitaiInfoJson;
+            try
+            {
+                CivitaiInfoJson = await _apiClient.GetModelVersionByHashAsync(hash, apiKey);
+            }
+            catch
+            {
+                return null;
+            }
 
-        await File.WriteAllTextAsync(infoPath, infoJson);
+            await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
 
-        var (previewUrl, modelId, words2, nsfw2) = ParseInfoJson(infoJson);
-        if (!string.IsNullOrWhiteSpace(modelId))
-            model.ModelId = modelId;
-        if (words2.Count > 0)
-            model.TrainedWords = words2;
-        if (nsfw2.HasValue)
-            model.Nsfw = nsfw2;
+            (previewUrl, modelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
+            if (!string.IsNullOrWhiteSpace(modelId))
+                model.ModelId = modelId;
+            if (words2.Count > 0)
+                model.TrainedWords = words2;
+            if (nsfw2.HasValue)
+                model.Nsfw = nsfw2;
+        }
 
         if (!hasMedia && !string.IsNullOrWhiteSpace(previewUrl))
         {

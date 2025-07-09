@@ -13,6 +13,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private string? _loraHelperFolderPath;
         [ObservableProperty] private bool _deleteEmptySourceFolders;
         [ObservableProperty] private bool _generateVideoThumbnails = true;
+        [ObservableProperty] private bool _showNsfw;
 
         [JsonIgnore]
         public string? CivitaiApiKey { get; set; }

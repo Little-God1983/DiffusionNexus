@@ -48,6 +48,9 @@
           <CheckBox Content="Automatic thumbnail generation from videos"
                    IsChecked="{Binding Settings.GenerateVideoThumbnails, Mode=TwoWay}"
                    Margin="0,5,0,0"/>
+          <CheckBox Content="Show NSFW by default"
+                   IsChecked="{Binding Settings.ShowNsfw, Mode=TwoWay}"
+                   Margin="0,5,0,0"/>
         </StackPanel>
       </Expander>
 
