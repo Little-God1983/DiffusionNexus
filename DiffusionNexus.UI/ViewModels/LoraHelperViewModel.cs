@@ -34,6 +34,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool _isLoadingPage;
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
+    private const double ForgePromptStrength = 0.75;
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -387,6 +388,11 @@ public partial class LoraHelperViewModel : ViewModelBase
             try
             {
                 var text = string.Join(", ", card.Model.TrainedWords);
+                if (settings.UseForgeStylePrompts)
+                {
+                    var name = card.Model.SafeTensorFileName;
+                    text = $"<lora:{name}:{ForgePromptStrength}> " + text;
+                }
                 await clipboard.SetTextAsync(text);
                 Log("copied to clipboard", LogSeverity.Success);
             }

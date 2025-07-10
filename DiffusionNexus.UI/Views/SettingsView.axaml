@@ -51,6 +51,9 @@
           <CheckBox Content="Show NSFW by default"
                    IsChecked="{Binding Settings.ShowNsfw, Mode=TwoWay}"
                    Margin="0,5,0,0"/>
+          <CheckBox Content="A1111/Forge Style prompts"
+                   IsChecked="{Binding Settings.UseForgeStylePrompts, Mode=TwoWay}"
+                   Margin="0,5,0,0"/>
         </StackPanel>
       </Expander>
 
