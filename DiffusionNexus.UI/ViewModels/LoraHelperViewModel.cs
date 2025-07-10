@@ -397,6 +397,21 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
     }
 
+    public async Task EditCardAsync(LoraCardViewModel card)
+    {
+        if (_window is null || card.Model == null)
+            return;
+
+        var dialog = new Views.LoraCardDetailView();
+        if (dialog.DataContext is LoraCardDetailViewModel vm)
+        {
+            vm.SetWindow(dialog);
+            vm.SetModel(card.Model);
+        }
+
+        await dialog.ShowDialog(_window);
+    }
+
     private async Task ScanDuplicatesAsync()
     {
         if (_window is null) return;
