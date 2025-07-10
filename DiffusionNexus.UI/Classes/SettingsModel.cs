@@ -14,6 +14,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private bool _deleteEmptySourceFolders;
         [ObservableProperty] private bool _generateVideoThumbnails = true;
         [ObservableProperty] private bool _showNsfw;
+        [ObservableProperty] private bool _useForgeStylePrompts = true;
 
         [JsonIgnore]
         public string? CivitaiApiKey { get; set; }
