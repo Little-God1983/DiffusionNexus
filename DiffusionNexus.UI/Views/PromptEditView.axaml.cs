@@ -13,14 +13,6 @@ public partial class PromptEditView : UserControl
     {
         InitializeComponent();
         this.AttachedToVisualTree += OnAttached;
-        var border = this.FindControl<Border>("ImageDropBorder");
-        if (border != null)
-        {
-            border.AddHandler(DragDrop.DragEnterEvent, (_, e) => ViewModel?.OnDragEnter(e));
-            border.AddHandler(DragDrop.DragLeaveEvent, (_, e) => ViewModel?.OnDragLeave(e));
-            border.AddHandler(DragDrop.DragOverEvent, (_, e) => ViewModel?.OnDragOver(e));
-            border.AddHandler(DragDrop.DropEvent, (_, e) => ViewModel?.OnDrop(e));
-        }
     }
 
     private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
@@ -29,6 +21,16 @@ public partial class PromptEditView : UserControl
         {
             vm.DialogService = new DialogService(window);
             vm.SetWindow(window);
+        }
+        
+        // Wire up drag events after the control is attached and initialized
+        var border = this.FindControl<Border>("ImageDropBorder");
+        if (border != null)
+        {
+            border.AddHandler(DragDrop.DragEnterEvent, (_, e) => ViewModel?.OnDragEnter(e));
+            border.AddHandler(DragDrop.DragLeaveEvent, (_, e) => ViewModel?.OnDragLeave(e));
+            border.AddHandler(DragDrop.DragOverEvent, (_, e) => ViewModel?.OnDragOver(e));
+            border.AddHandler(DragDrop.DropEvent, (_, e) => ViewModel?.OnDrop(e));
         }
     }
 
