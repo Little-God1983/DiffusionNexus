@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Classes;
@@ -17,7 +18,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Avalonia.Media;
 using DiffusionNexus.Service.Classes;
 
 namespace DiffusionNexus.UI.ViewModels
@@ -37,6 +37,12 @@ namespace DiffusionNexus.UI.ViewModels
 
         [ObservableProperty]
         private string dropText = "Drop image here";
+
+        [ObservableProperty]
+        private Brush borderBrush = new SolidColorBrush(Colors.Gray);
+
+        [ObservableProperty]
+        private bool isDragOver;
 
         [ObservableProperty] private string? steps;
         [ObservableProperty] private string? sampler;
@@ -81,12 +87,25 @@ namespace DiffusionNexus.UI.ViewModels
 
         public void OnDragEnter(DragEventArgs e)
         {
+            IsDragOver = true;
             if (IsImageFile(e))
+            {
                 DropText = "Release to drop";
+                BorderBrush = new SolidColorBrush(Colors.Green);
+                Log($"Drag enter with valid image file - setting border to green", LogSeverity.Info);
+            }
+            else
+            {
+                DropText = "Unsupported file type";
+                BorderBrush = new SolidColorBrush(Colors.Red);
+                Log($"Drag enter with invalid file - setting border to red", LogSeverity.Warning);
+            }
         }
 
         public void OnDragLeave(DragEventArgs e)
         {
+            IsDragOver = false;
+            Log($"Drag leave - resetting border", LogSeverity.Info);
             ResetDropArea();
         }
 
@@ -97,16 +116,29 @@ namespace DiffusionNexus.UI.ViewModels
 
         public void OnDrop(DragEventArgs e)
         {
-            if (!IsImageFile(e)) return;
+            IsDragOver = false;
+            if (!IsImageFile(e)) 
+            {
+                ResetDropArea();
+                return;
+            }
+            
             var storageFile = e.Data.GetFiles()?.FirstOrDefault();
             var file = storageFile?.TryGetLocalPath();
-            if (string.IsNullOrEmpty(file)) return;
+            if (string.IsNullOrEmpty(file)) 
+            {
+                ResetDropArea();
+                return;
+            }
+            
             try
             {
                 using var stream = File.OpenRead(file);
                 PreviewImage = new Bitmap(stream);
                 IsPreviewVisible = true;
                 DropText = string.Empty;
+                BorderBrush = new SolidColorBrush(Colors.Gray); // Reset to default
+                
                 var meta = PngMetadataReader.ReadMetadata(file);
                 if (meta != null)
                 {
@@ -144,9 +176,12 @@ namespace DiffusionNexus.UI.ViewModels
         private void ResetDropArea()
         {
             DropText = "Drop image here";
-            PreviewImage = null;
-            IsPreviewVisible = false;
-            ClearMetadata();
+            BorderBrush = new SolidColorBrush(Colors.Gray);
+            if (!IsPreviewVisible)
+            {
+                PreviewImage = null;
+                ClearMetadata();
+            }
         }
 
         private void DisplayMetadata()
