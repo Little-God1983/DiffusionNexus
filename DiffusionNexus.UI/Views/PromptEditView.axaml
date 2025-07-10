@@ -1,151 +1,272 @@
-<UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             x:Class="DiffusionNexus.UI.Views.PromptEditView"
-             xmlns:local="using:DiffusionNexus.UI.Views"
-             x:DataType="vm:PromptEditViewModel">
-  <UserControl.DataContext>
-    <vm:PromptEditViewModel/>
-  </UserControl.DataContext>
-  <TabControl>
-    <TabItem Header="Single Image">
-      <Grid Margin="10" RowDefinitions="*">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition MinWidth="200"/>
-          <ColumnDefinition MinWidth="150"/>
-          <ColumnDefinition MinWidth="250"/>
-        </Grid.ColumnDefinitions>
-        <!-- Image drop area -->
-        <Border Grid.Column="0" DragDrop.AllowDrop="True"  x:Name="ImageDropBorder" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
-          <Grid>
-            <Image Stretch="Uniform" Margin="5" Source="{Binding PreviewImage}" IsVisible="{Binding IsPreviewVisible}" />
-            <TextBlock Text="{Binding DropText}"  HorizontalAlignment="Center" VerticalAlignment="Center"/>
-          </Grid>
-        </Border>
+<UserControl
+    x:Class="DiffusionNexus.UI.Views.PromptEditView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:DiffusionNexus.UI.Views"
+    xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+    x:DataType="vm:PromptEditViewModel">
+    <UserControl.DataContext>
+        <vm:PromptEditViewModel />
+    </UserControl.DataContext>
+    <TabControl>
+        <TabItem Header="Single Image">
+            <Grid Margin="10" RowDefinitions="*">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition MinWidth="200" />
+                    <ColumnDefinition MinWidth="150" />
+                    <ColumnDefinition MinWidth="250" />
+                </Grid.ColumnDefinitions>
+                <!--  Image drop area  -->
+                <Border
+                    x:Name="ImageDropBorder"
+                    Grid.Column="0"
+                    Margin="0,0,10,0"
+                    Background="#22FFFFFF"
+                    BorderBrush="{Binding BorderBrush}"
+                    BorderThickness="3"
+                    CornerRadius="4"
+                    DragDrop.AllowDrop="True">
+                    <Grid>
+                        <Image
+                            Margin="5"
+                            IsVisible="{Binding IsPreviewVisible}"
+                            Source="{Binding PreviewImage}"
+                            Stretch="Uniform" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Text="{Binding DropText}" />
+                    </Grid>
+                </Border>
 
-        <!-- Middle side for Meta Data -->
-        <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Background="#22FFFFFF" CornerRadius="4" Margin="0,0,10,0">
-          <StackPanel x:Name="MetadataPanel" Spacing="4" Margin="10,0,10,0">
-            <TextBlock Text="Metadata" Width="120"/>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Steps" Width="120"/>
-              <TextBox Text="{Binding Steps}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Sampler" Width="120"/>
-              <TextBox Text="{Binding Sampler}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Schedule Type" Width="120"/>
-              <TextBox Text="{Binding ScheduleType}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="CFG Scale" Width="120"/>
-              <TextBox Text="{Binding CfgScale}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Seed" Width="120"/>
-              <TextBox Text="{Binding Seed}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Face Restoration" Width="120"/>
-              <TextBox Text="{Binding FaceRestoration}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Size" Width="120"/>
-              <TextBox Text="{Binding Size}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Model Hash" Width="120"/>
-              <TextBox Text="{Binding ModelHash}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Model" Width="120"/>
-              <TextBox Text="{Binding Model}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="TI" Width="120"/>
-              <TextBox Text="{Binding Ti}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Version" Width="120"/>
-              <TextBox Text="{Binding Version}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Source Identifier" Width="120"/>
-              <TextBox Text="{Binding SourceIdentifier}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="LoRA Hashes" Width="120"/>
-              <TextBox Text="{Binding LoRAHashes}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Width" Width="120"/>
-              <TextBox Text="{Binding Width}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="5">
-              <TextBlock Text="Height" Width="120"/>
-              <TextBox Text="{Binding Height}" IsReadOnly="True" Width="200"/>
-            </StackPanel>
-            <StackPanel Spacing="2">
-              <TextBlock Text="Hashes"/>
-              <TextBox FontFamily="Consolas" Text="{Binding Hashes}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
-            </StackPanel>
-            <StackPanel Spacing="2">
-              <TextBlock Text="Resources"/>
-              <TextBox FontFamily="Consolas" Text="{Binding Resources}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="60"/>
-            </StackPanel>
-            <Button Content="Copy all metadata" HorizontalAlignment="Right" Width="150" Command="{Binding CopyMetadataCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
-          </StackPanel>
-        </Border>
+                <!--  Middle side for Meta Data  -->
+                <Border
+                    Grid.Column="1"
+                    Margin="0,0,10,0"
+                    Background="#22FFFFFF"
+                    BorderBrush="Gray"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                    <StackPanel
+                        x:Name="MetadataPanel"
+                        Margin="10,0,10,0"
+                        Spacing="4">
+                        <TextBlock Width="120" Text="Metadata" />
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Steps" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Steps}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Sampler" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Sampler}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Schedule Type" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding ScheduleType}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="CFG Scale" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding CfgScale}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Seed" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Seed}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Face Restoration" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding FaceRestoration}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Size" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Size}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Model Hash" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding ModelHash}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Model" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Model}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="TI" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Ti}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Version" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Version}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Source Identifier" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding SourceIdentifier}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="LoRA Hashes" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding LoRAHashes}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Width" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Width}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Width="120" Text="Height" />
+                            <TextBox
+                                Width="200"
+                                IsReadOnly="True"
+                                Text="{Binding Height}" />
+                        </StackPanel>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Hashes" />
+                            <TextBox
+                                Height="60"
+                                AcceptsReturn="True"
+                                FontFamily="Consolas"
+                                IsReadOnly="True"
+                                Text="{Binding Hashes}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Resources" />
+                            <TextBox
+                                Height="60"
+                                AcceptsReturn="True"
+                                FontFamily="Consolas"
+                                IsReadOnly="True"
+                                Text="{Binding Resources}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button
+                            Width="150"
+                            HorizontalAlignment="Right"
+                            Command="{Binding CopyMetadataCommand}"
+                            CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+                            Content="Copy all metadata" />
+                    </StackPanel>
+                </Border>
 
-        <!-- Right side for prompts -->
-        <StackPanel Grid.Column="2" Spacing="10">
-          <local:PromptEditorControl Margin="10"
-             DataContext="{Binding SinglePromptVm}"
-             HorizontalAlignment="Stretch"
-             VerticalAlignment="Stretch"/>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            <Button Content="Apply List" Width="110" Command="{Binding ApplyBlacklistCommand}"/>
-            <Button Content="Save" Width="80" Command="{Binding SaveCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}"/>
-            <Button Content="Save As" Width="80" Command="{Binding SaveAsCommand}"/>
-          </StackPanel>
+                <!--  Right side for prompts  -->
+                <StackPanel Grid.Column="2" Spacing="10">
+                    <local:PromptEditorControl
+                        Margin="10"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        DataContext="{Binding SinglePromptVm}" />
+                    <StackPanel
+                        HorizontalAlignment="Right"
+                        Orientation="Horizontal"
+                        Spacing="10">
+                        <Button
+                            Width="110"
+                            Command="{Binding ApplyBlacklistCommand}"
+                            Content="Apply List" />
+                        <Button
+                            Width="80"
+                            Command="{Binding SaveCommand}"
+                            CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+                            Content="Save" />
+                        <Button
+                            Width="80"
+                            Command="{Binding SaveAsCommand}"
+                            Content="Save As" />
+                    </StackPanel>
 
-        </StackPanel>
+                </StackPanel>
 
-      </Grid>
-    </TabItem>
-    <TabItem Header="Batch Process">
-      <Grid x:DataType="vm:BatchProcessingViewModel" DataContext="{Binding BatchViewModel}"
-      Margin="10"
-      ColumnDefinitions="400,*">
-        <Image
-            Source="avares://DiffusionNexus.UI/Assets/under_construction.png" Opacity="0.75" Grid.Column="0" Grid.ColumnSpan="2"/>
-        <StackPanel Spacing="10" Grid.Column="0">
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Source Folder" Width="100"/>
-            <TextBox x:Name="SourceFolderBox" Width="140" Text="{Binding SourceFolder, Mode=TwoWay}"/>
-            <Button Content="Browse..." Command="{Binding BrowseSourceFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Target Folder" Width="100"/>
-            <TextBox x:Name="TargetFolderBox" Width="140" Text="{Binding TargetFolder, Mode=TwoWay}"/>
-            <Button Content="Browse..." Command="{Binding BrowseTargetFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
-          </StackPanel>
-          <StackPanel Orientation="Vertical" Spacing="5">
-            <RadioButton Content="Blacklist / Whitelist only" IsChecked="{Binding UseListOnly, Mode=TwoWay}"/>
-            <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}"/>
-          </StackPanel>
-        </StackPanel>
-        <StackPanel Grid.Column="0" Spacing="10">        
-        </StackPanel>
-        <StackPanel Grid.Column="1">
-          <local:PromptEditorControl Margin="10"
-            HorizontalAlignment="Stretch"
-            VerticalAlignment="Stretch"/>
-          <Button Name="ApplyBatchButton" Content="Apply to Batch" Width="120"/>
-        </StackPanel>
-      </Grid>
-    </TabItem>
-  </TabControl>
+            </Grid>
+        </TabItem>
+        <TabItem Header="Batch Process">
+            <Grid
+                Margin="10"
+                x:DataType="vm:BatchProcessingViewModel"
+                ColumnDefinitions="400,*"
+                DataContext="{Binding BatchViewModel}">
+                <Image
+                    Grid.Column="0"
+                    Grid.ColumnSpan="2"
+                    Opacity="0.75"
+                    Source="avares://DiffusionNexus.UI/Assets/under_construction.png" />
+                <StackPanel Grid.Column="0" Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Width="100" Text="Source Folder" />
+                        <TextBox
+                            x:Name="SourceFolderBox"
+                            Width="140"
+                            Text="{Binding SourceFolder, Mode=TwoWay}" />
+                        <Button
+                            Command="{Binding BrowseSourceFolderCommand}"
+                            CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+                            Content="Browse..." />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Width="100" Text="Target Folder" />
+                        <TextBox
+                            x:Name="TargetFolderBox"
+                            Width="140"
+                            Text="{Binding TargetFolder, Mode=TwoWay}" />
+                        <Button
+                            Command="{Binding BrowseTargetFolderCommand}"
+                            CommandParameter="{Binding $parent[UserControl].VisualRoot}"
+                            Content="Browse..." />
+                    </StackPanel>
+                    <StackPanel Orientation="Vertical" Spacing="5">
+                        <RadioButton Content="Blacklist / Whitelist only" IsChecked="{Binding UseListOnly, Mode=TwoWay}" />
+                        <RadioButton Content="Replace all" IsChecked="{Binding ReplaceAll, Mode=TwoWay}" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="0" Spacing="10" />
+                <StackPanel Grid.Column="1">
+                    <local:PromptEditorControl
+                        Margin="10"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch" />
+                    <Button
+                        Name="ApplyBatchButton"
+                        Width="120"
+                        Content="Apply to Batch" />
+                </StackPanel>
+            </Grid>
+        </TabItem>
+    </TabControl>
 </UserControl>
