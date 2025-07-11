@@ -390,8 +390,8 @@ public partial class LoraHelperViewModel : ViewModelBase
                 var text = string.Join(", ", card.Model.TrainedWords);
                 if (settings.UseForgeStylePrompts)
                 {
-                    var name = card.Model.SafeTensorFileName;
-                    text = $"<lora:{name}:{ForgePromptStrength}> " + text;
+                    var name = card.Model.ModelVersionName;
+                    text = $"<lora:{name}:{ForgePromptStrength.ToString(System.Globalization.CultureInfo.InvariantCulture)}> " + text;
                 }
                 await clipboard.SetTextAsync(text);
                 Log("copied to clipboard", LogSeverity.Success);
