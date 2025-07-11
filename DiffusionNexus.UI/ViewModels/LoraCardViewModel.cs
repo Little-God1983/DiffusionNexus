@@ -114,7 +114,11 @@ public partial class LoraCardViewModel : ViewModelBase
         return null;
     }
 
-    private void OnEdit() => Log($"Edit {Model.SafeTensorFileName}", LogSeverity.Info);
+    private async void OnEdit()
+    {
+        if (Parent != null)
+            await Parent.EditCardAsync(this);
+    }
 
     private Task OnDeleteAsync()
     {

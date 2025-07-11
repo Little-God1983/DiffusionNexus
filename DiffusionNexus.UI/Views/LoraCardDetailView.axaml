@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:d="https://github.com/avaloniaui"
+        x:Class="DiffusionNexus.UI.Views.LoraCardDetailView"
+        x:DataType="vm:LoraCardDetailViewModel"
+        Width="600" Height="500" Title="LoRA Details"
+        WindowStartupLocation="CenterOwner">
+    <Window.DataContext>
+        <vm:LoraCardDetailViewModel/>
+    </Window.DataContext>
+    <Grid>
+        <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+        <Border Background="#66000000"/>
+        <ScrollViewer>
+            <StackPanel Margin="20" Spacing="5">
+                <TextBlock Text="Name"/>
+                <TextBox Text="{Binding Name, Mode=TwoWay}"/>
+                <TextBlock Text="Model Version Name"/>
+                <TextBox Text="{Binding ModelVersionName, Mode=TwoWay}"/>
+                <TextBlock Text="Model Type"/>
+                <ComboBox Items="{Binding DiffusionTypesList}" SelectedItem="{Binding ModelType, Mode=TwoWay}"/>
+                <TextBlock Text="Tags"/>
+                <TextBox Text="{Binding Tags, Mode=TwoWay}" AcceptsReturn="True"/>
+                <TextBlock Text="Trained Words"/>
+                <TextBox Text="{Binding TrainedWords, Mode=TwoWay}" AcceptsReturn="True"/>
+                <TextBlock Text="Safetensor File Name"/>
+                <TextBox Text="{Binding SafetensorFileName}" IsReadOnly="True"/>
+            </StackPanel>
+        </ScrollViewer>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10">
+            <Button Content="Save" Width="80" Margin="0,0,10,0" Command="{Binding SaveCommand}"/>
+            <Button Content="Cancel" Width="80" Command="{Binding CancelCommand}"/>
+        </StackPanel>
+    </Grid>
+</Window>
