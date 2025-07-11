@@ -318,6 +318,18 @@ public class JsonInfoFileReaderServiceTests : IDisposable
     }
 
     [Fact]
+    public void GroupFilesByPrefix_ShouldPreserveCaseOfFileName()
+    {
+        var fileName = "TestModel.safetensors";
+        File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), string.Empty);
+
+        var result = JsonInfoFileReaderService.GroupFilesByPrefix(_testDirectoryPath);
+
+        result.Should().HaveCount(1);
+        result[0].SafeTensorFileName.Should().Be("TestModel");
+    }
+
+    [Fact]
     public async Task GetModelData_ShouldReportProgress()
     {
         // Arrange

@@ -66,13 +66,13 @@ public class JsonInfoFileReaderService
 
     public static List<ModelClass> GroupFilesByPrefix(string rootDirectory)
     {
-        var fileGroups = new Dictionary<string, List<FileInfo>>();
+        var fileGroups = new Dictionary<string, List<FileInfo>>(StringComparer.OrdinalIgnoreCase);
         string[] files = Directory.GetFiles(rootDirectory, "*", SearchOption.AllDirectories);
 
         foreach (var filePath in files)
         {
             var fileInfo = new FileInfo(filePath);
-            var prefix = ModelMetadataUtils.ExtractBaseName(fileInfo.Name).ToLower();
+            var prefix = ModelMetadataUtils.ExtractBaseName(fileInfo.Name);
 
             if (!fileGroups.ContainsKey(prefix))
             {
@@ -89,9 +89,15 @@ public class JsonInfoFileReaderService
                 continue;
             }
 
+            var modelFile = group.Value.FirstOrDefault(f =>
+                StaticFileTypes.ModelExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase));
+            var baseName = modelFile != null
+                ? ModelMetadataUtils.ExtractBaseName(modelFile.Name)
+                : group.Key;
+
             var model = new ModelClass
             {
-                SafeTensorFileName = group.Key,
+                SafeTensorFileName = baseName,
                 AssociatedFilesInfo = group.Value,
                 CivitaiCategory = CivitaiBaseCategories.UNKNOWN
             };
