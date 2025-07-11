@@ -376,7 +376,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
         await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
 
-        if (card.Model.TrainedWords.Count == 0)
+        if (card.Model.TrainedWords.Count == 0 && (!settings.UseForgeStylePrompts))
         {
             Log($"No trained words for {card.Model.ModelVersionName}", LogSeverity.Warning);
             return;
@@ -387,11 +387,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             try
             {
-                var text = string.Join(", ", card.Model.TrainedWords);
+                var text = string.Join(", ", card.Model.TrainedWords).TrimEnd();
                 if (settings.UseForgeStylePrompts)
                 {
                     var name = card.Model.SafeTensorFileName;
-                    text = $"<lora:{name}:{ForgePromptStrength}> " + text;
+                    text = $"<lora:{name}:{ForgePromptStrength.ToString(System.Globalization.CultureInfo.InvariantCulture)}> " + text;
                 }
                 await clipboard.SetTextAsync(text);
                 Log("copied to clipboard", LogSeverity.Success);
