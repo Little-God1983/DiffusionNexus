@@ -1,6 +1,7 @@
 using DiffusionNexus.Service.Classes;
 using System.Text.Json;
 using System.Collections.Generic;
+using System.Net;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -78,11 +79,11 @@ public class LoraMetadataDownloadService
         return (previewUrl, modelId, trainedWords, nsfw);
     }
 
-    public async Task<string?> EnsureMetadataAsync(ModelClass model, string apiKey)
+    public async Task<MetadataDownloadResult> EnsureMetadataAsync(ModelClass model, string apiKey)
     {
         var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
         if (folder == null)
-            return null;
+            return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, "No folder found");
 
         var baseName = model.SafeTensorFileName;
         var CivitaiInfoPath = Path.Combine(folder, baseName + ".civitai.info");
@@ -112,13 +113,13 @@ public class LoraMetadataDownloadService
         bool hasMedia = HasMedia(model);
 
         if (hasCivitaiInfo && hasJson && hasMedia)
-            return model.ModelId;
+            return new MetadataDownloadResult(MetadataDownloadResultType.AlreadyExists, model.ModelId);
 
         var tensor = model.AssociatedFilesInfo.FirstOrDefault(f =>
             f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
             f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase))?.FullName;
         if (tensor == null)
-            return null;
+            return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, "No tensor file found");
 
         if (!hasCivitaiInfo)
         {
@@ -128,12 +129,23 @@ public class LoraMetadataDownloadService
             {
                 CivitaiInfoJson = await _apiClient.GetModelVersionByHashAsync(hash, apiKey);
             }
-            catch
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
             {
-                return null;
+                return new MetadataDownloadResult(MetadataDownloadResultType.NotFound, null, ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
             }
 
-            await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+            try
+            {
+                await File.WriteAllTextAsync(CivitaiInfoPath, CivitaiInfoJson);
+            }
+            catch (Exception ex)
+            {
+                return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
+            }
 
             (previewUrl, modelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
             if (!string.IsNullOrWhiteSpace(modelId))
@@ -154,7 +166,10 @@ public class LoraMetadataDownloadService
                 var bytes = await http.GetByteArrayAsync(previewUrl);
                 await File.WriteAllBytesAsync(outPath, bytes);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
+            }
         }
 
         if (!hasJson && !string.IsNullOrWhiteSpace(modelId))
@@ -165,9 +180,12 @@ public class LoraMetadataDownloadService
                 var jsonPath = Path.Combine(folder, baseName + ".json");
                 await File.WriteAllTextAsync(jsonPath, modelJson);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
+            }
         }
 
-        return modelId;
+        return new MetadataDownloadResult(MetadataDownloadResultType.Downloaded, modelId);
     }
 }
