@@ -347,7 +347,8 @@ public partial class LoraHelperViewModel : ViewModelBase
         string? id;
         if (string.IsNullOrWhiteSpace(card.Model.ModelId))
         {
-             id = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            id = result.ModelId;
             if (string.IsNullOrWhiteSpace(id))
             {
                 Log($"Can't open Link. No Id found for {card.Model.ModelVersionName}", LogSeverity.Error);
@@ -440,10 +441,29 @@ public partial class LoraHelperViewModel : ViewModelBase
         var settings = await _settingsService.LoadAsync();
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
 
-        foreach (var card in _allCards)
+        var missing = _allCards.Where(c => c.Model != null && !c.Model.HasFullMetadata).ToList();
+        Log($"{missing.Count} models missing metadata", LogSeverity.Info);
+
+        foreach (var card in missing)
         {
             if (card.Model == null) continue;
-            await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            Log($"Requesting metadata for {card.Model.ModelVersionName}", LogSeverity.Info);
+            var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            switch (result.ResultType)
+            {
+                case MetadataDownloadResultType.AlreadyExists:
+                    Log($"{card.Model.ModelVersionName}: already has metadata", LogSeverity.Info);
+                    break;
+                case MetadataDownloadResultType.Downloaded:
+                    Log($"{card.Model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
+                    break;
+                case MetadataDownloadResultType.NotFound:
+                    Log($"{card.Model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
+                    break;
+                case MetadataDownloadResultType.Error:
+                    Log($"{card.Model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
+                    break;
+            }
         }
 
         await LoadAsync();
