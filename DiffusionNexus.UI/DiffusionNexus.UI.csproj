@@ -72,6 +72,9 @@
     <Compile Update="Views\CustomTagMapWindow.axaml.cs">
       <DependentUpon>CustomTagMapWindow.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Views\LoraCardDetailView.axaml.cs">
+      <DependentUpon>LoraCardDetailView.axaml</DependentUpon>
+    </Compile>
     <Compile Update="Views\Controls\BusyOverlay.axaml.cs">
       <DependentUpon>BusyOverlay.axaml</DependentUpon>
     </Compile>
