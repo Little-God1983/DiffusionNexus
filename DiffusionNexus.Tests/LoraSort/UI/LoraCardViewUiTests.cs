@@ -49,6 +49,7 @@ public class LoraCardViewUiTests
             var texts = view.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
             texts.Should().Contain("LORA");
             texts.Should().Contain("SD15");
+            texts.Should().Contain("card");
         }, System.Threading.CancellationToken.None);
     }
 }
