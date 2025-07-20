@@ -7,6 +7,7 @@ using DiffusionNexus.UI.Classes;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -36,6 +37,7 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand DeleteCommand { get; }
     public IAsyncRelayCommand OpenWebCommand { get; }
     public IAsyncRelayCommand CopyCommand { get; }
+    public IRelayCommand OpenFolderCommand { get; }
 
     public LoraHelperViewModel? Parent { get; set; }
 
@@ -45,6 +47,7 @@ public partial class LoraCardViewModel : ViewModelBase
         DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new AsyncRelayCommand(OnOpenWebAsync);
         CopyCommand = new AsyncRelayCommand(OnCopyAsync);
+        OpenFolderCommand = new RelayCommand(OnOpenFolder);
     }
 
     partial void OnModelChanged(ModelClass? value)
@@ -135,5 +138,25 @@ public partial class LoraCardViewModel : ViewModelBase
             return;
 
         await Parent.CopyTrainedWordsAsync(this);
+    }
+
+    private void OnOpenFolder()
+    {
+        if (string.IsNullOrWhiteSpace(FolderPath))
+            return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = FolderPath,
+                UseShellExecute = true,
+                Verb = "open"
+            });
+        }
+        catch (Exception ex)
+        {
+            Log($"failed to open folder: {ex.Message}", LogSeverity.Error);
+        }
     }
 }
