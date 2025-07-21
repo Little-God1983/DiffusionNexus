@@ -55,9 +55,14 @@ public partial class LoraHelperViewModel : ViewModelBase
     [ObservableProperty]
     private bool showNsfw;
 
+    [ObservableProperty]
+    private SortMode sortMode = SortMode.Name;
+
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
+    public IRelayCommand SortByNameCommand { get; }
+    public IRelayCommand SortByDateCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
@@ -75,6 +80,8 @@ public partial class LoraHelperViewModel : ViewModelBase
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
+        SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
+        SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
         _ = LoadAsync();
     }
     public void SetWindow(Window window)
@@ -171,6 +178,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         _ = RefreshCardsAsync();
     }
 
+    partial void OnSortModeChanged(SortMode value)
+    {
+        _ = RefreshCardsAsync();
+    }
+
     private async Task RefreshCardsAsync()
     {
         _filterCts.Cancel();
@@ -229,7 +241,8 @@ public partial class LoraHelperViewModel : ViewModelBase
         if (!ShowNsfw)
             query = query.Where(c => c.Model?.Nsfw != true);
 
-        return query.ToList();
+        var sorted = ApplySort(query);
+        return sorted.ToList();
     }
 
     public async Task LoadNextPageAsync()
@@ -258,6 +271,24 @@ public partial class LoraHelperViewModel : ViewModelBase
         SelectedFolder = null;
         SearchText = null;
         _ = RefreshCardsAsync();
+    }
+
+    internal IEnumerable<LoraCardViewModel> ApplySort(IEnumerable<LoraCardViewModel> items)
+    {
+        return SortMode switch
+        {
+            SortMode.Name => items.OrderBy(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase),
+            SortMode.CreationDate => items.OrderByDescending(GetCreationDate),
+            _ => items
+        };
+    }
+
+    internal static DateTime GetCreationDate(LoraCardViewModel card)
+    {
+        var file = card.Model?.AssociatedFilesInfo.FirstOrDefault(f =>
+            f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
+            f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase));
+        return file?.CreationTime ?? DateTime.MinValue;
     }
 
     /// <summary>
