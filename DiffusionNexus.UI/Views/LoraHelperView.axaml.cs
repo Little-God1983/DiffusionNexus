@@ -3,7 +3,6 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
-using System.Net.WebSockets;
 
 namespace DiffusionNexus.UI.Views;
 
