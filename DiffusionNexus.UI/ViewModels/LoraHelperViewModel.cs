@@ -58,6 +58,9 @@ public partial class LoraHelperViewModel : ViewModelBase
     [ObservableProperty]
     private SortMode sortMode = SortMode.Name;
 
+    [ObservableProperty]
+    private bool sortAscending = true;
+
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
@@ -183,6 +186,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         _ = RefreshCardsAsync();
     }
 
+    partial void OnSortAscendingChanged(bool value)
+    {
+        _ = RefreshCardsAsync();
+    }
+
     private async Task RefreshCardsAsync()
     {
         _filterCts.Cancel();
@@ -275,12 +283,18 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     internal IEnumerable<LoraCardViewModel> ApplySort(IEnumerable<LoraCardViewModel> items)
     {
-        return SortMode switch
+        IEnumerable<LoraCardViewModel> sorted = SortMode switch
         {
-            SortMode.Name => items.OrderBy(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase),
-            SortMode.CreationDate => items.OrderByDescending(GetCreationDate),
+            SortMode.Name => SortAscending
+                ? items.OrderBy(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase),
+            SortMode.CreationDate => SortAscending
+                ? items.OrderBy(GetCreationDate)
+                : items.OrderByDescending(GetCreationDate),
             _ => items
         };
+
+        return sorted;
     }
 
     internal static DateTime GetCreationDate(LoraCardViewModel card)

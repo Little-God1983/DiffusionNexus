@@ -11,6 +11,7 @@
   </UserControl.DataContext>
   <UserControl.Resources>
     <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
+    <conv:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
@@ -23,8 +24,14 @@
                                   IsDropDownOpen="{Binding ShowSuggestions}"                                
                                   Margin="5,0"
                                   MaxDropDownHeight="200"/>
-      <Button Grid.Column="2" Content="Sort by Name" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding SortByNameCommand}"/>
-      <Button Grid.Column="3" Content="Sort by Date" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding SortByDateCommand}"/>
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center">
+        <RadioButton Content="Name" IsChecked="{Binding SortMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=Name}"/>
+        <RadioButton Content="Date" Margin="5,0,0,0" IsChecked="{Binding SortMode, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=CreationDate}"/>
+      </StackPanel>
+      <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center">
+        <RadioButton Content="Asc" IsChecked="{Binding SortAscending}"/>
+        <RadioButton Content="Desc" Margin="5,0,0,0" IsChecked="{Binding SortAscending, Converter={StaticResource BooleanNotConverter}}"/>
+      </StackPanel>
       <CheckBox Grid.Column="4" Content="Show NSFW" IsChecked="{Binding ShowNsfw}" VerticalAlignment="Center" Margin="5,0"/>
       <Button Grid.Column="5" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
               Command="{Binding DownloadMissingMetadataCommand}"/>
