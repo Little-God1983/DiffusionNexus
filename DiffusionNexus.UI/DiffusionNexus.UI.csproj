@@ -10,12 +10,26 @@
     <!-- Base version prefix. Build number will be appended automatically. -->
     <VersionPrefix>0.5.1</VersionPrefix>
     <Version>$(VersionPrefix).0</Version>
+    <PackageIcon>Assets\AIKnowledgeIcon.ico</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**\*.*" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\OneDrive\AIKnowledge2Go\Branding\youtubeAvatarRound-whiteOutline.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- point at your ICO, relative to the UI project folder -->
+    <ApplicationIcon>Assets\AIKnowledgeIcon.ico</ApplicationIcon>
+    <GenerateManifest>true</GenerateManifest>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.1" />
@@ -84,5 +98,11 @@
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Update="Assets\AIKnowledgeIcon.ico">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </AvaloniaResource>
   </ItemGroup>
 </Project>
