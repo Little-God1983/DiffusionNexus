@@ -411,8 +411,6 @@ public partial class LoraHelperViewModel : ViewModelBase
 
         var url = $"https://civitai.com/models/{id}";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-
-        await LoadAsync();
     }
 
     public async Task CopyTrainedWordsAsync(LoraCardViewModel card)
