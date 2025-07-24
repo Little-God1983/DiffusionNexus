@@ -64,6 +64,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
+    public IAsyncRelayCommand RefreshCommand { get; }
     public IRelayCommand SortByNameCommand { get; }
     public IRelayCommand SortByDateCommand { get; }
 
@@ -83,6 +84,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
+        RefreshCommand = new AsyncRelayCommand(LoadAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
         _ = LoadAsync();
@@ -409,8 +411,6 @@ public partial class LoraHelperViewModel : ViewModelBase
 
         var url = $"https://civitai.com/models/{id}";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-
-        await LoadAsync();
     }
 
     public async Task CopyTrainedWordsAsync(LoraCardViewModel card)
