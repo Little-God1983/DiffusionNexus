@@ -449,6 +449,27 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
     }
 
+    public async Task CopyModelNameAsync(LoraCardViewModel card)
+    {
+        if (card.Model == null)
+            return;
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+            desktop.MainWindow is { Clipboard: { } clipboard })
+        {
+            try
+            {
+                var text = Path.GetFileNameWithoutExtension(card.Model.SafeTensorFileName);
+                await clipboard.SetTextAsync(text);
+                Log($"{text} copied to clipboard", LogSeverity.Success);
+            }
+            catch (Exception ex)
+            {
+                Log($"failed to copy name: {ex.Message}", LogSeverity.Error);
+            }
+        }
+    }
+
     private async Task ScanDuplicatesAsync()
     {
         if (_window is null) return;
