@@ -37,6 +37,7 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand DeleteCommand { get; }
     public IAsyncRelayCommand OpenWebCommand { get; }
     public IAsyncRelayCommand CopyCommand { get; }
+    public IAsyncRelayCommand CopyNameCommand { get; }
     public IRelayCommand OpenFolderCommand { get; }
 
     public LoraHelperViewModel? Parent { get; set; }
@@ -47,6 +48,7 @@ public partial class LoraCardViewModel : ViewModelBase
         DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new AsyncRelayCommand(OnOpenWebAsync);
         CopyCommand = new AsyncRelayCommand(OnCopyAsync);
+        CopyNameCommand = new AsyncRelayCommand(OnCopyNameAsync);
         OpenFolderCommand = new RelayCommand(OnOpenFolder);
     }
 
@@ -138,6 +140,14 @@ public partial class LoraCardViewModel : ViewModelBase
             return;
 
         await Parent.CopyTrainedWordsAsync(this);
+    }
+
+    private async Task OnCopyNameAsync()
+    {
+        if (Parent == null || Model == null)
+            return;
+
+        await Parent.CopyModelNameAsync(this);
     }
 
     private void OnOpenFolder()

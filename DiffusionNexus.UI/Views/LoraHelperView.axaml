@@ -97,6 +97,7 @@
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                           <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
                           <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
+                          <Button Content="N" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyNameCommand}"/>
                           <Button Content="📂" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenFolderCommand}"/>
                           <Button Content="❌" Width="36" Height="36" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
                         </StackPanel>
