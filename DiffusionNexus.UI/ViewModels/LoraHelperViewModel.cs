@@ -440,13 +440,49 @@ public partial class LoraHelperViewModel : ViewModelBase
                     text = $"<lora:{name}:{ForgePromptStrength.ToString(System.Globalization.CultureInfo.InvariantCulture)}> " + text;
                 }
                 await clipboard.SetTextAsync(text);
-                Log("copied to clipboard", LogSeverity.Success);
+                Log($"Trigger words for: {GetLoraNameShort(card)}  copied to clipboard", LogSeverity.Success);
             }
             catch (Exception ex)
             {
                 Log($"failed to copy: {ex.Message}", LogSeverity.Error);
             }
         }
+    }
+
+    private static IEnumerable<char> GetLoraNameShort(LoraCardViewModel card)
+    {
+        string input = card.Model?.ModelVersionName ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+            return input;
+
+        const int hardLimit = 30;
+        const int softLimit = 20;
+
+        if (input.Length <= softLimit)
+            return input;
+
+        string trimmed = input.Substring(0, Math.Min(hardLimit, input.Length));
+
+        int lastSpaceBeforeHardLimit = trimmed.LastIndexOf(' ');
+        if (softLimit < trimmed.Length && char.IsLetterOrDigit(trimmed[softLimit]) && lastSpaceBeforeHardLimit > softLimit)
+        {
+            // Cut at last space before exceeding softLimit and still inside the hardLimit
+            trimmed = trimmed.Substring(0, lastSpaceBeforeHardLimit);
+        }
+        else if (trimmed.Length > softLimit && char.IsLetterOrDigit(trimmed[softLimit]))
+        {
+            // Extend to next space (to complete the word), within the 30 char limit
+            int nextSpace = input.IndexOf(' ', softLimit);
+            if (nextSpace != -1 && nextSpace <= hardLimit)
+                trimmed = input.Substring(0, nextSpace);
+            else
+                trimmed = input.Substring(0, Math.Min(hardLimit, input.Length));
+        }
+
+        if (input.Length > trimmed.Length)
+            return trimmed + "...";
+
+        return trimmed;
     }
 
     public async Task CopyModelNameAsync(LoraCardViewModel card)
@@ -461,11 +497,11 @@ public partial class LoraHelperViewModel : ViewModelBase
             {
                 var text = Path.GetFileNameWithoutExtension(card.Model.SafeTensorFileName);
                 await clipboard.SetTextAsync(text);
-                Log($"{text} copied to clipboard", LogSeverity.Success);
+                Log($"Filename: {text} copied to clipboard", LogSeverity.Success);
             }
             catch (Exception ex)
             {
-                Log($"failed to copy name: {ex.Message}", LogSeverity.Error);
+                Log($"failed to copy filename: {ex.Message}", LogSeverity.Error);
             }
         }
     }
