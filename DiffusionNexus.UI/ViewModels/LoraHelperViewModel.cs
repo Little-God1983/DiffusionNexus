@@ -495,8 +495,8 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             try
             {
-                var text = Path.GetFileNameWithoutExtension(card.Model.SafeTensorFileName);
-                await clipboard.SetTextAsync(text);
+                var text = card.Model.SafeTensorFileName;
+                await clipboard.SetTextAsync(card.Model.SafeTensorFileName);
                 Log($"Filename: {text} copied to clipboard", LogSeverity.Success);
             }
             catch (Exception ex)
