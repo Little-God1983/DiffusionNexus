@@ -231,19 +231,17 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             if (_searchIndex.IsReady && _indexNames != null)
             {
-                var matches = _searchIndex.Search(search!)
+                var matches = _searchIndex.SearchPrefix(search!)
                     .Select(i => _allCards[i])
                     .ToHashSet();
                 if (matches.Count > 0)
                     query = query.Where(c => matches.Contains(c));
                 else
-                    query = query.Where(c =>
-                        c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+                    query = query.Where(c => MatchesSearch(c, search!));
             }
             else
             {
-                query = query.Where(c =>
-                    c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+                query = query.Where(c => MatchesSearch(c, search!));
             }
         }
         Log($"Found: {_allCards.Where(x => x.Model.Nsfw == true).Count()} Nsfw Models", LogSeverity.Info);
@@ -254,6 +252,10 @@ public partial class LoraHelperViewModel : ViewModelBase
         var sorted = ApplySort(query);
         return sorted.ToList();
     }
+
+    private static bool MatchesSearch(LoraCardViewModel card, string search) =>
+        card.Model.SafeTensorFileName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true ||
+        card.Model.ModelVersionName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task LoadNextPageAsync()
     {
@@ -313,7 +315,9 @@ public partial class LoraHelperViewModel : ViewModelBase
     /// </summary>
     private void StartIndexing()
     {
-        _indexNames = _allCards.Select(c => c.Model.SafeTensorFileName ?? string.Empty).ToList();
+        _indexNames = _allCards
+            .Select(c => $"{c.Model.SafeTensorFileName ?? string.Empty} {c.Model.ModelVersionName ?? string.Empty}")
+            .ToList();
         var namesCopy = _indexNames.ToList();
         Task.Run(() => _searchIndex.Build(namesCopy));
     }

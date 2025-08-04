@@ -53,6 +53,27 @@ public class SearchIndex
         }
     }
 
+    public IEnumerable<int> SearchPrefix(string query)
+    {
+        var tokens = Tokenize(query).ToList();
+        lock (_index)
+        {
+            IEnumerable<int>? result = null;
+            foreach (var token in tokens)
+            {
+                var matches = _index
+                    .Where(kv => kv.Key.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(kv => kv.Value)
+                    .Distinct()
+                    .ToList();
+                if (matches.Count == 0)
+                    return Enumerable.Empty<int>();
+                result = result == null ? matches : result.Intersect(matches);
+            }
+            return result ?? Enumerable.Empty<int>();
+        }
+    }
+
     public IEnumerable<string> Suggest(string prefix, int limit)
     {
         lock (_index)
