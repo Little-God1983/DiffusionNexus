@@ -1,15 +1,29 @@
 # DiffusionNexus
 
-## Thumbnail Generation
+DiffusionNexus is a cross‑platform desktop application for organising Stable Diffusion LoRA models. It scans your collection, fetches metadata from Civitai and presents each model as a card with preview images. The project uses Avalonia so the same binaries run on Windows, Linux and macOS.
 
-DiffusionNexus automatically creates preview thumbnails for LoRA cards. When no static preview image is found but a matching `.gif` or `.mp4` exists, the application generates a WebP thumbnail on first load. This behaviour can be disabled in the **Lora Helper** settings.
+## Features
+- **Thumbnail generation** – automatically creates WebP previews from GIF or video files when no static image is present.
+- **Search & filtering** – instant search with autocomplete, folder tree filtering and sort options.
+- **Metadata download** – retrieve missing information from the Civitai API using your API key.
+- **Duplicate detection** – scan any folder for `.safetensors` files with identical content.
+- **Clipboard helpers** – copy trained words or model names with a single click.
 
-### Dependencies
-- **Xabe.FFmpeg** – used to capture snapshots from video files. FFmpeg binaries are downloaded at runtime using `Xabe.FFmpeg.Downloader`.
-- **SkiaSharp** – used for decoding GIF frames and encoding WebP images (already referenced transitively via Avalonia).
+## Installation
+1. Install the [.NET 8 Runtime](https://dotnet.microsoft.com/download) if required.
+2. Download a release archive from the [GitHub Releases](https://github.com/<REPO>/releases) page.
+3. Extract the archive and run `DiffusionNexus.UI` (on Windows) or `dotnet DiffusionNexus.UI.dll` on Linux/macOS.
 
-### Behaviour
-1. On startup the application calls `FFmpeg.GetLatestVersion()` to download platform specific FFmpeg executables if they are not present.
-2. When a card lacks a preview image, the first frame from a GIF or a snapshot from a video is converted to WebP and stored next to the media file. Subsequent runs reuse this cached file unless thumbnail settings change.
-3. If thumbnail generation fails, no preview image is shown and the error is logged.
+## Usage
+A full walkthrough is available in the [User Guide](docs/user_guide.md). Configure paths and API keys under the **Settings** tab then open **Lora Helper** to browse your models.
+
+## Development
+Thumbnail creation relies on these libraries:
+- **Xabe.FFmpeg** – downloads platform specific FFmpeg binaries on first run to capture frames from videos.
+- **SkiaSharp** – decodes GIFs and encodes WebP images.
+
+The application calls `FFmpeg.GetLatestVersion()` during startup to ensure the executables are present. Generated thumbnails are cached next to the media file.
+
+## License
+This repository is provided for non‑commercial use only. See the [LICENSE](LICENSE) file for details.
 
