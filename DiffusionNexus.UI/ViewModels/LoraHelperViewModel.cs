@@ -234,16 +234,17 @@ public partial class LoraHelperViewModel : ViewModelBase
                 var matches = _searchIndex.Search(search!)
                     .Select(i => _allCards[i])
                     .ToHashSet();
-                if (matches.Count > 0)
-                    query = query.Where(c => matches.Contains(c));
-                else
-                    query = query.Where(c =>
-                        c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+
+                query = query.Where(c =>
+                    matches.Contains(c) ||
+                    c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true ||
+                    c.Model.ModelVersionName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
             else
             {
                 query = query.Where(c =>
-                    c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
+                    c.Model.SafeTensorFileName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true ||
+                    c.Model.ModelVersionName?.Contains(search!, StringComparison.OrdinalIgnoreCase) == true);
             }
         }
         Log($"Found: {_allCards.Where(x => x.Model.Nsfw == true).Count()} Nsfw Models", LogSeverity.Info);
@@ -313,7 +314,15 @@ public partial class LoraHelperViewModel : ViewModelBase
     /// </summary>
     private void StartIndexing()
     {
-        _indexNames = _allCards.Select(c => c.Model.SafeTensorFileName ?? string.Empty).ToList();
+        _indexNames = _allCards
+            .Select(c =>
+                string.Join(' ', new[]
+                {
+                    c.Model.SafeTensorFileName,
+                    c.Model.ModelVersionName
+                }.Where(s => !string.IsNullOrWhiteSpace(s)))
+            )
+            .ToList();
         var namesCopy = _indexNames.ToList();
         Task.Run(() => _searchIndex.Build(namesCopy));
     }
