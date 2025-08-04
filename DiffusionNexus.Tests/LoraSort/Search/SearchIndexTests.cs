@@ -23,4 +23,13 @@ public class SearchIndexTests
         var sugg = index.Suggest("c", 10).ToList();
         sugg.Should().Contain("car");
     }
+
+    [Fact]
+    public void SearchPrefixReturnsPartialMatches()
+    {
+        var index = new SearchIndex();
+        index.Build(new[] { "Fright Night", "Halloween Nightmare", "Nightmare Fuel" });
+        var result = index.SearchPrefix("night").OrderBy(i => i).ToList();
+        result.Should().Equal(new[] { 0, 1, 2 });
+    }
 }
