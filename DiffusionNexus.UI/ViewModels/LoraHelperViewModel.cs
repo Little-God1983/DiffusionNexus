@@ -97,56 +97,60 @@ public partial class LoraHelperViewModel : ViewModelBase
     private async Task LoadAsync()
     {
         IsLoading = true;
-        var settings = await _settingsService.LoadAsync();
-        ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
-        ShowNsfw = settings.ShowNsfw;
-        if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+        try
         {
-            IsLoading = false;
-            return;
+            var settings = await _settingsService.LoadAsync();
+            ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+            ShowNsfw = settings.ShowNsfw;
+            if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+            {
+                return;
+            }
+
+            var discovery = new ModelDiscoveryService();
+
+            var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
+            rootNode.IsExpanded = true; // Expand the root folder by default
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                FolderItems.Clear();
+                FolderItems.Add(ConvertFolder(rootNode));
+            });
+
+            var localProvider = new LocalFileMetadataProvider();
+            // Fix for CS1503: Argument 2: cannot convert from 'method group' to 'System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.Task<DiffusionNexus.Service.Classes.ModelClass>>'
+
+            // The issue is that the method group `localProvider.GetModelMetadataAsync` does not match the expected delegate signature.
+            // To fix this, explicitly create a lambda expression that matches the expected signature.
+            var reader = new JsonInfoFileReaderService(
+                settings.LoraHelperFolderPath!,
+                (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
+            );
+            var models = await reader.GetModelData(null, CancellationToken.None);
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _allCards.Clear();
+                Cards.Clear();
+            });
+
+            foreach (var model in models)
+            {
+                var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
+                var card = new LoraCardViewModel { Model = model, FolderPath = folder, Parent = this };
+                _allCards.Add(card);
+            }
+
+            _filteredCards = _allCards.ToList();
+            _nextIndex = 0;
+            await LoadNextPageAsync();
+
+            StartIndexing();
         }
-
-        var discovery = new ModelDiscoveryService();
-
-        var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
-        rootNode.IsExpanded = true; // Expand the root folder by default
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        finally
         {
-            FolderItems.Clear();
-            FolderItems.Add(ConvertFolder(rootNode));
-        });
-
-        var localProvider = new LocalFileMetadataProvider();
-        // Fix for CS1503: Argument 2: cannot convert from 'method group' to 'System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.Task<DiffusionNexus.Service.Classes.ModelClass>>'
-
-        // The issue is that the method group `localProvider.GetModelMetadataAsync` does not match the expected delegate signature.
-        // To fix this, explicitly create a lambda expression that matches the expected signature.
-        var reader = new JsonInfoFileReaderService(
-            settings.LoraHelperFolderPath!,
-            (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
-        );
-        var models = await reader.GetModelData(null, CancellationToken.None);
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            _allCards.Clear();
-            Cards.Clear();
-        });
-
-        foreach (var model in models)
-        {
-            var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-            var card = new LoraCardViewModel { Model = model, FolderPath = folder, Parent = this };
-            _allCards.Add(card);
+            await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
         }
-
-        _filteredCards = _allCards.ToList();
-        _nextIndex = 0;
-        await LoadNextPageAsync();
-
-        StartIndexing();
-
-        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
     }
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
@@ -203,20 +207,28 @@ public partial class LoraHelperViewModel : ViewModelBase
         var folder = SelectedFolder;
 
         IsLoading = true;
-
-        var list = await Task.Run(() => FilterCards(search, folder), token);
-        if (token.IsCancellationRequested)
-            return;
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        try
         {
-            Cards.Clear();
-            _filteredCards = list;
-            _nextIndex = 0;
-        });
+            var list = await Task.Run(() => FilterCards(search, folder), token);
+            if (token.IsCancellationRequested)
+                return;
 
-        await LoadNextPageAsync();
-        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                Cards.Clear();
+                _filteredCards = list;
+                _nextIndex = 0;
+            });
+
+            await LoadNextPageAsync();
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+            }
+        }
     }
 
     private List<LoraCardViewModel> FilterCards(string? search, FolderItemViewModel? folder)
@@ -527,10 +539,16 @@ public partial class LoraHelperViewModel : ViewModelBase
             return;
 
         IsLoading = true;
-        var scanner = new DuplicateScanner();
-        var progress = new Progress<ScanProgress>(_ => { });
-        await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
-        IsLoading = false;
+        try
+        {
+            var scanner = new DuplicateScanner();
+            var progress = new Progress<ScanProgress>(_ => { });
+            await Task.Run(() => scanner.ScanAsync(path, progress, CancellationToken.None));
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     private static string ComputeSHA256(string filePath)
@@ -544,36 +562,42 @@ public partial class LoraHelperViewModel : ViewModelBase
     private async Task DownloadMissingMetadataAsync()
     {
         IsLoading = true;
-        var settings = await _settingsService.LoadAsync();
-        var apiKey = settings.CivitaiApiKey ?? string.Empty;
-
-        var missing = _allCards.Where(c => c.Model != null && !c.Model.HasFullMetadata).ToList();
-        Log($"{missing.Count} models missing metadata", LogSeverity.Info);
-
-        foreach (var card in missing)
+        try
         {
-            if (card.Model == null) continue;
-            Log($"Requesting metadata for {card.Model.ModelVersionName}", LogSeverity.Info);
-            var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
-            switch (result.ResultType)
-            {
-                case MetadataDownloadResultType.AlreadyExists:
-                    Log($"{card.Model.ModelVersionName}: already has metadata", LogSeverity.Info);
-                    break;
-                case MetadataDownloadResultType.Downloaded:
-                    Log($"{card.Model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
-                    break;
-                case MetadataDownloadResultType.NotFound:
-                    Log($"{card.Model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
-                    break;
-                case MetadataDownloadResultType.Error:
-                    Log($"{card.Model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
-                    break;
-            }
-        }
+            var settings = await _settingsService.LoadAsync();
+            var apiKey = settings.CivitaiApiKey ?? string.Empty;
 
-        await LoadAsync();
-        IsLoading = false;
+            var missing = _allCards.Where(c => c.Model != null && !c.Model.HasFullMetadata).ToList();
+            Log($"{missing.Count} models missing metadata", LogSeverity.Info);
+
+            foreach (var card in missing)
+            {
+                if (card.Model == null) continue;
+                Log($"Requesting metadata for {card.Model.ModelVersionName}", LogSeverity.Info);
+                var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+                switch (result.ResultType)
+                {
+                    case MetadataDownloadResultType.AlreadyExists:
+                        Log($"{card.Model.ModelVersionName}: already has metadata", LogSeverity.Info);
+                        break;
+                    case MetadataDownloadResultType.Downloaded:
+                        Log($"{card.Model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
+                        break;
+                    case MetadataDownloadResultType.NotFound:
+                        Log($"{card.Model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
+                        break;
+                    case MetadataDownloadResultType.Error:
+                        Log($"{card.Model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
+                        break;
+                }
+            }
+
+            await LoadAsync();
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 }
 
