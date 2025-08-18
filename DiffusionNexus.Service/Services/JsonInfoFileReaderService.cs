@@ -66,6 +66,10 @@ public class JsonInfoFileReaderService
 
     public static List<ModelClass> GroupFilesByPrefix(string rootDirectory)
     {
+        // Key files by directory + prefix so that identical model names in different folders
+        // are treated as separate entries. Previously, only the filename prefix was used, which
+        // caused models with the same name in different directories to be merged and displayed
+        // only once.
         var fileGroups = new Dictionary<string, List<FileInfo>>(StringComparer.OrdinalIgnoreCase);
         string[] files = Directory.GetFiles(rootDirectory, "*", SearchOption.AllDirectories);
 
@@ -73,12 +77,15 @@ public class JsonInfoFileReaderService
         {
             var fileInfo = new FileInfo(filePath);
             var prefix = ModelMetadataUtils.ExtractBaseName(fileInfo.Name);
+            var dir = fileInfo.DirectoryName ?? string.Empty;
+            var key = Path.Combine(dir, prefix);
 
-            if (!fileGroups.ContainsKey(prefix))
+            if (!fileGroups.TryGetValue(key, out var list))
             {
-                fileGroups[prefix] = new List<FileInfo>();
+                list = new List<FileInfo>();
+                fileGroups[key] = list;
             }
-            fileGroups[prefix].Add(fileInfo);
+            list.Add(fileInfo);
         }
 
         var modelClasses = new List<ModelClass>();
@@ -93,7 +100,7 @@ public class JsonInfoFileReaderService
                 StaticFileTypes.ModelExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase));
             var baseName = modelFile != null
                 ? ModelMetadataUtils.ExtractBaseName(modelFile.Name)
-                : group.Key;
+                : Path.GetFileName(group.Key);
 
             var model = new ModelClass
             {

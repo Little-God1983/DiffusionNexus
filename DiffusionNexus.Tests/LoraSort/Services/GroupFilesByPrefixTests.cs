@@ -28,4 +28,29 @@ public class GroupFilesByPrefixTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public void SameModelNameInDifferentDirectories_IsNotMerged()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        var dirA = Path.Combine(tempDir, "a");
+        var dirB = Path.Combine(tempDir, "b");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(dirA, "model.safetensors"), string.Empty);
+            File.WriteAllText(Path.Combine(dirB, "model.safetensors"), string.Empty);
+
+            var result = JsonInfoFileReaderService.GroupFilesByPrefix(tempDir);
+            result.Should().HaveCount(2);
+            result.Select(m => m.SafeTensorFileName).Should().AllBe("model");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
 }
