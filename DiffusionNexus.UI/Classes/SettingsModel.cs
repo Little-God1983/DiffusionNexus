@@ -15,6 +15,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private bool _generateVideoThumbnails = true;
         [ObservableProperty] private bool _showNsfw;
         [ObservableProperty] private bool _useForgeStylePrompts = true;
+        [ObservableProperty] private WanVideoGroupingMode _wanVideoGrouping = WanVideoGroupingMode.No;
 
         [JsonIgnore]
         public string? CivitaiApiKey { get; set; }

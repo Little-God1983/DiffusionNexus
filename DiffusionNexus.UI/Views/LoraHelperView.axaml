@@ -15,7 +15,7 @@
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
-    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
+    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
       <Button Grid.Column="0" Content="◀️ Reset Filters" Width="120" Height="36" Command="{Binding ResetFiltersCommand}"/>
       <AutoCompleteBox x:Name="SearchBox"
                       Grid.Column="1"
@@ -40,9 +40,17 @@
         </StackPanel>
       </Border>
       <CheckBox Grid.Column="5" Content="Show NSFW" IsChecked="{Binding ShowNsfw}" VerticalAlignment="Center" Margin="10,0"/>
-      <Button Grid.Column="6" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
+      <Border Grid.Column="6" Background="#222" CornerRadius="4" Padding="4" Margin="5,0,0,0" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="Group Wan Video" VerticalAlignment="Center"/>
+          <RadioButton Content="No" Margin="5,0,0,0" IsChecked="{Binding WanVideoGrouping, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=No}"/>
+          <RadioButton Content="By type" Margin="5,0,0,0" IsChecked="{Binding WanVideoGrouping, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=ByType}"/>
+          <RadioButton Content="All" Margin="5,0,0,0" IsChecked="{Binding WanVideoGrouping, Converter={StaticResource EnumToBooleanConverter}, ConverterParameter=All}"/>
+        </StackPanel>
+      </Border>
+      <Button Grid.Column="7" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
               Command="{Binding DownloadMissingMetadataCommand}"/>
-      <Button Grid.Column="7" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
+      <Button Grid.Column="8" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
     </Grid>
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"
