@@ -21,7 +21,9 @@ namespace DiffusionNexus.UI.ViewModels
         public IRelayCommand DeleteApiKeyCommand { get; }
         public IAsyncRelayCommand BrowseLoraSortSourceCommand { get; }
         public IAsyncRelayCommand BrowseLoraSortTargetCommand { get; }
-        public IAsyncRelayCommand BrowseLoraHelperFolderCommand { get; }
+        public IAsyncRelayCommand<LoraHelperSourceModel?> BrowseLoraHelperSourceCommand { get; }
+        public IRelayCommand AddLoraHelperSourceCommand { get; }
+        public IRelayCommand<LoraHelperSourceModel?> RemoveLoraHelperSourceCommand { get; }
 
         private readonly ILogEventService _logEventService;
 
@@ -37,7 +39,9 @@ namespace DiffusionNexus.UI.ViewModels
             DeleteApiKeyCommand = new RelayCommand(DeleteApiKey);
             BrowseLoraSortSourceCommand = new AsyncRelayCommand(BrowseLoraSortSourceAsync);
             BrowseLoraSortTargetCommand = new AsyncRelayCommand(BrowseLoraSortTargetAsync);
-            BrowseLoraHelperFolderCommand = new AsyncRelayCommand(BrowseLoraHelperFolderAsync);
+            BrowseLoraHelperSourceCommand = new AsyncRelayCommand<LoraHelperSourceModel?>(BrowseLoraHelperSourceAsync);
+            AddLoraHelperSourceCommand = new RelayCommand(AddLoraHelperSource);
+            RemoveLoraHelperSourceCommand = new RelayCommand<LoraHelperSourceModel?>(RemoveLoraHelperSource, source => source != null);
             _ = LoadAsync();
         }
 
@@ -80,13 +84,30 @@ namespace DiffusionNexus.UI.ViewModels
                 Settings.LoraSortTargetPath = path;
         }
 
-        private async Task BrowseLoraHelperFolderAsync()
+        private void AddLoraHelperSource()
         {
-            if (_window is null) return;
+            Settings.LoraHelperSources.Add(new LoraHelperSourceModel());
+        }
+
+        private void RemoveLoraHelperSource(LoraHelperSourceModel? source)
+        {
+            if (source is null)
+            {
+                return;
+            }
+
+            Settings.LoraHelperSources.Remove(source);
+        }
+
+        private async Task BrowseLoraHelperSourceAsync(LoraHelperSourceModel? source)
+        {
+            if (_window is null || source is null) return;
             var folders = await _window.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             var path = folders.FirstOrDefault()?.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
-                Settings.LoraHelperFolderPath = path;
+            {
+                source.FolderPath = path;
+            }
         }
     }
 }

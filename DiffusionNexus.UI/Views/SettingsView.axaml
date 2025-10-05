@@ -39,12 +39,26 @@
 
       <Expander Header="Lora Helper" IsExpanded="False" Width="600">
         <StackPanel Spacing="5" Margin="10">
-          <TextBlock Text="Lora Location"/>
-          <StackPanel Orientation="Horizontal" Spacing="5">
-            <TextBlock Text="Folder Path" Width="100"/>
-            <TextBox Text="{Binding Settings.LoraHelperFolderPath, Mode=TwoWay}" Width="350"/>
-            <Button Content="Browse..." Command="{Binding BrowseLoraHelperFolderCommand}" CommandParameter="{Binding $parent[UserControl].VisualRoot}" />
+          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="LoRA Sources" VerticalAlignment="Center"/>
+            <Button Content="+" Width="28" Command="{Binding AddLoraHelperSourceCommand}"/>
           </StackPanel>
+          <ItemsControl ItemsSource="{Binding Settings.LoraHelperSources}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center" Margin="0,2,0,2">
+                  <Button Content="-" Width="28"
+                          Command="{Binding $parent[UserControl].DataContext.RemoveLoraHelperSourceCommand}"
+                          CommandParameter="{Binding}"/>
+                  <CheckBox Content="Enabled" IsChecked="{Binding IsEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
+                  <TextBox Text="{Binding FolderPath, Mode=TwoWay}" Width="300"/>
+                  <Button Content="Browse..."
+                          Command="{Binding $parent[UserControl].DataContext.BrowseLoraHelperSourceCommand}"
+                          CommandParameter="{Binding}"/>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
           <CheckBox Content="Automatic thumbnail generation from videos"
                    IsChecked="{Binding Settings.GenerateVideoThumbnails, Mode=TwoWay}"
                    Margin="0,5,0,0"/>
