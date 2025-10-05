@@ -25,6 +25,15 @@ namespace DiffusionNexus.UI.Classes
             var model = _store.Load<SettingsModel>("settings");
             // Decrypt API key after loading
             model.CivitaiApiKey = SecureStorageHelper.DecryptString(model.EncryptedCivitaiApiKey);
+            if (!string.IsNullOrWhiteSpace(model.LoraHelperFolderPath) && model.LoraHelperSources.Count == 0)
+            {
+                model.LoraHelperSources.Add(new LoraHelperSourceModel
+                {
+                    FolderPath = model.LoraHelperFolderPath,
+                    IsEnabled = true
+                });
+                model.LoraHelperFolderPath = null;
+            }
             return model;
         }
 
@@ -34,6 +43,7 @@ namespace DiffusionNexus.UI.Classes
             settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(settings.CivitaiApiKey)
                 ? null
                 : SecureStorageHelper.EncryptString(settings.CivitaiApiKey);
+            settings.LoraHelperFolderPath = null;
             _store.Save("settings", settings);
             await Task.CompletedTask;
         }

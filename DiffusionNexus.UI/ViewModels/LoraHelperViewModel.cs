@@ -102,31 +102,46 @@ public partial class LoraHelperViewModel : ViewModelBase
             var settings = await _settingsService.LoadAsync();
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowNsfw = settings.ShowNsfw;
-            if (string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+            var enabledSources = settings.LoraHelperSources
+                .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
+                .Select(source => source.FolderPath!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (enabledSources.Count == 0)
             {
                 return;
             }
 
             var discovery = new ModelDiscoveryService();
 
-            var rootNode = await Task.Run(() => discovery.BuildFolderTree(settings.LoraHelperFolderPath));
-            rootNode.IsExpanded = true; // Expand the root folder by default
+            var rootNodes = await Task.Run(() =>
+                enabledSources.Select(path =>
+                {
+                    var node = discovery.BuildFolderTree(path);
+                    node.IsExpanded = true;
+                    return node;
+                }).ToList());
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 FolderItems.Clear();
-                FolderItems.Add(ConvertFolder(rootNode));
+                foreach (var node in rootNodes)
+                {
+                    FolderItems.Add(ConvertFolder(node));
+                }
             });
 
             var localProvider = new LocalFileMetadataProvider();
-            // Fix for CS1503: Argument 2: cannot convert from 'method group' to 'System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.Task<DiffusionNexus.Service.Classes.ModelClass>>'
-
-            // The issue is that the method group `localProvider.GetModelMetadataAsync` does not match the expected delegate signature.
-            // To fix this, explicitly create a lambda expression that matches the expected signature.
-            var reader = new JsonInfoFileReaderService(
-                settings.LoraHelperFolderPath!,
-                (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
-            );
-            var models = await reader.GetModelData(null, CancellationToken.None);
+            var models = new List<ModelClass>();
+            foreach (var source in enabledSources)
+            {
+                var reader = new JsonInfoFileReaderService(
+                    source,
+                    (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
+                );
+                var sourceModels = await reader.GetModelData(null, CancellationToken.None);
+                models.AddRange(sourceModels);
+            }
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -527,9 +542,12 @@ public partial class LoraHelperViewModel : ViewModelBase
         if (_window is null) return;
         var settings = await _settingsService.LoadAsync();
         var options = new FolderPickerOpenOptions();
-        if (!string.IsNullOrWhiteSpace(settings.LoraHelperFolderPath))
+        var firstPath = settings.LoraHelperSources
+            .FirstOrDefault(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))?
+            .FolderPath;
+        if (!string.IsNullOrWhiteSpace(firstPath))
         {
-            var start = await _window.StorageProvider.TryGetFolderFromPathAsync(settings.LoraHelperFolderPath);
+            var start = await _window.StorageProvider.TryGetFolderFromPathAsync(firstPath);
             if (start != null)
                 options.SuggestedStartLocation = start;
         }
