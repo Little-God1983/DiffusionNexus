@@ -15,9 +15,11 @@ public static class LoraVariantClassifier
         ["highnoise"] = "High",
         ["high"] = "High",
         ["h"] = "High",
+        ["hn"] = "High",
         ["lownoise"] = "Low",
         ["low"] = "Low",
         ["l"] = "Low",
+        ["ln"] = "Low",
     };
 
     private static readonly string[] VariantKeysByLength = VariantLabels
@@ -62,7 +64,10 @@ public static class LoraVariantClassifier
         {
             variantLabel = label;
         }
-        else if (TryExtractVariantFromCombined(baseName, out var combinedLabel, out var combinedKey))
+
+        StripEmbeddedVariantTokens(tokens, ref variantLabel);
+
+        if (variantLabel == DefaultVariantLabel && TryExtractVariantFromCombined(baseName, out var combinedLabel, out var combinedKey))
         {
             variantLabel = combinedLabel;
             if (!string.IsNullOrWhiteSpace(combinedKey))
@@ -71,6 +76,8 @@ public static class LoraVariantClassifier
             }
         }
 
+        RemoveVersionTokens(tokens);
+
         var normalizedKey = NormalizeKey(tokens);
         if (string.IsNullOrWhiteSpace(normalizedKey))
         {
@@ -78,6 +85,121 @@ public static class LoraVariantClassifier
         }
 
         return new LoraVariantClassification(normalizedKey, variantLabel);
+    }
+
+    private static void StripEmbeddedVariantTokens(List<string> tokens, ref string variantLabel)
+    {
+        for (int i = tokens.Count - 1; i >= 0; i--)
+        {
+            var token = tokens[i];
+            if (TryStripVariantSuffix(token, out var stripped, out var suffixLabel))
+            {
+                if (string.IsNullOrWhiteSpace(stripped))
+                {
+                    tokens.RemoveAt(i);
+                }
+                else
+                {
+                    tokens[i] = stripped;
+                }
+
+                if (variantLabel == DefaultVariantLabel && suffixLabel != DefaultVariantLabel)
+                {
+                    variantLabel = suffixLabel;
+                }
+            }
+        }
+    }
+
+    private static bool TryStripVariantSuffix(string token, out string strippedToken, out string variantLabel)
+    {
+        strippedToken = token;
+        variantLabel = DefaultVariantLabel;
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        foreach (var variantKey in VariantKeysByLength)
+        {
+            if (token.Length <= variantKey.Length)
+            {
+                continue;
+            }
+
+            if (!token.EndsWith(variantKey, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!TryGetVariantLabel(variantKey, out var label))
+            {
+                continue;
+            }
+
+            var suffix = token.Substring(token.Length - variantKey.Length, variantKey.Length);
+            if (!suffix.Any(char.IsUpper))
+            {
+                continue;
+            }
+
+            strippedToken = token[..^variantKey.Length];
+            variantLabel = label;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void RemoveVersionTokens(List<string> tokens)
+    {
+        for (int i = tokens.Count - 1; i >= 0; i--)
+        {
+            if (IsVersionToken(tokens, i))
+            {
+                tokens.RemoveAt(i);
+            }
+        }
+    }
+
+    private static bool IsVersionToken(List<string> tokens, int index)
+    {
+        var token = tokens[index];
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return true;
+        }
+
+        token = token.Trim();
+        var lower = token.ToLowerInvariant();
+
+        if (lower.All(char.IsDigit))
+        {
+            return index >= tokens.Count - 2;
+        }
+
+        if (lower.StartsWith('v') && lower.Length > 1 && lower[1..].All(char.IsDigit))
+        {
+            return true;
+        }
+
+        if (lower.StartsWith('e') && lower.Length > 1 && lower[1..].All(char.IsDigit))
+        {
+            return true;
+        }
+
+        if (lower.Contains("epoc") || lower.Contains("epoch") || lower.Contains("iter") || lower.Contains("step"))
+        {
+            return true;
+        }
+
+        if (lower.EndsWith('b') && lower[..^1].All(char.IsDigit))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryExtractVariant(List<string> tokens, out string variantLabel)
