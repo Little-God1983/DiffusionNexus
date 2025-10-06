@@ -30,7 +30,14 @@ public class LoraHelperFilterTests
             ModelVersionName = versionName ?? fileName,
             AssociatedFilesInfo = new List<FileInfo>()
         };
-        return new LoraCardViewModel { Model = model };
+
+        var card = new LoraCardViewModel();
+        card.InitializeVariants(new[]
+        {
+            new ModelVariantViewModel(model, LoraVariantClassifier.DefaultVariantLabel)
+        });
+
+        return card;
     }
 
     private static List<LoraCardViewModel> InvokeFilter(LoraHelperViewModel vm, string term)
@@ -49,7 +56,7 @@ public class LoraHelperFilterTests
         list.AddRange(cards);
 
         var indexNames = cards
-            .Select(c => $"{c.Model.SafeTensorFileName} {c.Model.ModelVersionName}")
+            .Select(c => c.GetSearchIndexText())
             .ToList();
 
         var indexNamesField = typeof(LoraHelperViewModel)
@@ -75,7 +82,7 @@ public class LoraHelperFilterTests
 
         BuildIndex(vm, cards);
         var result = InvokeFilter(vm, "night");
-        result.Select(c => c.Model.SafeTensorFileName).Should()
+        result.Select(c => c.Model!.SafeTensorFileName).Should()
             .BeEquivalentTo(new[] { "Fright Night", "0403 Halloween Nightmare_v1_pony", "t2v_model" });
     }
 

@@ -26,7 +26,14 @@ public class LoraHelperSortTests
             SafeTensorFileName = Path.GetFileNameWithoutExtension(filePath),
             AssociatedFilesInfo = new List<FileInfo> { new FileInfo(filePath) }
         };
-        return new LoraCardViewModel { Model = model };
+
+        var card = new LoraCardViewModel();
+        card.InitializeVariants(new[]
+        {
+            new ModelVariantViewModel(model, LoraVariantClassifier.DefaultVariantLabel)
+        });
+
+        return card;
     }
 
     [Fact]
