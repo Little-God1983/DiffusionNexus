@@ -30,6 +30,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private CancellationTokenSource _suggestCts = new();
     private CancellationTokenSource _filterCts = new();
     private List<LoraCardViewModel> _filteredCards = new();
+    private bool _isLoadingPage;
     private readonly LoraMetadataDownloadService _metadataDownloader;
     private const double ForgePromptStrength = 0.75;
     [ObservableProperty]
@@ -69,6 +70,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
+    public bool HasMoreCards => Cards.Count < _filteredCards.Count;
     private readonly ISettingsService _settingsService;
     private Window? _window;
     public LoraHelperViewModel() : this(new SettingsService(), null)
@@ -432,18 +434,31 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public async Task LoadNextPageAsync()
     {
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        if (_isLoadingPage)
         {
-            if (Cards.Count >= _filteredCards.Count)
-            {
-                return;
-            }
+            return;
+        }
 
-            for (var i = Cards.Count; i < _filteredCards.Count; i++)
+        if (Cards.Count >= _filteredCards.Count)
+        {
+            return;
+        }
+
+        _isLoadingPage = true;
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Cards.Add(_filteredCards[i]);
-            }
-        });
+                for (var i = Cards.Count; i < _filteredCards.Count; i++)
+                {
+                    Cards.Add(_filteredCards[i]);
+                }
+            });
+        }
+        finally
+        {
+            _isLoadingPage = false;
+        }
     }
 
     private void ResetFilters()
