@@ -39,6 +39,14 @@ namespace DiffusionNexus.UI.Classes
 
         public async Task SaveAsync(SettingsModel settings)
         {
+            for (var i = settings.LoraHelperSources.Count - 1; i >= 0; i--)
+            {
+                if (string.IsNullOrWhiteSpace(settings.LoraHelperSources[i].FolderPath))
+                {
+                    settings.LoraHelperSources.RemoveAt(i);
+                }
+            }
+
             // Encrypt API key before saving
             settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(settings.CivitaiApiKey)
                 ? null

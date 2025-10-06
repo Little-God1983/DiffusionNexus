@@ -13,6 +13,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private string? _loraSortTargetPath;
         [ObservableProperty] private string? _loraHelperFolderPath;
         [ObservableProperty] private ObservableCollection<LoraHelperSourceModel> _loraHelperSources = new();
+        [ObservableProperty] private bool _mergeLoraHelperSources;
         [ObservableProperty] private bool _deleteEmptySourceFolders;
         [ObservableProperty] private bool _generateVideoThumbnails = true;
         [ObservableProperty] private bool _showNsfw;
