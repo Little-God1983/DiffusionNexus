@@ -101,6 +101,43 @@
                   </StackPanel>
                   <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
                     <StackPanel>
+                      <ListBox ItemsSource="{Binding Variants}"
+                               SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                               Margin="0,0,0,4"
+                               Background="Transparent"
+                               BorderBrush="Transparent"
+                               SelectionMode="Single"
+                               IsVisible="{Binding HasMultipleVariants}"
+                               ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.Styles>
+                          <Style Selector="ListBoxItem">
+                            <Setter Property="Margin" Value="0,0,4,0"/>
+                            <Setter Property="Padding" Value="8,4"/>
+                            <Setter Property="Background" Value="#33000000"/>
+                            <Setter Property="BorderBrush" Value="#55FFFFFF"/>
+                            <Setter Property="BorderThickness" Value="1"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                          </Style>
+                          <Style Selector="ListBoxItem:pointerover">
+                            <Setter Property="Background" Value="#55000000"/>
+                          </Style>
+                          <Style Selector="ListBoxItem:selected">
+                            <Setter Property="Background" Value="#AAFFFFFF"/>
+                            <Setter Property="Foreground" Value="Black"/>
+                          </Style>
+                        </ListBox.Styles>
+                        <ListBox.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                          </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ModelVariantViewModel">
+                            <TextBlock Text="{Binding DisplayLabel}" FontSize="12" FontWeight="SemiBold"/>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
                       <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
                       <TextBlock Text="{Binding Model.SafeTensorFileName}" FontSize="12" Foreground="#FFCCCCCC" TextWrapping="Wrap"/>
                       <Grid ColumnDefinitions="Auto,*">

@@ -13,7 +13,8 @@ public partial class LoraHelperView : UserControl
     public LoraHelperView()
     {
         InitializeComponent();
-        this.AttachedToVisualTree += OnAttached;
+        AttachedToVisualTree += OnAttached;
+        DetachedFromVisualTree += OnDetached;
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
@@ -41,6 +42,15 @@ public partial class LoraHelperView : UserControl
             _scroll.ScrollChanged += OnScrollChanged;
     }
 
+    private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_scroll != null)
+        {
+            _scroll.ScrollChanged -= OnScrollChanged;
+            _scroll = null;
+        }
+    }
+
     private async void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
         if (_scroll == null)
@@ -48,7 +58,8 @@ public partial class LoraHelperView : UserControl
 
         if (DataContext is LoraHelperViewModel vm)
         {
-            if (_scroll.Offset.Y + _scroll.Viewport.Height > _scroll.Extent.Height - 300)
+            if (!vm.IsLoading && vm.HasMoreCardsToLoad &&
+                _scroll.Offset.Y + _scroll.Viewport.Height > _scroll.Extent.Height - 300)
             {
                 await vm.LoadNextPageAsync();
             }
