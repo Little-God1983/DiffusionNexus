@@ -27,6 +27,9 @@ public partial class LoraCardViewModel : ViewModelBase
     [ObservableProperty]
     private string? folderPath;
 
+    [ObservableProperty]
+    private string? treePath;
+
     public IEnumerable<string> DiffusionTypes => Model is null
         ? Array.Empty<string>()
         : new[] { Model.ModelType.ToString() };

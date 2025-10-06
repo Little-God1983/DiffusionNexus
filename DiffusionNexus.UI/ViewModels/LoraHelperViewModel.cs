@@ -35,6 +35,8 @@ public partial class LoraHelperViewModel : ViewModelBase
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
     private const double ForgePromptStrength = 0.75;
+    private static readonly char[] PathSeparators =
+        { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, '\\' };
 
     [ObservableProperty]
     private bool showSuggestions;
@@ -113,35 +115,57 @@ public partial class LoraHelperViewModel : ViewModelBase
                 return;
             }
 
+            var mergeSources = settings.MergeLoraHelperSources;
+            var cardEntries = new List<CardEntry>();
             var discovery = new ModelDiscoveryService();
-
-            var rootNodes = await Task.Run(() =>
-                enabledSources.Select(path =>
-                {
-                    var node = discovery.BuildFolderTree(path);
-                    node.IsExpanded = true;
-                    return node;
-                }).ToList());
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                FolderItems.Clear();
-                foreach (var node in rootNodes)
-                {
-                    FolderItems.Add(ConvertFolder(node));
-                }
-            });
-
+            var folderNodes = new List<FolderNode>();
             var localProvider = new LocalFileMetadataProvider();
-            var models = new List<ModelClass>();
+
             foreach (var source in enabledSources)
             {
+                if (!mergeSources)
+                {
+                    var node = discovery.BuildFolderTree(source);
+                    node.IsExpanded = true;
+                    folderNodes.Add(node);
+                }
+
                 var reader = new JsonInfoFileReaderService(
                     source,
                     (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
                 );
                 var sourceModels = await reader.GetModelData(null, CancellationToken.None);
-                models.AddRange(sourceModels);
+
+                foreach (var model in sourceModels)
+                {
+                    var entry = CreateCardEntry(model, source, mergeSources);
+                    if (entry != null)
+                    {
+                        cardEntries.Add(entry);
+                    }
+                }
             }
+
+            var mergedRoot = mergeSources ? BuildMergedFolderTree(cardEntries) : null;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                FolderItems.Clear();
+                if (mergeSources)
+                {
+                    if (mergedRoot != null)
+                    {
+                        FolderItems.Add(ConvertFolder(mergedRoot));
+                    }
+                }
+                else
+                {
+                    foreach (var node in folderNodes)
+                    {
+                        FolderItems.Add(ConvertFolder(node));
+                    }
+                }
+            });
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -149,10 +173,15 @@ public partial class LoraHelperViewModel : ViewModelBase
                 Cards.Clear();
             });
 
-            foreach (var model in models)
+            foreach (var entry in cardEntries)
             {
-                var folder = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
-                var card = new LoraCardViewModel { Model = model, FolderPath = folder, Parent = this };
+                var card = new LoraCardViewModel
+                {
+                    Model = entry.Model,
+                    FolderPath = entry.FolderPath,
+                    TreePath = entry.TreePath,
+                    Parent = this
+                };
                 _allCards.Add(card);
             }
 
@@ -167,6 +196,160 @@ public partial class LoraHelperViewModel : ViewModelBase
             await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
         }
     }
+
+    private static CardEntry? CreateCardEntry(ModelClass model, string sourcePath, bool mergeSources)
+    {
+        var folder = model.AssociatedFilesInfo?.FirstOrDefault()?.DirectoryName;
+
+        if (!mergeSources)
+        {
+            var entryPath = !string.IsNullOrWhiteSpace(folder) ? folder! : sourcePath;
+            return new CardEntry(model, sourcePath, folder, entryPath, null);
+        }
+
+        var segments = BuildMergedSegments(sourcePath, folder, model.DiffusionBaseModel);
+        if (segments.Count == 0)
+        {
+            return null;
+        }
+
+        var mergedTreePath = string.Join(Path.DirectorySeparatorChar, segments);
+        return new CardEntry(model, sourcePath, folder, mergedTreePath, segments);
+    }
+
+    private static List<string> BuildMergedSegments(string sourcePath, string? folderPath, string? baseModel)
+    {
+        var segments = new List<string> { "Loras" };
+        var normalizedBaseModel = NormalizeBaseModel(baseModel);
+
+        if (!string.IsNullOrWhiteSpace(normalizedBaseModel))
+        {
+            segments.Add(normalizedBaseModel);
+        }
+        else
+        {
+            segments.Add(GetSourceName(sourcePath));
+        }
+
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            var relativeSegments = GetRelativeSegments(sourcePath, folderPath!);
+            if (!string.IsNullOrWhiteSpace(normalizedBaseModel) && relativeSegments.Count > 0 &&
+                string.Equals(relativeSegments[0], normalizedBaseModel, StringComparison.OrdinalIgnoreCase))
+            {
+                relativeSegments.RemoveAt(0);
+            }
+
+            segments.AddRange(relativeSegments);
+        }
+
+        return segments;
+    }
+
+    private static string NormalizeBaseModel(string? baseModel)
+    {
+        if (string.IsNullOrWhiteSpace(baseModel))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = baseModel.Trim();
+        return string.Equals(trimmed, "UNKNOWN", StringComparison.OrdinalIgnoreCase) ? string.Empty : trimmed;
+    }
+
+    private static string GetSourceName(string sourcePath)
+    {
+        var segments = SplitSegments(sourcePath);
+        return segments.Count == 0 ? sourcePath : segments[^1];
+    }
+
+    private static List<string> GetRelativeSegments(string sourcePath, string folderPath)
+    {
+        var sourceSegments = SplitSegments(sourcePath);
+        var folderSegments = SplitSegments(folderPath);
+
+        var index = 0;
+        while (index < sourceSegments.Count && index < folderSegments.Count &&
+               string.Equals(sourceSegments[index], folderSegments[index], StringComparison.OrdinalIgnoreCase))
+        {
+            index++;
+        }
+
+        return folderSegments.Skip(index).ToList();
+    }
+
+    private static List<string> SplitSegments(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return new List<string>();
+        }
+
+        return path
+            .Split(PathSeparators, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+    }
+
+    private static FolderNode? BuildMergedFolderTree(IEnumerable<CardEntry> entries)
+    {
+        var entryList = entries.Where(e => e.TreeSegments != null).ToList();
+        if (entryList.Count == 0)
+        {
+            return null;
+        }
+
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        var nodes = new Dictionary<string, FolderNode>(comparer);
+
+        FolderNode EnsureNode(string path, string name, string? parentPath)
+        {
+            if (!nodes.TryGetValue(path, out var node))
+            {
+                node = new FolderNode
+                {
+                    Name = name,
+                    FullPath = path,
+                    IsExpanded = parentPath is null || comparer.Equals(parentPath, "Loras")
+                };
+                nodes[path] = node;
+
+                if (parentPath != null && nodes.TryGetValue(parentPath, out var parent))
+                {
+                    parent.Children.Add(node);
+                }
+            }
+
+            return node;
+        }
+
+        foreach (var entry in entryList)
+        {
+            var segments = entry.TreeSegments!;
+            if (segments.Count == 0)
+            {
+                continue;
+            }
+
+            var cumulative = new List<string>();
+            for (var i = 0; i < segments.Count; i++)
+            {
+                cumulative.Add(segments[i]);
+                var path = string.Join(Path.DirectorySeparatorChar, cumulative);
+                var parentPath = i == 0 ? null : string.Join(Path.DirectorySeparatorChar, cumulative.Take(i));
+                var node = EnsureNode(path, segments[i], parentPath);
+                node.ModelCount++;
+            }
+        }
+
+        return nodes.TryGetValue("Loras", out var root) ? root : null;
+    }
+
+    private sealed record CardEntry(
+        ModelClass Model,
+        string SourcePath,
+        string? FolderPath,
+        string TreePath,
+        IReadOnlyList<string>? TreeSegments);
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
     {
@@ -250,9 +433,10 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         IEnumerable<LoraCardViewModel> query = _allCards;
 
-        if (folder != null)
+        if (folder?.Path != null)
             query = query.Where(c =>
-                c.FolderPath != null && c.FolderPath.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
+                !string.IsNullOrWhiteSpace(c.TreePath) &&
+                c.TreePath!.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
 
         if (!string.IsNullOrWhiteSpace(search))
         {
