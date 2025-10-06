@@ -10,6 +10,14 @@ public static class LoraVariantClassifier
 {
     public const string DefaultVariantLabel = "Default";
 
+    private static readonly string[] KnownExtensions =
+    {
+        ".safetensors",
+        ".pt",
+        ".pth",
+        ".ckpt",
+    };
+
     private static readonly Dictionary<string, string> VariantLabels = new(StringComparer.OrdinalIgnoreCase)
     {
         ["highnoise"] = "High",
@@ -39,12 +47,56 @@ public static class LoraVariantClassifier
             return new LoraVariantClassification(string.Empty, DefaultVariantLabel);
         }
 
-        return Classify(model.SafeTensorFileName);
+        string normalizedKey = string.Empty;
+        string variantLabel = DefaultVariantLabel;
+
+        void Consider(string? candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return;
+            }
+
+            var result = Classify(candidate);
+
+            if (string.IsNullOrWhiteSpace(normalizedKey) && !string.IsNullOrWhiteSpace(result.NormalizedKey))
+            {
+                normalizedKey = result.NormalizedKey;
+            }
+
+            if (variantLabel == DefaultVariantLabel && result.VariantLabel != DefaultVariantLabel)
+            {
+                variantLabel = result.VariantLabel;
+            }
+        }
+
+        Consider(model.SafeTensorFileName);
+        Consider(model.ModelVersionName);
+
+        if (string.IsNullOrWhiteSpace(normalizedKey))
+        {
+            normalizedKey = NormalizeKey(model.SafeTensorFileName ?? model.ModelVersionName ?? string.Empty);
+        }
+
+        return new LoraVariantClassification(normalizedKey, variantLabel);
     }
 
     public static LoraVariantClassification Classify(string? safeTensorName)
     {
-        var baseName = Path.GetFileNameWithoutExtension(safeTensorName ?? string.Empty) ?? string.Empty;
+        var fileName = Path.GetFileName(safeTensorName ?? string.Empty) ?? string.Empty;
+        var baseName = fileName;
+
+        foreach (var extension in KnownExtensions)
+        {
+            if (!baseName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            baseName = baseName[..^extension.Length];
+            break;
+        }
+
         if (string.IsNullOrWhiteSpace(baseName))
         {
             return new LoraVariantClassification(string.Empty, DefaultVariantLabel);

@@ -37,7 +37,9 @@ public class LoraVariantClassifierTests
     [InlineData("WAN-2.2-T2V-cial-HIGH 14B.safetensors", "wan22t2vcial", "High")]
     [InlineData("WAN-2.2-T2V-cial-LOW 14B.safetensors", "wan22t2vcial", "Low")]
     [InlineData("CassHamadaWan2.2HighNoise.safetensors", "casshamadawan2", "High")]
+    [InlineData("CassHamadaWan2.2HighNoise", "casshamadawan2", "High")]
     [InlineData("CassHamadaWan2.2LowNoise.safetensors", "casshamadawan2", "Low")]
+    [InlineData("CassHamadaWan2.2LowNoise", "casshamadawan2", "Low")]
     public void Classify_ReturnsExpectedNormalizationAndLabel(string fileName, string expectedKey, string expectedLabel)
     {
         var model = new ModelClass
@@ -78,5 +80,46 @@ public class LoraVariantClassifierTests
             .ToList();
 
         keys.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Classify_FallsBackToModelVersionNameWhenSafeTensorMissing()
+    {
+        var high = new ModelClass
+        {
+            SafeTensorFileName = string.Empty,
+            ModelVersionName = "CassHamadaWan2.2HighNoise",
+            AssociatedFilesInfo = new List<FileInfo>()
+        };
+
+        var low = new ModelClass
+        {
+            SafeTensorFileName = null!,
+            ModelVersionName = "CassHamadaWan2.2LowNoise",
+            AssociatedFilesInfo = new List<FileInfo>()
+        };
+
+        var highResult = LoraVariantClassifier.Classify(high);
+        var lowResult = LoraVariantClassifier.Classify(low);
+
+        highResult.VariantLabel.Should().Be("High");
+        lowResult.VariantLabel.Should().Be("Low");
+        highResult.NormalizedKey.Should().Be(lowResult.NormalizedKey);
+    }
+
+    [Fact]
+    public void Classify_UsesModelVersionVariantWhenFileNameLacksVariant()
+    {
+        var model = new ModelClass
+        {
+            SafeTensorFileName = "wan_cshot_v1.safetensors",
+            ModelVersionName = "wan2.2_highnoise_cshot_v1.0",
+            AssociatedFilesInfo = new List<FileInfo>()
+        };
+
+        var result = LoraVariantClassifier.Classify(model);
+
+        result.NormalizedKey.Should().Be("wancshot");
+        result.VariantLabel.Should().Be("High");
     }
 }
