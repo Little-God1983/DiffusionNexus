@@ -12,13 +12,18 @@ public static class LoraVariantClassifier
 
     private static readonly Dictionary<string, string> VariantLabels = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["highnoise"] = "High",
         ["high"] = "High",
         ["h"] = "High",
-        ["highnoise"] = "High Noise",
-        ["lownoise"] = "Low Noise",
+        ["lownoise"] = "Low",
         ["low"] = "Low",
         ["l"] = "Low",
     };
+
+    private static readonly string[] VariantKeysByLength = VariantLabels
+        .Keys
+        .OrderByDescending(k => k.Length)
+        .ToArray();
 
     private static readonly char[] TokenSeparators =
     {
@@ -57,6 +62,14 @@ public static class LoraVariantClassifier
         {
             variantLabel = label;
         }
+        else if (TryExtractVariantFromCombined(baseName, out var combinedLabel, out var combinedKey))
+        {
+            variantLabel = combinedLabel;
+            if (!string.IsNullOrWhiteSpace(combinedKey))
+            {
+                return new LoraVariantClassification(combinedKey, variantLabel);
+            }
+        }
 
         var normalizedKey = NormalizeKey(tokens);
         if (string.IsNullOrWhiteSpace(normalizedKey))
@@ -69,15 +82,74 @@ public static class LoraVariantClassifier
 
     private static bool TryExtractVariant(List<string> tokens, out string variantLabel)
     {
-        for (int length = Math.Min(2, tokens.Count); length >= 1; length--)
+        for (int length = Math.Min(3, tokens.Count); length >= 1; length--)
         {
-            var candidateTokens = tokens.Skip(tokens.Count - length).Take(length);
-            var normalized = NormalizeKey(candidateTokens);
-            if (VariantLabels.TryGetValue(normalized, out variantLabel!))
+            for (int start = tokens.Count - length; start >= 0; start--)
             {
-                tokens.RemoveRange(tokens.Count - length, length);
-                return true;
+                var candidateTokens = tokens.Skip(start).Take(length);
+                var normalized = NormalizeKey(candidateTokens);
+                if (TryGetVariantLabel(normalized, out variantLabel!))
+                {
+                    tokens.RemoveRange(start, length);
+                    return true;
+                }
             }
+        }
+
+        variantLabel = DefaultVariantLabel;
+        return false;
+    }
+
+    private static bool TryExtractVariantFromCombined(
+        string baseName,
+        out string variantLabel,
+        out string normalizedKey)
+    {
+        var normalized = NormalizeKey(baseName);
+        foreach (var variantKey in VariantKeysByLength)
+        {
+            if (variantKey.IndexOf("noise", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                continue;
+            }
+
+            var index = normalized.LastIndexOf(variantKey, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            if (!TryGetVariantLabel(variantKey, out variantLabel!))
+            {
+                continue;
+            }
+
+            var trimmed = normalized.Remove(index, variantKey.Length);
+            normalizedKey = string.IsNullOrWhiteSpace(trimmed) ? normalized : trimmed;
+            return true;
+        }
+
+        variantLabel = DefaultVariantLabel;
+        normalizedKey = normalized;
+        return false;
+    }
+
+    private static bool TryGetVariantLabel(string candidate, out string variantLabel)
+    {
+        if (VariantLabels.TryGetValue(candidate, out variantLabel!))
+        {
+            return true;
+        }
+
+        var trimmed = candidate;
+        while (trimmed.Length > 0 && char.IsDigit(trimmed[^1]))
+        {
+            trimmed = trimmed[..^1];
+        }
+
+        if (trimmed.Length != candidate.Length && trimmed.Length > 0)
+        {
+            return VariantLabels.TryGetValue(trimmed, out variantLabel!);
         }
 
         variantLabel = DefaultVariantLabel;
