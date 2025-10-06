@@ -43,6 +43,13 @@ namespace DiffusionNexus.UI.Classes
             settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(settings.CivitaiApiKey)
                 ? null
                 : SecureStorageHelper.EncryptString(settings.CivitaiApiKey);
+            for (var i = settings.LoraHelperSources.Count - 1; i >= 0; i--)
+            {
+                if (string.IsNullOrWhiteSpace(settings.LoraHelperSources[i].FolderPath))
+                {
+                    settings.LoraHelperSources.RemoveAt(i);
+                }
+            }
             settings.LoraHelperFolderPath = null;
             _store.Save("settings", settings);
             await Task.CompletedTask;

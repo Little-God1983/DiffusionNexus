@@ -102,6 +102,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             var settings = await _settingsService.LoadAsync();
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowNsfw = settings.ShowNsfw;
+            var mergeSources = settings.MergeLoraHelperSources;
             var enabledSources = settings.LoraHelperSources
                 .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
                 .Select(source => source.FolderPath!)
@@ -113,23 +114,18 @@ public partial class LoraHelperViewModel : ViewModelBase
                 return;
             }
 
+            List<FolderNode>? rootNodes = null;
             var discovery = new ModelDiscoveryService();
-
-            var rootNodes = await Task.Run(() =>
-                enabledSources.Select(path =>
-                {
-                    var node = discovery.BuildFolderTree(path);
-                    node.IsExpanded = true;
-                    return node;
-                }).ToList());
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            if (!mergeSources)
             {
-                FolderItems.Clear();
-                foreach (var node in rootNodes)
-                {
-                    FolderItems.Add(ConvertFolder(node));
-                }
-            });
+                rootNodes = await Task.Run(() =>
+                    enabledSources.Select(path =>
+                    {
+                        var node = discovery.BuildFolderTree(path);
+                        node.IsExpanded = true;
+                        return node;
+                    }).ToList());
+            }
 
             var localProvider = new LocalFileMetadataProvider();
             var models = new List<ModelClass>();
@@ -142,6 +138,19 @@ public partial class LoraHelperViewModel : ViewModelBase
                 var sourceModels = await reader.GetModelData(null, CancellationToken.None);
                 models.AddRange(sourceModels);
             }
+
+            var folderViewModels = mergeSources
+                ? BuildMergedFolderItems(models, enabledSources)
+                : rootNodes?.Select(ConvertFolder).ToList() ?? new List<FolderItemViewModel>();
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                FolderItems.Clear();
+                foreach (var node in folderViewModels)
+                {
+                    FolderItems.Add(node);
+                }
+            });
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -177,9 +186,177 @@ public partial class LoraHelperViewModel : ViewModelBase
             Path = node.FullPath,
             IsExpanded = node.IsExpanded
         };
+        if (!string.IsNullOrWhiteSpace(node.FullPath))
+            vm.Paths.Add(node.FullPath);
         foreach (var child in node.Children)
-            vm.Children.Add(ConvertFolder(child));
+        {
+            var childVm = ConvertFolder(child);
+            vm.Children.Add(childVm);
+            foreach (var path in childVm.Paths)
+                vm.Paths.Add(path);
+        }
         return vm;
+    }
+
+    private List<FolderItemViewModel> BuildMergedFolderItems(List<ModelClass> models, IReadOnlyList<string> enabledSources)
+    {
+        var root = new MergedTreeNode("Loras");
+        var orderedSources = enabledSources
+            .OrderByDescending(s => s.Length)
+            .ToList();
+        foreach (var model in models)
+        {
+            var folderPath = model.AssociatedFilesInfo.FirstOrDefault()?.DirectoryName;
+            if (string.IsNullOrWhiteSpace(folderPath))
+                continue;
+
+            var sourceRoot = orderedSources.FirstOrDefault(src =>
+                folderPath.StartsWith(src, StringComparison.OrdinalIgnoreCase));
+            if (sourceRoot is null)
+                continue;
+
+            var baseModel = NormalizeBaseModel(model.DiffusionBaseModel);
+            var baseNodeName = baseModel ?? $"{GetSourceDisplayName(sourceRoot)} (Unmerged)";
+
+            var relative = Path.GetRelativePath(sourceRoot, folderPath);
+            if (relative == ".")
+                relative = string.Empty;
+            var segments = SplitPath(relative);
+            var startIndex = 0;
+            if (baseModel != null && segments.Length > 0 &&
+                string.Equals(segments[0], baseModel, StringComparison.OrdinalIgnoreCase))
+            {
+                startIndex = 1;
+            }
+
+            AddModelToMergedTree(root, baseNodeName, sourceRoot, segments, startIndex, folderPath);
+        }
+
+        if (root.Children.Count == 0)
+            return new List<FolderItemViewModel>();
+
+        return new List<FolderItemViewModel> { ConvertMergedNode(root, true) };
+    }
+
+    private static string GetSourceDisplayName(string sourceRoot)
+    {
+        var trimmed = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(name) ? trimmed : name;
+    }
+
+    private static string? NormalizeBaseModel(string? baseModel)
+    {
+        if (string.IsNullOrWhiteSpace(baseModel))
+            return null;
+
+        return string.Equals(baseModel, "UNKNOWN", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : baseModel.Trim();
+    }
+
+    private static string[] SplitPath(string relative)
+    {
+        return string.IsNullOrWhiteSpace(relative)
+            ? Array.Empty<string>()
+            : relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static void AddModelToMergedTree(
+        MergedTreeNode root,
+        string baseNodeName,
+        string sourceRoot,
+        IReadOnlyList<string> segments,
+        int startIndex,
+        string folderPath)
+    {
+        root.ModelCount++;
+        root.Paths.Add(folderPath);
+
+        var baseNode = root.GetOrAddChild(baseNodeName);
+        baseNode.ModelCount++;
+        baseNode.Paths.Add(folderPath);
+
+        if (segments.Count > 0)
+        {
+            var basePathSegments = new string[Math.Min(1, segments.Count) + 1];
+            basePathSegments[0] = sourceRoot;
+            if (segments.Count > 0)
+                basePathSegments[1] = segments[0];
+            var basePath = Path.Combine(basePathSegments.Where(s => !string.IsNullOrEmpty(s)).ToArray());
+            if (!string.IsNullOrWhiteSpace(basePath))
+                baseNode.Paths.Add(basePath);
+        }
+
+        var current = baseNode;
+        for (var i = startIndex; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            var child = current.GetOrAddChild(segment);
+            child.ModelCount++;
+            var combine = new string[i + 2];
+            combine[0] = sourceRoot;
+            for (var j = 0; j <= i; j++)
+                combine[j + 1] = segments[j];
+            var actualPath = Path.Combine(combine);
+            if (!string.IsNullOrWhiteSpace(actualPath))
+                child.Paths.Add(actualPath);
+            current = child;
+        }
+    }
+
+    private FolderItemViewModel ConvertMergedNode(MergedTreeNode node, bool isRoot = false)
+    {
+        var vm = new FolderItemViewModel
+        {
+            Name = node.Name,
+            ModelCount = node.ModelCount,
+            IsExpanded = isRoot || node.ModelCount > 0
+        };
+
+        if (!isRoot && node.Paths.Count == 1)
+            vm.Path = node.Paths.First();
+
+        foreach (var path in node.Paths)
+            vm.Paths.Add(path);
+
+        var orderedChildren = node.Children.Values
+            .OrderBy(child => child.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var child in orderedChildren)
+        {
+            var childVm = ConvertMergedNode(child);
+            vm.Children.Add(childVm);
+        }
+
+        return vm;
+    }
+
+    private sealed class MergedTreeNode
+    {
+        public MergedTreeNode(string name)
+        {
+            Name = name;
+        }
+
+        public string Name { get; }
+
+        public Dictionary<string, MergedTreeNode> Children { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public HashSet<string> Paths { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public int ModelCount { get; set; }
+
+        public MergedTreeNode GetOrAddChild(string name)
+        {
+            if (!Children.TryGetValue(name, out var child))
+            {
+                child = new MergedTreeNode(name);
+                Children[name] = child;
+            }
+
+            return child;
+        }
     }
 
     // 3) This partial method is generated by [ObservableProperty];
@@ -251,8 +428,20 @@ public partial class LoraHelperViewModel : ViewModelBase
         IEnumerable<LoraCardViewModel> query = _allCards;
 
         if (folder != null)
-            query = query.Where(c =>
-                c.FolderPath != null && c.FolderPath.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
+        {
+            var candidatePaths = folder.Paths.Count > 0
+                ? folder.Paths.ToArray()
+                : folder.Path != null
+                    ? new[] { folder.Path }
+                    : Array.Empty<string>();
+
+            if (candidatePaths.Length > 0)
+            {
+                query = query.Where(c =>
+                    c.FolderPath != null && candidatePaths.Any(p =>
+                        c.FolderPath!.StartsWith(p, StringComparison.OrdinalIgnoreCase)));
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {
