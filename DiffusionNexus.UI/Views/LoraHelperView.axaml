@@ -15,7 +15,7 @@
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
-    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
+    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
       <Button Grid.Column="0" Content="◀️ Reset Filters" Width="120" Height="36" Command="{Binding ResetFiltersCommand}"/>
       <AutoCompleteBox x:Name="SearchBox"
                       Grid.Column="1"
@@ -40,9 +40,42 @@
         </StackPanel>
       </Border>
       <CheckBox Grid.Column="5" Content="Show NSFW" IsChecked="{Binding ShowNsfw}" VerticalAlignment="Center" Margin="10,0"/>
-      <Button Grid.Column="6" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
+      <Button Grid.Column="6"
+              Width="40"
+              Height="36"
+              Margin="5,0,0,0"
+              ToolTip.Tip="Filter by base model"
+              HorizontalContentAlignment="Center"
+              VerticalContentAlignment="Center">
+        <Button.Content>
+          <PathIcon Width="20" Height="20" Data="M4 5H20L13 13V19L11 17V13L4 5Z"/>
+        </Button.Content>
+        <Button.Flyout>
+          <Flyout Placement="BottomEdgeAlignedRight">
+            <Border Background="#2B2B2B" BorderBrush="#444" BorderThickness="1" CornerRadius="6" Padding="10" MinWidth="200">
+              <StackPanel>
+                <TextBlock Text="Base Models" FontWeight="Bold" Margin="0,0,0,6"/>
+                <ScrollViewer MaxHeight="240" HorizontalScrollBarVisibility="Disabled">
+                  <ItemsControl ItemsSource="{Binding DiffusionBaseModelFilters}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DiffusionBaseModelFilterOptionViewModel">
+                        <ToggleButton Content="{Binding DisplayName}"
+                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                      Margin="0,0,0,6"
+                                      HorizontalAlignment="Stretch"
+                                      HorizontalContentAlignment="Stretch"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </StackPanel>
+            </Border>
+          </Flyout>
+        </Button.Flyout>
+      </Button>
+      <Button Grid.Column="7" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
               Command="{Binding DownloadMissingMetadataCommand}"/>
-      <Button Grid.Column="7" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
+      <Button Grid.Column="8" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
     </Grid>
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"

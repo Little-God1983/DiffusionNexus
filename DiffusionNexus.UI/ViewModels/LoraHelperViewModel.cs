@@ -35,6 +35,9 @@ public partial class LoraHelperViewModel : ViewModelBase
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
     private const double ForgePromptStrength = 0.75;
+    private bool _suppressRefresh;
+    private bool _suspendBaseModelFilterChange;
+    private HashSet<string> _selectedDiffusionBaseModels = new(StringComparer.OrdinalIgnoreCase);
     [ObservableProperty]
     private bool showSuggestions;
 
@@ -70,6 +73,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
+    public ObservableCollection<DiffusionBaseModelFilterOptionViewModel> DiffusionBaseModelFilters { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
     public LoraHelperViewModel() : this(new SettingsService(), null)
@@ -182,8 +186,16 @@ public partial class LoraHelperViewModel : ViewModelBase
                 _allCards.Add(card);
             }
 
-            _filteredCards = _allCards.ToList();
-            _nextIndex = 0;
+            await UpdateDiffusionBaseModelFiltersAsync(cardEntries);
+
+            var initialFiltered = FilterCards(SearchText, SelectedFolder);
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _filteredCards = initialFiltered;
+                _nextIndex = 0;
+            });
+
             await LoadNextPageAsync();
 
             StartIndexing();
@@ -249,6 +261,11 @@ public partial class LoraHelperViewModel : ViewModelBase
     //    it runs whenever SearchText is set.
     partial void OnSearchTextChanged(string? value)
     {
+        if (_suppressRefresh)
+        {
+            return;
+        }
+
         _ = RefreshCardsAsync();
         DebounceSuggestions();
     }
@@ -257,6 +274,11 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         if (value != null)
             SearchText = null;
+        if (_suppressRefresh)
+        {
+            return;
+        }
+
         _ = RefreshCardsAsync();
     }
 
@@ -318,6 +340,16 @@ public partial class LoraHelperViewModel : ViewModelBase
                 !string.IsNullOrWhiteSpace(c.TreePath) &&
                 c.TreePath!.StartsWith(folder.Path!, StringComparison.OrdinalIgnoreCase));
 
+        var selectedBaseModels = _selectedDiffusionBaseModels;
+        if (selectedBaseModels.Count > 0)
+        {
+            query = query.Where(c =>
+            {
+                var baseModelKey = GetBaseModelFilterKey(c.Model?.DiffusionBaseModel);
+                return selectedBaseModels.Contains(baseModelKey);
+            });
+        }
+
         if (!string.IsNullOrWhiteSpace(search))
         {
             if (_searchIndex.IsReady && _indexNames != null)
@@ -371,9 +403,96 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     private void ResetFilters()
     {
-        SelectedFolder = null;
-        SearchText = null;
+        _suppressRefresh = true;
+        try
+        {
+            SelectedFolder = null;
+            SearchText = null;
+            ClearDiffusionBaseModelFilters();
+        }
+        finally
+        {
+            _suppressRefresh = false;
+        }
+
         _ = RefreshCardsAsync();
+    }
+
+    private void ClearDiffusionBaseModelFilters()
+    {
+        _suspendBaseModelFilterChange = true;
+        try
+        {
+            foreach (var option in DiffusionBaseModelFilters)
+            {
+                option.IsSelected = false;
+            }
+        }
+        finally
+        {
+            _suspendBaseModelFilterChange = false;
+        }
+
+        _selectedDiffusionBaseModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void OnDiffusionBaseModelFilterChanged()
+    {
+        if (_suspendBaseModelFilterChange)
+        {
+            return;
+        }
+
+        _selectedDiffusionBaseModels = DiffusionBaseModelFilters
+            .Where(option => option.IsSelected)
+            .Select(option => option.FilterKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _ = RefreshCardsAsync();
+    }
+
+    private async Task UpdateDiffusionBaseModelFiltersAsync(IEnumerable<CardEntry> entries)
+    {
+        var baseModels = entries
+            .Select(entry => GetBaseModelFilterKey(entry.Model.DiffusionBaseModel))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(model => string.Equals(model, LoraHelperTreeBuilder.UnknownBaseModelFolderName, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(model => model, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var previouslySelected = _selectedDiffusionBaseModels;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            _suspendBaseModelFilterChange = true;
+            try
+            {
+                DiffusionBaseModelFilters.Clear();
+                foreach (var model in baseModels)
+                {
+                    var option = new DiffusionBaseModelFilterOptionViewModel(
+                        model,
+                        model,
+                        OnDiffusionBaseModelFilterChanged);
+
+                    if (previouslySelected.Contains(model))
+                    {
+                        option.IsSelected = true;
+                    }
+
+                    DiffusionBaseModelFilters.Add(option);
+                }
+            }
+            finally
+            {
+                _suspendBaseModelFilterChange = false;
+            }
+
+            _selectedDiffusionBaseModels = DiffusionBaseModelFilters
+                .Where(option => option.IsSelected)
+                .Select(option => option.FilterKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        });
     }
 
     internal IEnumerable<LoraCardViewModel> ApplySort(IEnumerable<LoraCardViewModel> items)
@@ -398,6 +517,23 @@ public partial class LoraHelperViewModel : ViewModelBase
             f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
             f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase));
         return file?.CreationTime ?? DateTime.MinValue;
+    }
+
+    private static string GetBaseModelFilterKey(string? baseModel)
+    {
+        if (string.IsNullOrWhiteSpace(baseModel))
+        {
+            return LoraHelperTreeBuilder.UnknownBaseModelFolderName;
+        }
+
+        var trimmed = baseModel.Trim();
+        if (string.Equals(trimmed, "UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, LoraHelperTreeBuilder.UnknownBaseModelFolderName, StringComparison.OrdinalIgnoreCase))
+        {
+            return LoraHelperTreeBuilder.UnknownBaseModelFolderName;
+        }
+
+        return trimmed;
     }
 
     /// <summary>

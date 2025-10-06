@@ -5,6 +5,7 @@ using DiffusionNexus.Service.Search;
 using FluentAssertions;
 using Moq;
 using Xunit;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -22,22 +23,30 @@ public class LoraHelperFilterTests
         return new LoraHelperViewModel(mock.Object);
     }
 
-    private static LoraCardViewModel CreateCard(string fileName, string? versionName = null)
+    private static LoraCardViewModel CreateCard(string fileName, string? versionName = null, string? baseModel = null)
     {
         var model = new ModelClass
         {
             SafeTensorFileName = fileName,
             ModelVersionName = versionName ?? fileName,
-            AssociatedFilesInfo = new List<FileInfo>()
+            AssociatedFilesInfo = new List<FileInfo>(),
+            DiffusionBaseModel = baseModel ?? string.Empty
         };
         return new LoraCardViewModel { Model = model };
     }
 
-    private static List<LoraCardViewModel> InvokeFilter(LoraHelperViewModel vm, string term)
+    private static List<LoraCardViewModel> InvokeFilter(LoraHelperViewModel vm, string? term)
     {
         var filterMethod = typeof(LoraHelperViewModel)
             .GetMethod("FilterCards", BindingFlags.NonPublic | BindingFlags.Instance);
         return (List<LoraCardViewModel>)filterMethod!.Invoke(vm, new object?[] { term, null })!;
+    }
+
+    private static void SetSelectedBaseModels(LoraHelperViewModel vm, params string[] models)
+    {
+        var field = typeof(LoraHelperViewModel)
+            .GetField("_selectedDiffusionBaseModels", BindingFlags.NonPublic | BindingFlags.Instance);
+        field!.SetValue(vm, models.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     private static void BuildIndex(LoraHelperViewModel vm, List<LoraCardViewModel> cards)
@@ -49,7 +58,7 @@ public class LoraHelperFilterTests
         list.AddRange(cards);
 
         var indexNames = cards
-            .Select(c => $"{c.Model.SafeTensorFileName} {c.Model.ModelVersionName}")
+            .Select(c => $"{c.Model!.SafeTensorFileName} {c.Model!.ModelVersionName}")
             .ToList();
 
         var indexNamesField = typeof(LoraHelperViewModel)
@@ -75,7 +84,7 @@ public class LoraHelperFilterTests
 
         BuildIndex(vm, cards);
         var result = InvokeFilter(vm, "night");
-        result.Select(c => c.Model.SafeTensorFileName).Should()
+        result.Select(c => c.Model!.SafeTensorFileName).Should()
             .BeEquivalentTo(new[] { "Fright Night", "0403 Halloween Nightmare_v1_pony", "t2v_model" });
     }
 
@@ -92,6 +101,45 @@ public class LoraHelperFilterTests
         var result = InvokeFilter(vm, "spooky");
         result.Should().HaveCount(1);
         result[0].Model!.ModelVersionName.Should().Be("Spooky Version");
+    }
+
+    [Fact]
+    public void FilterCards_FiltersBySelectedBaseModels()
+    {
+        var vm = CreateViewModel();
+        var cards = new List<LoraCardViewModel>
+        {
+            CreateCard("alpha", baseModel: "SD 1.5"),
+            CreateCard("beta", baseModel: "SDXL"),
+            CreateCard("gamma", baseModel: "Flux")
+        };
+
+        BuildIndex(vm, cards);
+        SetSelectedBaseModels(vm, "SD 1.5", "Flux");
+
+        var result = InvokeFilter(vm, null);
+
+        result.Select(c => c.Model!.SafeTensorFileName)
+            .Should().BeEquivalentTo(new[] { "alpha", "gamma" });
+    }
+
+    [Fact]
+    public void FilterCards_UnknownBaseModelMatches()
+    {
+        var vm = CreateViewModel();
+        var cards = new List<LoraCardViewModel>
+        {
+            CreateCard("known", baseModel: "SD 1.5"),
+            CreateCard("mystery")
+        };
+
+        BuildIndex(vm, cards);
+        SetSelectedBaseModels(vm, LoraHelperTreeBuilder.UnknownBaseModelFolderName);
+
+        var result = InvokeFilter(vm, null);
+
+        result.Should().HaveCount(1);
+        result[0].Model!.SafeTensorFileName.Should().Be("mystery");
     }
 }
 
