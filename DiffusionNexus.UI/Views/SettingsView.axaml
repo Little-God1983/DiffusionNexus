@@ -59,7 +59,7 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-          <CheckBox Content="Merge LoRA sources by base model"
+          <CheckBox Content="Merge LoRA sources by base model (Experimental)"
                    IsChecked="{Binding Settings.MergeLoraHelperSources, Mode=TwoWay}"
                    Margin="0,5,0,0"/>
           <CheckBox Content="Automatic thumbnail generation from videos"
