@@ -15,7 +15,7 @@
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
-    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
+    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
       <Button Grid.Column="0" Content="◀️ Reset Filters" Width="120" Height="36" Command="{Binding ResetFiltersCommand}"/>
       <AutoCompleteBox x:Name="SearchBox"
                       Grid.Column="1"
@@ -43,6 +43,20 @@
       <Button Grid.Column="6" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
               Command="{Binding DownloadMissingMetadataCommand}"/>
       <Button Grid.Column="7" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
+      <Button Grid.Column="8"
+              Width="48"
+              Height="36"
+              Margin="5,0,0,0"
+              ToolTip.Tip="Filter by base model">
+        <Button.Content>
+          <PathIcon Data="M3,6H5.55L11,13.5V19L13,21V13.5L18.45,6H21V4H3Z" Width="18" Height="18"/>
+        </Button.Content>
+        <Button.Flyout>
+          <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Transient">
+            <controls:DiffusionModelFilterControl DataContext="{Binding DiffusionModelFilter}"/>
+          </Flyout>
+        </Button.Flyout>
+      </Button>
     </Grid>
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"
