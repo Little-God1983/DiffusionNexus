@@ -154,12 +154,32 @@ public static class LoraVariantClassifier
 
     private static void RemoveVersionTokens(List<string> tokens)
     {
+        var removedVersionSuffix = false;
+
         for (int i = tokens.Count - 1; i >= 0; i--)
         {
-            if (IsVersionToken(tokens, i))
+            if (!IsVersionToken(tokens, i))
             {
-                tokens.RemoveAt(i);
+                continue;
             }
+
+            var token = tokens[i];
+            if (!removedVersionSuffix && token.Any(char.IsDigit))
+            {
+                removedVersionSuffix = true;
+            }
+
+            tokens.RemoveAt(i);
+        }
+
+        if (!removedVersionSuffix)
+        {
+            return;
+        }
+
+        while (tokens.Count > 0 && IsVersionPrefixToken(tokens[^1]))
+        {
+            tokens.RemoveAt(tokens.Count - 1);
         }
     }
 
@@ -176,7 +196,7 @@ public static class LoraVariantClassifier
 
         if (lower.All(char.IsDigit))
         {
-            return index >= tokens.Count - 2;
+            return index >= tokens.Count - 1;
         }
 
         if (lower.StartsWith('v') && lower.Length > 1 && lower[1..].All(char.IsDigit))
@@ -200,6 +220,17 @@ public static class LoraVariantClassifier
         }
 
         return false;
+    }
+
+    private static bool IsVersionPrefixToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var lower = token.ToLowerInvariant();
+        return lower is "v" or "ver" or "vers" or "version";
     }
 
     private static bool TryExtractVariant(List<string> tokens, out string variantLabel)

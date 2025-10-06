@@ -3,6 +3,7 @@ using DiffusionNexus.Service.Classes;
 using FluentAssertions;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace DiffusionNexus.Tests.LoraSort.Classes;
 
@@ -29,6 +30,14 @@ public class LoraVariantClassifierTests
     [InlineData("Wan2.2 - I2V - King Machine - LOW 14B.safetensors", "wan22i2vkingmachine", "Low")]
     [InlineData("AAG_MuscleMommyH_high_noise.safetensors", "aagmusclemommy", "High")]
     [InlineData("AAG_MuscleMommyL_low_noise.safetensors", "aagmusclemommy", "Low")]
+    [InlineData("wan2.2_highnoise_cshot_v.1.0.safetensors", "wan22cshot", "High")]
+    [InlineData("wan2.2_lownoise_cshot_v1.0.safetensors", "wan22cshot", "Low")]
+    [InlineData("WAN-2.2-T2V-oggy Style-HIGH 14B.safetensors", "wan22t2voggystyle", "High")]
+    [InlineData("WAN-2.2-T2V-oggy Style-LOW 14B.safetensors", "wan22t2voggystyle", "Low")]
+    [InlineData("WAN-2.2-T2V-cial-HIGH 14B.safetensors", "wan22t2vcial", "High")]
+    [InlineData("WAN-2.2-T2V-cial-LOW 14B.safetensors", "wan22t2vcial", "Low")]
+    [InlineData("CassHamadaWan2.2HighNoise.safetensors", "casshamadawan2", "High")]
+    [InlineData("CassHamadaWan2.2LowNoise.safetensors", "casshamadawan2", "Low")]
     public void Classify_ReturnsExpectedNormalizationAndLabel(string fileName, string expectedKey, string expectedLabel)
     {
         var model = new ModelClass
@@ -41,5 +50,33 @@ public class LoraVariantClassifierTests
 
         result.NormalizedKey.Should().Be(expectedKey);
         result.VariantLabel.Should().Be(expectedLabel);
+    }
+
+    [Fact]
+    public void Classify_DoesNotMergeDistinctWanDownloads()
+    {
+        var inputs = new[]
+        {
+            "wan2.2_5b_c0wg1rl_72_000002500.safetensors",
+            "wan2.2_5b_cuflation_000003750.safetensors",
+            "wan2.2_5b_rsc_000002500.safetensors",
+            "wan2.1-i2v-480p-rsacp.safetensors",
+            "Wan2.1_i2v_cuinmouth_v1_7epo.safetensors"
+        };
+
+        var keys = inputs
+            .Select(fileName =>
+            {
+                var model = new ModelClass
+                {
+                    SafeTensorFileName = fileName,
+                    AssociatedFilesInfo = new List<FileInfo>()
+                };
+
+                return LoraVariantClassifier.Classify(model).NormalizedKey;
+            })
+            .ToList();
+
+        keys.Should().OnlyHaveUniqueItems();
     }
 }
