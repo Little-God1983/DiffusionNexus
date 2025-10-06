@@ -1,0 +1,24 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.DiffusionModelFilterControl"
+             x:DataType="vm:DiffusionModelFilterViewModel"
+             MinWidth="200"
+             MaxWidth="320"
+             Padding="12">
+  <StackPanel Spacing="8">
+    <TextBlock Text="Filter by base model" FontWeight="Bold" />
+    <ItemsControl ItemsSource="{Binding Options}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:DiffusionModelFilterOptionViewModel">
+          <ToggleButton Content="{Binding DisplayName}"
+                        IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,2"
+                        Padding="10,6"
+                        Classes="Accent"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>

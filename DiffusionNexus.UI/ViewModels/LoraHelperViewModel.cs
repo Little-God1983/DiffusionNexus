@@ -60,6 +60,8 @@ public partial class LoraHelperViewModel : ViewModelBase
     [ObservableProperty]
     private bool sortAscending = true;
 
+    public DiffusionModelFilterViewModel DiffusionModelFilter { get; } = new();
+
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
@@ -86,6 +88,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
+        DiffusionModelFilter.FiltersChanged += OnDiffusionModelFiltersChanged;
         _ = LoadAsync();
     }
     public void SetWindow(Window window)
@@ -182,6 +185,11 @@ public partial class LoraHelperViewModel : ViewModelBase
                 _allCards.Add(card);
             }
 
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                DiffusionModelFilter.SetOptions(_allCards.Select(card => card.DiffusionBaseModel));
+            });
+
             _filteredCards = _allCards.ToList();
             _nextIndex = 0;
             await LoadNextPageAsync();
@@ -275,6 +283,11 @@ public partial class LoraHelperViewModel : ViewModelBase
         _ = RefreshCardsAsync();
     }
 
+    private void OnDiffusionModelFiltersChanged(object? sender, EventArgs e)
+    {
+        _ = RefreshCardsAsync();
+    }
+
     private async Task RefreshCardsAsync()
     {
         _filterCts.Cancel();
@@ -340,6 +353,13 @@ public partial class LoraHelperViewModel : ViewModelBase
         if (!ShowNsfw)
             query = query.Where(c => c.Model?.Nsfw != true);
 
+        var selectedBaseModels = DiffusionModelFilter.SelectedModels.ToList();
+        if (selectedBaseModels.Count > 0)
+        {
+            var baseModelSet = new HashSet<string>(selectedBaseModels, StringComparer.OrdinalIgnoreCase);
+            query = query.Where(card => baseModelSet.Contains(card.DiffusionBaseModel));
+        }
+
         var sorted = ApplySort(query);
         return sorted.ToList();
     }
@@ -373,6 +393,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         SelectedFolder = null;
         SearchText = null;
+        DiffusionModelFilter.ClearSelection();
         _ = RefreshCardsAsync();
     }
 
