@@ -30,9 +30,6 @@ public partial class LoraHelperViewModel : ViewModelBase
     private CancellationTokenSource _suggestCts = new();
     private CancellationTokenSource _filterCts = new();
     private List<LoraCardViewModel> _filteredCards = new();
-    private int _nextIndex;
-    private bool _isLoadingPage;
-    private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
     private const double ForgePromptStrength = 0.75;
     [ObservableProperty]
@@ -190,7 +187,6 @@ public partial class LoraHelperViewModel : ViewModelBase
             });
 
             _filteredCards = _allCards.ToList();
-            _nextIndex = 0;
             await LoadNextPageAsync();
 
             StartIndexing();
@@ -376,7 +372,6 @@ public partial class LoraHelperViewModel : ViewModelBase
             {
                 Cards.Clear();
                 _filteredCards = list;
-                _nextIndex = 0;
             });
 
             await LoadNextPageAsync();
@@ -437,23 +432,18 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public async Task LoadNextPageAsync()
     {
-        if (_isLoadingPage)
-            return;
-
-        if (_nextIndex >= _filteredCards.Count)
-            return;
-
-        _isLoadingPage = true;
-        var slice = _filteredCards.Skip(_nextIndex).Take(PageSize).ToList();
-        _nextIndex += slice.Count;
-
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            foreach (var card in slice)
-                Cards.Add(card);
-        });
+            if (Cards.Count >= _filteredCards.Count)
+            {
+                return;
+            }
 
-        _isLoadingPage = false;
+            for (var i = Cards.Count; i < _filteredCards.Count; i++)
+            {
+                Cards.Add(_filteredCards[i]);
+            }
+        });
     }
 
     private void ResetFilters()
