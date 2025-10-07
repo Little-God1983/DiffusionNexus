@@ -25,16 +25,19 @@ public class LoraCardViewUiTests
     {
         using var session = HeadlessUnitTestSession.StartNew(typeof(DiffusionNexus.UI.App));
         session.Dispatch(() => {
-            var cardVm = new LoraCardViewModel
+            var model = new ModelClass
             {
-                Model = new ModelClass
-                {
-                    SafeTensorFileName = "card",
-                    DiffusionBaseModel = "SD15",
-                    ModelType = DiffusionTypes.LORA,
-                    AssociatedFilesInfo = new List<FileInfo>()
-                }
+                SafeTensorFileName = "card",
+                DiffusionBaseModel = "SD15",
+                ModelType = DiffusionTypes.LORA,
+                AssociatedFilesInfo = new List<FileInfo>()
             };
+
+            var cardVm = new LoraCardViewModel();
+            cardVm.InitializeVariants(new[]
+            {
+                new ModelVariantViewModel(model, LoraVariantClassifier.DefaultVariantLabel)
+            });
 
             var mock = new Mock<ISettingsService>();
             mock.Setup(s => s.LoadAsync()).ReturnsAsync(new SettingsModel());
