@@ -30,10 +30,11 @@ public partial class LoraHelperViewModel : ViewModelBase
     private CancellationTokenSource _suggestCts = new();
     private CancellationTokenSource _filterCts = new();
     private List<LoraCardViewModel> _filteredCards = new();
-    private int _nextIndex;
     private bool _isLoadingPage;
-    private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
+    private int _paginationVersion;
+    private int _loadedCardCount;
+    private const int PageSize = 40;
     private const double ForgePromptStrength = 0.75;
     [ObservableProperty]
     private bool showSuggestions;
@@ -72,6 +73,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
+    public bool HasMoreCards => _loadedCardCount < _filteredCards.Count;
     private readonly ISettingsService _settingsService;
     private Window? _window;
     public LoraHelperViewModel() : this(new SettingsService(), null)
@@ -167,32 +169,33 @@ public partial class LoraHelperViewModel : ViewModelBase
                 }
             });
 
+            var groupedCards = cardEntries
+                .GroupBy(CreateGroupKey)
+                .Select(CreateCardFromGroup)
+                .ToList();
+
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 _allCards.Clear();
                 Cards.Clear();
             });
 
-            foreach (var entry in cardEntries)
+            foreach (var card in groupedCards)
             {
-                var card = new LoraCardViewModel
-                {
-                    Model = entry.Model,
-                    FolderPath = entry.FolderPath,
-                    TreePath = entry.TreePath,
-                    Parent = this
-                };
+                card.Parent = this;
                 _allCards.Add(card);
             }
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                DiffusionModelFilter.SetOptions(_allCards.Select(card => card.DiffusionBaseModel));
+                DiffusionModelFilter.SetOptions(_allCards.SelectMany(card => card.GetAllDiffusionBaseModels()));
             });
 
             _filteredCards = _allCards.ToList();
-            _nextIndex = 0;
-            await LoadNextPageAsync();
+            _loadedCardCount = 0;
+            var version = Interlocked.Increment(ref _paginationVersion);
+            await Dispatcher.UIThread.InvokeAsync(() => OnPropertyChanged(nameof(HasMoreCards)));
+            await LoadNextPageAsync(version);
 
             StartIndexing();
         }
@@ -204,12 +207,18 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     private static CardEntry? CreateCardEntry(ModelClass model, string sourcePath, bool mergeSources)
     {
+        var classification = LoraVariantClassifier.Classify(model);
+        var normalizedKey = EnsureNormalizedKey(model, classification.NormalizedKey);
+        var variantLabel = string.IsNullOrWhiteSpace(classification.VariantLabel)
+            ? LoraVariantClassifier.DefaultVariantLabel
+            : classification.VariantLabel;
+
         var folder = model.AssociatedFilesInfo?.FirstOrDefault()?.DirectoryName;
 
         if (!mergeSources)
         {
             var entryPath = !string.IsNullOrWhiteSpace(folder) ? folder! : sourcePath;
-            return new CardEntry(model, sourcePath, folder, entryPath, null);
+            return new CardEntry(model, sourcePath, folder, entryPath, null, normalizedKey, variantLabel);
         }
 
         var segments = LoraHelperTreeBuilder.BuildMergedSegments(sourcePath, folder, model.DiffusionBaseModel);
@@ -219,7 +228,68 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
 
         var mergedTreePath = string.Join(Path.DirectorySeparatorChar, segments);
-        return new CardEntry(model, sourcePath, folder, mergedTreePath, segments);
+        return new CardEntry(model, sourcePath, folder, mergedTreePath, segments, normalizedKey, variantLabel);
+    }
+
+    private static string EnsureNormalizedKey(ModelClass model, string normalizedKey)
+    {
+        if (!string.IsNullOrWhiteSpace(normalizedKey))
+        {
+            return normalizedKey;
+        }
+
+        var fallback = model.SafeTensorFileName;
+        if (!string.IsNullOrWhiteSpace(fallback))
+        {
+            var alt = LoraVariantClassifier.Classify(fallback).NormalizedKey;
+            if (!string.IsNullOrWhiteSpace(alt))
+            {
+                return alt;
+            }
+        }
+
+        fallback = model.ModelVersionName;
+        if (!string.IsNullOrWhiteSpace(fallback))
+        {
+            var alt = LoraVariantClassifier.Classify(fallback).NormalizedKey;
+            if (!string.IsNullOrWhiteSpace(alt))
+            {
+                return alt;
+            }
+        }
+
+        var baseName = model.SafeTensorFileName ?? model.ModelVersionName ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            return Guid.NewGuid().ToString("N");
+        }
+
+        var cleaned = new string(baseName.Where(char.IsLetterOrDigit).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned)
+            ? Guid.NewGuid().ToString("N")
+            : cleaned.ToLowerInvariant();
+    }
+
+    private static string CreateGroupKey(CardEntry entry)
+    {
+        var folder = string.IsNullOrWhiteSpace(entry.FolderPath) ? entry.SourcePath : entry.FolderPath;
+        var folderKey = folder?.ToLowerInvariant() ?? string.Empty;
+        return $"{folderKey}|{entry.NormalizedKey}";
+    }
+
+    private LoraCardViewModel CreateCardFromGroup(IGrouping<string, CardEntry> group)
+    {
+        var primary = group.First();
+        var card = new LoraCardViewModel
+        {
+            FolderPath = primary.FolderPath ?? primary.SourcePath,
+            TreePath = primary.TreePath,
+        };
+
+        var variants = group.Select(entry => new ModelVariantViewModel(entry.Model, entry.VariantLabel));
+        card.InitializeVariants(variants);
+
+        return card;
     }
 
     private static FolderNode? BuildMergedFolderTree(IEnumerable<CardEntry> entries)
@@ -237,7 +307,9 @@ public partial class LoraHelperViewModel : ViewModelBase
         string SourcePath,
         string? FolderPath,
         string TreePath,
-        IReadOnlyList<string>? TreeSegments);
+        IReadOnlyList<string>? TreeSegments,
+        string NormalizedKey,
+        string VariantLabel);
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
     {
@@ -304,14 +376,17 @@ public partial class LoraHelperViewModel : ViewModelBase
             if (token.IsCancellationRequested)
                 return;
 
+            var version = Interlocked.Increment(ref _paginationVersion);
+
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 Cards.Clear();
                 _filteredCards = list;
-                _nextIndex = 0;
+                _loadedCardCount = 0;
+                OnPropertyChanged(nameof(HasMoreCards));
             });
 
-            await LoadNextPageAsync();
+            await LoadNextPageAsync(version);
         }
         finally
         {
@@ -348,16 +423,16 @@ public partial class LoraHelperViewModel : ViewModelBase
                 query = query.Where(c => MatchesSearch(c, search!));
             }
         }
-        Log($"Found: {_allCards.Where(x => x.Model.Nsfw == true).Count()} Nsfw Models", LogSeverity.Info);
+        Log($"Found: {_allCards.Count(x => x.Variants.Any(v => v.Model.Nsfw == true))} Nsfw Models", LogSeverity.Info);
 
         if (!ShowNsfw)
-            query = query.Where(c => c.Model?.Nsfw != true);
+            query = query.Where(c => c.HasAnySafeVariant);
 
         var selectedBaseModels = DiffusionModelFilter.SelectedModels.ToList();
         if (selectedBaseModels.Count > 0)
         {
             var baseModelSet = new HashSet<string>(selectedBaseModels, StringComparer.OrdinalIgnoreCase);
-            query = query.Where(card => baseModelSet.Contains(card.DiffusionBaseModel));
+            query = query.Where(card => card.MatchesBaseModel(baseModelSet));
         }
 
         var sorted = ApplySort(query);
@@ -365,28 +440,61 @@ public partial class LoraHelperViewModel : ViewModelBase
     }
 
     private static bool MatchesSearch(LoraCardViewModel card, string search) =>
-        card.Model.SafeTensorFileName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true ||
-        card.Model.ModelVersionName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
+        card.MatchesSearch(search);
 
-    public async Task LoadNextPageAsync()
+    public Task LoadNextPageAsync()
+    {
+        var version = Volatile.Read(ref _paginationVersion);
+        return LoadNextPageAsync(version);
+    }
+
+    private async Task LoadNextPageAsync(int version)
     {
         if (_isLoadingPage)
+        {
             return;
+        }
 
-        if (_nextIndex >= _filteredCards.Count)
+        if (_loadedCardCount >= _filteredCards.Count)
+        {
             return;
+        }
 
         _isLoadingPage = true;
-        var slice = _filteredCards.Skip(_nextIndex).Take(PageSize).ToList();
-        _nextIndex += slice.Count;
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        try
         {
-            foreach (var card in slice)
-                Cards.Add(card);
-        });
+            var startIndex = _loadedCardCount;
+            var endIndex = Math.Min(startIndex + PageSize, _filteredCards.Count);
+            if (endIndex <= startIndex)
+            {
+                return;
+            }
 
-        _isLoadingPage = false;
+            var batch = _filteredCards
+                .Skip(startIndex)
+                .Take(endIndex - startIndex)
+                .ToList();
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (version != Volatile.Read(ref _paginationVersion))
+                {
+                    return;
+                }
+
+                foreach (var card in batch)
+                {
+                    Cards.Add(card);
+                }
+
+                _loadedCardCount = endIndex;
+                OnPropertyChanged(nameof(HasMoreCards));
+            });
+        }
+        finally
+        {
+            _isLoadingPage = false;
+        }
     }
 
     private void ResetFilters()
@@ -402,23 +510,15 @@ public partial class LoraHelperViewModel : ViewModelBase
         IEnumerable<LoraCardViewModel> sorted = SortMode switch
         {
             SortMode.Name => SortAscending
-                ? items.OrderBy(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase)
-                : items.OrderByDescending(c => c.Model?.SafeTensorFileName, StringComparer.OrdinalIgnoreCase),
+                ? items.OrderBy(c => c.SortKey, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(c => c.SortKey, StringComparer.OrdinalIgnoreCase),
             SortMode.CreationDate => SortAscending
-                ? items.OrderBy(GetCreationDate)
-                : items.OrderByDescending(GetCreationDate),
+                ? items.OrderBy(c => c.NewestCreationDate)
+                : items.OrderByDescending(c => c.NewestCreationDate),
             _ => items
         };
 
         return sorted;
-    }
-
-    internal static DateTime GetCreationDate(LoraCardViewModel card)
-    {
-        var file = card.Model?.AssociatedFilesInfo.FirstOrDefault(f =>
-            f.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase) ||
-            f.Extension.Equals(".pt", StringComparison.OrdinalIgnoreCase));
-        return file?.CreationTime ?? DateTime.MinValue;
     }
 
     /// <summary>
@@ -428,7 +528,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private void StartIndexing()
     {
         _indexNames = _allCards
-            .Select(c => $"{c.Model.SafeTensorFileName ?? string.Empty} {c.Model.ModelVersionName ?? string.Empty}")
+            .Select(c => c.GetSearchIndexText())
             .ToList();
         var namesCopy = _indexNames.ToList();
         Task.Run(() => _searchIndex.Build(namesCopy));
@@ -484,37 +584,53 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public async Task DeleteCardAsync(LoraCardViewModel card)
     {
-        if (DialogService == null || card.Model == null)
+        var variant = card.SelectedVariant;
+        if (DialogService == null || variant?.Model == null)
             return;
 
-        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{card.Model.SafeTensorFileName}'?");
+        var confirm = await DialogService.ShowConfirmationAsync($"Delete '{variant.Model.SafeTensorFileName}'?");
         if (confirm != true) return;
 
-        foreach (var file in card.Model.AssociatedFilesInfo)
+        foreach (var file in variant.Model.AssociatedFilesInfo)
         {
             try { File.Delete(file.FullName); } catch { }
         }
 
-        _allCards.Remove(card);
-        Cards.Remove(card);
+        var removed = card.RemoveVariant(variant);
+        if (!removed)
+        {
+            return;
+        }
+
+        if (card.Variants.Count == 0)
+        {
+            _allCards.Remove(card);
+            _filteredCards.Remove(card);
+            Cards.Remove(card);
+            _loadedCardCount = Cards.Count;
+            OnPropertyChanged(nameof(HasMoreCards));
+        }
+
         StartIndexing();
+        DiffusionModelFilter.SetOptions(_allCards.SelectMany(c => c.GetAllDiffusionBaseModels()));
     }
 
     public async Task OpenWebForCardAsync(LoraCardViewModel card)
     {
-        if (card.Model == null)
+        var model = card.SelectedVariant?.Model;
+        if (model == null)
             return;
 
         var settings = await _settingsService.LoadAsync();
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
         string? id;
-        if (string.IsNullOrWhiteSpace(card.Model.ModelId))
+        if (string.IsNullOrWhiteSpace(model.ModelId))
         {
-            var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+            var result = await _metadataDownloader.EnsureMetadataAsync(model, apiKey);
             id = result.ModelId;
             if (string.IsNullOrWhiteSpace(id))
             {
-                Log($"Can't open Link. No Id found for {card.Model.ModelVersionName}", LogSeverity.Error);
+                Log($"Can't open Link. No Id found for {model.ModelVersionName}", LogSeverity.Error);
                 return;
 
             }
@@ -522,7 +638,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         else
         {
             // If we already have the ID, just use it
-            id = card.Model.ModelId;
+            id = model.ModelId;
         }
 
         var url = $"https://civitai.com/models/{id}";
@@ -531,16 +647,17 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public async Task CopyTrainedWordsAsync(LoraCardViewModel card)
     {
-        if (card.Model == null)
+        var model = card.SelectedVariant?.Model;
+        if (model == null)
             return;
 
         var settings = await _settingsService.LoadAsync();
         var apiKey = settings.CivitaiApiKey ?? string.Empty;
-        await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+        await _metadataDownloader.EnsureMetadataAsync(model, apiKey);
 
-        if (card.Model.TrainedWords.Count == 0 && (!settings.UseForgeStylePrompts))
+        if (model.TrainedWords.Count == 0 && (!settings.UseForgeStylePrompts))
         {
-            Log($"No trained words for {card.Model.ModelVersionName}", LogSeverity.Warning);
+            Log($"No trained words for {model.ModelVersionName}", LogSeverity.Warning);
             return;
         }
 
@@ -549,10 +666,10 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             try
             {
-                var text = string.Join(", ", card.Model.TrainedWords).TrimEnd();
+                var text = string.Join(", ", model.TrainedWords).TrimEnd();
                 if (settings.UseForgeStylePrompts)
                 {
-                    var name = card.Model.SafeTensorFileName;
+                    var name = model.SafeTensorFileName;
                     text = $"<lora:{name}:{ForgePromptStrength.ToString(System.Globalization.CultureInfo.InvariantCulture)}> " + text;
                 }
                 await clipboard.SetTextAsync(text);
@@ -567,7 +684,7 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     private static IEnumerable<char> GetLoraNameShort(LoraCardViewModel card)
     {
-        string input = card.Model?.ModelVersionName ?? string.Empty;
+        string input = card.SelectedVariant?.Model.ModelVersionName ?? string.Empty;
         if (string.IsNullOrWhiteSpace(input))
             return input;
 
@@ -603,7 +720,8 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public async Task CopyModelNameAsync(LoraCardViewModel card)
     {
-        if (card.Model == null)
+        var model = card.SelectedVariant?.Model;
+        if (model == null)
             return;
 
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
@@ -611,8 +729,8 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             try
             {
-                var text = card.Model.SafeTensorFileName;
-                await clipboard.SetTextAsync(card.Model.SafeTensorFileName);
+                var text = model.SafeTensorFileName;
+                await clipboard.SetTextAsync(model.SafeTensorFileName);
                 Log($"Filename: {text} copied to clipboard", LogSeverity.Success);
             }
             catch (Exception ex)
@@ -670,27 +788,33 @@ public partial class LoraHelperViewModel : ViewModelBase
             var settings = await _settingsService.LoadAsync();
             var apiKey = settings.CivitaiApiKey ?? string.Empty;
 
-            var missing = _allCards.Where(c => c.Model != null && !c.Model.HasFullMetadata).ToList();
+            var missing = _allCards
+                .SelectMany(card => card.Variants)
+                .Where(variant => variant.Model != null && !variant.Model.HasFullMetadata)
+                .ToList();
+
             Log($"{missing.Count} models missing metadata", LogSeverity.Info);
 
-            foreach (var card in missing)
+            foreach (var variant in missing)
             {
-                if (card.Model == null) continue;
-                Log($"Requesting metadata for {card.Model.ModelVersionName}", LogSeverity.Info);
-                var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+                var model = variant.Model;
+                if (model == null) continue;
+
+                Log($"Requesting metadata for {model.ModelVersionName}", LogSeverity.Info);
+                var result = await _metadataDownloader.EnsureMetadataAsync(model, apiKey);
                 switch (result.ResultType)
                 {
                     case MetadataDownloadResultType.AlreadyExists:
-                        Log($"{card.Model.ModelVersionName}: already has metadata", LogSeverity.Info);
+                        Log($"{model.ModelVersionName}: already has metadata", LogSeverity.Info);
                         break;
                     case MetadataDownloadResultType.Downloaded:
-                        Log($"{card.Model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
+                        Log($"{model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
                         break;
                     case MetadataDownloadResultType.NotFound:
-                        Log($"{card.Model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
+                        Log($"{model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
                         break;
                     case MetadataDownloadResultType.Error:
-                        Log($"{card.Model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
+                        Log($"{model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
                         break;
                 }
             }

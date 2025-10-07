@@ -48,6 +48,11 @@ public partial class LoraHelperView : UserControl
 
         if (DataContext is LoraHelperViewModel vm)
         {
+            if (vm.IsLoading || !vm.HasMoreCards)
+            {
+                return;
+            }
+
             if (_scroll.Offset.Y + _scroll.Viewport.Height > _scroll.Extent.Height - 300)
             {
                 await vm.LoadNextPageAsync();
