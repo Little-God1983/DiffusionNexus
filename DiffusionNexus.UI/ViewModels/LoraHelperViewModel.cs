@@ -188,8 +188,17 @@ public partial class LoraHelperViewModel : ViewModelBase
                 DiffusionModelFilter.SetOptions(_allCards.SelectMany(card => card.GetAllDiffusionBaseModels()));
             });
 
-            _filteredCards = _allCards.ToList();
-            await LoadNextPageAsync();
+            var snapshot = _allCards.ToList();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _filteredCards = snapshot;
+                Cards.Clear();
+                foreach (var card in snapshot)
+                {
+                    Cards.Add(card);
+                }
+                OnPropertyChanged(nameof(HasMoreCards));
+            });
 
             StartIndexing();
         }
@@ -372,11 +381,14 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Cards.Clear();
                 _filteredCards = list;
+                Cards.Clear();
+                foreach (var card in list)
+                {
+                    Cards.Add(card);
+                }
+                OnPropertyChanged(nameof(HasMoreCards));
             });
-
-            await LoadNextPageAsync();
         }
         finally
         {
@@ -453,6 +465,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                 {
                     Cards.Add(_filteredCards[i]);
                 }
+                OnPropertyChanged(nameof(HasMoreCards));
             });
         }
         finally
