@@ -99,7 +99,7 @@ public class JsonInfoFileReaderServiceTests : IDisposable
                     ""type"": ""LORA"",
                     ""tags"": [""character"", ""style""]
                 }")
-            };
+        };
 
         foreach (var (fileName, content) in modelFiles)
         {
@@ -204,6 +204,38 @@ public class JsonInfoFileReaderServiceTests : IDisposable
 
         invalidModel.Should().NotBeNull();
         invalidModel!.NoMetaData.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetModelData_ShouldPopulateModelIdAndTrainedWords()
+    {
+        // Arrange
+        var files = new[]
+        {
+                ("wan_variant.safetensors", string.Empty),
+                ("wan_variant.civitai.info", @"{
+                    ""modelId"": 12345,
+                    ""trainedWords"": [""wan"", ""video""]
+                }")
+            };
+
+        foreach (var (fileName, content) in files)
+        {
+            File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
+        }
+
+        var service = new JsonInfoFileReaderService(
+            _testDirectoryPath,
+            (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken)
+        );
+
+        // Act
+        var result = await service.GetModelData(null, CancellationToken.None);
+
+        // Assert
+        var model = result.Single(m => m.SafeTensorFileName == "wan_variant");
+        model.ModelId.Should().Be("12345");
+        model.TrainedWords.Should().Contain(new[] { "wan", "video" });
     }
 
     [Fact]
