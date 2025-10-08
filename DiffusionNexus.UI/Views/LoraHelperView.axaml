@@ -103,6 +103,22 @@
                     <StackPanel>
                       <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
                       <TextBlock Text="{Binding Model.SafeTensorFileName}" FontSize="12" Foreground="#FFCCCCCC" TextWrapping="Wrap"/>
+                      <ItemsControl ItemsSource="{Binding Variants}" Margin="0,4,0,0" IsVisible="{Binding HasVariants}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:LoraVariantViewModel">
+                            <ToggleButton Content="{Binding Label}"
+                                          Margin="0,0,4,0"
+                                          MinWidth="60"
+                                          Command="{Binding SelectCommand}"
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
                       <Grid ColumnDefinitions="Auto,*">
                         <!--<Button Content="âœï¸"
                                 Width="36" Height="36" FontSize="16"

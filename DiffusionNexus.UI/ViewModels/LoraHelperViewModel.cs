@@ -116,7 +116,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             }
 
             var mergeSources = settings.MergeLoraHelperSources;
-            var cardEntries = new List<CardEntry>();
+            var cardSeeds = new List<LoraCardSeed>();
             var discovery = new ModelDiscoveryService();
             var folderNodes = new List<FolderNode>();
             var localProvider = new LocalFileMetadataProvider();
@@ -138,15 +138,16 @@ public partial class LoraHelperViewModel : ViewModelBase
 
                 foreach (var model in sourceModels)
                 {
-                    var entry = CreateCardEntry(model, source, mergeSources);
-                    if (entry != null)
+                    var seed = CreateCardEntry(model, source, mergeSources);
+                    if (seed != null)
                     {
-                        cardEntries.Add(entry);
+                        cardSeeds.Add(seed);
                     }
                 }
             }
 
-            var mergedRoot = mergeSources ? BuildMergedFolderTree(cardEntries) : null;
+            var mergedRoot = mergeSources ? BuildMergedFolderTree(cardSeeds) : null;
+            var cardEntries = LoraVariantMerger.Merge(cardSeeds);
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -182,6 +183,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                     TreePath = entry.TreePath,
                     Parent = this
                 };
+                card.SetVariants(entry.Variants);
                 _allCards.Add(card);
             }
 
@@ -202,14 +204,14 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
     }
 
-    private static CardEntry? CreateCardEntry(ModelClass model, string sourcePath, bool mergeSources)
+    private static LoraCardSeed? CreateCardEntry(ModelClass model, string sourcePath, bool mergeSources)
     {
         var folder = model.AssociatedFilesInfo?.FirstOrDefault()?.DirectoryName;
 
         if (!mergeSources)
         {
             var entryPath = !string.IsNullOrWhiteSpace(folder) ? folder! : sourcePath;
-            return new CardEntry(model, sourcePath, folder, entryPath, null);
+            return new LoraCardSeed(model, sourcePath, folder, entryPath, null);
         }
 
         var segments = LoraHelperTreeBuilder.BuildMergedSegments(sourcePath, folder, model.DiffusionBaseModel);
@@ -219,10 +221,10 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
 
         var mergedTreePath = string.Join(Path.DirectorySeparatorChar, segments);
-        return new CardEntry(model, sourcePath, folder, mergedTreePath, segments);
+        return new LoraCardSeed(model, sourcePath, folder, mergedTreePath, segments);
     }
 
-    private static FolderNode? BuildMergedFolderTree(IEnumerable<CardEntry> entries)
+    private static FolderNode? BuildMergedFolderTree(IEnumerable<LoraCardSeed> entries)
     {
         var segments = entries
             .Where(e => e.TreeSegments != null)
@@ -231,13 +233,6 @@ public partial class LoraHelperViewModel : ViewModelBase
 
         return LoraHelperTreeBuilder.BuildMergedFolderTree(segments);
     }
-
-    private sealed record CardEntry(
-        ModelClass Model,
-        string SourcePath,
-        string? FolderPath,
-        string TreePath,
-        IReadOnlyList<string>? TreeSegments);
 
     private FolderItemViewModel ConvertFolder(FolderNode node)
     {

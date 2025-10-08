@@ -6,6 +6,8 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.UI.Classes;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
@@ -43,6 +45,10 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand CopyNameCommand { get; }
     public IRelayCommand OpenFolderCommand { get; }
 
+    public ObservableCollection<LoraVariantViewModel> Variants { get; } = new();
+
+    public bool HasVariants => Variants.Count > 1;
+
     public LoraHelperViewModel? Parent { get; set; }
 
     public LoraCardViewModel()
@@ -53,11 +59,75 @@ public partial class LoraCardViewModel : ViewModelBase
         CopyCommand = new AsyncRelayCommand(OnCopyAsync);
         CopyNameCommand = new AsyncRelayCommand(OnCopyNameAsync);
         OpenFolderCommand = new RelayCommand(OnOpenFolder);
+        Variants.CollectionChanged += OnVariantsCollectionChanged;
     }
 
     partial void OnModelChanged(ModelClass? value)
     {
         _ = LoadPreviewImageAsync();
+    }
+
+    internal void SetVariants(IReadOnlyList<LoraVariantDescriptor> variants)
+    {
+        Variants.CollectionChanged -= OnVariantsCollectionChanged;
+        Variants.Clear();
+
+        if (variants != null && variants.Count > 0)
+        {
+            foreach (var variant in variants)
+            {
+                var option = new LoraVariantViewModel(variant.Label, variant.Model, OnVariantSelected);
+                option.IsSelected = ReferenceEquals(variant.Model, Model);
+                Variants.Add(option);
+            }
+
+            if (Variants.Count > 0 && Variants.All(v => !v.IsSelected))
+            {
+                var preferred = Variants.FirstOrDefault(v => string.Equals(v.Label, "High", StringComparison.OrdinalIgnoreCase))
+                    ?? Variants.First();
+                preferred.IsSelected = true;
+                ApplyVariant(preferred);
+            }
+            else
+            {
+                var selected = Variants.FirstOrDefault(v => v.IsSelected);
+                if (selected != null)
+                {
+                    ApplyVariant(selected);
+                }
+            }
+        }
+
+        Variants.CollectionChanged += OnVariantsCollectionChanged;
+        OnPropertyChanged(nameof(HasVariants));
+    }
+
+    private void OnVariantsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasVariants));
+    }
+
+    private void OnVariantSelected(LoraVariantViewModel option)
+    {
+        foreach (var variant in Variants)
+        {
+            variant.IsSelected = ReferenceEquals(variant, option);
+        }
+
+        ApplyVariant(option);
+    }
+
+    private void ApplyVariant(LoraVariantViewModel option)
+    {
+        if (option == null)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(Model, option.Model))
+        {
+            Model = option.Model;
+        }
     }
 
     private async Task LoadPreviewImageAsync()

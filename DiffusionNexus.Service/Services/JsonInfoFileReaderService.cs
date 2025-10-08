@@ -40,11 +40,13 @@ public class JsonInfoFileReaderService
             {
                 progress?.Report(new ProgressReport { StatusMessage = $"Processing metadata for {safetensors.Name}", LogLevel = LogSeverity.Info });
                 ModelClass meta = await _metadataFetcher(safetensors.FullName, progress, cancellationToken);
+                model.ModelId = meta.ModelId;
                 model.DiffusionBaseModel = meta.DiffusionBaseModel;
                 model.ModelType = meta.ModelType;
                 model.ModelVersionName = string.IsNullOrWhiteSpace(meta.ModelVersionName) ? model.SafeTensorFileName : meta.ModelVersionName;
                 model.Tags = meta.Tags;
-                model.Nsfw = meta.Nsfw; 
+                model.Nsfw = meta.Nsfw;
+                model.TrainedWords = meta.TrainedWords;
                 model.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(model.Tags);
                 var completeness = meta.HasFullMetadata ? "complete" : meta.HasAnyMetadata ? "partial" : "none";
                 var level = meta.HasFullMetadata ? LogSeverity.Success : LogSeverity.Warning;
