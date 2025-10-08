@@ -35,20 +35,20 @@ internal static class LoraVariantClassifier
             throw new ArgumentNullException(nameof(model));
         }
 
-        var primary = NormalizeSource(model.SafeTensorFileName);
-        var classification = ClassifyFromSource(primary);
+        string? primary = NormalizeSource(model.SafeTensorFileName);
+        LoraVariantClassification classification = ClassifyFromSource(primary);
 
         if (string.IsNullOrWhiteSpace(classification.VariantLabel) || string.IsNullOrWhiteSpace(classification.NormalizedKey))
         {
-            var fallback = NormalizeSource(model.ModelVersionName);
+            string? fallback = NormalizeSource(model.ModelVersionName);
             if (!string.IsNullOrWhiteSpace(fallback))
             {
-                var fallbackResult = ClassifyFromSource(fallback);
-                var variant = !string.IsNullOrWhiteSpace(classification.VariantLabel)
+                LoraVariantClassification fallbackResult = ClassifyFromSource(fallback);
+                string? variant = !string.IsNullOrWhiteSpace(classification.VariantLabel)
                     ? classification.VariantLabel
                     : fallbackResult.VariantLabel;
 
-                var key = !string.IsNullOrWhiteSpace(classification.NormalizedKey)
+                string? key = !string.IsNullOrWhiteSpace(classification.NormalizedKey)
                     ? classification.NormalizedKey
                     : fallbackResult.NormalizedKey;
 
@@ -66,12 +66,12 @@ internal static class LoraVariantClassifier
             return null;
         }
 
-        var trimmed = value.Trim();
-        var extension = Path.GetExtension(trimmed);
+        string? trimmed = value.Trim();
+        string? extension = Path.GetExtension(trimmed);
 
         if (!string.IsNullOrWhiteSpace(extension) && IsKnownExtension(extension))
         {
-            var withoutExtension = Path.GetFileNameWithoutExtension(trimmed);
+            string? withoutExtension = Path.GetFileNameWithoutExtension(trimmed);
             return string.IsNullOrWhiteSpace(withoutExtension) ? trimmed : withoutExtension;
         }
 
@@ -90,8 +90,8 @@ internal static class LoraVariantClassifier
             return new LoraVariantClassification(string.Empty, null);
         }
 
-        var label = DetectVariantLabel(source);
-        var key = BuildNormalizedKey(source, label);
+        string? label = DetectVariantLabel(source);
+        string? key = BuildNormalizedKey(source, label);
         return new LoraVariantClassification(key, label);
     }
 
@@ -113,7 +113,7 @@ internal static class LoraVariantClassifier
                 return label;
             }
 
-            var trimmed = TrimNumericEdges(token);
+            string? trimmed = TrimNumericEdges(token);
             if (!string.Equals(trimmed, token, StringComparison.OrdinalIgnoreCase) &&
                 VariantLabels.TryGetValue(trimmed, out label))
             {
@@ -134,7 +134,7 @@ internal static class LoraVariantClassifier
     {
         foreach (var kvp in VariantLabels.OrderByDescending(k => k.Key.Length))
         {
-            var key = kvp.Key;
+            string? key = kvp.Key;
             var index = token.IndexOf(key, StringComparison.OrdinalIgnoreCase);
             while (index >= 0)
             {
@@ -158,7 +158,7 @@ internal static class LoraVariantClassifier
 
     private static string BuildNormalizedKey(string source, string? variantLabel)
     {
-        var sanitized = RemoveVariantSegments(source);
+        string? sanitized = RemoveVariantSegments(source);
         var tokens = Tokenize(sanitized);
 
         if (tokens.Count == 0)
@@ -169,13 +169,13 @@ internal static class LoraVariantClassifier
         var processed = new List<string>();
         for (var i = 0; i < tokens.Count; i++)
         {
-            var token = tokens[i];
+            string? token = tokens[i];
             if (string.IsNullOrWhiteSpace(token))
             {
                 continue;
             }
 
-            var lower = token.ToLower(CultureInfo.InvariantCulture);
+            string? lower = token.ToLower(CultureInfo.InvariantCulture);
 
             if (VariantLabels.ContainsKey(lower))
             {
@@ -207,7 +207,7 @@ internal static class LoraVariantClassifier
                 }
             }
 
-            var normalized = NormalizeToken(token, variantLabel);
+            string? normalized = NormalizeToken(token, variantLabel);
             if (!string.IsNullOrWhiteSpace(normalized))
             {
                 processed.Add(normalized);
@@ -230,7 +230,7 @@ internal static class LoraVariantClassifier
 
     private static string RemoveVariantSegments(string source)
     {
-        var result = source;
+        string? result = source;
         foreach (var key in VariantLabels.Keys.OrderByDescending(k => k.Length))
         {
             result = RemoveToken(result, key);
@@ -378,7 +378,7 @@ internal static class LoraVariantClassifier
 
         if (token.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
         {
-            var segment = token[^suffix.Length..];
+            string? segment = token[^suffix.Length..];
             if (!segment.Any(char.IsUpper))
             {
                 return token;
@@ -458,13 +458,13 @@ internal static class LoraVariantClassifier
     {
         for (var i = index + 1; i < tokens.Count; i++)
         {
-            var token = tokens[i];
+            string? token = tokens[i];
             if (string.IsNullOrWhiteSpace(token))
             {
                 continue;
             }
 
-            var lower = token.ToLower(CultureInfo.InvariantCulture);
+            string? lower = token.ToLower(CultureInfo.InvariantCulture);
             if (VariantLabels.ContainsKey(lower))
             {
                 continue;
