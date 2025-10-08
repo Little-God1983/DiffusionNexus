@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.Domain.Loras;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
