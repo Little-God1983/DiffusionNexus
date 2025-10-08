@@ -7,6 +7,7 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Search;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.Domain.Loras;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Diagnostics;

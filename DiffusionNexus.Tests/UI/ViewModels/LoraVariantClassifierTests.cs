@@ -1,7 +1,10 @@
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.UI.Domain.Loras;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace DiffusionNexus.Tests.UI.ViewModels;
 
@@ -82,6 +85,36 @@ public class LoraVariantClassifierTests
             .ToList();
 
         keys.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Classify_TrickyInputsMatchSnapshot()
+    {
+        var expectations = new Dictionary<string, (string Key, string? Variant)>
+        {
+            ["WAN 2.2 - I2V - Glitter Shot - HIGH"] = ("wan22i2vglittershot", "High"),
+            ["WAN 2.2 - I2V - Glitter Shot - LOW"] = ("wan22i2vglittershot", "Low"),
+            ["wan2.2 high-noise clip.safetensors"] = ("wan22clip", "High"),
+            ["wan2.2 low noise clip.safetensors"] = ("wan22clip", "Low"),
+            ["WAN22CinematicHighNoiseV2.safetensors"] = ("wan22cinematichighnoisev2", null),
+            ["WAN22CinematicLowNoiseV2.safetensors"] = ("wan22cinematiclownoisev2", null)
+        };
+
+        var actual = expectations.Keys.ToDictionary(
+            key => key,
+            key =>
+            {
+                var model = new ModelClass
+                {
+                    SafeTensorFileName = key,
+                    AssociatedFilesInfo = new List<FileInfo>()
+                };
+
+                var result = LoraVariantClassifier.Classify(model);
+                return (result.NormalizedKey, result.VariantLabel);
+            });
+
+        actual.Should().BeEquivalentTo(expectations);
     }
 
     [Fact]
@@ -185,6 +218,35 @@ public class LoraVariantClassifierTests
         entry.FolderPath.Should().Be(first.FolderPath);
         entry.SourcePath.Should().Be(first.SourcePath);
         entry.TreePath.Should().Be(first.TreePath);
+    }
+
+    [Fact]
+    public void Merge_OrdersVariantsWithHighBeforeLow()
+    {
+        var seeds = new List<LoraCardSeed>
+        {
+            CreateSeed("wan_low_version.safetensors", "1", "Wan Video 2.2"),
+            CreateSeed("wan_high_version.safetensors", "1", "Wan Video 2.2")
+        };
+
+        var entries = LoraVariantMerger.Merge(seeds);
+
+        entries.Should().ContainSingle();
+        entries.Single().Variants.Select(v => v.Label).Should().ContainInOrder("High", "Low");
+    }
+
+    [Fact]
+    public void Merge_DoesNotGroupWhenVariantMissing()
+    {
+        var seeds = new List<LoraCardSeed>
+        {
+            CreateSeed("wan_high_version.safetensors", "1", "Wan Video 2.2"),
+            CreateSeed("wan_plain_version.safetensors", "1", "Wan Video 2.2")
+        };
+
+        var entries = LoraVariantMerger.Merge(seeds);
+
+        entries.Should().HaveCount(2);
     }
 
     private static LoraCardSeed CreateSeed(string fileName, string modelId, string baseModel)
