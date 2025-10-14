@@ -697,11 +697,17 @@ internal static class LoraVariantClassifier
             {
                 ["highnoise"] = "High",
                 ["high_noise"] = "High",
+                ["_high_noise"] = "High",
+                ["h_high_noise"] = "High",
                 ["high"] = "High",
+                ["_high_"] = "High",
                 ["hn"] = "High",
                 ["lownoise"] = "Low",
                 ["low_noise"] = "Low",
+                ["_low_noise"] = "Low",
+                ["l_low_noise"] = "Low",
                 ["low"] = "Low",
+                ["_low_"] = "High",
                 ["ln"] = "Low"
             };
 
