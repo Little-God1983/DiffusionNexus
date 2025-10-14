@@ -1,47 +1,16 @@
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace DiffusionNexus.Tests.UI.ViewModels;
 
 public class LoraVariantClassifierTests
 {
     [Theory]
-    [InlineData("wriggling_t2v_high_e100.safetensors", "wrigglingt2v", "High")]
-    [InlineData("wriggling_t2v_low_e100.safetensors", "wrigglingt2v", "Low")]
-    [InlineData("WANTT2VHIGHNOISEJIGGLE", "wantt2vjiggle", "High")]
-    [InlineData("WANTT2VLOWNOISEJIGGLE", "wantt2vjiggle", "Low")]
-    [InlineData("Pump_wan22_e20_high.safetensors", "pumpwan22", "High")]
-    [InlineData("Pump_wan22_e20_low.safetensors", "pumpwan22", "Low")]
-    [InlineData("scifi_wan_low_30 (1).safetensors", "scifiwan", "Low")]
-    [InlineData("scifi_wan_high_30 (1).safetensors", "scifiwan", "High")]
-    [InlineData("wriggling_i2v_high_e010.safetensors", "wrigglingi2v", "High")]
-    [InlineData("wriggling_i2v_low_e020.safetensors", "wrigglingi2v", "Low")]
-    [InlineData("wan22-f4c3spl4sh-100epoc-high-k3nk.safetensors", "wan22f4c3spl4shk3nk", "High")]
-    [InlineData("wan22-f4c3spl4sh-154epoc-low-k3nk.safetensors", "wan22f4c3spl4shk3nk", "Low")]
-    [InlineData("model_HN.safetensors", "model", "High")]
-    [InlineData("model_LN.safetensors", "model", "Low")]
-    [InlineData("WAN-2.2-I2V-BPlay-HIGH-v1.safetensors", "wan22i2vbplay", "High")]
-    [InlineData("WAN-2.2-I2V-BPlay-LOW-v1.safetensors", "wan22i2vbplay", "Low")]
-    [InlineData("WAN-2.2-T2V-oggy Style-HIGH 14B.safetensors", "wan22t2voggystyle", "High")]
-    [InlineData("WAN-2.2-T2V-oggy Style-LOW 14B.safetensors", "wan22t2voggystyle", "Low")]
-    [InlineData("WAN-2.2-T2V-cial-HIGH 14B.safetensors", "wan22t2vcial", "High")]
-    [InlineData("WAN-2.2-T2V-cial-LOW 14B.safetensors", "wan22t2vcial", "Low")]
-    [InlineData("CassHamadaWan2.2HighNoise.safetensors", "casshamadawan2", "High")]
-    [InlineData("CassHamadaWan2.2HighNoise", "casshamadawan2", "High")]
-    [InlineData("CassHamadaWan2.2LowNoise.safetensors", "casshamadawan2", "Low")]
-    [InlineData("CassHamadaWan2.2LowNoise", "casshamadawan2", "Low")]
-    [InlineData("AAG_MuscleMommyH_high_noise.safetensors", "aagmusclemommy", "High")]
-    [InlineData("AAG_MuscleMommyL_low_noise.safetensors", "aagmusclemommy", "Low")]
-    [InlineData("wan2.2_highnoise_cshot_v.1.0.safetensors", "wan22cshot", "High")]
-    [InlineData("wan2.2_lownoise_cshot_v1.0.safetensors", "wan22cshot", "Low")]
-    [InlineData("WAN-2.2-I2V-BPlay-HIGH-v1", "wan22i2vbplay", "High")]
-    [InlineData("WAN-2.2-I2V-BPlay-LOW-v1", "wan22i2vbplay", "Low")]
-    [InlineData("Wan2.2 - I2V - King Machine - HIGH 14B.safetensors", "wan22i2vkingmachine", "High")]
-    [InlineData("Wan2.2 - I2V - King Machine - LOW 14B.safetensors", "wan22i2vkingmachine", "Low")]
-    [InlineData("WAN-2.2-T2V-oggy Style-HIGH 14B", "wan22t2voggystyle", "High")]
-    [InlineData("WAN-2.2-T2V-oggy Style-LOW 14B", "wan22t2voggystyle", "Low")]
+    [MemberData(nameof(GetClassificationSamples))]
     public void Classify_ReturnsExpectedNormalizationAndLabel(string fileName, string expectedKey, string expectedLabel)
     {
         var model = new ModelClass
@@ -54,6 +23,50 @@ public class LoraVariantClassifierTests
 
         result.NormalizedKey.Should().Be(expectedKey);
         result.VariantLabel.Should().Be(expectedLabel);
+    }
+
+    public static IEnumerable<object[]> GetClassificationSamples()
+    {
+        yield return new object[] { "wriggling_t2v_high_e100.safetensors", "wrigglingt2v", "High" };
+        yield return new object[] { "wriggling_t2v_low_e100.safetensors", "wrigglingt2v", "Low" };
+        yield return new object[] { "WANTT2VHIGHNOISEJIGGLE", "wantt2vjiggle", "High" };
+        yield return new object[] { "WANTT2VLOWNOISEJIGGLE", "wantt2vjiggle", "Low" };
+        yield return new object[] { "Pump_wan22_e20_high.safetensors", "pumpwan22", "High" };
+        yield return new object[] { "Pump_wan22_e20_low.safetensors", "pumpwan22", "Low" };
+        yield return new object[] { "scifi_wan_low_30 (1).safetensors", "scifiwan", "Low" };
+        yield return new object[] { "scifi_wan_high_30 (1).safetensors", "scifiwan", "High" };
+        yield return new object[] { "wriggling_i2v_high_e010.safetensors", "wrigglingi2v", "High" };
+        yield return new object[] { "wriggling_i2v_low_e020.safetensors", "wrigglingi2v", "Low" };
+        yield return new object[] { "wan22-f4c3spl4sh-100epoc-high-k3nk.safetensors", "wan22f4c3spl4shk3nk", "High" };
+        yield return new object[] { "wan22-f4c3spl4sh-154epoc-low-k3nk.safetensors", "wan22f4c3spl4shk3nk", "Low" };
+        yield return new object[] { "model_HN.safetensors", "model", "High" };
+        yield return new object[] { "model_LN.safetensors", "model", "Low" };
+        yield return new object[] { "WAN-2.2-I2V-BPlay-HIGH-v1.safetensors", "wan22i2vbplay", "High" };
+        yield return new object[] { "WAN-2.2-I2V-BPlay-LOW-v1.safetensors", "wan22i2vbplay", "Low" };
+        yield return new object[] { "WAN-2.2-T2V-oggy Style-HIGH 14B.safetensors", "wan22t2voggystyle", "High" };
+        yield return new object[] { "WAN-2.2-T2V-oggy Style-LOW 14B.safetensors", "wan22t2voggystyle", "Low" };
+        yield return new object[] { "WAN-2.2-T2V-cial-HIGH 14B.safetensors", "wan22t2vcial", "High" };
+        yield return new object[] { "WAN-2.2-T2V-cial-LOW 14B.safetensors", "wan22t2vcial", "Low" };
+        yield return new object[] { "CassHamadaWan2.2HighNoise.safetensors", "casshamadawan2", "High" };
+        yield return new object[] { "CassHamadaWan2.2HighNoise", "casshamadawan2", "High" };
+        yield return new object[] { "CassHamadaWan2.2LowNoise.safetensors", "casshamadawan2", "Low" };
+        yield return new object[] { "CassHamadaWan2.2LowNoise", "casshamadawan2", "Low" };
+        yield return new object[] { "AAG_MuscleMommyH_high_noise.safetensors", "aagmusclemommy", "High" };
+        yield return new object[] { "AAG_MuscleMommyL_low_noise.safetensors", "aagmusclemommy", "Low" };
+        yield return new object[] { "wan2.2_highnoise_cshot_v.1.0.safetensors", "wan22cshot", "High" };
+        yield return new object[] { "wan2.2_lownoise_cshot_v1.0.safetensors", "wan22cshot", "Low" };
+        yield return new object[] { "WAN-2.2-I2V-BPlay-HIGH-v1", "wan22i2vbplay", "High" };
+        yield return new object[] { "WAN-2.2-I2V-BPlay-LOW-v1", "wan22i2vbplay", "Low" };
+        yield return new object[] { "Wan2.2 - I2V - King Machine - HIGH 14B.safetensors", "wan22i2vkingmachine", "High" };
+        yield return new object[] { "Wan2.2 - I2V - King Machine - LOW 14B.safetensors", "wan22i2vkingmachine", "Low" };
+        yield return new object[] { "WAN-2.2-T2V-oggy Style-HIGH 14B", "wan22t2voggystyle", "High" };
+        yield return new object[] { "WAN-2.2-T2V-oggy Style-LOW 14B", "wan22t2voggystyle", "Low" };
+        yield return new object[] { "WAN_2.2_mix_HIGH (Final).safetensors", "wan22mixfinal", "High" };
+        yield return new object[] { "WAN_2.2_mix_LOW (Final).safetensors", "wan22mixfinal", "Low" };
+        yield return new object[] { "wan - custom - LN 15B.safetensors", "wancustom", "Low" };
+        yield return new object[] { "wan - custom - HN 15B.safetensors", "wancustom", "High" };
+        yield return new object[] { "Another Model (LOW Noise).safetensors", "anothermodel", "Low" };
+        yield return new object[] { "Another Model (HIGH Noise).safetensors", "anothermodel", "High" };
     }
 
     [Fact]
@@ -110,6 +123,59 @@ public class LoraVariantClassifierTests
     }
 
     [Fact]
+    public void Classify_ReturnsEmptyKeyWhenOnlyNoisePresent()
+    {
+        var model = new ModelClass
+        {
+            SafeTensorFileName = "HighNoise",
+            AssociatedFilesInfo = new List<FileInfo>()
+        };
+
+        var result = LoraVariantClassifier.Classify(model);
+
+        result.NormalizedKey.Should().BeEmpty();
+        result.VariantLabel.Should().Be("High");
+    }
+
+    [Fact]
+    public void Classify_SnapshotProtectsAgainstRegression()
+    {
+        var samples = new[]
+        {
+            "wan2.2_highnoise_cshot_v1.0 (Final Copy).safetensors",
+            "wan2.2-lownoise-cshot-v1.0-final.safetensors",
+            "WAN2.2_FINAL-HIGHNoise   .safetensors",
+            "WAN2.2_FINAL-LowNoise   .safetensors",
+            "Some Random Model.safetensors"
+        };
+
+        var snapshot = samples
+            .Select(sample =>
+            {
+                var model = new ModelClass
+                {
+                    SafeTensorFileName = sample,
+                    AssociatedFilesInfo = new List<FileInfo>()
+                };
+
+                var classification = LoraVariantClassifier.Classify(model);
+                return (sample, classification);
+            })
+            .ToDictionary(
+                entry => entry.sample,
+                entry => ($"{entry.classification.NormalizedKey}|{entry.classification.VariantLabel}"));
+
+        snapshot.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["wan2.2_highnoise_cshot_v1.0 (Final Copy).safetensors"] = "wan22cshot0finalcopy|High",
+            ["wan2.2-lownoise-cshot-v1.0-final.safetensors"] = "wan22cshot0final|Low",
+            ["WAN2.2_FINAL-HIGHNoise   .safetensors"] = "wan22final|High",
+            ["WAN2.2_FINAL-LowNoise   .safetensors"] = "wan22fina|Low",
+            ["Some Random Model.safetensors"] = "somerandommodel|"
+        });
+    }
+
+    [Fact]
     public void Classify_UsesModelVersionVariantWhenFileNameLacksVariant()
     {
         var model = new ModelClass
@@ -141,6 +207,23 @@ public class LoraVariantClassifierTests
         entry.Variants.Should().HaveCount(2);
         entry.Variants.Select(v => v.Label).Should().Contain(new[] { "High", "Low" });
         entry.Model.SafeTensorFileName.Should().Be("WAN-2.2-I2V-BPlay-HIGH-v1.safetensors");
+    }
+
+    [Fact]
+    public void Merge_OrdersVariantsDeterministically()
+    {
+        var seeds = new List<LoraCardSeed>
+        {
+            CreateSeed("WAN-2.2-I2V-BPlay-LOW-v1.safetensors", "1", "Wan Video 2.2"),
+            CreateSeed("WAN-2.2-I2V-BPlay-HIGH-v1.safetensors", "1", "Wan Video 2.2"),
+        };
+
+        var entries = LoraVariantMerger.Merge(seeds);
+
+        entries.Should().HaveCount(1);
+        var entry = entries.Single();
+        entry.Variants.Select(v => v.Label).Should().ContainInOrder("High", "Low");
+        entry.Variants[0].Model.SafeTensorFileName.Should().Contain("HIGH");
     }
 
     [Fact]
@@ -185,6 +268,28 @@ public class LoraVariantClassifierTests
         entry.FolderPath.Should().Be(first.FolderPath);
         entry.SourcePath.Should().Be(first.SourcePath);
         entry.TreePath.Should().Be(first.TreePath);
+    }
+
+    [Fact]
+    public void Merge_IgnoresSeedsWithoutVariantLabel()
+    {
+        var single = new ModelClass
+        {
+            SafeTensorFileName = "wan2.2_cshot.safetensors",
+            ModelId = "1",
+            DiffusionBaseModel = "Wan Video 2.2",
+            AssociatedFilesInfo = new List<FileInfo>()
+        };
+
+        var seeds = new[]
+        {
+            new LoraCardSeed(single, "source", "folder", "tree", Array.Empty<string>())
+        };
+
+        var entries = LoraVariantMerger.Merge(seeds);
+
+        entries.Should().HaveCount(1);
+        entries.Single().Variants.Should().BeEmpty();
     }
 
     private static LoraCardSeed CreateSeed(string fileName, string modelId, string baseModel)
