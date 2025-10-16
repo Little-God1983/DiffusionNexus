@@ -63,6 +63,8 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public DiffusionModelFilterViewModel DiffusionModelFilter { get; } = new();
 
+    public bool IsVideoPreviewEnabled { get; private set; }
+
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
@@ -104,6 +106,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             var settings = await _settingsService.LoadAsync();
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+            IsVideoPreviewEnabled = settings.ShowVideoPreview;
             ShowNsfw = settings.ShowNsfw;
             var enabledSources = settings.LoraHelperSources
                 .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
@@ -171,6 +174,11 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                foreach (var existing in _allCards)
+                {
+                    existing.DisposeVideoPreview();
+                }
+
                 _allCards.Clear();
                 Cards.Clear();
             });
@@ -185,6 +193,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                     Parent = this
                 };
                 card.SetVariants(entry.Variants);
+                card.ApplyVideoPreviewSetting(IsVideoPreviewEnabled);
                 _allCards.Add(card);
             }
 
@@ -491,6 +500,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             try { File.Delete(file.FullName); } catch { }
         }
 
+        card.DisposeVideoPreview();
         _allCards.Remove(card);
         Cards.Remove(card);
         StartIndexing();

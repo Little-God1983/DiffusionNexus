@@ -106,7 +106,16 @@
                       Cursor="Hand"
                       PointerReleased="OnCardPointerReleased">
                 <Grid>
-                  <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
+                  <Grid>
+                    <Image Source="{Binding VideoFrame}" Stretch="UniformToFill" IsVisible="{Binding HasVideo}"/>
+                    <Image Source="{Binding PreviewImage}" Stretch="UniformToFill" IsVisible="{Binding ShouldShowImage}"/>
+                    <TextBlock Text="No preview available"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontStyle="Italic"
+                               Foreground="#FFCCCCCC"
+                               IsVisible="{Binding ShowPlaceholder}"/>
+                  </Grid>
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
                     <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2" Background="Black">
                       <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
