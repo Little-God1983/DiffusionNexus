@@ -16,6 +16,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private bool _mergeLoraHelperSources;
         [ObservableProperty] private bool _deleteEmptySourceFolders;
         [ObservableProperty] private bool _generateVideoThumbnails = true;
+        [ObservableProperty] private bool _showVideoPreview;
         [ObservableProperty] private bool _showNsfw;
         [ObservableProperty] private bool _useForgeStylePrompts = true;
 
