@@ -42,7 +42,16 @@ public class LoraVariantClassifierTests
     [InlineData("Wan2.2 - I2V - King Machine - LOW 14B.safetensors", "wan22i2vkingmachine", "Low")]
     [InlineData("WAN-2.2-T2V-oggy Style-HIGH 14B", "wan22t2voggystyle", "High")]
     [InlineData("WAN-2.2-T2V-oggy Style-LOW 14B", "wan22t2voggystyle", "Low")]
-    public void Classify_ReturnsExpectedNormalizationAndLabel(string fileName, string expectedKey, string expectedLabel)
+    [InlineData("eyes_3d_high.safetensors", "eyes3d", "High")]
+    [InlineData("eyes_3d_low.safetensors", "eyes3d", "Low")]
+    [InlineData("LipL-high-60.safetensors", "lipl", "High")]
+    [InlineData("LipL-low-60.safetensors", "lipl", "Low")]
+    [InlineData("i merged_CB_H_V2.safetensors", "imergedcb", "High")]
+    [InlineData("i merged_CB_L_V2.safetensors", "imergedcb", "Low")]
+    [InlineData("Blowbang_high_noise.safetensors", "blowbang", "High")]
+    [InlineData("Blowbang_low_noise.safetensors", "blowbang", "Low")]
+    [InlineData("5XLOWCS5thEPOCH.safetensors", "5xlowcs5thepoch", null)]
+    public void Classify_ReturnsExpectedNormalizationAndLabel(string fileName, string expectedKey, string? expectedLabel)
     {
         var model = new ModelClass
         {
