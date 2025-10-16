@@ -56,6 +56,9 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool showNsfw;
 
     [ObservableProperty]
+    private bool showVideoPreview;
+
+    [ObservableProperty]
     private SortMode sortMode = SortMode.Name;
 
     [ObservableProperty]
@@ -105,6 +108,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             var settings = await _settingsService.LoadAsync();
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowNsfw = settings.ShowNsfw;
+            ShowVideoPreview = settings.ShowVideoPreview;
             var enabledSources = settings.LoraHelperSources
                 .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
                 .Select(source => source.FolderPath!)
@@ -171,6 +175,10 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                foreach (var card in _allCards)
+                {
+                    card.Dispose();
+                }
                 _allCards.Clear();
                 Cards.Clear();
             });
@@ -184,6 +192,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                     TreePath = entry.TreePath,
                     Parent = this
                 };
+                card.ShowVideoPreview = ShowVideoPreview;
                 card.SetVariants(entry.Variants);
                 _allCards.Add(card);
             }
@@ -267,6 +276,14 @@ public partial class LoraHelperViewModel : ViewModelBase
     partial void OnShowNsfwChanged(bool value)
     {
         _ = RefreshCardsAsync();
+    }
+
+    partial void OnShowVideoPreviewChanged(bool value)
+    {
+        foreach (var card in _allCards)
+        {
+            card.ShowVideoPreview = value;
+        }
     }
 
     partial void OnSortModeChanged(SortMode value)
@@ -491,6 +508,7 @@ public partial class LoraHelperViewModel : ViewModelBase
             try { File.Delete(file.FullName); } catch { }
         }
 
+        card.Dispose();
         _allCards.Remove(card);
         Cards.Remove(card);
         StartIndexing();
