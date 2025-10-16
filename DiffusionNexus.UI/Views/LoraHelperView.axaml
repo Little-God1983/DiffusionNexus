@@ -14,12 +14,26 @@
     <conv:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
     <Style Selector="Border.lora-card">
-      <Setter Property="BorderBrush" Value="Transparent"/>
-      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="BorderBrush" Value="#444"/>
+      <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="BorderBrush" Duration="0:0:0.12" Easing="QuadraticEaseOut"/>
+          <DoubleTransition Property="BorderThickness" Duration="0:0:0.12" Easing="QuadraticEaseOut"/>
+          <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12" Easing="QuadraticEaseOut"/>
+        </Transitions>
+      </Setter>
     </Style>
     <Style Selector="Border.lora-card:pointerover">
-      <Setter Property="BorderBrush" Value="#3399FF"/>
+      <Setter Property="BorderBrush" Value="#4A90FF"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="BoxShadow">
+        <BoxShadows>
+          <BoxShadow Blur="12" Offset="0,4" Color="#662244FF"/>
+        </BoxShadows>
+      </Setter>
     </Style>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
