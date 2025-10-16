@@ -13,6 +13,14 @@
     <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
     <conv:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
+    <Style Selector="Border.lora-card">
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="CornerRadius" Value="6"/>
+    </Style>
+    <Style Selector="Border.lora-card:pointerover">
+      <Setter Property="BorderBrush" Value="#3399FF"/>
+    </Style>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
@@ -88,7 +96,7 @@
           </items:ItemsRepeater.Layout>
           <items:ItemsRepeater.ItemTemplate>
             <DataTemplate x:DataType="vm:LoraCardViewModel">
-              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300" Classes="lora-card">
                 <Grid>
                   <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
