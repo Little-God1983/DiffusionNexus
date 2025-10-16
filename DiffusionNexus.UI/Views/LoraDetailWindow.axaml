@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:conv="using:DiffusionNexus.UI.Converters"
+        xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
+        x:Class="DiffusionNexus.UI.Views.LoraDetailWindow"
+        x:DataType="vm:LoraDetailViewModel"
+        Width="900"
+        Height="620"
+        Title="{Binding ModelName}"
+        WindowStartupLocation="CenterOwner">
+  <Window.Resources>
+    <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
+  </Window.Resources>
+  <Window.Styles>
+    <Style Selector="Button.tag-chip">
+      <Setter Property="Background" Value="#2C2C2C"/>
+      <Setter Property="BorderBrush" Value="#3F3F3F"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Foreground" Value="#F0F0F0"/>
+      <Setter Property="Padding" Value="10,4"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="IsEnabled" Value="False"/>
+    </Style>
+  </Window.Styles>
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="20" Spacing="16">
+      <TextBlock Text="{Binding ModelName}" FontSize="26" FontWeight="Bold" TextWrapping="Wrap"/>
+      <ItemsControl ItemsSource="{Binding Tags}" IsVisible="{Binding HasTags}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel ItemSpacing="8"/>
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Classes="tag-chip" Content="{Binding .}"/>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <Grid ColumnDefinitions="3*,2*" ColumnSpacing="20">
+        <Border Background="#1E1E1E" CornerRadius="10" Padding="12" MinHeight="320">
+          <Grid>
+            <Image x:Name="PreviewImageControl"
+                   Source="{Binding PreviewImage}" Stretch="Uniform"/>
+            <vlc:VideoView x:Name="PreviewVideo" IsVisible="False"/>
+            <TextBlock x:Name="PreviewPlaceholder"
+                       Text="No preview available"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+        <Border Background="#1E1E1E" CornerRadius="10" Padding="16">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="Auto,*" RowSpacing="12" ColumnSpacing="16">
+            <TextBlock Text="Model ID" FontWeight="SemiBold"/>
+            <TextBlock Grid.Column="1" Text="{Binding ModelIdDisplay}" TextWrapping="Wrap"/>
+
+            <TextBlock Grid.Row="1" Text="Model Version ID" FontWeight="SemiBold"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModelVersionIdDisplay}" TextWrapping="Wrap"/>
+
+            <TextBlock Grid.Row="2" Text="Base Model" FontWeight="SemiBold"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BaseModelDisplay}" TextWrapping="Wrap"/>
+
+            <TextBlock Grid.Row="3" Text="File" FontWeight="SemiBold"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding FileNameWithExtension}" TextWrapping="Wrap"/>
+
+            <TextBlock Grid.Row="4" Text="Model Type" FontWeight="SemiBold"/>
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModelTypeDisplay}" TextWrapping="Wrap"/>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <StackPanel>
+        <TextBlock Text="Description" FontWeight="SemiBold" FontSize="16"/>
+        <Border Background="#1E1E1E" CornerRadius="10" Padding="16" MinHeight="120">
+          <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+            <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
+          </ScrollViewer>
+        </Border>
+      </StackPanel>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button Content="🌐" Width="44" Height="44" Command="{Binding Card.OpenWebCommand}" ToolTip.Tip="Open on Civitai"/>
+        <Button Content="📋" Width="44" Height="44" Command="{Binding Card.CopyCommand}" ToolTip.Tip="Copy trigger words"/>
+        <Button Content="N" Width="44" Height="44" Command="{Binding Card.CopyNameCommand}" ToolTip.Tip="Copy model name"/>
+        <Button Content="📂" Width="44" Height="44" Command="{Binding Card.OpenFolderCommand}" ToolTip.Tip="Open containing folder"/>
+        <Button Content="❌" Width="44" Height="44" Command="{Binding Card.DeleteCommand}" ToolTip.Tip="Delete this model"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

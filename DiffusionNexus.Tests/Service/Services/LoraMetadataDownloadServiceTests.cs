@@ -11,9 +11,11 @@ public class LoraMetadataDownloadServiceTests
     public void ParseInfoJson_ReturnsExpectedValues()
     {
         var json = "{\"modelId\":123,\"images\":[{\"url\":\"http://example.com/a.jpg\"}],\"trainedWords\":[\"foo\"],\"model\":{\"nsfw\":true}}";
-        var (url, id, words, nsfw) = LoraMetadataDownloadService.ParseInfoJson(json);
+        var (url, id, versionId, description, words, nsfw) = LoraMetadataDownloadService.ParseInfoJson(json);
         id.Should().Be("123");
+        versionId.Should().BeNull();
         url.Should().Be("http://example.com/a.jpg");
+        description.Should().BeNull();
         words.Should().ContainSingle().Which.Should().Be("foo");
         nsfw.Should().BeTrue();
     }

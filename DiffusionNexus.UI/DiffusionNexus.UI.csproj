@@ -47,6 +47,8 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.7" />
     <PackageReference Include="Xabe.FFmpeg" Version="6.0.1" />
     <PackageReference Include="Xabe.FFmpeg.Downloader" Version="6.0.1" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.7.0" />
+    <PackageReference Include="LibVLCSharp" Version="3.7.0" />
   </ItemGroup>
 
   <!-- Automatically read, increment and save build number on each build -->

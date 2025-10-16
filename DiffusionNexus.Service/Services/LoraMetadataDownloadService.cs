@@ -1,7 +1,11 @@
 using DiffusionNexus.Service.Classes;
-using System.Text.Json;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.IO;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -32,12 +36,14 @@ public class LoraMetadataDownloadService
         return string.Concat(hash.Select(b => b.ToString("x2")));
     }
 
-    internal static (string? PreviewUrl, string? ModelId, List<string> TrainedWords, bool? Nsfw) ParseInfoJson(string infoJson)
+    internal static (string? PreviewUrl, string? ModelId, string? ModelVersionId, string? Description, List<string> TrainedWords, bool? Nsfw) ParseInfoJson(string infoJson)
     {
         using var doc = JsonDocument.Parse(infoJson);
         var root = doc.RootElement;
         string? previewUrl = null;
         string? modelId = null;
+        string? modelVersionId = null;
+        string? description = null;
         var trainedWords = new List<string>();
         bool? nsfw = null;
 
@@ -49,14 +55,10 @@ public class LoraMetadataDownloadService
         }
 
         if (root.TryGetProperty("modelId", out var modelIdEl))
-        {
-            modelId = modelIdEl.ValueKind switch
-            {
-                JsonValueKind.Number => modelIdEl.GetInt64().ToString(),
-                JsonValueKind.String => modelIdEl.GetString(),
-                _ => null
-            };
-        }
+            modelId = ConvertElementToString(modelIdEl);
+
+        if (root.TryGetProperty("modelVersionId", out var versionIdEl))
+            modelVersionId = ConvertElementToString(versionIdEl);
 
         if (root.TryGetProperty("trainedWords", out var wordsEl) && wordsEl.ValueKind == JsonValueKind.Array)
         {
@@ -74,9 +76,15 @@ public class LoraMetadataDownloadService
                 if (nsfwEl.ValueKind == JsonValueKind.True || nsfwEl.ValueKind == JsonValueKind.False)
                     nsfw = nsfwEl.GetBoolean();
             }
+
+            if (string.IsNullOrWhiteSpace(description) && modelEl.TryGetProperty("description", out var descriptionEl))
+                description = ExtractDescription(descriptionEl) ?? description;
         }
 
-        return (previewUrl, modelId, trainedWords, nsfw);
+        if (string.IsNullOrWhiteSpace(description) && root.TryGetProperty("description", out var descriptionRoot))
+            description = ExtractDescription(descriptionRoot) ?? description;
+
+        return (previewUrl, modelId, modelVersionId, description, trainedWords, nsfw);
     }
 
     public async Task<MetadataDownloadResult> EnsureMetadataAsync(ModelClass model, string apiKey)
@@ -90,19 +98,27 @@ public class LoraMetadataDownloadService
 
         string previewUrl = String.Empty;
         string modelId = String.Empty;
+        string? modelVersionId = null;
+        string? description = null;
 
         bool hasCivitaiInfo = false;
         if (File.Exists(CivitaiInfoPath))
         {
             hasCivitaiInfo = true;
             var CivitaiJson = await File.ReadAllTextAsync(CivitaiInfoPath);
-            (previewUrl, string id, List<string> words, bool? infoNsfw) = ParseInfoJson(CivitaiJson);
+            (previewUrl, string id, string? versionId, string? infoDescription, List<string> words, bool? infoNsfw) = ParseInfoJson(CivitaiJson);
             if (!string.IsNullOrWhiteSpace(id))
             {
                 modelId = id;
                 model.ModelId = id;
             }
-                
+
+            if (!string.IsNullOrWhiteSpace(versionId))
+                model.ModelVersionId = versionId;
+
+            if (!string.IsNullOrWhiteSpace(infoDescription))
+                model.Description = infoDescription;
+
             if (words.Count > 0)
                 model.TrainedWords = words;
             if (infoNsfw.HasValue)
@@ -147,9 +163,13 @@ public class LoraMetadataDownloadService
                 return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
             }
 
-            (previewUrl, modelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
+            (previewUrl, modelId, modelVersionId, description, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
             if (!string.IsNullOrWhiteSpace(modelId))
                 model.ModelId = modelId;
+            if (!string.IsNullOrWhiteSpace(modelVersionId))
+                model.ModelVersionId = modelVersionId;
+            if (!string.IsNullOrWhiteSpace(description))
+                model.Description = description;
             if (words2.Count > 0)
                 model.TrainedWords = words2;
             if (nsfw2.HasValue)
@@ -187,5 +207,41 @@ public class LoraMetadataDownloadService
         }
 
         return new MetadataDownloadResult(MetadataDownloadResultType.Downloaded, modelId);
+    }
+
+    private static string? ConvertElementToString(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number => element.GetInt64().ToString(),
+            JsonValueKind.String => element.GetString(),
+            _ => null
+        };
+    }
+
+    private static string? ExtractDescription(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                return element.GetString();
+            case JsonValueKind.Array:
+                var segments = element.EnumerateArray()
+                    .Where(e => e.ValueKind == JsonValueKind.String)
+                    .Select(e => e.GetString())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToArray();
+                return segments.Length > 0 ? string.Join(Environment.NewLine + Environment.NewLine, segments!) : null;
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var candidate = ExtractDescription(property.Value);
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                        return candidate;
+                }
+                break;
+        }
+
+        return null;
     }
 }

@@ -44,6 +44,7 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand CopyCommand { get; }
     public IAsyncRelayCommand CopyNameCommand { get; }
     public IRelayCommand OpenFolderCommand { get; }
+    public IAsyncRelayCommand OpenDetailsCommand { get; }
 
     public ObservableCollection<LoraVariantViewModel> Variants { get; } = new();
 
@@ -59,12 +60,14 @@ public partial class LoraCardViewModel : ViewModelBase
         CopyCommand = new AsyncRelayCommand(OnCopyAsync);
         CopyNameCommand = new AsyncRelayCommand(OnCopyNameAsync);
         OpenFolderCommand = new RelayCommand(OnOpenFolder);
+        OpenDetailsCommand = new AsyncRelayCommand(OnOpenDetailsAsync);
         Variants.CollectionChanged += OnVariantsCollectionChanged;
     }
 
     partial void OnModelChanged(ModelClass? value)
     {
         _ = LoadPreviewImageAsync();
+        Description = value?.Description;
     }
 
     internal void SetVariants(IReadOnlyList<LoraVariantDescriptor> variants)
@@ -177,7 +180,7 @@ public partial class LoraCardViewModel : ViewModelBase
         return null;
     }
 
-    private string? GetPreviewMediaPath()
+    public string? GetPreviewMediaPath()
     {
         if (Model == null) return null;
         
@@ -190,6 +193,11 @@ public partial class LoraCardViewModel : ViewModelBase
         }
 
         return null;
+    }
+
+    private Task OnOpenDetailsAsync()
+    {
+        return Parent?.ShowDetailsAsync(this) ?? Task.CompletedTask;
     }
 
     private void OnEdit() => Log($"Edit {Model.SafeTensorFileName}", LogSeverity.Info);

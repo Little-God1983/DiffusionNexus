@@ -7,6 +7,7 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Search;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.Views;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Diagnostics;
@@ -558,6 +559,23 @@ public partial class LoraHelperViewModel : ViewModelBase
                 Log($"failed to copy: {ex.Message}", LogSeverity.Error);
             }
         }
+    }
+
+    public async Task ShowDetailsAsync(LoraCardViewModel card)
+    {
+        if (card.Model == null || _window == null)
+            return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var detailVm = new LoraDetailViewModel(card);
+            var window = new LoraDetailWindow
+            {
+                DataContext = detailVm
+            };
+
+            window.Show(_window);
+        });
     }
 
     private static IEnumerable<char> GetLoraNameShort(LoraCardViewModel card)

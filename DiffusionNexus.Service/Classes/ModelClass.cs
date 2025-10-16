@@ -24,6 +24,7 @@ namespace DiffusionNexus.Service.Classes
         [MetadataField] public string SafeTensorFileName { get; set; }
         [MetadataField] public string ModelVersionName { get; set; }
         [MetadataField] public string? ModelId { get; set; }
+        [MetadataField] public string? ModelVersionId { get; set; }
         public string? SHA256Hash { get; set; }
         [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.UNASSIGNED;
         public List<FileInfo> AssociatedFilesInfo { get; set; }
@@ -31,6 +32,7 @@ namespace DiffusionNexus.Service.Classes
         [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
         [MetadataField] public List<string> TrainedWords { get; set; } = new();
         [MetadataField] public bool? Nsfw { get; set; }
+        [MetadataField] public string? Description { get; set; }
 
         // status flags
         public bool NoMetaData { get; set; } = true;

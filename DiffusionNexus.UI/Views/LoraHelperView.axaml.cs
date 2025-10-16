@@ -3,6 +3,8 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
+using Avalonia.Input;
+using Avalonia.Controls.Primitives;
 
 namespace DiffusionNexus.UI.Views;
 
@@ -52,6 +54,30 @@ public partial class LoraHelperView : UserControl
             {
                 await vm.LoadNextPageAsync();
             }
+        }
+    }
+
+    private void OnCardPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Border { DataContext: LoraCardViewModel card })
+        {
+            return;
+        }
+
+        if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        if (e.Source is Control control && control != sender && (control is Button || control is ToggleButton))
+        {
+            return;
+        }
+
+        if (card.OpenDetailsCommand.CanExecute(null))
+        {
+            card.OpenDetailsCommand.Execute(null);
+            e.Handled = true;
         }
     }
 }

@@ -1,6 +1,9 @@
 using DiffusionNexus.Service.Classes;
+using System;
 using System.IO;
 using ModelMover.Core.Metadata;
+using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -46,14 +49,14 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
             using JsonDocument versionDoc = JsonDocument.Parse(versionJson);
             JsonElement versionRoot = versionDoc.RootElement;
 
+            if (versionRoot.TryGetProperty("id", out var versionId))
+            {
+                modelClass.ModelVersionId = ConvertElementToString(versionId);
+            }
+
             if (versionRoot.TryGetProperty("modelId", out var modelId))
             {
-                modelClass.ModelId = modelId.ValueKind switch
-                {
-                    JsonValueKind.String => modelId.GetString(),
-                    JsonValueKind.Number => modelId.GetInt64().ToString(),
-                    _ => null
-                };
+                modelClass.ModelId = ConvertElementToString(modelId);
                 if (!string.IsNullOrEmpty(modelClass.ModelId))
                 {
                     var modelJson = await _apiClient.GetModelAsync(modelClass.ModelId, _apiKey);
@@ -67,6 +70,9 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
 
             if (versionRoot.TryGetProperty("name", out var versionName))
                 modelClass.ModelVersionName = versionName.GetString() ?? modelClass.ModelVersionName;
+
+            if (string.IsNullOrWhiteSpace(modelClass.Description) && versionRoot.TryGetProperty("description", out var description))
+                modelClass.Description = ExtractDescription(description) ?? modelClass.Description;
 
             modelClass.NoMetaData = !modelClass.HasAnyMetadata;
         }
@@ -97,7 +103,45 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
         if (root.TryGetProperty("tags", out var tags))
             modelClass.Tags = ModelMetadataUtils.ParseTags(tags);
         modelClass.CivitaiCategory = MetaDataUtilService.GetCategoryFromTags(modelClass.Tags);
+
+        if (root.TryGetProperty("description", out var description))
+            modelClass.Description = ExtractDescription(description) ?? modelClass.Description;
     }
 
+    private static string? ConvertElementToString(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.GetInt64().ToString(),
+            _ => null
+        };
+    }
+
+    private static string? ExtractDescription(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                return element.GetString();
+            case JsonValueKind.Array:
+                var segments = element.EnumerateArray()
+                    .Where(e => e.ValueKind == JsonValueKind.String)
+                    .Select(e => e.GetString())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToArray();
+                return segments.Length > 0 ? string.Join(Environment.NewLine + Environment.NewLine, segments!) : null;
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var candidate = ExtractDescription(property.Value);
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                        return candidate;
+                }
+                break;
+        }
+
+        return null;
+    }
 }
 
