@@ -4,6 +4,7 @@
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:conv="using:DiffusionNexus.UI.Converters"
              xmlns:items="using:Avalonia.Controls"
+             xmlns:animations="using:Avalonia.Animation"
              x:Class="DiffusionNexus.UI.Views.LoraHelperView"
              x:DataType="vm:LoraHelperViewModel">
   <UserControl.DataContext>
@@ -13,6 +14,23 @@
     <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
     <conv:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
+    <Style Selector="Border.lora-card">
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Transitions">
+        <Transitions>
+          <animations:BrushTransition Property="Border.BorderBrush" Duration="0:0:0.15"/>
+          <animations:BrushTransition Property="Border.Background" Duration="0:0:0.15"/>
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Border.lora-card:pointerover">
+      <Setter Property="BorderBrush" Value="#3399FF"/>
+      <Setter Property="Background" Value="#3F3F4A"/>
+      <Setter Property="BoxShadow" Value="0 0 8 2 #3399FF"/>
+      <Setter Property="ZIndex" Value="1"/>
+    </Style>
   </UserControl.Resources>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
     <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
@@ -88,7 +106,7 @@
           </items:ItemsRepeater.Layout>
           <items:ItemsRepeater.ItemTemplate>
             <DataTemplate x:DataType="vm:LoraCardViewModel">
-              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300">
+              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300" Classes="lora-card">
                 <Grid>
                   <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
