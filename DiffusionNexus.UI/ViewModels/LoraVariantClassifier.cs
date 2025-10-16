@@ -16,10 +16,12 @@ internal static class LoraVariantClassifier
         ["highnoise"] = "High",
         ["high_noise"] = "High",
         ["high"] = "High",
+        ["h"] = "High",
         ["hn"] = "High",
         ["lownoise"] = "Low",
         ["low_noise"] = "Low",
         ["low"] = "Low",
+        ["l"] = "Low",
         ["ln"] = "Low",
     };
 
@@ -135,6 +137,11 @@ internal static class LoraVariantClassifier
         foreach (var kvp in VariantLabels.OrderByDescending(k => k.Key.Length))
         {
             var key = kvp.Key;
+            if (key.Length == 1)
+            {
+                continue;
+            }
+
             var index = token.IndexOf(key, StringComparison.OrdinalIgnoreCase);
             while (index >= 0)
             {
@@ -142,7 +149,16 @@ internal static class LoraVariantClassifier
                 var afterIndex = index + key.Length;
                 var after = afterIndex < token.Length ? token[afterIndex] : (char?)null;
 
-                if (!IsLowercaseLetter(before) && !IsLowercaseLetter(after))
+                var beforeIsLetter = IsAlphabetic(before);
+                var afterIsLetter = IsAlphabetic(after);
+
+                if (!beforeIsLetter || !afterIsLetter)
+                {
+                    return kvp.Value;
+                }
+
+                if (key.Length > 3 && before.HasValue && after.HasValue &&
+                    char.IsUpper(before.Value) && char.IsUpper(after.Value))
                 {
                     return kvp.Value;
                 }
@@ -154,7 +170,7 @@ internal static class LoraVariantClassifier
         return null;
     }
 
-    private static bool IsLowercaseLetter(char? value) => value.HasValue && char.IsLetter(value.Value) && char.IsLower(value.Value);
+    private static bool IsAlphabetic(char? value) => value.HasValue && char.IsLetter(value.Value);
 
     private static string BuildNormalizedKey(string source, string? variantLabel)
     {
@@ -203,7 +219,10 @@ internal static class LoraVariantClassifier
                 }
                 else
                 {
-                    continue;
+                    if (HasOtherAlphabeticToken(tokens, i))
+                    {
+                        continue;
+                    }
                 }
             }
 
@@ -346,6 +365,11 @@ internal static class LoraVariantClassifier
         {
             if (string.Equals(pair.Value, variantLabel, StringComparison.OrdinalIgnoreCase))
             {
+                if (pair.Key.Length == 1)
+                {
+                    continue;
+                }
+
                 yield return pair.Key;
             }
         }
@@ -362,6 +386,27 @@ internal static class LoraVariantClassifier
         var index = token.IndexOf(key, comparison);
         while (index >= 0)
         {
+            var before = index > 0 ? token[index - 1] : (char?)null;
+            var afterIndex = index + key.Length;
+            var after = afterIndex < token.Length ? token[afterIndex] : (char?)null;
+
+            var beforeIsLetter = IsAlphabetic(before);
+            var afterIsLetter = IsAlphabetic(after);
+
+            var shouldRemove = !beforeIsLetter || !afterIsLetter;
+
+            if (!shouldRemove && before.HasValue && after.HasValue &&
+                key.Length > 3 && char.IsUpper(before.Value) && char.IsUpper(after.Value))
+            {
+                shouldRemove = true;
+            }
+
+            if (!shouldRemove)
+            {
+                index = token.IndexOf(key, index + 1, comparison);
+                continue;
+            }
+
             token = token.Remove(index, key.Length);
             index = token.IndexOf(key, comparison);
         }
@@ -378,6 +423,11 @@ internal static class LoraVariantClassifier
 
         if (token.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
         {
+            if (token.Length - suffix.Length < 4)
+            {
+                return token;
+            }
+
             var segment = token[^suffix.Length..];
             if (!segment.Any(char.IsUpper))
             {
@@ -453,6 +503,42 @@ internal static class LoraVariantClassifier
     }
 
     private static bool StartsWithDigit(string token) => !string.IsNullOrWhiteSpace(token) && char.IsDigit(token[0]);
+
+    private static bool HasOtherAlphabeticToken(IReadOnlyList<string> tokens, int excludeIndex)
+    {
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (i == excludeIndex)
+            {
+                continue;
+            }
+
+            var token = tokens[i];
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                continue;
+            }
+
+            var lower = token.ToLower(CultureInfo.InvariantCulture);
+
+            if (VariantLabels.ContainsKey(lower))
+            {
+                continue;
+            }
+
+            if (IsVersionToken(lower))
+            {
+                continue;
+            }
+
+            if (lower.Any(char.IsLetter))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool HasSubsequentAlphabeticToken(IReadOnlyList<string> tokens, int index)
     {
