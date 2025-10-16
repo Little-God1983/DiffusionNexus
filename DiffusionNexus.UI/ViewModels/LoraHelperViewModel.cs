@@ -63,7 +63,8 @@ public partial class LoraHelperViewModel : ViewModelBase
 
     public DiffusionModelFilterViewModel DiffusionModelFilter { get; } = new();
 
-    public bool IsVideoPreviewEnabled { get; private set; }
+    [ObservableProperty]
+    private bool isVideoPreviewEnabled;
 
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
@@ -193,7 +194,6 @@ public partial class LoraHelperViewModel : ViewModelBase
                     Parent = this
                 };
                 card.SetVariants(entry.Variants);
-                card.ApplyVideoPreviewSetting(IsVideoPreviewEnabled);
                 _allCards.Add(card);
             }
 
@@ -311,6 +311,10 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                foreach (var card in Cards)
+                {
+                    card.DisposeVideoPreview();
+                }
                 Cards.Clear();
                 _filteredCards = list;
                 _nextIndex = 0;

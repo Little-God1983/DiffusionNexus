@@ -90,7 +90,9 @@
       <ScrollViewer x:Name="CardScrollViewer"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto">
-        <items:ItemsRepeater ItemsSource="{Binding Cards}">
+        <items:ItemsRepeater ItemsSource="{Binding Cards}"
+                              ElementPrepared="OnCardElementPrepared"
+                              ElementClearing="OnCardElementClearing">
           <items:ItemsRepeater.Layout>
             <UniformGridLayout MinItemWidth="250"
                                MinItemHeight="300" />
