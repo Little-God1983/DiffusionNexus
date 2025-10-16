@@ -10,7 +10,7 @@ DiffusionNexus is a cross‑platform desktop application for organising Stable D
 - **Clipboard helpers** – copy trained words or model names with a single click.
 
 ## Installation
-1. Install the [.NET 8 Runtime](https://dotnet.microsoft.com/download) if required.
+1. Install the [.NET 9 Runtime](https://dotnet.microsoft.com/download) if required.
 2. Download a release archive from the [GitHub Releases](https://github.com/<REPO>/releases) page.
 3. Extract the archive and run `DiffusionNexus.UI` (on Windows) or `dotnet DiffusionNexus.UI.dll` on Linux/macOS.
 
