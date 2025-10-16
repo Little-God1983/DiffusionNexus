@@ -44,6 +44,7 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand CopyCommand { get; }
     public IAsyncRelayCommand CopyNameCommand { get; }
     public IRelayCommand OpenFolderCommand { get; }
+    public IAsyncRelayCommand OpenDetailsCommand { get; }
 
     public ObservableCollection<LoraVariantViewModel> Variants { get; } = new();
 
@@ -59,6 +60,7 @@ public partial class LoraCardViewModel : ViewModelBase
         CopyCommand = new AsyncRelayCommand(OnCopyAsync);
         CopyNameCommand = new AsyncRelayCommand(OnCopyNameAsync);
         OpenFolderCommand = new RelayCommand(OnOpenFolder);
+        OpenDetailsCommand = new AsyncRelayCommand(OnOpenDetailsAsync);
         Variants.CollectionChanged += OnVariantsCollectionChanged;
     }
 
@@ -177,10 +179,10 @@ public partial class LoraCardViewModel : ViewModelBase
         return null;
     }
 
-    private string? GetPreviewMediaPath()
+    public string? GetPreviewMediaPath()
     {
         if (Model == null) return null;
-        
+
 
         foreach (var ext in SupportedTypes.VideoTypesByPriority)
         {
@@ -197,6 +199,11 @@ public partial class LoraCardViewModel : ViewModelBase
     private Task OnDeleteAsync()
     {
         return Parent?.DeleteCardAsync(this) ?? Task.CompletedTask;
+    }
+
+    private Task OnOpenDetailsAsync()
+    {
+        return Parent?.ShowDetailsAsync(this) ?? Task.CompletedTask;
     }
 
     private async Task OnOpenWebAsync()

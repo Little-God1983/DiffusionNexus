@@ -97,7 +97,14 @@
           </items:ItemsRepeater.Layout>
           <items:ItemsRepeater.ItemTemplate>
             <DataTemplate x:DataType="vm:LoraCardViewModel">
-              <Border Background="#333333" Padding="5" Margin="5" Width="250" Height="300" Classes="lora-card">
+              <Border Background="#333333"
+                      Padding="5"
+                      Margin="5"
+                      Width="250"
+                      Height="300"
+                      Classes="lora-card"
+                      Cursor="Hand"
+                      PointerReleased="OnCardPointerReleased">
                 <Grid>
                   <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">

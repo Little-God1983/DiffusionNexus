@@ -7,6 +7,7 @@ using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Search;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Classes;
+using DiffusionNexus.UI.Views;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Diagnostics;
@@ -493,6 +494,19 @@ public partial class LoraHelperViewModel : ViewModelBase
         _allCards.Remove(card);
         Cards.Remove(card);
         StartIndexing();
+    }
+
+    public Task ShowDetailsAsync(LoraCardViewModel card)
+    {
+        if (_window is null)
+            return Task.CompletedTask;
+
+        var detailWindow = new LoraDetailWindow
+        {
+            DataContext = new LoraDetailViewModel(card)
+        };
+
+        return detailWindow.ShowDialog(_window);
     }
 
     public async Task OpenWebForCardAsync(LoraCardViewModel card)
