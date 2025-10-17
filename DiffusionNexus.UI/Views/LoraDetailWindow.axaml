@@ -27,7 +27,7 @@
     </Style>
   </Window.Styles>
 
-  <Grid Margin="20" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="18">
+  <Grid Margin="20" RowDefinitions="Auto,Auto,*,*,Auto" RowSpacing="18">
     <TextBlock Grid.Row="0"
                Text="{Binding ModelName}"
                FontSize="28"
@@ -96,11 +96,32 @@
       <TextBlock Text="Description" FontWeight="SemiBold" FontSize="16"/>
       <Border Background="#1E1E1E"
               CornerRadius="8"
-              Padding="12">
-        <ScrollViewer MaxHeight="180">
-          <TextBlock Text="{Binding Description}"
-                     TextWrapping="Wrap"/>
-        </ScrollViewer>
+              Padding="0">
+        <Grid RowDefinitions="Auto,*">
+          <TextBlock x:Name="WebViewFallbackNotice"
+                     Grid.Row="0"
+                     Margin="12,12,12,0"
+                     Text="HTML viewer unavailable (WebView runtime missing). Using basic renderer."
+                     Foreground="#E5B567"
+                     FontSize="13"
+                     TextWrapping="Wrap"
+                     IsVisible="False"/>
+          <Grid Grid.Row="1">
+            <NativeWebView x:Name="DescriptionWebView"
+                           Margin="0"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Stretch"/>
+            <ScrollViewer x:Name="DescriptionFallbackScroll"
+                          Margin="12"
+                          IsVisible="False"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+              <TextBlock x:Name="DescriptionFallback"
+                         Text="No description provided."
+                         TextWrapping="Wrap"/>
+            </ScrollViewer>
+          </Grid>
+        </Grid>
       </Border>
     </StackPanel>
 

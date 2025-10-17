@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <AvaloniaUILicenseDisableTask>true</AvaloniaUILicenseDisableTask>
   </PropertyGroup>
 
   <ItemGroup>
