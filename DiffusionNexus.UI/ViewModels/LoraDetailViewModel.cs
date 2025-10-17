@@ -9,6 +9,8 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.UI.Services.Html;
+using HtmlAgilityPack;
 using OpenCvSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -17,8 +19,12 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
 {
     private static readonly string[] ModelFileExtensions = [".safetensors", ".pt", ".ckpt", ".pth"];
     private readonly object _videoLock = new();
+    private readonly HtmlSanitizer _htmlSanitizer = new();
+    private readonly HtmlCssWrapper _htmlCssWrapper = new();
     private string? _modelVersionId;
     private string? _description;
+    private string? _descriptionHtmlCache;
+    private string? _descriptionPlainTextCache;
     private string? _previewMediaPath;
     private VideoCapture? _videoCapture;
     private DispatcherTimer? _videoTimer;
@@ -57,9 +63,18 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
         _ => Card.Model!.ModelType.ToString()
     };
 
-    public string Description => string.IsNullOrWhiteSpace(_description)
-        ? "No description available."
-        : _description!;
+    public string Description => _descriptionPlainTextCache ??= BuildPlainTextDescription();
+
+    public string DescriptionHtml => _descriptionHtmlCache ??= BuildSanitizedHtml();
+
+    public bool HasDescriptionContent
+    {
+        get
+        {
+            var html = DescriptionHtml;
+            return !string.IsNullOrWhiteSpace(html) && !html.Contains("html-placeholder", StringComparison.Ordinal);
+        }
+    }
 
     public Bitmap? VideoFrame
     {
@@ -118,7 +133,42 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
 
         var description = TryLoadDescription();
         SetProperty(ref _description, description, nameof(Description));
+        ResetDescriptionCaches();
         OnPropertyChanged(nameof(Description));
+        OnPropertyChanged(nameof(DescriptionHtml));
+        OnPropertyChanged(nameof(HasDescriptionContent));
+    }
+
+    public string GetDescriptionDocument(bool isDarkTheme) => _htmlCssWrapper.Wrap(DescriptionHtml, isDarkTheme);
+
+    private void ResetDescriptionCaches()
+    {
+        _descriptionHtmlCache = null;
+        _descriptionPlainTextCache = null;
+    }
+
+    private string BuildSanitizedHtml()
+    {
+        var sanitized = _htmlSanitizer.Sanitize(_description);
+        return string.IsNullOrWhiteSpace(sanitized)
+            ? "<div class=\"html-placeholder\">No description provided.</div>"
+            : sanitized;
+    }
+
+    private string BuildPlainTextDescription()
+    {
+        var sanitized = _htmlSanitizer.Sanitize(_description);
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return "No description provided.";
+        }
+
+        var document = new HtmlDocument();
+        document.LoadHtml(sanitized);
+        var text = HtmlEntity.DeEntitize(document.DocumentNode.InnerText ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(text)
+            ? "No description provided."
+            : text;
     }
 
     private void UpdatePreviewMediaPath()
