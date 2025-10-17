@@ -1,22 +1,26 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
+using System;
 
 namespace DiffusionNexus.UI.Views;
 
 public partial class LoraHelperView : UserControl
 {
     private ScrollViewer? _scroll;
+    private ItemsRepeater? _repeater;
 
     public LoraHelperView()
     {
         InitializeComponent();
         this.AttachedToVisualTree += OnAttached;
+        this.DetachedFromVisualTree += OnDetached;
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
@@ -42,6 +46,21 @@ public partial class LoraHelperView : UserControl
         _scroll = this.FindControl<ScrollViewer>("CardScrollViewer");
         if (_scroll != null)
             _scroll.ScrollChanged += OnScrollChanged;
+
+        _repeater = this.FindControl<ItemsRepeater>("CardRepeater");
+
+        UpdateActivePreviewRange();
+    }
+
+    private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_scroll != null)
+        {
+            _scroll.ScrollChanged -= OnScrollChanged;
+        }
+
+        _scroll = null;
+        _repeater = null;
     }
 
     private async void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -55,7 +74,42 @@ public partial class LoraHelperView : UserControl
             {
                 await vm.LoadNextPageAsync();
             }
+
+            UpdateActivePreviewRange();
         }
+    }
+
+    private void UpdateActivePreviewRange()
+    {
+        if (_scroll == null || _repeater == null || DataContext is not LoraHelperViewModel vm)
+            return;
+
+        if (_repeater.Layout is not UniformGridLayout layout)
+        {
+            vm.SetActiveVideoRange(0);
+            return;
+        }
+
+        var itemHeight = (layout.MinItemHeight > 0 ? layout.MinItemHeight : 300) + 10;
+        var itemWidth = (layout.MinItemWidth > 0 ? layout.MinItemWidth : 250) + 10;
+
+        var viewportWidth = _scroll.Viewport.Width;
+        if (double.IsNaN(viewportWidth) || viewportWidth <= 0)
+        {
+            viewportWidth = _scroll.Bounds.Width;
+        }
+
+        if (double.IsNaN(viewportWidth) || viewportWidth <= 0)
+        {
+            vm.SetActiveVideoRange(0);
+            return;
+        }
+
+        var columns = Math.Max(1, (int)Math.Floor(viewportWidth / itemWidth));
+        var rowsScrolled = Math.Max(0, (int)Math.Floor(_scroll.Offset.Y / itemHeight));
+        var startIndex = rowsScrolled * columns;
+
+        vm.SetActiveVideoRange(startIndex);
     }
 
     private async void OnCardPointerReleased(object? sender, PointerReleasedEventArgs e)

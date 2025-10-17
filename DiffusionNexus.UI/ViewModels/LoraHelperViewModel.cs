@@ -14,6 +14,7 @@ using System.Diagnostics;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -36,6 +37,8 @@ public partial class LoraHelperViewModel : ViewModelBase
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
     private const double ForgePromptStrength = 0.75;
+    private const int MaxActiveVideoPreviews = 30;
+    private int _activePreviewStartIndex;
     [ObservableProperty]
     private bool showSuggestions;
 
@@ -62,6 +65,21 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool sortAscending = true;
 
     public DiffusionModelFilterViewModel DiffusionModelFilter { get; } = new();
+
+    private bool _isVideoPreviewEnabled;
+
+    public bool IsVideoPreviewEnabled
+    {
+        get => _isVideoPreviewEnabled;
+        private set
+        {
+            if (_isVideoPreviewEnabled == value)
+                return;
+
+            _isVideoPreviewEnabled = value;
+            UpdateVideoPreviewActivation();
+        }
+    }
 
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
@@ -90,6 +108,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
         DiffusionModelFilter.FiltersChanged += OnDiffusionModelFiltersChanged;
+        Cards.CollectionChanged += OnCardsCollectionChanged;
         _ = LoadAsync();
     }
     public void SetWindow(Window window)
@@ -104,6 +123,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             var settings = await _settingsService.LoadAsync();
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+            IsVideoPreviewEnabled = settings.ShowVideoPreview;
             ShowNsfw = settings.ShowNsfw;
             var enabledSources = settings.LoraHelperSources
                 .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
@@ -171,8 +191,15 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                foreach (var existing in _allCards)
+                {
+                    existing.DisposeVideoPreview();
+                }
+
                 _allCards.Clear();
+                DisableVisibleCardPreviews();
                 Cards.Clear();
+                _activePreviewStartIndex = 0;
             });
 
             foreach (var entry in cardEntries)
@@ -302,9 +329,11 @@ public partial class LoraHelperViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                DisableVisibleCardPreviews();
                 Cards.Clear();
                 _filteredCards = list;
                 _nextIndex = 0;
+                _activePreviewStartIndex = 0;
             });
 
             await LoadNextPageAsync();
@@ -344,7 +373,7 @@ public partial class LoraHelperViewModel : ViewModelBase
                 query = query.Where(c => MatchesSearch(c, search!));
             }
         }
-        Log($"Found: {_allCards.Where(x => x.Model.Nsfw == true).Count()} Nsfw Models", LogSeverity.Info);
+        Log($"Found: {_allCards.Count(x => x.Model?.Nsfw == true)} Nsfw Models", LogSeverity.Info);
 
         if (!ShowNsfw)
             query = query.Where(c => c.Model?.Nsfw != true);
@@ -361,8 +390,8 @@ public partial class LoraHelperViewModel : ViewModelBase
     }
 
     private static bool MatchesSearch(LoraCardViewModel card, string search) =>
-        card.Model.SafeTensorFileName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true ||
-        card.Model.ModelVersionName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
+        card.Model?.SafeTensorFileName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true ||
+        card.Model?.ModelVersionName?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task LoadNextPageAsync()
     {
@@ -383,6 +412,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         });
 
         _isLoadingPage = false;
+        UpdateVideoPreviewActivation();
     }
 
     private void ResetFilters()
@@ -424,7 +454,12 @@ public partial class LoraHelperViewModel : ViewModelBase
     private void StartIndexing()
     {
         _indexNames = _allCards
-            .Select(c => $"{c.Model.SafeTensorFileName ?? string.Empty} {c.Model.ModelVersionName ?? string.Empty}")
+            .Select(c =>
+            {
+                var fileName = c.Model?.SafeTensorFileName ?? string.Empty;
+                var versionName = c.Model?.ModelVersionName ?? string.Empty;
+                return $"{fileName} {versionName}".Trim();
+            })
             .ToList();
         var namesCopy = _indexNames.ToList();
         Task.Run(() => _searchIndex.Build(namesCopy));
@@ -491,9 +526,85 @@ public partial class LoraHelperViewModel : ViewModelBase
             try { File.Delete(file.FullName); } catch { }
         }
 
+        card.DisposeVideoPreview();
         _allCards.Remove(card);
         Cards.Remove(card);
         StartIndexing();
+    }
+
+    private void OnCardsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e?.OldItems != null)
+        {
+            foreach (var item in e.OldItems.OfType<LoraCardViewModel>())
+            {
+                item.ApplyVideoPreviewSetting(false);
+            }
+        }
+
+        if (e?.Action == NotifyCollectionChangedAction.Reset)
+        {
+            foreach (var card in _allCards)
+            {
+                card.ApplyVideoPreviewSetting(false);
+            }
+        }
+
+        UpdateVideoPreviewActivation();
+    }
+
+    private void DisableVisibleCardPreviews()
+    {
+        foreach (var card in Cards)
+        {
+            card.ApplyVideoPreviewSetting(false);
+        }
+    }
+
+    private void UpdateVideoPreviewActivation()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateVideoPreviewActivation);
+            return;
+        }
+
+        if (Cards.Count == 0)
+        {
+            return;
+        }
+
+        var maxStart = Math.Max(0, Cards.Count - MaxActiveVideoPreviews);
+        if (_activePreviewStartIndex > maxStart)
+        {
+            _activePreviewStartIndex = maxStart;
+        }
+
+        var endIndex = _activePreviewStartIndex + MaxActiveVideoPreviews;
+
+        for (var i = 0; i < Cards.Count; i++)
+        {
+            var shouldEnable = IsVideoPreviewEnabled && i >= _activePreviewStartIndex && i < endIndex;
+            Cards[i].ApplyVideoPreviewSetting(shouldEnable);
+        }
+    }
+
+    public void SetActiveVideoRange(int startIndex)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => SetActiveVideoRange(startIndex));
+            return;
+        }
+
+        var clamped = Math.Max(0, Math.Min(startIndex, Math.Max(0, Cards.Count - MaxActiveVideoPreviews)));
+        if (clamped == _activePreviewStartIndex)
+        {
+            return;
+        }
+
+        _activePreviewStartIndex = clamped;
+        UpdateVideoPreviewActivation();
     }
 
     public Task ShowDetailsAsync(LoraCardViewModel card)

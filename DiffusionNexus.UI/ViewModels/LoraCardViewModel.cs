@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -12,6 +14,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using OpenCvSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -32,6 +35,13 @@ public partial class LoraCardViewModel : ViewModelBase
     [ObservableProperty]
     private string? treePath;
 
+    private readonly object _videoLock = new();
+    private string? _previewMediaPath;
+    private VideoCapture? _videoCapture;
+    private DispatcherTimer? _videoTimer;
+    private Bitmap? _videoFrame;
+    private bool _isVideoPreviewEnabled;
+
     public IEnumerable<string> DiffusionTypes => Model is null
         ? Array.Empty<string>()
         : new[] { Model.ModelType.ToString() };
@@ -50,6 +60,25 @@ public partial class LoraCardViewModel : ViewModelBase
 
     public bool HasVariants => Variants.Count > 1;
 
+    public Bitmap? VideoFrame
+    {
+        get => _videoFrame;
+        private set
+        {
+            if (ReferenceEquals(_videoFrame, value))
+                return;
+
+            _videoFrame?.Dispose();
+            _videoFrame = value;
+            OnPropertyChanged(nameof(VideoFrame));
+        }
+    }
+
+    public bool HasVideo => _videoCapture != null;
+    public bool HasImage => PreviewImage != null;
+    public bool ShouldShowImage => !HasVideo && HasImage;
+    public bool ShowPlaceholder => !HasVideo && !HasImage;
+
     public LoraHelperViewModel? Parent { get; set; }
 
     public LoraCardViewModel()
@@ -67,6 +96,13 @@ public partial class LoraCardViewModel : ViewModelBase
     partial void OnModelChanged(ModelClass? value)
     {
         _ = LoadPreviewImageAsync();
+    }
+
+    partial void OnPreviewImageChanged(Bitmap? value)
+    {
+        OnPropertyChanged(nameof(HasImage));
+        OnPropertyChanged(nameof(ShouldShowImage));
+        OnPropertyChanged(nameof(ShowPlaceholder));
     }
 
     internal void SetVariants(IReadOnlyList<LoraVariantDescriptor> variants)
@@ -144,24 +180,205 @@ public partial class LoraCardViewModel : ViewModelBase
             }
         }
 
-        if (path is null || !File.Exists(path))
+        Bitmap? bitmap = null;
+
+        if (path is not null && File.Exists(path))
         {
-            PreviewImage = null;
+            try
+            {
+                bitmap = await Task.Run(() =>
+                {
+                    using var stream = File.OpenRead(path);
+                    return new Bitmap(stream);
+                });
+            }
+            catch
+            {
+                bitmap = null;
+            }
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            PreviewImage = bitmap;
+            _previewMediaPath = GetPreviewMediaPath();
+
+            if (_isVideoPreviewEnabled)
+            {
+                StartVideoPreview();
+            }
+            else
+            {
+                StopVideoPreview();
+            }
+        });
+    }
+
+    public void ApplyVideoPreviewSetting(bool isEnabled)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyVideoPreviewSetting(isEnabled));
+            return;
+        }
+
+        if (_isVideoPreviewEnabled == isEnabled && (!isEnabled || HasVideo))
+        {
+            return;
+        }
+
+        _isVideoPreviewEnabled = isEnabled;
+
+        if (_isVideoPreviewEnabled)
+        {
+            StartVideoPreview();
+        }
+        else
+        {
+            StopVideoPreview();
+        }
+    }
+
+    public void DisposeVideoPreview()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(StopVideoPreview);
+            return;
+        }
+
+        StopVideoPreview();
+    }
+
+    private void StartVideoPreview()
+    {
+        StopVideoPreview();
+
+        if (!_isVideoPreviewEnabled)
+        {
+            return;
+        }
+
+        _previewMediaPath = GetPreviewMediaPath();
+        if (string.IsNullOrWhiteSpace(_previewMediaPath) || !File.Exists(_previewMediaPath))
+        {
+            OnPropertyChanged(nameof(ShouldShowImage));
+            OnPropertyChanged(nameof(ShowPlaceholder));
             return;
         }
 
         try
         {
-            var bitmap = await Task.Run(() =>
+            var capture = new VideoCapture(_previewMediaPath);
+            if (!capture.IsOpened())
             {
-                using var stream = File.OpenRead(path);
-                return new Bitmap(stream);
-            });
-            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = bitmap);
+                capture.Dispose();
+                OnPropertyChanged(nameof(ShouldShowImage));
+                OnPropertyChanged(nameof(ShowPlaceholder));
+                return;
+            }
+
+            _videoCapture = capture;
+            var fps = capture.Fps;
+            if (fps <= 0 || double.IsNaN(fps) || double.IsInfinity(fps))
+            {
+                fps = 24;
+            }
+
+            _videoTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(15, 1000.0 / fps))
+            };
+            _videoTimer.Tick += OnVideoTick;
+            _videoTimer.Start();
+            OnPropertyChanged(nameof(HasVideo));
+            OnPropertyChanged(nameof(ShouldShowImage));
+            OnPropertyChanged(nameof(ShowPlaceholder));
+            OnVideoTick(this, EventArgs.Empty);
         }
-        catch
+        catch (Exception ex)
         {
-            await Dispatcher.UIThread.InvokeAsync(() => PreviewImage = null);
+            Log($"Failed to start video preview: {ex.Message}", LogSeverity.Warning);
+            StopVideoPreview();
+        }
+    }
+
+    private void StopVideoPreview()
+    {
+        if (_videoTimer != null)
+        {
+            _videoTimer.Stop();
+            _videoTimer.Tick -= OnVideoTick;
+            _videoTimer = null;
+        }
+
+        if (_videoCapture != null)
+        {
+            try
+            {
+                _videoCapture.Release();
+            }
+            catch
+            {
+                // ignored
+            }
+
+            _videoCapture.Dispose();
+            _videoCapture = null;
+        }
+
+        VideoFrame = null;
+        OnPropertyChanged(nameof(HasVideo));
+        OnPropertyChanged(nameof(ShouldShowImage));
+        OnPropertyChanged(nameof(ShowPlaceholder));
+    }
+
+    private unsafe void OnVideoTick(object? sender, EventArgs e)
+    {
+        if (_videoCapture == null)
+            return;
+
+        lock (_videoLock)
+        {
+            try
+            {
+                using var frame = new Mat();
+                if (!_videoCapture.Read(frame) || frame.Empty())
+                {
+                    _videoCapture.Set(VideoCaptureProperties.PosFrames, 0);
+                    if (!_videoCapture.Read(frame) || frame.Empty())
+                    {
+                        return;
+                    }
+                }
+
+                using var converted = new Mat();
+                Cv2.CvtColor(frame, converted, ColorConversionCodes.BGR2BGRA);
+
+                var size = new PixelSize(converted.Width, converted.Height);
+                var bitmap = new WriteableBitmap(size, new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+                using (var fb = bitmap.Lock())
+                {
+                    var sourceStride = (int)converted.Step();
+                    var targetStride = fb.RowBytes;
+                    var rows = converted.Height;
+                    var srcPtr = (byte*)converted.DataPointer;
+                    var dstPtr = (byte*)fb.Address;
+
+                    for (var y = 0; y < rows; y++)
+                    {
+                        var srcOffset = y * sourceStride;
+                        var dstOffset = y * targetStride;
+                        Buffer.MemoryCopy(srcPtr + srcOffset, dstPtr + dstOffset, targetStride, sourceStride);
+                    }
+                }
+
+                VideoFrame = bitmap;
+            }
+            catch (Exception ex)
+            {
+                Log($"Error updating video frame: {ex.Message}", LogSeverity.Warning);
+            }
         }
     }
 
