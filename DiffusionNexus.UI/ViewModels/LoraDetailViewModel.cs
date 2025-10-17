@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.UI.Utilities;
 using OpenCvSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -20,6 +21,7 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
     private string? _modelVersionId;
     private string? _description;
     private string? _previewMediaPath;
+    private string? _descriptionHtml;
     private VideoCapture? _videoCapture;
     private DispatcherTimer? _videoTimer;
     private Bitmap? _videoFrame;
@@ -60,6 +62,10 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
     public string Description => string.IsNullOrWhiteSpace(_description)
         ? "No description available."
         : _description!;
+
+    public string? DescriptionHtml => _descriptionHtml;
+
+    public bool HasDescriptionHtml => !string.IsNullOrWhiteSpace(_descriptionHtml);
 
     public Bitmap? VideoFrame
     {
@@ -118,7 +124,10 @@ public class LoraDetailViewModel : ViewModelBase, IDisposable
 
         var description = TryLoadDescription();
         SetProperty(ref _description, description, nameof(Description));
+        var sanitizedHtml = HtmlDescriptionFormatter.Sanitize(description);
+        SetProperty(ref _descriptionHtml, sanitizedHtml, nameof(DescriptionHtml));
         OnPropertyChanged(nameof(Description));
+        OnPropertyChanged(nameof(HasDescriptionHtml));
     }
 
     private void UpdatePreviewMediaPath()
