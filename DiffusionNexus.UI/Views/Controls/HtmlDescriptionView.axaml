@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:html="clr-namespace:TheArtOfDev.HtmlRenderer.Avalonia;assembly=Avalonia.HtmlRenderer"
+             xmlns:wv="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.WebView"
+             x:Class="DiffusionNexus.UI.Views.Controls.HtmlDescriptionView">
+  <Grid RowDefinitions="Auto,*">
+    <Border x:Name="FallbackBanner"
+            Background="#312A2A"
+            BorderBrush="#5A3F3F"
+            BorderThickness="0,0,0,1"
+            Padding="12"
+            IsVisible="False">
+      <TextBlock Text="HTML viewer unavailable (WebView runtime missing). Using basic renderer."
+                 TextWrapping="Wrap"/>
+    </Border>
+    <Grid Grid.Row="1">
+      <wv:NativeWebView x:Name="WebView"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Focusable="False"
+                        IsVisible="False"/>
+      <ScrollViewer x:Name="HtmlScroll"
+                    IsVisible="False"
+                    Padding="12">
+        <html:HtmlPanel x:Name="HtmlPanel"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"/>
+      </ScrollViewer>
+      <ScrollViewer x:Name="PlainTextScroll"
+                    IsVisible="False"
+                    Padding="12">
+        <TextBlock x:Name="PlainTextBlock"
+                   TextWrapping="Wrap"/>
+      </ScrollViewer>
+      <TextBlock x:Name="Placeholder"
+                 Text="No description provided."
+                 FontStyle="Italic"
+                 Foreground="#AAAAAA"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"
+                 IsVisible="False"
+                 Margin="12"/>
+    </Grid>
+  </Grid>
+</UserControl>
