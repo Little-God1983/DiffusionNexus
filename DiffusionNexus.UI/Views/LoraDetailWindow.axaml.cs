@@ -15,15 +15,11 @@ namespace DiffusionNexus.UI.Views;
 
 public partial class LoraDetailWindow : Window
 {
-    private NativeWebView? _descriptionWebView;
     private HtmlPanel? _descriptionHtmlPanel;
-    private Border? _webViewUnavailableBanner;
     private ScrollViewer? _descriptionFallbackScroll;
     private TextBlock? _descriptionFallbackText;
     private TextBlock? _descriptionPlaceholder;
     private LoraDetailViewModel? _viewModel;
-    private bool _webViewFailed;
-    private bool _suppressNavigationHandling;
 
     public LoraDetailWindow()
     {
@@ -37,19 +33,10 @@ public partial class LoraDetailWindow : Window
     {
         AvaloniaXamlLoader.Load(this);
 
-        _descriptionWebView = this.FindControl<NativeWebView>("DescriptionWebView");
         _descriptionHtmlPanel = this.FindControl<HtmlPanel>("DescriptionHtmlPanel");
-        _webViewUnavailableBanner = this.FindControl<Border>("WebViewUnavailableBanner");
         _descriptionFallbackScroll = this.FindControl<ScrollViewer>("DescriptionFallbackScroll");
         _descriptionFallbackText = this.FindControl<TextBlock>("DescriptionFallbackText");
         _descriptionPlaceholder = this.FindControl<TextBlock>("DescriptionPlaceholder");
-
-        if (_descriptionWebView != null)
-        {
-            _descriptionWebView.NavigationStarted += OnWebViewNavigationStarted;
-            _descriptionWebView.NavigationCompleted += OnWebViewNavigationCompleted;
-            _descriptionWebView.NewWindowRequested += OnWebViewNewWindowRequested;
-        }
 
         if (_descriptionHtmlPanel != null)
         {
@@ -97,61 +84,32 @@ public partial class LoraDetailWindow : Window
 
         if (!string.IsNullOrWhiteSpace(sanitizedHtml))
         {
-            var document = HtmlDescriptionFormatter.BuildDocument(sanitizedHtml, theme);
-
-            if (!_webViewFailed && _descriptionWebView != null)
-            {
-                try
-                {
-                    _suppressNavigationHandling = true;
-                    _descriptionWebView.NavigateToString(document);
-                    SetPresentation(webView: true, htmlPanel: false, plainText: false, placeholder: false, showBanner: false);
-                    return;
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or PlatformNotSupportedException)
-                {
-                    _webViewFailed = true;
-                }
-                finally
-                {
-                    if (_webViewFailed)
-                    {
-                        _suppressNavigationHandling = false;
-                    }
-                }
-            }
-
             if (_descriptionHtmlPanel != null)
             {
                 _descriptionHtmlPanel.BaseStylesheet = HtmlDescriptionFormatter.GetStylesheet(theme);
-                _descriptionHtmlPanel.Text = sanitizedHtml;
-                SetPresentation(webView: false, htmlPanel: true, plainText: false, placeholder: false, showBanner: _webViewFailed);
+                _descriptionHtmlPanel.Text = HtmlDescriptionFormatter.WrapContent(sanitizedHtml);
+                SetPresentation(htmlPanel: true, plainText: false, placeholder: false);
                 return;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(description))
+        if (!string.IsNullOrWhiteSpace(description) && sanitizedHtml != null)
         {
             if (_descriptionFallbackText != null)
             {
                 _descriptionFallbackText.Text = description;
             }
 
-            SetPresentation(webView: false, htmlPanel: false, plainText: true, placeholder: false, showBanner: _webViewFailed && !string.IsNullOrWhiteSpace(sanitizedHtml));
+            SetPresentation(htmlPanel: false, plainText: true, placeholder: false);
         }
         else
         {
-            SetPresentation(webView: false, htmlPanel: false, plainText: false, placeholder: true, showBanner: false);
+            SetPresentation(htmlPanel: false, plainText: false, placeholder: true);
         }
     }
 
-    private void SetPresentation(bool webView, bool htmlPanel, bool plainText, bool placeholder, bool showBanner)
+    private void SetPresentation(bool htmlPanel, bool plainText, bool placeholder)
     {
-        if (_descriptionWebView != null)
-        {
-            _descriptionWebView.IsVisible = webView;
-        }
-
         if (_descriptionHtmlPanel != null)
         {
             _descriptionHtmlPanel.IsVisible = htmlPanel;
@@ -166,46 +124,6 @@ public partial class LoraDetailWindow : Window
         {
             _descriptionPlaceholder.IsVisible = placeholder;
         }
-
-        if (_webViewUnavailableBanner != null)
-        {
-            _webViewUnavailableBanner.IsVisible = showBanner;
-        }
-    }
-
-    private void OnWebViewNavigationStarted(object? sender, WebViewNavigationStartingEventArgs e)
-    {
-        if (_suppressNavigationHandling)
-        {
-            return;
-        }
-
-        var request = e.Request;
-        if (request == null)
-        {
-            return;
-        }
-
-        if (request.Scheme is "http" or "https")
-        {
-            e.Cancel = true;
-            OpenExternalLink(request);
-        }
-    }
-
-    private void OnWebViewNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
-    {
-        _suppressNavigationHandling = false;
-    }
-
-    private void OnWebViewNewWindowRequested(object? sender, WebViewNewWindowRequestedEventArgs e)
-    {
-        if (e.Request != null)
-        {
-            OpenExternalLink(e.Request);
-        }
-
-        e.Handled = true;
     }
 
     private void OnHtmlPanelLinkClicked(object? sender, HtmlRendererRoutedEventArgs<HtmlLinkClickedEventArgs> e)
@@ -235,18 +153,20 @@ public partial class LoraDetailWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
-        if (_descriptionWebView != null)
-        {
-            _descriptionWebView.NavigationStarted -= OnWebViewNavigationStarted;
-            _descriptionWebView.NavigationCompleted -= OnWebViewNavigationCompleted;
-            _descriptionWebView.NewWindowRequested -= OnWebViewNewWindowRequested;
-        }
-
         if (_descriptionHtmlPanel != null)
         {
             _descriptionHtmlPanel.LinkClicked -= OnHtmlPanelLinkClicked;
         }
 
+        CleanupViewModel();
+
+        ActualThemeVariantChanged -= OnActualThemeVariantChanged;
+        DataContextChanged -= OnDataContextChanged;
+        Closed -= OnClosed;
+    }
+
+    private void CleanupViewModel()
+    {
         if (_viewModel != null)
         {
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
@@ -257,9 +177,5 @@ public partial class LoraDetailWindow : Window
         {
             disposable.Dispose();
         }
-
-        ActualThemeVariantChanged -= OnActualThemeVariantChanged;
-        DataContextChanged -= OnDataContextChanged;
-        Closed -= OnClosed;
     }
 }

@@ -23,32 +23,12 @@ internal static class HtmlDescriptionFormatter
         return string.IsNullOrWhiteSpace(sanitized) ? null : sanitized.Trim();
     }
 
-    public static string BuildDocument(string? sanitizedHtml, ThemeVariant themeVariant)
+    public static string WrapContent(string? sanitizedHtml)
     {
-        var css = themeVariant == ThemeVariant.Dark ? DarkCss : LightCss;
-        var colorScheme = themeVariant == ThemeVariant.Dark ? "dark" : "light";
-        var bodyContent = string.IsNullOrWhiteSpace(sanitizedHtml)
+        var content = string.IsNullOrWhiteSpace(sanitizedHtml)
             ? "<p class=\"placeholder\">No description provided.</p>"
             : sanitizedHtml;
-
-        var builder = new StringBuilder();
-        builder.AppendLine("<!DOCTYPE html>");
-        builder.AppendLine("<html lang=\"en\">");
-        builder.AppendLine("<head>");
-        builder.AppendLine("  <meta charset=\"utf-8\" />");
-        builder.AppendLine("  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src https: data:; style-src 'unsafe-inline';\">");
-        builder.Append("  <meta name=\"color-scheme\" content=\"").Append(colorScheme).AppendLine("\" />");
-        builder.AppendLine("  <style>");
-        builder.AppendLine(css);
-        builder.AppendLine("  </style>");
-        builder.AppendLine("</head>");
-        builder.AppendLine("<body>");
-        builder.AppendLine("  <main class=\"content\">");
-        builder.AppendLine(bodyContent);
-        builder.AppendLine("  </main>");
-        builder.AppendLine("</body>");
-        builder.AppendLine("</html>");
-        return builder.ToString();
+        return $"<div class=\"content\">{content}</div>";
     }
 
     public static string GetStylesheet(ThemeVariant themeVariant) => themeVariant == ThemeVariant.Dark ? DarkCss : LightCss;

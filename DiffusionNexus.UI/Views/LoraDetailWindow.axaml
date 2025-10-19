@@ -1,7 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-        xmlns:wv="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.WebView"
         xmlns:html="clr-namespace:TheArtOfDev.HtmlRenderer.Avalonia;assembly=Avalonia.HtmlRenderer"
         x:Class="DiffusionNexus.UI.Views.LoraDetailWindow"
         x:DataType="vm:LoraDetailViewModel"
@@ -101,45 +100,29 @@
               CornerRadius="8"
               Padding="0"
               ClipToBounds="True">
-        <Grid RowDefinitions="Auto,*">
-          <Border x:Name="WebViewUnavailableBanner"
-                  Background="#312A2A"
-                  BorderBrush="#5A3F3F"
-                  BorderThickness="0,0,0,1"
-                  IsVisible="False"
-                  Padding="12">
-            <TextBlock Text="HTML viewer unavailable (WebView runtime missing). Using basic renderer."
-                       TextWrapping="Wrap"/>
-          </Border>
-          <Grid Grid.Row="1">
-            <wv:NativeWebView x:Name="DescriptionWebView"
-                               IsVisible="False"
-                               HorizontalAlignment="Stretch"
-                               VerticalAlignment="Stretch"
-                               Focusable="False"/>
-            <html:HtmlPanel x:Name="DescriptionHtmlPanel"
-                            IsVisible="False"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="0"
-                            HorizontalAlignment="Stretch"
-                            VerticalAlignment="Stretch"/>
-            <ScrollViewer x:Name="DescriptionFallbackScroll"
+        <Grid>
+          <html:HtmlPanel x:Name="DescriptionHtmlPanel"
                           IsVisible="False"
-                          MaxHeight="320"
-                          Padding="12">
-              <TextBlock x:Name="DescriptionFallbackText"
-                         Text="{Binding Description}"
-                         TextWrapping="Wrap"/>
-            </ScrollViewer>
-            <TextBlock x:Name="DescriptionPlaceholder"
-                       Text="No description provided."
-                       FontStyle="Italic"
-                       Foreground="#AAAAAA"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"
-                       IsVisible="False"/>
-          </Grid>
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"/>
+          <ScrollViewer x:Name="DescriptionFallbackScroll"
+                        IsVisible="False"
+                        MaxHeight="320"
+                        Padding="12">
+            <TextBlock x:Name="DescriptionFallbackText"
+                       Text="{Binding Description}"
+                       TextWrapping="Wrap"/>
+          </ScrollViewer>
+          <TextBlock x:Name="DescriptionPlaceholder"
+                     Text="No description provided."
+                     FontStyle="Italic"
+                     Foreground="#AAAAAA"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     IsVisible="False"/>
         </Grid>
       </Border>
     </Grid>
