@@ -742,6 +742,36 @@ public partial class LoraHelperViewModel : ViewModelBase
         }
     }
 
+    public async Task<bool> DownloadMetadataForCardAsync(LoraCardViewModel card)
+    {
+        if (card.Model == null)
+            return false;
+
+        var settings = await _settingsService.LoadAsync();
+        var apiKey = settings.CivitaiApiKey ?? string.Empty;
+
+        Log($"Requesting metadata for {card.Model.ModelVersionName}", LogSeverity.Info);
+        var result = await _metadataDownloader.EnsureMetadataAsync(card.Model, apiKey);
+
+        switch (result.ResultType)
+        {
+            case MetadataDownloadResultType.AlreadyExists:
+                Log($"{card.Model.ModelVersionName}: already has metadata", LogSeverity.Info);
+                break;
+            case MetadataDownloadResultType.Downloaded:
+                Log($"{card.Model.ModelVersionName}: metadata downloaded", LogSeverity.Success);
+                break;
+            case MetadataDownloadResultType.NotFound:
+                Log($"{card.Model.ModelVersionName}: not found on Civitai", LogSeverity.Error);
+                break;
+            case MetadataDownloadResultType.Error:
+                Log($"{card.Model.ModelVersionName}: failed to download metadata - {result.ErrorMessage}", LogSeverity.Error);
+                break;
+        }
+
+        return card.Model.HasFullMetadata;
+    }
+
     private async Task ScanDuplicatesAsync()
     {
         if (_window is null) return;

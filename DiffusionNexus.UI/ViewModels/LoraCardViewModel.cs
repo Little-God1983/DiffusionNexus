@@ -55,10 +55,13 @@ public partial class LoraCardViewModel : ViewModelBase
     public IAsyncRelayCommand CopyNameCommand { get; }
     public IRelayCommand OpenFolderCommand { get; }
     public IAsyncRelayCommand OpenDetailsCommand { get; }
+    public IAsyncRelayCommand DownloadMetadataCommand { get; }
 
     public ObservableCollection<LoraVariantViewModel> Variants { get; } = new();
 
     public bool HasVariants => Variants.Count > 1;
+
+    public bool ShouldShowDownloadMetadataButton => Model != null && !Model.HasFullMetadata;
 
     public Bitmap? VideoFrame
     {
@@ -90,12 +93,14 @@ public partial class LoraCardViewModel : ViewModelBase
         CopyNameCommand = new AsyncRelayCommand(OnCopyNameAsync);
         OpenFolderCommand = new RelayCommand(OnOpenFolder);
         OpenDetailsCommand = new AsyncRelayCommand(OnOpenDetailsAsync);
+        DownloadMetadataCommand = new AsyncRelayCommand(OnDownloadMetadataAsync);
         Variants.CollectionChanged += OnVariantsCollectionChanged;
     }
 
     partial void OnModelChanged(ModelClass? value)
     {
         _ = LoadPreviewImageAsync();
+        OnPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
     }
 
     partial void OnPreviewImageChanged(Bitmap? value)
@@ -445,6 +450,15 @@ public partial class LoraCardViewModel : ViewModelBase
             return;
 
         await Parent.CopyModelNameAsync(this);
+    }
+
+    private async Task OnDownloadMetadataAsync()
+    {
+        if (Parent == null || Model == null)
+            return;
+
+        await Parent.DownloadMetadataForCardAsync(this);
+        OnPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
     }
 
     private void OnOpenFolder()
