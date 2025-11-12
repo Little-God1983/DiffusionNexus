@@ -72,7 +72,7 @@ public class CivitaiModelDownloadService
         try
         {
             var uri = new Uri(file.DownloadUrl);
-            await _fileDownloader.DownloadAsync(uri, destinationPath, progress, cancellationToken);
+            await _fileDownloader.DownloadAsync(uri, destinationPath, apiKey, progress, cancellationToken);
             return new CivitaiModelDownloadResult(ModelDownloadResultType.Success, destinationPath, versionInfo, file);
         }
         catch (OperationCanceledException)

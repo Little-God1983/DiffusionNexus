@@ -26,7 +26,7 @@ namespace DiffusionNexus.Service.Services
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (!string.IsNullOrWhiteSpace(apiKey))
             {
-                request.Headers.Authorization = new AuthenticationHeaderValue("ApiKey", apiKey);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             }
 
             HttpResponseMessage response = await _httpClient.SendAsync(request);

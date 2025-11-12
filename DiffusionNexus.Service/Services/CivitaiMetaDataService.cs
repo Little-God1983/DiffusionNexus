@@ -103,9 +103,9 @@ namespace DiffusionNexus.Service.Services
             return string.Empty;
         }
 
-        private static string ParseModelId(string civitaiUrl)
+        internal static string ParseModelId(string civitaiUrl)
         {
-            var match = Regex.Match(civitaiUrl, @"civitai\.com/models/(\d+)", RegexOptions.IgnoreCase);
+            var match = Regex.Match(civitaiUrl, @"civitai\.com/(?:api/download/)?models/(\d+)", RegexOptions.IgnoreCase);
             if (!match.Success)
             {
                 throw new InvalidOperationException("Failed to extract model id from the Civitai URL.");

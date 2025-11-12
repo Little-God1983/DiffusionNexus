@@ -154,5 +154,14 @@ public class CivitaiMetaDataServiceTests
             // Assert
             result.Should().Be("12345");
         }
+
+        [Theory]
+        [InlineData("https://civitai.com/models/2108995", "2108995")]
+        [InlineData("https://civitai.com/models/2108995?modelVersionId=2385870", "2108995")]
+        [InlineData("https://civitai.com/api/download/models/2108995?type=Model&format=SafeTensor", "2108995")]
+        public void ParseModelId_ShouldSupportModernCivitaiUrls(string url, string expected)
+        {
+            CivitaiMetaDataService.ParseModelId(url).Should().Be(expected);
+        }
     }
 
