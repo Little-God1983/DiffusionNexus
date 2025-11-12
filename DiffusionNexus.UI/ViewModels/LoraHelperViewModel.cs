@@ -36,6 +36,10 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool _isLoadingPage;
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
+    private readonly ICivitaiApiClient _apiClient;
+    private readonly CivitaiModelService _modelService;
+    private readonly CivitaiFileDownloader _fileDownloader;
+    private readonly CivitaiModelDownloadService _modelDownloadService;
     private const double ForgePromptStrength = 0.75;
     private const int MaxActiveVideoPreviews = 30;
     private int _activePreviewStartIndex;
@@ -84,6 +88,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
+    public IAsyncRelayCommand DownloadLoraCommand { get; }
     public IAsyncRelayCommand RefreshCommand { get; }
     public IRelayCommand SortByNameCommand { get; }
     public IRelayCommand SortByDateCommand { get; }
@@ -93,17 +98,22 @@ public partial class LoraHelperViewModel : ViewModelBase
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
-    public LoraHelperViewModel() : this(new SettingsService(), null)
+    public LoraHelperViewModel() : this(new SettingsService(), null, null)
     {
     }
 
-    public LoraHelperViewModel(ISettingsService settingsService, LoraMetadataDownloadService? metadataDownloader = null)
+    public LoraHelperViewModel(ISettingsService settingsService, LoraMetadataDownloadService? metadataDownloader = null, ICivitaiApiClient? apiClient = null)
     {
         _settingsService = settingsService;
-        _metadataDownloader = metadataDownloader ?? new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient()));
+        _apiClient = apiClient ?? new CivitaiApiClient(new HttpClient());
+        _metadataDownloader = metadataDownloader ?? new LoraMetadataDownloadService(_apiClient);
+        _modelService = new CivitaiModelService(_apiClient);
+        _fileDownloader = new CivitaiFileDownloader();
+        _modelDownloadService = new CivitaiModelDownloadService(_modelService, _fileDownloader);
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
+        DownloadLoraCommand = new AsyncRelayCommand(ShowDownloadDialogAsync);
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
@@ -114,6 +124,56 @@ public partial class LoraHelperViewModel : ViewModelBase
     public void SetWindow(Window window)
     {
         _window = window;
+    }
+
+    private async Task ShowDownloadDialogAsync()
+    {
+        if (_window is null)
+            return;
+
+        var settings = await _settingsService.LoadAsync();
+        var sources = settings.LoraHelperSources
+            .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
+            .ToList();
+
+        if (sources.Count == 0)
+        {
+            Log("Configure at least one enabled LoRA source in settings before downloading.", LogSeverity.Error);
+            return;
+        }
+
+        var dialog = new LoraDownloadWindow();
+        var vm = new LoraDownloadViewModel(
+            _modelDownloadService,
+            _metadataDownloader,
+            sources,
+            settings.CivitaiApiKey ?? string.Empty,
+            (message, severity) => Log(message, severity));
+
+        dialog.DataContext = vm;
+        var result = await dialog.ShowDialog<bool?>(_window);
+
+        if (result == true)
+        {
+            await LoadAsync();
+            return;
+        }
+
+        if (vm.Result == null)
+            return;
+
+        switch (vm.Result.ResultType)
+        {
+            case ModelDownloadResultType.Error when !string.IsNullOrWhiteSpace(vm.Result.ErrorMessage):
+                Log($"Download failed: {vm.Result.ErrorMessage}", LogSeverity.Error);
+                break;
+            case ModelDownloadResultType.AlreadyExists when !string.IsNullOrWhiteSpace(vm.Result.FilePath):
+                Log($"LoRA already exists at '{vm.Result.FilePath}'", LogSeverity.Warning);
+                break;
+            case ModelDownloadResultType.Cancelled:
+                Log("LoRA download cancelled.", LogSeverity.Warning);
+                break;
+        }
     }
 
     private async Task LoadAsync()
