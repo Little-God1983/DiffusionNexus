@@ -85,6 +85,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
     public IAsyncRelayCommand RefreshCommand { get; }
+    public IAsyncRelayCommand OpenDownloadLoraCommand { get; }
     public IRelayCommand SortByNameCommand { get; }
     public IRelayCommand SortByDateCommand { get; }
 
@@ -93,18 +94,25 @@ public partial class LoraHelperViewModel : ViewModelBase
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
-    public LoraHelperViewModel() : this(new SettingsService(), null)
+    private readonly LoraDownloadService _downloadService;
+
+    public LoraHelperViewModel() : this(new SettingsService(), null, null)
     {
     }
 
-    public LoraHelperViewModel(ISettingsService settingsService, LoraMetadataDownloadService? metadataDownloader = null)
+    public LoraHelperViewModel(
+        ISettingsService settingsService,
+        LoraMetadataDownloadService? metadataDownloader = null,
+        LoraDownloadService? downloadService = null)
     {
         _settingsService = settingsService;
         _metadataDownloader = metadataDownloader ?? new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient()));
+        _downloadService = downloadService ?? new LoraDownloadService(new CivitaiApiClient(new HttpClient()));
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
+        OpenDownloadLoraCommand = new AsyncRelayCommand(OpenDownloadLoraAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
         DiffusionModelFilter.FiltersChanged += OnDiffusionModelFiltersChanged;
@@ -229,6 +237,25 @@ public partial class LoraHelperViewModel : ViewModelBase
         finally
         {
             await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+        }
+    }
+
+    private async Task OpenDownloadLoraAsync()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        var dialog = new DownloadLoraWindow
+        {
+            DataContext = new DownloadLoraViewModel(_settingsService, _downloadService)
+        };
+
+        var result = await dialog.ShowDialog<bool?>(_window);
+        if (result == true)
+        {
+            await LoadAsync();
         }
     }
 

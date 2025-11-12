@@ -1,0 +1,29 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:conv="using:DiffusionNexus.UI.Converters"
+        x:Class="DiffusionNexus.UI.Views.DownloadLoraWindow"
+        x:DataType="vm:DownloadLoraViewModel"
+        Width="500"
+        Height="320"
+        WindowStartupLocation="CenterOwner"
+        Title="Download LoRA">
+  <Window.Resources>
+    <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
+  </Window.Resources>
+  <Grid RowDefinitions="Auto,*" Margin="16">
+    <StackPanel Spacing="12">
+      <TextBlock Text="Civitai Link"/>
+      <TextBox Text="{Binding CivitaiLink, Mode=TwoWay}" IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}"/>
+      <TextBlock Text="Target Folder" Margin="0,8,0,0"/>
+      <ComboBox ItemsSource="{Binding SourceFolders}" SelectedItem="{Binding SelectedFolder, Mode=TwoWay}" IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}"/>
+      <TextBlock Text="{Binding StatusMessage}" Foreground="#FFCCCCCC" TextWrapping="Wrap"/>
+      <ProgressBar Minimum="0" Maximum="100" Height="18" Value="{Binding Progress}" IsVisible="{Binding IsDownloading}"/>
+      <TextBlock Text="{Binding SpeedDisplay}" IsVisible="{Binding IsDownloading}"/>
+    </StackPanel>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
+      <Button Content="Cancel" Width="100" Command="{Binding CancelCommand}"/>
+      <Button Content="Download" Width="120" Command="{Binding DownloadCommand}"/>
+    </StackPanel>
+  </Grid>
+</Window>
