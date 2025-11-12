@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using DiffusionNexus.Service.Classes;
@@ -17,11 +18,22 @@ public class CivitaiFileDownloader
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
     }
 
-    public async Task DownloadAsync(Uri downloadUri, string destinationFilePath, IProgress<ModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    public virtual async Task DownloadAsync(
+        Uri downloadUri,
+        string destinationFilePath,
+        string? apiKey,
+        IProgress<ModelDownloadProgress>? progress,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destinationFilePath)!);
 
-        using var response = await _httpClient.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        }
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var contentLength = response.Content.Headers.ContentLength;

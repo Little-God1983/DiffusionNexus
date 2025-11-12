@@ -4,11 +4,12 @@
 */
 
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace DiffusionNexus.Service.Classes
 {
-    public class ModelClass
+    public class ModelClass : CivitaiModelMetadataBase
     {
         private const string Unknown = "UNKNOWN";
 
@@ -18,19 +19,48 @@ namespace DiffusionNexus.Service.Classes
         public string DiffusionBaseModel
         {
             get => diffusionBaseModel;
-            set => diffusionBaseModel = value == "SDXL 1.0" ? "SDXL" : value;
+            set
+            {
+                var normalised = value switch
+                {
+                    null or "" => Unknown,
+                    "SDXL 1.0" => "SDXL",
+                    _ => value
+                };
+                diffusionBaseModel = normalised;
+                base.BaseModel = normalised;
+            }
         }
 
-        [MetadataField] public string SafeTensorFileName { get; set; }
-        [MetadataField] public string ModelVersionName { get; set; }
+        public override string? BaseModel
+        {
+            get => DiffusionBaseModel;
+            set => DiffusionBaseModel = value ?? Unknown;
+        }
+
+        [MetadataField] public string SafeTensorFileName { get; set; } = string.Empty;
+
+        [MetadataField]
+        public override string ModelVersionName
+        {
+            get => base.ModelVersionName;
+            set => base.ModelVersionName = value;
+        }
+
         [MetadataField] public string? ModelId { get; set; }
         public string? SHA256Hash { get; set; }
         [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.UNASSIGNED;
-        public List<FileInfo> AssociatedFilesInfo { get; set; }
+        public List<FileInfo> AssociatedFilesInfo { get; set; } = new();
         [MetadataField] public List<string> Tags { get; set; } = new();
         [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
-        [MetadataField] public List<string> TrainedWords { get; set; } = new();
+        [MetadataField]
+        public new List<string> TrainedWords
+        {
+            get => MutableTrainedWords;
+            set => MutableTrainedWords = value ?? new List<string>();
+        }
         [MetadataField] public bool? Nsfw { get; set; }
+        public override string? Description { get; set; }
 
         // status flags
         public bool NoMetaData { get; set; } = true;

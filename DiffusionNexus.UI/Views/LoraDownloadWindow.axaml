@@ -14,9 +14,16 @@
   <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="16">
     <StackPanel Grid.Row="0" Spacing="6">
       <TextBlock Text="Civitai Link" FontWeight="SemiBold"/>
-      <TextBox Text="{Binding CivitaiUrl, Mode=TwoWay}"
-               MinWidth="400"
-               IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}"/>
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <TextBox Grid.Column="0"
+                 Text="{Binding CivitaiUrl, Mode=TwoWay}"
+                 MinWidth="400"
+                 IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}"/>
+        <Button Grid.Column="1"
+                Content="Paste"
+                Command="{Binding PasteFromClipboardCommand}"
+                IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}"/>
+      </Grid>
     </StackPanel>
 
     <StackPanel Grid.Row="1" Spacing="6">

@@ -6,6 +6,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Service.Classes;
@@ -21,6 +24,7 @@ public partial class LoraDownloadViewModel : ViewModelBase
     private readonly string _apiKey;
     private readonly Action<string, LogSeverity>? _log;
     private readonly AsyncRelayCommand _startDownloadCommand;
+    private readonly AsyncRelayCommand _pasteFromClipboardCommand;
     private CancellationTokenSource? _cts;
 
     public ObservableCollection<LoraDownloadTargetOption> Targets { get; } = new();
@@ -56,6 +60,7 @@ public partial class LoraDownloadViewModel : ViewModelBase
     private string statusForeground = "#E0E0E0";
 
     public IAsyncRelayCommand StartDownloadCommand => _startDownloadCommand;
+    public IAsyncRelayCommand PasteFromClipboardCommand => _pasteFromClipboardCommand;
 
     public IRelayCommand CancelCommand { get; }
 
@@ -75,6 +80,7 @@ public partial class LoraDownloadViewModel : ViewModelBase
         _apiKey = apiKey ?? string.Empty;
         _log = log;
         _startDownloadCommand = new AsyncRelayCommand(OnDownloadAsync, CanStartDownload);
+        _pasteFromClipboardCommand = new AsyncRelayCommand(OnPasteFromClipboardAsync, CanUseClipboard);
         CancelCommand = new RelayCommand(OnCancel);
         PopulateTargets(sources);
     }
@@ -104,6 +110,8 @@ public partial class LoraDownloadViewModel : ViewModelBase
         !IsDownloading &&
         !string.IsNullOrWhiteSpace(CivitaiUrl) &&
         SelectedTarget != null;
+
+    private bool CanUseClipboard() => !IsDownloading;
 
     private async Task OnDownloadAsync()
     {
@@ -256,6 +264,11 @@ public partial class LoraDownloadViewModel : ViewModelBase
         StatusForeground = value ? "#FF6F6F" : "#E0E0E0";
     }
 
+    partial void OnIsDownloadingChanged(bool value)
+    {
+        _pasteFromClipboardCommand.NotifyCanExecuteChanged();
+    }
+
     private static string FormatBytes(double bytes)
     {
         var units = new[] { "B", "KB", "MB", "GB", "TB" };
@@ -305,5 +318,28 @@ public partial class LoraDownloadViewModel : ViewModelBase
     public sealed record LoraDownloadTargetOption(string FolderPath)
     {
         public string DisplayName => FolderPath;
+    }
+
+    private async Task OnPasteFromClipboardAsync()
+    {
+        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+            desktop.MainWindow is not { Clipboard: { } clipboard })
+        {
+            HasError = true;
+            StatusMessage = "Clipboard is not available.";
+            return;
+        }
+
+        var text = await clipboard.GetTextAsync();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            HasError = true;
+            StatusMessage = "Clipboard does not contain a link.";
+            return;
+        }
+
+        CivitaiUrl = text.Trim();
+        HasError = false;
+        StatusMessage = "Link pasted from clipboard.";
     }
 }
