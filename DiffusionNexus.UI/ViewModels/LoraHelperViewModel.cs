@@ -36,6 +36,10 @@ public partial class LoraHelperViewModel : ViewModelBase
     private bool _isLoadingPage;
     private const int PageSize = 50;
     private readonly LoraMetadataDownloadService _metadataDownloader;
+    private readonly ILoraDownloader _loraDownloader;
+    private readonly ICivitaiUrlParser _civitaiUrlParser;
+    private readonly ILoraSourcesProvider _loraSourcesProvider;
+    private readonly IUserSettings _userSettings;
     private const double ForgePromptStrength = 0.75;
     private const int MaxActiveVideoPreviews = 30;
     private int _activePreviewStartIndex;
@@ -87,12 +91,14 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IAsyncRelayCommand RefreshCommand { get; }
     public IRelayCommand SortByNameCommand { get; }
     public IRelayCommand SortByDateCommand { get; }
+    public IAsyncRelayCommand DownloadLoraCommand { get; }
 
     // What the View actually binds to
     public ObservableCollection<LoraCardViewModel> Cards { get; } = new();
     public ObservableCollection<FolderItemViewModel> FolderItems { get; } = new();
     private readonly ISettingsService _settingsService;
     private Window? _window;
+    private SettingsModel? _cachedSettings;
     public LoraHelperViewModel() : this(new SettingsService(), null)
     {
     }
@@ -101,12 +107,17 @@ public partial class LoraHelperViewModel : ViewModelBase
     {
         _settingsService = settingsService;
         _metadataDownloader = metadataDownloader ?? new LoraMetadataDownloadService(new CivitaiApiClient(new HttpClient()));
+        _loraDownloader = new CivitaiLoraDownloader(new CivitaiApiClient(new HttpClient()), new HttpClient());
+        _civitaiUrlParser = new CivitaiUrlParser();
+        _loraSourcesProvider = new SettingsLoraSourcesProvider(_settingsService);
+        _userSettings = new SettingsUserSettings(_settingsService);
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
+        DownloadLoraCommand = new AsyncRelayCommand(OpenDownloadDialogAsync);
         DiffusionModelFilter.FiltersChanged += OnDiffusionModelFiltersChanged;
         Cards.CollectionChanged += OnCardsCollectionChanged;
         _ = LoadAsync();
@@ -116,12 +127,41 @@ public partial class LoraHelperViewModel : ViewModelBase
         _window = window;
     }
 
+    private async Task OpenDownloadDialogAsync()
+    {
+        if (_window is null)
+            return;
+
+        var settings = await GetSettingsAsync();
+        var dialog = new DownloadLoraDialog();
+        var vm = new DownloadLoraDialogViewModel(
+            _civitaiUrlParser,
+            _loraDownloader,
+            _loraSourcesProvider,
+            _userSettings,
+            settings.CivitaiApiKey ?? string.Empty);
+        dialog.DataContext = vm;
+        await vm.InitializeAsync();
+        await dialog.ShowDialog<bool?>(_window);
+    }
+
+    private async Task<SettingsModel> GetSettingsAsync()
+    {
+        if (_cachedSettings is null)
+        {
+            _cachedSettings = await _settingsService.LoadAsync();
+        }
+
+        return _cachedSettings;
+    }
+
     private async Task LoadAsync()
     {
         IsLoading = true;
         try
         {
             var settings = await _settingsService.LoadAsync();
+            _cachedSettings = settings;
             ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             IsVideoPreviewEnabled = settings.ShowVideoPreview;
             ShowNsfw = settings.ShowNsfw;
