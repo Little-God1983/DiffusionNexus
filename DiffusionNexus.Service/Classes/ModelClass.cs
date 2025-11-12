@@ -27,10 +27,10 @@ namespace DiffusionNexus.Service.Classes
         public string? SHA256Hash { get; set; }
         [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.UNASSIGNED;
         public List<FileInfo> AssociatedFilesInfo { get; set; }
-        [MetadataField] public List<string> Tags { get; set; } = new();
+        public List<string> Tags { get; set; } = new();
         [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
-        [MetadataField] public List<string> TrainedWords { get; set; } = new();
-        [MetadataField] public bool? Nsfw { get; set; }
+        public List<string> TrainedWords { get; set; } = new();
+        public bool? Nsfw { get; set; }
 
         // status flags
         public bool NoMetaData { get; set; } = true;
