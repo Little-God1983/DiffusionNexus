@@ -84,6 +84,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     public IRelayCommand ResetFiltersCommand { get; }
     public IAsyncRelayCommand ScanDuplicatesCommand { get; }
     public IAsyncRelayCommand DownloadMissingMetadataCommand { get; }
+    public IAsyncRelayCommand DownloadLoraCommand { get; }
     public IAsyncRelayCommand RefreshCommand { get; }
     public IRelayCommand SortByNameCommand { get; }
     public IRelayCommand SortByDateCommand { get; }
@@ -104,6 +105,7 @@ public partial class LoraHelperViewModel : ViewModelBase
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         ScanDuplicatesCommand = new AsyncRelayCommand(ScanDuplicatesAsync);
         DownloadMissingMetadataCommand = new AsyncRelayCommand(DownloadMissingMetadataAsync);
+        DownloadLoraCommand = new AsyncRelayCommand(DownloadLoraAsync);
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
         SortByNameCommand = new RelayCommand(() => SortMode = SortMode.Name);
         SortByDateCommand = new RelayCommand(() => SortMode = SortMode.CreationDate);
@@ -802,6 +804,64 @@ public partial class LoraHelperViewModel : ViewModelBase
         {
             IsLoading = false;
         }
+    }
+
+    private async Task DownloadLoraAsync()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        var settings = await _settingsService.LoadAsync();
+        var enabledTargets = settings.LoraHelperSources
+            .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
+            .Select(source => source.FolderPath!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(Directory.Exists)
+            .Select(path => new DownloadTargetOption(GetTargetDisplayName(path), path))
+            .ToList();
+
+        if (enabledTargets.Count == 0)
+        {
+            Log("Configure at least one writable LoRA source before downloading.", LogSeverity.Warning);
+            return;
+        }
+
+        var apiClient = new CivitaiApiClient(new HttpClient());
+        var downloader = new CivitaiLoraDownloader(apiClient, new HttpClient());
+
+        var dialog = new DownloadLoraDialog();
+        var viewModel = new DownloadLoraDialogViewModel(
+            new CivitaiUrlParser(),
+            downloader,
+            enabledTargets,
+            settings.CivitaiApiKey,
+            settings.LastDownloadLoraTargetPath,
+            async path =>
+            {
+                if (!string.Equals(settings.LastDownloadLoraTargetPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.LastDownloadLoraTargetPath = path;
+                    await _settingsService.SaveAsync(settings);
+                }
+            });
+
+        dialog.DataContext = viewModel;
+        await dialog.ShowDialog<bool?>(_window);
+
+        if (viewModel.WasSuccessful)
+        {
+            Log("LoRA download completed successfully.", LogSeverity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private static string GetTargetDisplayName(string path)
+    {
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrEmpty(name) ? path : name;
     }
 
     private static string ComputeSHA256(string filePath)

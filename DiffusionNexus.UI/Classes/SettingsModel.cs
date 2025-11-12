@@ -19,6 +19,7 @@ namespace DiffusionNexus.UI.Classes
         [ObservableProperty] private bool _showVideoPreview;
         [ObservableProperty] private bool _showNsfw;
         [ObservableProperty] private bool _useForgeStylePrompts = true;
+        [ObservableProperty] private string? _lastDownloadLoraTargetPath;
 
         [JsonIgnore]
         public string? CivitaiApiKey { get; set; }

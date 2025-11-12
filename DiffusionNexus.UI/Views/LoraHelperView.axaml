@@ -24,7 +24,7 @@
     </Style>
   </UserControl.Styles>
   <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*" Margin="10">
-    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
+    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,1.5*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,5">
       <Button Grid.Column="0" Content="◀️ Reset Filters" Width="120" Height="36" Command="{Binding ResetFiltersCommand}"/>
       <AutoCompleteBox x:Name="SearchBox"
                       Grid.Column="1"
@@ -51,8 +51,9 @@
       <CheckBox Grid.Column="5" Content="Show NSFW" IsChecked="{Binding ShowNsfw}" VerticalAlignment="Center" Margin="10,0"/>
       <Button Grid.Column="6" Content="🧠 Download Metadata" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Width="200" Height="36" Margin="5,0,0,0"
               Command="{Binding DownloadMissingMetadataCommand}"/>
-      <Button Grid.Column="7" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
-      <Button Grid.Column="8"
+      <Button Grid.Column="7" Content="⬇️ Download LoRA" Width="180" Height="36" Margin="5,0,0,0" Command="{Binding DownloadLoraCommand}"/>
+      <Button Grid.Column="8" Content="🔄 Refresh" Width="120" Height="36" Margin="5,0,0,0" Command="{Binding RefreshCommand}"/>
+      <Button Grid.Column="9"
               Width="48"
               Height="36"
               Margin="5,0,0,0"

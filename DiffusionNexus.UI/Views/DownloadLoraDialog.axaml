@@ -1,0 +1,96 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:conv="using:DiffusionNexus.UI.Converters"
+        x:Class="DiffusionNexus.UI.Views.DownloadLoraDialog"
+        x:DataType="vm:DownloadLoraDialogViewModel"
+        Title="Download LoRA from Civitai"
+        Width="520"
+        MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+  <Window.Resources>
+    <conv:BooleanNotConverter x:Key="BooleanNotConverter" />
+    <conv:StringNotEmptyToBoolConverter x:Key="StringNotEmptyToBoolConverter" />
+  </Window.Resources>
+  <Border Padding="16">
+    <Grid RowDefinitions="Auto,*" ColumnDefinitions="*">
+      <StackPanel Spacing="16">
+        <StackPanel Spacing="4">
+          <TextBlock Text="Civitai Link" FontWeight="Bold" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBox Width="360"
+                     Watermark="https://civitai.com/models/..."
+                     Text="{Binding CivitaiUrl, UpdateSourceTrigger=PropertyChanged}"
+                     IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}" />
+            <Button Content="Paste"
+                    Command="{Binding PasteFromClipboardCommand}"
+                    IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}" />
+          </StackPanel>
+          <TextBlock Text="Examples:" FontSize="12" Foreground="#AAA" />
+          <StackPanel Spacing="2">
+            <TextBlock Text="https://civitai.com/models/372465?modelVersionId=914390"
+                       FontSize="12"
+                       Foreground="#888" />
+            <TextBlock Text="https://civitai.com/models/1153088/retro-ghibli-style-porco-rosso?modelVersionId=2396443"
+                       FontSize="12"
+                       Foreground="#888" />
+            <TextBlock Text="Note: modelVersionId may be missing for single-version models."
+                       FontSize="12"
+                       Foreground="#888" />
+          </StackPanel>
+          <TextBlock Text="{Binding UrlError}"
+                     Foreground="Red"
+                     FontSize="12"
+                     IsVisible="{Binding UrlError, Converter={StaticResource StringNotEmptyToBoolConverter}}" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="Target Folder" FontWeight="Bold" />
+          <ComboBox ItemsSource="{Binding Targets}"
+                    SelectedItem="{Binding SelectedTarget}"
+                    IsEnabled="{Binding IsDownloading, Converter={StaticResource BooleanNotConverter}}" />
+        </StackPanel>
+
+        <Border Background="#330000" CornerRadius="4" Padding="8" IsVisible="{Binding ErrorMessage, Converter={StaticResource StringNotEmptyToBoolConverter}}">
+          <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap" />
+        </Border>
+
+        <Border Background="#223344" CornerRadius="4" Padding="8" IsVisible="{Binding IsCollisionPromptVisible}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding CollisionMessage}" FontWeight="Bold" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Overwrite"
+                      Command="{Binding OverwriteCommand}" />
+              <Button Content="Skip"
+                      Command="{Binding SkipCommand}" />
+              <Button Command="{Binding SaveAsCommand}">
+                <Button.Content>
+                  <TextBlock Text="{Binding SaveAsFileName, StringFormat='Save as &quot;{0}&quot;'}" />
+                </Button.Content>
+              </Button>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <StackPanel Spacing="8" IsVisible="{Binding IsDownloading}">
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" Height="16" />
+          <TextBlock Text="{Binding ProgressStatus}" />
+          <TextBlock Text="{Binding EtaText}" Foreground="#AAA" />
+        </StackPanel>
+      </StackPanel>
+
+      <StackPanel Grid.Row="1"
+                  VerticalAlignment="Bottom"
+                  Orientation="Horizontal"
+                  HorizontalAlignment="Right"
+                  Spacing="8"
+                  Margin="0,24,0,0">
+        <Button Content="Cancel" Command="{Binding CancelCommand}" MinWidth="100" />
+        <Button Content="OK"
+                Command="{Binding OkCommand}"
+                IsEnabled="{Binding IsOkEnabled}"
+                MinWidth="100" />
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
