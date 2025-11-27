@@ -13,6 +13,75 @@
     <conv:TagsDisplayConverter x:Key="TagsDisplayConverter" />
     <conv:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
     <conv:BooleanNotConverter x:Key="BooleanNotConverter"/>
+    <DataTemplate x:Key="LoraCardTemplate" x:DataType="vm:LoraCardViewModel">
+      <Border Background="#333333"
+              Padding="5"
+              Margin="5"
+              Width="250"
+              Height="300"
+              Classes="lora-card"
+              Cursor="Hand"
+              PointerReleased="OnCardPointerReleased">
+        <Grid>
+          <Grid>
+            <Image Source="{Binding VideoFrame}" Stretch="UniformToFill" IsVisible="{Binding HasVideo}"/>
+            <Image Source="{Binding PreviewImage}" Stretch="UniformToFill" IsVisible="{Binding ShouldShowImage}"/>
+            <TextBlock Text="No preview available"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontStyle="Italic"
+                       Foreground="#FFCCCCCC"
+                       IsVisible="{Binding ShowPlaceholder}"/>
+          </Grid>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
+            <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2" Background="Black">
+              <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
+            </Border>
+            <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2,2,0,2" Background="Black">
+              <TextBlock Text="{Binding DiffusionBaseModel}" FontSize="12"/>
+            </Border>
+          </StackPanel>
+          <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
+            <StackPanel>
+              <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+              <TextBlock Text="{Binding Model.SafeTensorFileName}" FontSize="12" Foreground="#FFCCCCCC" TextWrapping="Wrap"/>
+              <ItemsControl ItemsSource="{Binding Variants}" Margin="0,4,0,0" IsVisible="{Binding HasVariants}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:LoraVariantViewModel">
+                    <ToggleButton Content="{Binding Label}"
+                                  Margin="0,0,4,0"
+                                  MinWidth="60"
+                                  Command="{Binding SelectCommand}"
+                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                  <Button Content="⬇️"
+                          Width="36"
+                          Height="36"
+                          FontSize="16"
+                          Margin="0,4,4,0"
+                          Command="{Binding DownloadMetadataCommand}"
+                          IsVisible="{Binding ShouldShowDownloadMetadataButton}"/>
+                  <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
+                  <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
+                  <Button Content="N" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyNameCommand}"/>
+                  <Button Content="📂" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenFolderCommand}"/>
+                  <Button Content="❌" Width="36" Height="36" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
+                </StackPanel>
+              </Grid>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
   </UserControl.Resources>
   <UserControl.Styles>
     <Style Selector="Border.lora-card">
@@ -96,79 +165,7 @@
                                MinItemHeight="300" />
           </items:ItemsRepeater.Layout>
           <items:ItemsRepeater.ItemTemplate>
-            <DataTemplate x:DataType="vm:LoraCardViewModel">
-              <Border Background="#333333"
-                      Padding="5"
-                      Margin="5"
-                      Width="250"
-                      Height="300"
-                      Classes="lora-card"
-                      Cursor="Hand"
-                      PointerReleased="OnCardPointerReleased">
-                <Grid>
-                  <Grid>
-                    <Image Source="{Binding VideoFrame}" Stretch="UniformToFill" IsVisible="{Binding HasVideo}"/>
-                    <Image Source="{Binding PreviewImage}" Stretch="UniformToFill" IsVisible="{Binding ShouldShowImage}"/>
-                    <TextBlock Text="No preview available"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               FontStyle="Italic"
-                               Foreground="#FFCCCCCC"
-                               IsVisible="{Binding ShowPlaceholder}"/>
-                  </Grid>
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
-                    <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2" Background="Black">
-                      <TextBlock Text="{Binding DiffusionTypes, Converter={StaticResource TagsDisplayConverter}}" FontSize="12"/>
-                    </Border>
-                    <Border BorderBrush="White" BorderThickness="2" Padding="2" Margin="2,2,0,2" Background="Black">
-                      <TextBlock Text="{Binding DiffusionBaseModel}" FontSize="12"/>
-                    </Border>
-                  </StackPanel>
-                  <Border VerticalAlignment="Bottom" Background="#66000000" Padding="5">
-                    <StackPanel>
-                      <TextBlock Text="{Binding Model.ModelVersionName}" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
-                      <TextBlock Text="{Binding Model.SafeTensorFileName}" FontSize="12" Foreground="#FFCCCCCC" TextWrapping="Wrap"/>
-                      <ItemsControl ItemsSource="{Binding Variants}" Margin="0,4,0,0" IsVisible="{Binding HasVariants}">
-                        <ItemsControl.ItemsPanel>
-                          <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal"/>
-                          </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:LoraVariantViewModel">
-                            <ToggleButton Content="{Binding Label}"
-                                          Margin="0,0,4,0"
-                                          MinWidth="60"
-                                          Command="{Binding SelectCommand}"
-                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                      <Grid ColumnDefinitions="Auto,*">
-                        <!--<Button Content="âœï¸"
-                                Width="36" Height="36" FontSize="16"
-                                Margin="0,4,4,0"
-                                Command="{Binding EditCommand}"/>-->
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                          <Button Content="⬇️"
-                                  Width="36"
-                                  Height="36"
-                                  FontSize="16"
-                                  Margin="0,4,4,0"
-                                  Command="{Binding DownloadMetadataCommand}"
-                                  IsVisible="{Binding ShouldShowDownloadMetadataButton}"/>
-                          <Button Content="🌐" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenWebCommand}"/>
-                          <Button Content="📋" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyCommand}"/>
-                          <Button Content="N" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding CopyNameCommand}"/>
-                          <Button Content="📂" Width="36" Height="36" FontSize="16" Margin="0,4,4,0" Command="{Binding OpenFolderCommand}"/>
-                          <Button Content="❌" Width="36" Height="36" FontSize="16" Margin="0,4,0,0" Command="{Binding DeleteCommand}"/>
-                        </StackPanel>
-                      </Grid>
-                    </StackPanel>
-                  </Border>
-                </Grid>
-              </Border>
-            </DataTemplate>
+            <StaticResource ResourceKey="LoraCardTemplate" />
           </items:ItemsRepeater.ItemTemplate>
         </items:ItemsRepeater>
       </ScrollViewer>
