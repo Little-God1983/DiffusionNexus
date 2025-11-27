@@ -39,6 +39,7 @@ public partial class LoraHelperViewModel : ViewModelBase
     private const double ForgePromptStrength = 0.75;
     private const int MaxActiveVideoPreviews = 30;
     private int _activePreviewStartIndex;
+    private record LoraSourceLoadResult(List<FolderNode> FolderNodes, FolderNode? MergedRoot, List<LoraCardSeed> CardSeeds);
     [ObservableProperty]
     private bool showSuggestions;
 
@@ -121,100 +122,20 @@ public partial class LoraHelperViewModel : ViewModelBase
         IsLoading = true;
         try
         {
-            var settings = await _settingsService.LoadAsync();
-            ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
-            IsVideoPreviewEnabled = settings.ShowVideoPreview;
-            ShowNsfw = settings.ShowNsfw;
-            var enabledSources = settings.LoraHelperSources
-                .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
-                .Select(source => source.FolderPath!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var settings = await LoadAndApplySettingsAsync();
+            var enabledSources = GetEnabledSources(settings);
 
             if (enabledSources.Count == 0)
             {
                 return;
             }
 
-            var mergeSources = settings.MergeLoraHelperSources;
-            var cardSeeds = new List<LoraCardSeed>();
-            var discovery = new ModelDiscoveryService();
-            var folderNodes = new List<FolderNode>();
-            var localProvider = new LocalFileMetadataProvider();
+            var sourceData = await LoadSourcesAsync(enabledSources, settings.MergeLoraHelperSources);
+            var cardEntries = LoraVariantMerger.Merge(sourceData.CardSeeds);
 
-            foreach (var source in enabledSources)
-            {
-                if (!mergeSources)
-                {
-                    var node = discovery.BuildFolderTree(source);
-                    node.IsExpanded = true;
-                    folderNodes.Add(node);
-                }
-
-                var reader = new JsonInfoFileReaderService(
-                    source,
-                    (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
-                );
-                var sourceModels = await reader.GetModelData(null, CancellationToken.None);
-
-                foreach (var model in sourceModels)
-                {
-                    var seed = CreateCardEntry(model, source, mergeSources);
-                    if (seed != null)
-                    {
-                        cardSeeds.Add(seed);
-                    }
-                }
-            }
-
-            var mergedRoot = mergeSources ? BuildMergedFolderTree(cardSeeds) : null;
-            var cardEntries = LoraVariantMerger.Merge(cardSeeds);
-
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                FolderItems.Clear();
-                if (mergeSources)
-                {
-                    if (mergedRoot != null)
-                    {
-                        FolderItems.Add(ConvertFolder(mergedRoot));
-                    }
-                }
-                else
-                {
-                    foreach (var node in folderNodes)
-                    {
-                        FolderItems.Add(ConvertFolder(node));
-                    }
-                }
-            });
-
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var existing in _allCards)
-                {
-                    existing.DisposeVideoPreview();
-                }
-
-                _allCards.Clear();
-                DisableVisibleCardPreviews();
-                Cards.Clear();
-                _activePreviewStartIndex = 0;
-            });
-
-            foreach (var entry in cardEntries)
-            {
-                var card = new LoraCardViewModel
-                {
-                    Model = entry.Model,
-                    FolderPath = entry.FolderPath,
-                    TreePath = entry.TreePath,
-                    Parent = this
-                };
-                card.SetVariants(entry.Variants);
-                _allCards.Add(card);
-            }
-
+            await PopulateFolderItemsAsync(sourceData, settings.MergeLoraHelperSources);
+            await ResetCardsAsync();
+            BuildCards(cardEntries);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 DiffusionModelFilter.SetOptions(_allCards.Select(card => card.DiffusionBaseModel));
@@ -229,6 +150,111 @@ public partial class LoraHelperViewModel : ViewModelBase
         finally
         {
             await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+        }
+    }
+
+    private async Task<SettingsModel> LoadAndApplySettingsAsync()
+    {
+        var settings = await _settingsService.LoadAsync();
+        ThumbnailSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+        IsVideoPreviewEnabled = settings.ShowVideoPreview;
+        ShowNsfw = settings.ShowNsfw;
+        return settings;
+    }
+
+    private static List<string> GetEnabledSources(SettingsModel settings) => settings.LoraHelperSources
+        .Where(source => source.IsEnabled && !string.IsNullOrWhiteSpace(source.FolderPath))
+        .Select(source => source.FolderPath!)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private async Task<LoraSourceLoadResult> LoadSourcesAsync(IEnumerable<string> enabledSources, bool mergeSources)
+    {
+        var cardSeeds = new List<LoraCardSeed>();
+        var discovery = new ModelDiscoveryService();
+        var folderNodes = new List<FolderNode>();
+        var localProvider = new LocalFileMetadataProvider();
+
+        foreach (var source in enabledSources)
+        {
+            if (!mergeSources)
+            {
+                var node = discovery.BuildFolderTree(source);
+                node.IsExpanded = true;
+                folderNodes.Add(node);
+            }
+
+            var reader = new JsonInfoFileReaderService(
+                source,
+                (filePath, progress, cancellationToken) => localProvider.GetModelMetadataAsync(filePath, cancellationToken)
+            );
+            var sourceModels = await reader.GetModelData(null, CancellationToken.None);
+
+            foreach (var model in sourceModels)
+            {
+                var seed = CreateCardEntry(model, source, mergeSources);
+                if (seed != null)
+                {
+                    cardSeeds.Add(seed);
+                }
+            }
+        }
+
+        var mergedRoot = mergeSources ? BuildMergedFolderTree(cardSeeds) : null;
+        return new LoraSourceLoadResult(folderNodes, mergedRoot, cardSeeds);
+    }
+
+    private async Task PopulateFolderItemsAsync(LoraSourceLoadResult sourceData, bool mergeSources)
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            FolderItems.Clear();
+            if (mergeSources)
+            {
+                if (sourceData.MergedRoot != null)
+                {
+                    FolderItems.Add(ConvertFolder(sourceData.MergedRoot));
+                }
+            }
+            else
+            {
+                foreach (var node in sourceData.FolderNodes)
+                {
+                    FolderItems.Add(ConvertFolder(node));
+                }
+            }
+        });
+    }
+
+    private async Task ResetCardsAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            foreach (var existing in _allCards)
+            {
+                existing.DisposeVideoPreview();
+            }
+
+            _allCards.Clear();
+            DisableVisibleCardPreviews();
+            Cards.Clear();
+            _activePreviewStartIndex = 0;
+        });
+    }
+
+    private void BuildCards(IEnumerable<LoraCardSeed> cardEntries)
+    {
+        foreach (var entry in cardEntries)
+        {
+            var card = new LoraCardViewModel
+            {
+                Model = entry.Model,
+                FolderPath = entry.FolderPath,
+                TreePath = entry.TreePath,
+                Parent = this
+            };
+            card.SetVariants(entry.Variants);
+            _allCards.Add(card);
         }
     }
 
