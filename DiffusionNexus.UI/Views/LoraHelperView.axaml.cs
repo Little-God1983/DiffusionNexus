@@ -4,10 +4,12 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Classes;
 using System;
+using System.Threading;
 
 namespace DiffusionNexus.UI.Views;
 
@@ -15,6 +17,8 @@ public partial class LoraHelperView : UserControl
 {
     private ScrollViewer? _scroll;
     private ItemsRepeater? _repeater;
+    private CancellationTokenSource? _scrollDebounceTokenSource;
+    private const int ScrollDebounceMilliseconds = 100;
 
     public LoraHelperView()
     {
@@ -68,14 +72,33 @@ public partial class LoraHelperView : UserControl
         if (_scroll == null)
             return;
 
-        if (DataContext is LoraHelperViewModel vm)
+        if (DataContext is not LoraHelperViewModel vm)
+            return;
+
+        // Debounce scroll events
+        _scrollDebounceTokenSource?.Cancel();
+        _scrollDebounceTokenSource = new CancellationTokenSource();
+        var token = _scrollDebounceTokenSource.Token;
+
+        try
         {
+            await System.Threading.Tasks.Task.Delay(ScrollDebounceMilliseconds, token);
+
+            if (token.IsCancellationRequested)
+                return;
+
+            // Load next page if near bottom
             if (_scroll.Offset.Y + _scroll.Viewport.Height > _scroll.Extent.Height - 300)
             {
                 await vm.LoadNextPageAsync();
             }
 
+            // Update active video preview range
             UpdateActivePreviewRange();
+        }
+        catch (OperationCanceledException)
+        {
+            // Debounced
         }
     }
 
