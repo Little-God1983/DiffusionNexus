@@ -20,6 +20,8 @@ namespace DiffusionNexus.UI.ViewModels;
 
 public partial class LoraCardViewModel : ViewModelBase
 {
+    private readonly PropertyChangeNotifier _notifier;
+
     [ObservableProperty]
     private string? _description;
 
@@ -73,7 +75,7 @@ public partial class LoraCardViewModel : ViewModelBase
 
             _videoFrame?.Dispose();
             _videoFrame = value;
-            OnPropertyChanged(nameof(VideoFrame));
+            _notifier.NotifyPropertyChanged(nameof(VideoFrame));
         }
     }
 
@@ -86,6 +88,7 @@ public partial class LoraCardViewModel : ViewModelBase
 
     public LoraCardViewModel()
     {
+        _notifier = new PropertyChangeNotifier(this, OnPropertyChanged);
         EditCommand = new RelayCommand(OnEdit);
         DeleteCommand = new AsyncRelayCommand(OnDeleteAsync);
         OpenWebCommand = new AsyncRelayCommand(OnOpenWebAsync);
@@ -99,50 +102,61 @@ public partial class LoraCardViewModel : ViewModelBase
 
     partial void OnModelChanged(ModelClass? value)
     {
-        _ = LoadPreviewImageAsync();
-        OnPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
+        using (_notifier.SuspendNotifications())
+        {
+            _ = LoadPreviewImageAsync();
+            _notifier.NotifyPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
+            _notifier.NotifyPropertyChanged(nameof(DiffusionTypes));
+            _notifier.NotifyPropertyChanged(nameof(DiffusionBaseModel));
+        }
     }
 
     partial void OnPreviewImageChanged(Bitmap? value)
     {
-        OnPropertyChanged(nameof(HasImage));
-        OnPropertyChanged(nameof(ShouldShowImage));
-        OnPropertyChanged(nameof(ShowPlaceholder));
+        using (_notifier.SuspendNotifications())
+        {
+            _notifier.NotifyPropertyChanged(nameof(HasImage));
+            _notifier.NotifyPropertyChanged(nameof(ShouldShowImage));
+            _notifier.NotifyPropertyChanged(nameof(ShowPlaceholder));
+        }
     }
 
     internal void SetVariants(IReadOnlyList<LoraVariantDescriptor> variants)
     {
-        Variants.CollectionChanged -= OnVariantsCollectionChanged;
-        Variants.Clear();
-
-        if (variants != null && variants.Count > 0)
+        using (_notifier.SuspendNotifications())
         {
-            foreach (var variant in variants)
-            {
-                var option = new LoraVariantViewModel(variant.Label, variant.Model, OnVariantSelected);
-                option.IsSelected = ReferenceEquals(variant.Model, Model);
-                Variants.Add(option);
-            }
+            Variants.CollectionChanged -= OnVariantsCollectionChanged;
+            Variants.Clear();
 
-            if (Variants.Count > 0 && Variants.All(v => !v.IsSelected))
+            if (variants != null && variants.Count > 0)
             {
-                var preferred = Variants.FirstOrDefault(v => string.Equals(v.Label, "High", StringComparison.OrdinalIgnoreCase))
-                    ?? Variants.First();
-                preferred.IsSelected = true;
-                ApplyVariant(preferred);
-            }
-            else
-            {
-                var selected = Variants.FirstOrDefault(v => v.IsSelected);
-                if (selected != null)
+                foreach (var variant in variants)
                 {
-                    ApplyVariant(selected);
+                    var option = new LoraVariantViewModel(variant.Label, variant.Model, OnVariantSelected);
+                    option.IsSelected = ReferenceEquals(variant.Model, Model);
+                    Variants.Add(option);
+                }
+
+                if (Variants.Count > 0 && Variants.All(v => !v.IsSelected))
+                {
+                    var preferred = Variants.FirstOrDefault(v => string.Equals(v.Label, "High", StringComparison.OrdinalIgnoreCase))
+                        ?? Variants.First();
+                    preferred.IsSelected = true;
+                    ApplyVariant(preferred);
+                }
+                else
+                {
+                    var selected = Variants.FirstOrDefault(v => v.IsSelected);
+                    if (selected != null)
+                    {
+                        ApplyVariant(selected);
+                    }
                 }
             }
-        }
 
-        Variants.CollectionChanged += OnVariantsCollectionChanged;
-        OnPropertyChanged(nameof(HasVariants));
+            Variants.CollectionChanged += OnVariantsCollectionChanged;
+            _notifier.NotifyPropertyChanged(nameof(HasVariants));
+        }
     }
 
     private void OnVariantsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -205,16 +219,19 @@ public partial class LoraCardViewModel : ViewModelBase
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            PreviewImage = bitmap;
-            _previewMediaPath = GetPreviewMediaPath();
+            using (_notifier.SuspendNotifications())
+            {
+                PreviewImage = bitmap;
+                _previewMediaPath = GetPreviewMediaPath();
 
-            if (_isVideoPreviewEnabled)
-            {
-                StartVideoPreview();
-            }
-            else
-            {
-                StopVideoPreview();
+                if (_isVideoPreviewEnabled)
+                {
+                    StartVideoPreview();
+                }
+                else
+                {
+                    StopVideoPreview();
+                }
             }
         });
     }
@@ -267,8 +284,11 @@ public partial class LoraCardViewModel : ViewModelBase
         _previewMediaPath = GetPreviewMediaPath();
         if (string.IsNullOrWhiteSpace(_previewMediaPath) || !File.Exists(_previewMediaPath))
         {
-            OnPropertyChanged(nameof(ShouldShowImage));
-            OnPropertyChanged(nameof(ShowPlaceholder));
+            using (_notifier.SuspendNotifications())
+            {
+                _notifier.NotifyPropertyChanged(nameof(ShouldShowImage));
+                _notifier.NotifyPropertyChanged(nameof(ShowPlaceholder));
+            }
             return;
         }
 
@@ -278,8 +298,11 @@ public partial class LoraCardViewModel : ViewModelBase
             if (!capture.IsOpened())
             {
                 capture.Dispose();
-                OnPropertyChanged(nameof(ShouldShowImage));
-                OnPropertyChanged(nameof(ShowPlaceholder));
+                using (_notifier.SuspendNotifications())
+                {
+                    _notifier.NotifyPropertyChanged(nameof(ShouldShowImage));
+                    _notifier.NotifyPropertyChanged(nameof(ShowPlaceholder));
+                }
                 return;
             }
 
@@ -296,9 +319,14 @@ public partial class LoraCardViewModel : ViewModelBase
             };
             _videoTimer.Tick += OnVideoTick;
             _videoTimer.Start();
-            OnPropertyChanged(nameof(HasVideo));
-            OnPropertyChanged(nameof(ShouldShowImage));
-            OnPropertyChanged(nameof(ShowPlaceholder));
+            
+            using (_notifier.SuspendNotifications())
+            {
+                _notifier.NotifyPropertyChanged(nameof(HasVideo));
+                _notifier.NotifyPropertyChanged(nameof(ShouldShowImage));
+                _notifier.NotifyPropertyChanged(nameof(ShowPlaceholder));
+            }
+            
             OnVideoTick(this, EventArgs.Empty);
         }
         catch (Exception ex)
@@ -333,9 +361,13 @@ public partial class LoraCardViewModel : ViewModelBase
         }
 
         VideoFrame = null;
-        OnPropertyChanged(nameof(HasVideo));
-        OnPropertyChanged(nameof(ShouldShowImage));
-        OnPropertyChanged(nameof(ShowPlaceholder));
+        
+        using (_notifier.SuspendNotifications())
+        {
+            _notifier.NotifyPropertyChanged(nameof(HasVideo));
+            _notifier.NotifyPropertyChanged(nameof(ShouldShowImage));
+            _notifier.NotifyPropertyChanged(nameof(ShowPlaceholder));
+        }
     }
 
     private unsafe void OnVideoTick(object? sender, EventArgs e)
@@ -458,7 +490,7 @@ public partial class LoraCardViewModel : ViewModelBase
             return;
 
         await Parent.DownloadMetadataForCardAsync(this);
-        OnPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
+        _notifier.NotifyPropertyChanged(nameof(ShouldShowDownloadMetadataButton));
     }
 
     private void OnOpenFolder()

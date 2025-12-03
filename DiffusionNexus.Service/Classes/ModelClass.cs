@@ -13,33 +13,121 @@ namespace DiffusionNexus.Service.Classes
         private const string Unknown = "UNKNOWN";
 
         private string diffusionBaseModel = Unknown;
+        private MetadataCompleteness? _cachedCompleteness;
 
         [MetadataField]
         public string DiffusionBaseModel
         {
             get => diffusionBaseModel;
-            set => diffusionBaseModel = value == "SDXL 1.0" ? "SDXL" : value;
+            set
+            {
+                if (diffusionBaseModel != value)
+                {
+                    diffusionBaseModel = value == "SDXL 1.0" ? "SDXL" : value;
+                    InvalidateCompletenessCache();
+                }
+            }
         }
 
-        [MetadataField] public string SafeTensorFileName { get; set; }
-        [MetadataField] public string ModelVersionName { get; set; }
-        [MetadataField] public string? ModelId { get; set; }
+        private string? _safeTensorFileName;
+        [MetadataField]
+        public string SafeTensorFileName
+        {
+            get => _safeTensorFileName ?? string.Empty;
+            set
+            {
+                if (_safeTensorFileName != value)
+                {
+                    _safeTensorFileName = value;
+                    InvalidateCompletenessCache();
+                }
+            }
+        }
+
+        private string? _modelVersionName;
+        [MetadataField]
+        public string ModelVersionName
+        {
+            get => _modelVersionName ?? string.Empty;
+            set
+            {
+                if (_modelVersionName != value)
+                {
+                    _modelVersionName = value;
+                    InvalidateCompletenessCache();
+                }
+            }
+        }
+
+        private string? _modelId;
+        [MetadataField]
+        public string? ModelId
+        {
+            get => _modelId;
+            set
+            {
+                if (_modelId != value)
+                {
+                    _modelId = value;
+                    InvalidateCompletenessCache();
+                }
+            }
+        }
+
         public string? SHA256Hash { get; set; }
-        [MetadataField] public DiffusionTypes ModelType { get; set; } = DiffusionTypes.UNASSIGNED;
+
+        private DiffusionTypes _modelType = DiffusionTypes.UNASSIGNED;
+        [MetadataField]
+        public DiffusionTypes ModelType
+        {
+            get => _modelType;
+            set
+            {
+                if (_modelType != value)
+                {
+                    _modelType = value;
+                    InvalidateCompletenessCache();
+                }
+            }
+        }
+
         public List<FileInfo> AssociatedFilesInfo { get; set; }
         public List<string> Tags { get; set; } = new();
-        [MetadataField] public CivitaiBaseCategories CivitaiCategory { get; set; } = CivitaiBaseCategories.UNASSIGNED;
+
+        private CivitaiBaseCategories _civitaiCategory = CivitaiBaseCategories.UNASSIGNED;
+        [MetadataField]
+        public CivitaiBaseCategories CivitaiCategory
+        {
+            get => _civitaiCategory;
+            set
+            {
+                if (_civitaiCategory != value)
+                {
+                    _civitaiCategory = value;
+                    InvalidateCompletenessCache();
+                }
+            }
+        }
+
         public List<string> TrainedWords { get; set; } = new();
         public bool? Nsfw { get; set; }
 
         // status flags
         public bool NoMetaData { get; set; } = true;
 
+        private void InvalidateCompletenessCache()
+        {
+            _cachedCompleteness = null;
+        }
+
         //------------------------------------------------------------------
         // Helper: evaluate completeness whenever you need it
         //------------------------------------------------------------------
         public MetadataCompleteness GetCompleteness()
         {
+            if (_cachedCompleteness.HasValue)
+                return _cachedCompleteness.Value;
+
             var metaProps = typeof(ModelClass)
                             .GetProperties()
                             .Where(p => Attribute.IsDefined(p, typeof(MetadataFieldAttribute)));
@@ -66,11 +154,11 @@ namespace DiffusionNexus.Service.Classes
                 }
             }
 
-
-
-            return filled == 0 ? MetadataCompleteness.None
+            _cachedCompleteness = filled == 0 ? MetadataCompleteness.None
                  : filled == total ? MetadataCompleteness.Full
                                     : MetadataCompleteness.Partial;
+
+            return _cachedCompleteness.Value;
         }
 
         //------------------------------------------------------------------
