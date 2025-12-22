@@ -1,8 +1,8 @@
-# DiffusionNexus.Domain
-
-> **Documentation moved**: See [documentation/V2/Domain.md](../documentation/V2/Domain.md)
+# DiffusionNexus Domain
 
 Domain entities for the DiffusionNexus application. Designed for Entity Framework Core.
+
+**Project**: `DiffusionNexus.Domain`
 
 ## Architecture
 
@@ -60,7 +60,7 @@ ModelImage uses a hybrid storage strategy for optimal performance:
 // Thumbnail is stored in DB for instant loading
 var image = new ModelImage
 {
-    Url = "https://civitai.com/...?",
+    Url = "https://civitai.com/...",
     ThumbnailData = thumbnailBytes,      // BLOB in DB
     ThumbnailMimeType = "image/webp",
     ThumbnailWidth = 256,
@@ -190,12 +190,12 @@ if (result.Success)
 }
 ```
 
-## Future: EF Core Configuration
+## EF Core Configuration
 
-When implementing persistence:
+The DbContext configuration is in `DiffusionNexus.DataAccess`:
 
 ```csharp
-// DbContext configuration (future)
+// DbContext configuration
 modelBuilder.Entity<Model>(e =>
 {
     e.HasKey(m => m.Id);
@@ -220,3 +220,4 @@ modelBuilder.Entity<ModelTag>(e =>
 {
     e.HasKey(mt => new { mt.ModelId, mt.TagId });
 });
+```

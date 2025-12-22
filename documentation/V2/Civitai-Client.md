@@ -1,8 +1,8 @@
-# DiffusionNexus.Civitai
-
-> **Documentation moved**: See [documentation/V2/Civitai-Client.md](../documentation/V2/Civitai-Client.md)
+# DiffusionNexus Civitai Client
 
 Typed HTTP client for the Civitai REST API.
+
+**Project**: `DiffusionNexus.Civitai`
 
 ## Features
 
@@ -111,3 +111,90 @@ new CivitaiModelsQuery
     Nsfw = false,
     BaseModel = CivitaiBaseModel.SDXL10
 }
+```
+
+### CivitaiImagesQuery
+
+```csharp
+new CivitaiImagesQuery
+{
+    Limit = 100,
+    ModelId = 12345,
+    ModelVersionId = 67890,
+    Nsfw = false,
+    Sort = "Newest"
+}
+```
+
+## Enums
+
+### CivitaiModelType
+
+```csharp
+public enum CivitaiModelType
+{
+    Checkpoint,
+    TextualInversion,
+    Hypernetwork,
+    AestheticGradient,
+    LORA,
+    LoCon,
+    DoRA,
+    Controlnet,
+    Poses,
+    Upscaler,
+    MotionModule,
+    VAE,
+    Wildcards,
+    Workflows,
+    Other
+}
+```
+
+### CivitaiBaseModel Constants
+
+```csharp
+public static class CivitaiBaseModel
+{
+    public const string SD15 = "SD 1.5";
+    public const string SDXL10 = "SDXL 1.0";
+    public const string Flux1D = "Flux.1 D";
+    public const string WanVideo22 = "Wan Video 2.2";
+    // ... and more
+}
+```
+
+## Error Handling
+
+```csharp
+try
+{
+    var model = await client.GetModelAsync(12345);
+}
+catch (HttpRequestException ex)
+{
+    // Network or HTTP error
+    Console.WriteLine($"Request failed: {ex.Message}");
+}
+catch (JsonException ex)
+{
+    // Unexpected response format
+    Console.WriteLine($"Parse failed: {ex.Message}");
+}
+```
+
+## Rate Limiting
+
+The Civitai API has rate limits. Consider:
+- Adding delays between requests
+- Caching responses
+- Using the API key for higher limits
+
+```csharp
+// Simple delay between requests
+foreach (var modelId in modelIds)
+{
+    var model = await client.GetModelAsync(modelId);
+    await Task.Delay(100); // 100ms delay
+}
+```
