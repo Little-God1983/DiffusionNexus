@@ -8,6 +8,7 @@ This folder contains all documentation for the V2 refactored architecture.
 |----------|-------------|
 | [Domain.md](Domain.md) | Domain entities, enums, and data model |
 | [Database.md](Database.md) | SQLite database schema and EF Core configuration |
+| [Settings.md](Settings.md) | Application settings system and secure storage |
 | [Civitai-Client.md](Civitai-Client.md) | Typed HTTP client for Civitai REST API |
 | [UI-Architecture.md](UI-Architecture.md) | Avalonia UI patterns, MVVM, ViewModels |
 | [DataAccess.md](DataAccess.md) | Repository patterns and data access abstractions |
@@ -25,7 +26,8 @@ This folder contains all documentation for the V2 refactored architecture.
 ????????????????????????????????????????????????????????????????????
 ? DiffusionNexus.       ?  DiffusionNexus.    ? DiffusionNexus.    ?
 ? Infrastructure        ?  DataAccess         ? Civitai            ?
-? (Image Caching)       ?  (EF Core + SQLite) ? (API Client)       ?
+? (Image Caching,       ?  (EF Core + SQLite) ? (API Client)       ?
+?  Secure Storage)      ?                     ?                    ?
 ????????????????????????????????????????????????????????????????????
 ?                       DiffusionNexus.Domain                       ?
 ?                   (Entities, Enums, Interfaces)                   ?
@@ -49,6 +51,11 @@ This folder contains all documentation for the V2 refactored architecture.
 - **Full Images**: Cached on disk for detail views
 - **URLs**: Kept for re-downloading if needed
 
+### Secure Settings
+- **API Keys**: Encrypted using DPAPI (Windows) or AES-256 (cross-platform)
+- **Settings**: Stored in SQLite database
+- **LoRA Sources**: Multiple folders with enable/disable per source
+
 ## Projects
 
 | Project | Description |
@@ -56,7 +63,7 @@ This folder contains all documentation for the V2 refactored architecture.
 | `DiffusionNexus.Domain` | Domain entities, enums, service interfaces |
 | `DiffusionNexus.Civitai` | Typed Civitai API client |
 | `DiffusionNexus.DataAccess` | EF Core DbContext, repositories |
-| `DiffusionNexus.Infrastructure` | Image caching service |
+| `DiffusionNexus.Infrastructure` | Image caching, secure storage services |
 | `DiffusionNexus.Service` | Business logic services |
 | `DiffusionNexus.UI-V2` | Avalonia desktop application |
 
@@ -73,9 +80,15 @@ This folder contains all documentation for the V2 refactored architecture.
    dotnet run --project DiffusionNexus.UI-V2
    ```
 
+3. **Configure Settings**
+   - Open the Settings view from the sidebar
+   - Add your Civitai API key (encrypted storage)
+   - Configure LoRA source folders
+   - Save settings
+
 ## Target Framework
 
 - .NET 9
 - C# 13
 - Entity Framework Core 9
-- Avalonia 11.3.9
+- Avalonia 11.3.10
