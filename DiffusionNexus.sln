@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.14.36127.28
+# Visual Studio Version 18
+VisualStudioVersion = 18.1.11312.151 d18.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI", "DiffusionNexus.UI\DiffusionNexus.UI.csproj", "{19C60AE1-F065-40A4-913F-3F19BDA229FF}"
 EndProject
@@ -13,6 +13,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess.Infrastructure", "DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj", "{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI-V2", "DiffusionNexus.UI-V2\DiffusionNexus.UI-V2.csproj", "{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -84,6 +85,18 @@ Global
 		{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}.Release|x64.Build.0 = Release|Any CPU
 		{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}.Release|x86.ActiveCfg = Release|Any CPU
 		{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}.Release|x86.Build.0 = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|x64.Build.0 = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Debug|x86.Build.0 = Debug|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|x64.ActiveCfg = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|x64.Build.0 = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|x86.ActiveCfg = Release|Any CPU
+		{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

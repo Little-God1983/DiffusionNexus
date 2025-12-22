@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.DiffusionNexusMainWindow"
+        x:DataType="vm:DiffusionNexusMainWindowViewModel"
+        Title="Diffusion Nexus"
+        MinWidth="1300" MinHeight="800"
+        Name="MainWin">
+    
+    <Design.DataContext>
+        <vm:DiffusionNexusMainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <SplitView Grid.Row="0" 
+                   IsPaneOpen="{Binding IsMenuOpen}"
+                   DisplayMode="CompactInline"
+                   CompactPaneLength="48"
+                   OpenPaneLength="200"
+                   PanePlacement="Left">
+            
+            <!-- Sidebar Navigation Pane -->
+            <SplitView.Pane>
+                <Border Background="#1E1E1E">
+                    <DockPanel>
+                        <!-- Hamburger Menu Toggle -->
+                        <Button DockPanel.Dock="Top"
+                                Content="?" 
+                                Command="{Binding ToggleMenuCommand}"
+                                HorizontalContentAlignment="Center"
+                                VerticalContentAlignment="Center" 
+                                Width="48" Height="48"
+                                Margin="0,8,0,16"/>
+
+                        <!-- Module Navigation -->
+                        <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding Modules}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ModuleItem">
+                                        <Button Width="196" 
+                                                Margin="2,2"
+                                                Command="{Binding DataContext.NavigateToModuleCommand, ElementName=MainWin}"
+                                                CommandParameter="{Binding .}"
+                                                HorizontalContentAlignment="Left">
+                                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                                <Image Source="{Binding IconPath}" 
+                                                       Width="24" Height="24"/>
+                                                <TextBlock Text="{Binding Name}"
+                                                           VerticalAlignment="Center"
+                                                           IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <!-- Spacer -->
+                        <Border/>
+                    </DockPanel>
+                </Border>
+            </SplitView.Pane>
+
+            <!-- Main Content Area -->
+            <SplitView.Content>
+                <Border Background="#252526">
+                    <ContentControl Content="{Binding CurrentModuleView}">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate>
+                                <ContentPresenter Content="{Binding}"/>
+                            </DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Border>
+            </SplitView.Content>
+        </SplitView>
+
+        <!-- Status Bar / Log Area (placeholder for future implementation) -->
+        <Border Grid.Row="1" 
+                Background="#007ACC" 
+                Height="24">
+            <TextBlock Text="Ready" 
+                       Foreground="White" 
+                       VerticalAlignment="Center" 
+                       Margin="8,0"/>
+        </Border>
+    </Grid>
+</Window>
