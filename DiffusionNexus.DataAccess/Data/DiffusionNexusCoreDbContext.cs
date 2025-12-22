@@ -47,6 +47,12 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Trigger words.</summary>
     public DbSet<TriggerWord> TriggerWords => Set<TriggerWord>();
 
+    /// <summary>Application settings (singleton).</summary>
+    public DbSet<AppSettings> AppSettings => Set<AppSettings>();
+
+    /// <summary>LoRA source folders.</summary>
+    public DbSet<LoraSource> LoraSources => Set<LoraSource>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -61,6 +67,8 @@ public class DiffusionNexusCoreDbContext : DbContext
         ConfigureTag(modelBuilder);
         ConfigureModelTag(modelBuilder);
         ConfigureTriggerWord(modelBuilder);
+        ConfigureAppSettings(modelBuilder);
+        ConfigureLoraSource(modelBuilder);
     }
 
     #region Entity Configurations
@@ -294,6 +302,42 @@ public class DiffusionNexusCoreDbContext : DbContext
 
             // Properties
             entity.Property(e => e.Word).IsRequired().HasMaxLength(500);
+        });
+    }
+
+    private static void ConfigureAppSettings(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AppSettings>(entity =>
+        {
+            entity.ToTable("AppSettings");
+            entity.HasKey(e => e.Id);
+
+            // Properties
+            entity.Property(e => e.EncryptedCivitaiApiKey).HasMaxLength(2000);
+            entity.Property(e => e.LoraSortSourcePath).HasMaxLength(1000);
+            entity.Property(e => e.LoraSortTargetPath).HasMaxLength(1000);
+
+            // Relationships
+            entity.HasMany(e => e.LoraSources)
+                .WithOne(s => s.AppSettings)
+                .HasForeignKey(s => s.AppSettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private static void ConfigureLoraSource(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<LoraSource>(entity =>
+        {
+            entity.ToTable("LoraSources");
+            entity.HasKey(e => e.Id);
+
+            // Indexes
+            entity.HasIndex(e => e.AppSettingsId);
+            entity.HasIndex(e => e.FolderPath);
+
+            // Properties
+            entity.Property(e => e.FolderPath).IsRequired().HasMaxLength(1000);
         });
     }
 

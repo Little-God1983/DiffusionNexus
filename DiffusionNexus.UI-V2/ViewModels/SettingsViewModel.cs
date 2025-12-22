@@ -1,0 +1,317 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Services;
+
+namespace DiffusionNexus.UI.ViewModels;
+
+/// <summary>
+/// ViewModel for the application settings view.
+/// </summary>
+public partial class SettingsViewModel : BusyViewModelBase
+{
+    private readonly IAppSettingsService _settingsService;
+    private readonly ISecureStorage _secureStorage;
+
+    #region Observable Properties
+
+    /// <summary>
+    /// The Civitai API key (decrypted, in memory only).
+    /// </summary>
+    [ObservableProperty]
+    private string? _civitaiApiKey;
+
+    /// <summary>
+    /// Whether to show NSFW content by default.
+    /// </summary>
+    [ObservableProperty]
+    private bool _showNsfw;
+
+    /// <summary>
+    /// Whether to generate thumbnails from video files.
+    /// </summary>
+    [ObservableProperty]
+    private bool _generateVideoThumbnails = true;
+
+    /// <summary>
+    /// Whether to show video preview (experimental).
+    /// </summary>
+    [ObservableProperty]
+    private bool _showVideoPreview;
+
+    /// <summary>
+    /// Whether to use A1111/Forge style prompts.
+    /// </summary>
+    [ObservableProperty]
+    private bool _useForgeStylePrompts = true;
+
+    /// <summary>
+    /// Whether to merge LoRA sources by base model.
+    /// </summary>
+    [ObservableProperty]
+    private bool _mergeLoraSources;
+
+    /// <summary>
+    /// Default source folder for LoRA Sort.
+    /// </summary>
+    [ObservableProperty]
+    private string? _loraSortSourcePath;
+
+    /// <summary>
+    /// Default target folder for LoRA Sort.
+    /// </summary>
+    [ObservableProperty]
+    private string? _loraSortTargetPath;
+
+    /// <summary>
+    /// Collection of LoRA source folders.
+    /// </summary>
+    [ObservableProperty]
+    private ObservableCollection<LoraSourceViewModel> _loraSources = [];
+
+    /// <summary>
+    /// Status message for the user.
+    /// </summary>
+    [ObservableProperty]
+    private string? _statusMessage;
+
+    /// <summary>
+    /// Whether settings have been modified.
+    /// </summary>
+    [ObservableProperty]
+    private bool _hasChanges;
+
+    #endregion
+
+    /// <summary>
+    /// Creates a new SettingsViewModel.
+    /// </summary>
+    public SettingsViewModel(IAppSettingsService settingsService, ISecureStorage secureStorage)
+    {
+        _settingsService = settingsService;
+        _secureStorage = secureStorage;
+    }
+
+    /// <summary>
+    /// Design-time constructor.
+    /// </summary>
+    public SettingsViewModel()
+    {
+        _settingsService = null!;
+        _secureStorage = null!;
+
+        // Design-time data
+        LoraSources =
+        [
+            new LoraSourceViewModel { FolderPath = @"C:\Models\LoRA", IsEnabled = true },
+            new LoraSourceViewModel { FolderPath = @"D:\AI\Models\LoRA", IsEnabled = true },
+        ];
+    }
+
+    /// <summary>
+    /// Loads settings from the database.
+    /// </summary>
+    [RelayCommand]
+    private async Task LoadAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            var settings = await _settingsService.GetSettingsAsync();
+
+            // Decrypt API key
+            CivitaiApiKey = _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+
+            // Map settings to view model
+            ShowNsfw = settings.ShowNsfw;
+            GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+            ShowVideoPreview = settings.ShowVideoPreview;
+            UseForgeStylePrompts = settings.UseForgeStylePrompts;
+            MergeLoraSources = settings.MergeLoraSources;
+            LoraSortSourcePath = settings.LoraSortSourcePath;
+            LoraSortTargetPath = settings.LoraSortTargetPath;
+
+            // Map LoRA sources
+            LoraSources.Clear();
+            foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
+            {
+                LoraSources.Add(new LoraSourceViewModel
+                {
+                    Id = source.Id,
+                    FolderPath = source.FolderPath,
+                    IsEnabled = source.IsEnabled
+                });
+            }
+
+            HasChanges = false;
+            StatusMessage = null;
+        }, "Loading settings...");
+    }
+
+    /// <summary>
+    /// Saves settings to the database.
+    /// </summary>
+    [RelayCommand]
+    private async Task SaveAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            var settings = await _settingsService.GetSettingsAsync();
+
+            // Encrypt and set API key
+            settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey)
+                ? null
+                : _secureStorage.Encrypt(CivitaiApiKey);
+
+            // Map view model to settings
+            settings.ShowNsfw = ShowNsfw;
+            settings.GenerateVideoThumbnails = GenerateVideoThumbnails;
+            settings.ShowVideoPreview = ShowVideoPreview;
+            settings.UseForgeStylePrompts = UseForgeStylePrompts;
+            settings.MergeLoraSources = MergeLoraSources;
+            settings.LoraSortSourcePath = LoraSortSourcePath;
+            settings.LoraSortTargetPath = LoraSortTargetPath;
+
+            // Map LoRA sources (remove empty ones)
+            settings.LoraSources.Clear();
+            var order = 0;
+            foreach (var sourceVm in LoraSources.Where(s => !string.IsNullOrWhiteSpace(s.FolderPath)))
+            {
+                settings.LoraSources.Add(new LoraSource
+                {
+                    Id = sourceVm.Id,
+                    FolderPath = sourceVm.FolderPath!,
+                    IsEnabled = sourceVm.IsEnabled,
+                    Order = order++
+                });
+            }
+
+            await _settingsService.SaveSettingsAsync(settings);
+
+            HasChanges = false;
+            StatusMessage = "Settings saved successfully.";
+        }, "Saving settings...");
+    }
+
+    /// <summary>
+    /// Deletes the API key.
+    /// </summary>
+    [RelayCommand]
+    private void DeleteApiKey()
+    {
+        CivitaiApiKey = null;
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Adds a new LoRA source folder.
+    /// </summary>
+    [RelayCommand]
+    private void AddLoraSource()
+    {
+        LoraSources.Add(new LoraSourceViewModel { IsEnabled = true });
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Removes a LoRA source folder.
+    /// </summary>
+    [RelayCommand]
+    private void RemoveLoraSource(LoraSourceViewModel? source)
+    {
+        if (source is not null)
+        {
+            LoraSources.Remove(source);
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for a LoRA source folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseLoraSourceAsync(LoraSourceViewModel? source)
+    {
+        if (source is null || DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select LoRA Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            source.FolderPath = path;
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for LoRA Sort source folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseLoraSortSourceAsync()
+    {
+        if (DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Source Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            LoraSortSourcePath = path;
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for LoRA Sort target folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseLoraSortTargetAsync()
+    {
+        if (DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Target Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            LoraSortTargetPath = path;
+            HasChanges = true;
+        }
+    }
+
+    partial void OnCivitaiApiKeyChanged(string? value) => HasChanges = true;
+    partial void OnShowNsfwChanged(bool value) => HasChanges = true;
+    partial void OnGenerateVideoThumbnailsChanged(bool value) => HasChanges = true;
+    partial void OnShowVideoPreviewChanged(bool value) => HasChanges = true;
+    partial void OnUseForgeStylePromptsChanged(bool value) => HasChanges = true;
+    partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
+    partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
+    partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
+}
+
+/// <summary>
+/// ViewModel for a single LoRA source folder.
+/// </summary>
+public partial class LoraSourceViewModel : ObservableObject
+{
+    /// <summary>
+    /// Database ID (0 for new sources).
+    /// </summary>
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Folder path.
+    /// </summary>
+    [ObservableProperty]
+    private string? _folderPath;
+
+    /// <summary>
+    /// Whether this source is enabled.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEnabled = true;
+}

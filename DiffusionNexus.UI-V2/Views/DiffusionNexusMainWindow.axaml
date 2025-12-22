@@ -43,13 +43,26 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ModuleItem">
                                         <Button Width="196" 
+                                                Height="40"
                                                 Margin="2,2"
                                                 Command="{Binding DataContext.NavigateToModuleCommand, ElementName=MainWin}"
                                                 CommandParameter="{Binding .}"
                                                 HorizontalContentAlignment="Left">
                                             <StackPanel Orientation="Horizontal" Spacing="12">
+                                                <!-- Icon placeholder when no image -->
+                                                <Border Width="24" Height="24"
+                                                        Background="#3C3C3C"
+                                                        CornerRadius="4"
+                                                        IsVisible="{Binding IconPath, Converter={x:Static StringConverters.IsNullOrEmpty}}">
+                                                    <TextBlock Text="?" 
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               FontSize="14"/>
+                                                </Border>
+                                                <!-- Actual icon when provided -->
                                                 <Image Source="{Binding IconPath}" 
-                                                       Width="24" Height="24"/>
+                                                       Width="24" Height="24"
+                                                       IsVisible="{Binding IconPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                                 <TextBlock Text="{Binding Name}"
                                                            VerticalAlignment="Center"
                                                            IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>

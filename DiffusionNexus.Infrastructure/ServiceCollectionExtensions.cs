@@ -30,6 +30,9 @@ public static class ServiceCollectionExtensions
             return new ImageCacheService(cacheDirectory, httpClient);
         });
 
+        // Register SecureStorage
+        services.AddSingleton<ISecureStorage, SecureStorageService>();
+
         return services;
     }
 

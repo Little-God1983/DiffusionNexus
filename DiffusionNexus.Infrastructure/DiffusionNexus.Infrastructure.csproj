@@ -7,8 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Image processing - using latest to avoid security vulnerabilities -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.8" />
+    <!-- Image processing - updated to fix security vulnerability -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.3.0" />
@@ -16,6 +16,9 @@
     <!-- DI and HTTP -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.2" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.2" />
+    
+    <!-- Secure storage (DPAPI on Windows) -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.2" />
   </ItemGroup>
 
   <ItemGroup>
