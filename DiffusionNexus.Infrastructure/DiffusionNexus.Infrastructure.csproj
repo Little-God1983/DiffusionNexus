@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DiffusionNexus.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Image processing - using latest to avoid security vulnerabilities -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.8" />
+    
+    <!-- Logging -->
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    
+    <!-- DI and HTTP -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -15,4 +15,8 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -4,6 +4,7 @@ namespace DiffusionNexus.Domain.Entities;
 
 /// <summary>
 /// Represents a preview image for a model version.
+/// Uses hybrid storage: thumbnails in DB (BLOB), full images on disk.
 /// </summary>
 public class ModelImage
 {
@@ -16,7 +17,7 @@ public class ModelImage
     /// <summary>Parent model version ID.</summary>
     public int ModelVersionId { get; set; }
 
-    /// <summary>Image URL on Civitai.</summary>
+    /// <summary>Image URL on Civitai (source of truth for re-download).</summary>
     public string Url { get; set; } = string.Empty;
 
     /// <summary>Whether the image is NSFW.</summary>
@@ -25,16 +26,19 @@ public class ModelImage
     /// <summary>NSFW level classification.</summary>
     public NsfwLevel NsfwLevel { get; set; } = NsfwLevel.None;
 
-    /// <summary>Image width in pixels.</summary>
+    /// <summary>Original image width in pixels.</summary>
     public int Width { get; set; }
 
-    /// <summary>Image height in pixels.</summary>
+    /// <summary>Original image height in pixels.</summary>
     public int Height { get; set; }
 
-    /// <summary>BlurHash for placeholder display.</summary>
+    /// <summary>BlurHash for instant placeholder display.</summary>
     public string? BlurHash { get; set; }
 
-    /// <summary>When the image was created.</summary>
+    /// <summary>Sort order for display (0 = primary image).</summary>
+    public int SortOrder { get; set; }
+
+    /// <summary>When the image was created on Civitai.</summary>
     public DateTimeOffset? CreatedAt { get; set; }
 
     /// <summary>Post ID the image belongs to.</summary>
@@ -42,6 +46,57 @@ public class ModelImage
 
     /// <summary>Username of the image creator.</summary>
     public string? Username { get; set; }
+
+    #region Thumbnail Storage (BLOB in DB)
+
+    /// <summary>
+    /// Thumbnail image data stored as BLOB.
+    /// Resized to fit within ThumbnailMaxSize, encoded as WebP/JPEG.
+    /// Typically 20-80 KB per image for instant tile rendering.
+    /// </summary>
+    public byte[]? ThumbnailData { get; set; }
+
+    /// <summary>
+    /// MIME type of the thumbnail (e.g., "image/webp", "image/jpeg").
+    /// </summary>
+    public string? ThumbnailMimeType { get; set; }
+
+    /// <summary>
+    /// Width of the stored thumbnail in pixels.
+    /// </summary>
+    public int? ThumbnailWidth { get; set; }
+
+    /// <summary>
+    /// Height of the stored thumbnail in pixels.
+    /// </summary>
+    public int? ThumbnailHeight { get; set; }
+
+    #endregion
+
+    #region Full Image Cache (File on Disk)
+
+    /// <summary>
+    /// Local file path for the full-resolution cached image.
+    /// Stored relative to the cache root directory.
+    /// </summary>
+    public string? LocalCachePath { get; set; }
+
+    /// <summary>
+    /// Whether the local cache file exists and is valid.
+    /// </summary>
+    public bool IsLocalCacheValid { get; set; }
+
+    /// <summary>
+    /// When the image was last downloaded/cached.
+    /// </summary>
+    public DateTimeOffset? CachedAt { get; set; }
+
+    /// <summary>
+    /// File size of the cached full image in bytes.
+    /// </summary>
+    public long? CachedFileSize { get; set; }
+
+    #endregion
 
     #region Generation Metadata
 
@@ -79,16 +134,6 @@ public class ModelImage
 
     #endregion
 
-    #region Local Cache
-
-    /// <summary>Local cached file path.</summary>
-    public string? LocalCachePath { get; set; }
-
-    /// <summary>Whether the local cache is valid.</summary>
-    public bool IsLocalCacheValid { get; set; }
-
-    #endregion
-
     #region Navigation Properties
 
     public ModelVersion? ModelVersion { get; set; }
@@ -97,7 +142,7 @@ public class ModelImage
 
     #region Computed Properties
 
-    /// <summary>Aspect ratio of the image.</summary>
+    /// <summary>Aspect ratio of the original image.</summary>
     public double AspectRatio => Height > 0 ? (double)Width / Height : 1.0;
 
     /// <summary>Whether this is a portrait image.</summary>
@@ -105,6 +150,18 @@ public class ModelImage
 
     /// <summary>Whether this is a landscape image.</summary>
     public bool IsLandscape => Width > Height;
+
+    /// <summary>Whether a thumbnail is available for instant display.</summary>
+    public bool HasThumbnail => ThumbnailData is { Length: > 0 };
+
+    /// <summary>Whether a full-resolution cached image is available.</summary>
+    public bool HasLocalCache => IsLocalCacheValid && !string.IsNullOrEmpty(LocalCachePath);
+
+    /// <summary>Whether this is the primary image (first in sort order).</summary>
+    public bool IsPrimary => SortOrder == 0;
+
+    /// <summary>Thumbnail size in KB for display.</summary>
+    public double ThumbnailSizeKB => ThumbnailData?.Length / 1024.0 ?? 0;
 
     #endregion
 }

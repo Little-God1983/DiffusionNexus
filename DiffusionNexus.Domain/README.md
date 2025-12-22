@@ -43,6 +43,42 @@ Entities are designed for EF Core:
 - Navigation properties for relationships
 - No EF dependencies yet (added when implementing persistence)
 
+## Image Storage (Hybrid Approach)
+
+ModelImage uses a hybrid storage strategy for optimal performance:
+
+| Data | Storage | Size | Purpose |
+|------|---------|------|---------|
+| `ThumbnailData` | SQLite BLOB | ~30-80 KB | Instant tile display |
+| `LocalCachePath` | File system | Full size | Detail view, zoom |
+| `Url` | SQLite TEXT | ~100 bytes | Re-download if needed |
+| `BlurHash` | SQLite TEXT | ~30 bytes | Placeholder while loading |
+
+```csharp
+// Thumbnail is stored in DB for instant loading
+var image = new ModelImage
+{
+    Url = "https://civitai.com/...?",
+    ThumbnailData = thumbnailBytes,      // BLOB in DB
+    ThumbnailMimeType = "image/webp",
+    ThumbnailWidth = 256,
+    ThumbnailHeight = 384,
+    LocalCachePath = "ab/abc123.cache",  // Relative path on disk
+    IsLocalCacheValid = true
+};
+
+// Check what's available
+if (image.HasThumbnail)      // Thumbnail in DB
+if (image.HasLocalCache)      // Full image on disk
+```
+
+### Benefits
+
+1. **Instant tile loading** - thumbnails are in the DB query result
+2. **No orphaned files** - cascade delete handles cleanup
+3. **Offline support** - works without internet after first cache
+4. **Reasonable DB size** - ~50KB × 10 images × 1000 models = ~500MB
+
 ## Entities
 
 ### Model
@@ -86,13 +122,14 @@ version.Files.Add(new ModelFile
     Format = FileFormat.SafeTensor
 });
 
-// Add images
+// Add images with thumbnails
 version.Images.Add(new ModelImage
 {
     Url = "https://...",
     Width = 512,
     Height = 768,
-    Prompt = "a beautiful landscape"
+    ThumbnailData = thumbnailBytes,
+    ThumbnailMimeType = "image/webp"
 });
 ```
 
@@ -124,6 +161,33 @@ Console.WriteLine(file.IsSecure);     // true if scans passed
 | `NsfwLevel` | None, Soft, Mature, X |
 | `DataSource` | LocalFile, CivitaiApi, Manual |
 
+## Services
+
+### IImageCacheService
+
+Service for downloading and caching preview images:
+
+```csharp
+// Download and create thumbnail
+var result = await imageCacheService.DownloadAndCacheAsync(
+    "https://civitai.com/images/12345.jpeg",
+    new ImageCacheOptions
+    {
+        ThumbnailMaxSize = 256,
+        ThumbnailQuality = 85,
+        UseWebP = true,
+        CacheFullImage = true
+    });
+
+if (result.Success)
+{
+    image.ThumbnailData = result.ThumbnailData;
+    image.ThumbnailMimeType = result.ThumbnailMimeType;
+    image.LocalCachePath = result.LocalCachePath;
+    image.IsLocalCacheValid = true;
+}
+```
+
 ## Future: EF Core Configuration
 
 When implementing persistence:
@@ -138,14 +202,19 @@ modelBuilder.Entity<Model>(e =>
     e.HasMany(m => m.Versions).WithOne(v => v.Model);
 });
 
-modelBuilder.Entity<ModelVersion>(e =>
+modelBuilder.Entity<ModelImage>(e =>
 {
-    e.HasMany(v => v.Files).WithOne(f => f.ModelVersion);
-    e.HasMany(v => v.Images).WithOne(i => i.ModelVersion);
+    e.HasKey(i => i.Id);
+    e.Property(i => i.ThumbnailData).HasColumnType("BLOB");
+    e.HasIndex(i => new { i.ModelVersionId, i.SortOrder });
+    
+    // Ignore computed properties
+    e.Ignore(i => i.HasThumbnail);
+    e.Ignore(i => i.HasLocalCache);
+    e.Ignore(i => i.IsPrimary);
 });
 
 modelBuilder.Entity<ModelTag>(e =>
 {
     e.HasKey(mt => new { mt.ModelId, mt.TagId });
 });
-```
