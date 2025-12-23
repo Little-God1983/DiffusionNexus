@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
+using System.Collections.ObjectModel;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -44,6 +45,20 @@ public partial class ModelTileViewModel : ViewModelBase
 
     #endregion
 
+    #region Collections
+
+    /// <summary>
+    /// Available versions for the version selector.
+    /// </summary>
+    public ObservableCollection<ModelVersion> Versions { get; } = [];
+
+    /// <summary>
+    /// Version toggle buttons for the UI.
+    /// </summary>
+    public ObservableCollection<VersionButtonViewModel> VersionButtons { get; } = [];
+
+    #endregion
+
     #region Base Model Display Mappings
 
     private static readonly Dictionary<string, (string Short, string? Icon)> BaseModelMappings = new(StringComparer.OrdinalIgnoreCase)
@@ -73,40 +88,43 @@ public partial class ModelTileViewModel : ViewModelBase
     public string DisplayName => ModelEntity?.Name ?? SelectedVersion?.Name ?? "Unknown Model";
 
     /// <summary>
+    /// The filename on disk (without extension).
+    /// </summary>
+    public string FileName
+    {
+        get
+        {
+            var file = SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary) 
+                       ?? SelectedVersion?.Files?.FirstOrDefault();
+            if (file?.FileName is not null)
+            {
+                // Remove extension
+                var name = file.FileName;
+                var lastDot = name.LastIndexOf('.');
+                return lastDot > 0 ? name[..lastDot] : name;
+            }
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
     /// Model type display (e.g., "LORA", "Checkpoint").
     /// </summary>
-    public string ModelTypeDisplay => ModelEntity?.Type.ToString() ?? "Unknown";
+    public string ModelTypeDisplay => ModelEntity?.Type.ToString().ToUpperInvariant() ?? "UNKNOWN";
 
     /// <summary>
     /// Base models display string with short names.
-    /// Shows all unique base models from all versions.
+    /// Shows the base model for the currently selected version.
     /// </summary>
     public string BaseModelsDisplay
     {
         get
         {
-            if (ModelEntity?.Versions is null || ModelEntity.Versions.Count == 0)
+            if (SelectedVersion is not null)
             {
-                if (SelectedVersion is not null)
-                {
-                    return FormatBaseModel(SelectedVersion.BaseModelRaw);
-                }
-                return "?";
+                return FormatBaseModel(SelectedVersion.BaseModelRaw);
             }
-
-            var baseModels = ModelEntity.Versions
-                .Select(v => v.BaseModelRaw)
-                .Where(b => !string.IsNullOrWhiteSpace(b))
-                .Distinct()
-                .ToList();
-
-            if (baseModels.Count == 0)
-            {
-                return "?";
-            }
-
-            // Format each base model
-            return string.Join(", ", baseModels.Select(FormatBaseModel));
+            return "?";
         }
     }
 
@@ -118,13 +136,13 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>
     /// Whether this model has multiple versions.
     /// </summary>
-    public bool HasMultipleVersions => (ModelEntity?.Versions?.Count ?? 0) > 1;
+    public bool HasMultipleVersions => Versions.Count > 1;
 
     /// <summary>
     /// Version count display.
     /// </summary>
     public string VersionCountDisplay => HasMultipleVersions
-        ? $"{ModelEntity!.Versions.Count} versions"
+        ? $"{Versions.Count} versions"
         : string.Empty;
 
     /// <summary>
@@ -183,6 +201,16 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Copy model filename to clipboard.
+    /// </summary>
+    [RelayCommand]
+    private async Task CopyFileNameAsync()
+    {
+        // TODO: Implement clipboard copy for filename
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Open model on Civitai.
     /// </summary>
     [RelayCommand]
@@ -222,13 +250,41 @@ public partial class ModelTileViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Delete the model.
+    /// </summary>
+    [RelayCommand]
+    private async Task DeleteAsync()
+    {
+        // TODO: Implement delete with confirmation
+        await Task.CompletedTask;
+    }
+
     #endregion
 
     #region Lifecycle
 
     partial void OnModelEntityChanged(Model? value)
     {
+        // Populate versions collection
+        Versions.Clear();
+        VersionButtons.Clear();
+        
+        if (value?.Versions is not null)
+        {
+            foreach (var version in value.Versions.OrderByDescending(v => v.CreatedAt))
+            {
+                Versions.Add(version);
+                
+                // Create button with short label from base model
+                var label = GetVersionButtonLabel(version);
+                var button = new VersionButtonViewModel(version, label, OnVersionButtonSelected);
+                VersionButtons.Add(button);
+            }
+        }
+
         OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(ModelTypeDisplay));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
@@ -237,15 +293,16 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(CreatorName));
         OnPropertyChanged(nameof(DownloadCountDisplay));
 
-        // Auto-select latest version
-        if (value?.Versions?.Count > 0)
+        // Auto-select first version
+        if (VersionButtons.Count > 0)
         {
-            SelectedVersion = value.LatestVersion ?? value.Versions.First();
+            OnVersionButtonSelected(VersionButtons.First());
         }
     }
 
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
+        OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(DownloadCountDisplay));
         LoadThumbnailFromVersion();
@@ -260,6 +317,53 @@ public partial class ModelTileViewModel : ViewModelBase
     #endregion
 
     #region Private Methods
+
+    private void OnVersionButtonSelected(VersionButtonViewModel selected)
+    {
+        // Update all button states
+        foreach (var button in VersionButtons)
+        {
+            button.IsSelected = ReferenceEquals(button, selected);
+        }
+        
+        // Update selected version
+        SelectedVersion = selected.Version;
+    }
+
+    private static string GetVersionButtonLabel(ModelVersion version)
+    {
+        // Try to get short label from base model
+        if (!string.IsNullOrWhiteSpace(version.BaseModelRaw))
+        {
+            if (BaseModelMappings.TryGetValue(version.BaseModelRaw, out var mapping))
+            {
+                return mapping.Icon is not null
+                    ? $"{mapping.Icon}{mapping.Short}"
+                    : mapping.Short;
+            }
+            
+            // Truncate if too long
+            var baseModel = version.BaseModelRaw;
+            if (baseModel.Length > 8)
+            {
+                return baseModel[..7] + "…";
+            }
+            return baseModel;
+        }
+        
+        // Fall back to version name
+        if (!string.IsNullOrWhiteSpace(version.Name))
+        {
+            var name = version.Name;
+            if (name.Length > 8)
+            {
+                return name[..7] + "…";
+            }
+            return name;
+        }
+        
+        return "v?";
+    }
 
     private static string FormatBaseModel(string? baseModel)
     {
@@ -332,14 +436,26 @@ public partial class ModelTileViewModel : ViewModelBase
             CreatorId = 1
         };
 
+        var versionNum = 1;
         foreach (var baseModel in baseModels)
         {
-            model.Versions.Add(new ModelVersion
+            var version = new ModelVersion
             {
-                Name = $"{name} v1.0",
+                Name = $"v{versionNum}.0 - {baseModel}",
                 BaseModelRaw = baseModel,
-                DownloadCount = Random.Shared.Next(100, 50000)
+                DownloadCount = Random.Shared.Next(100, 50000),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-Random.Shared.Next(1, 90) * versionNum)
+            };
+            
+            // Add a demo file with filename
+            version.Files.Add(new ModelFile
+            {
+                FileName = $"{name.Replace(" ", "_").Replace("(", "").Replace(")", "")}_v{versionNum}.safetensors",
+                IsPrimary = true
             });
+            
+            model.Versions.Add(version);
+            versionNum++;
         }
 
         return FromModel(model);
