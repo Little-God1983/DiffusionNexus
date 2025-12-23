@@ -9,6 +9,7 @@ This folder contains all documentation for the V2 refactored architecture.
 | [Domain.md](Domain.md) | Domain entities, enums, and data model |
 | [Database.md](Database.md) | SQLite database schema and EF Core configuration |
 | [Settings.md](Settings.md) | Application settings system and secure storage |
+| [LoraHelper.md](LoraHelper.md) | LoRA Helper module with tile grid and base model display |
 | [Civitai-Client.md](Civitai-Client.md) | Typed HTTP client for Civitai REST API |
 | [UI-Architecture.md](UI-Architecture.md) | Avalonia UI patterns, MVVM, ViewModels |
 | [DataAccess.md](DataAccess.md) | Repository patterns and data access abstractions |

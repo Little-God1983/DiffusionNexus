@@ -70,11 +70,21 @@ public partial class App : Application
 
         // ViewModels (transient - new instance each time)
         services.AddTransient<SettingsViewModel>();
+        services.AddTransient<LoraHelperViewModel>();
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
     {
-        // Settings module - always available
+        // LoRA Helper module - main feature
+        var loraHelperVm = Services!.GetRequiredService<LoraHelperViewModel>();
+        var loraHelperView = new LoraHelperView { DataContext = loraHelperVm };
+
+        mainViewModel.RegisterModule(new ModuleItem(
+            "LoRA Helper",
+            string.Empty, // Icon path - add asset later
+            loraHelperView));
+
+        // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
         var settingsView = new SettingsView { DataContext = settingsVm };
 

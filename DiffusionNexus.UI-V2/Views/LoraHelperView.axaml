@@ -1,0 +1,137 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.LoraHelperView"
+             x:DataType="vm:LoraHelperViewModel">
+
+  <Design.DataContext>
+    <vm:LoraHelperViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*">
+    
+    <!-- Toolbar -->
+    <Border Grid.Row="0" 
+            Background="#1E1E1E" 
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        
+        <!-- Left: Search and Filters -->
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
+          
+          <!-- Search Box -->
+          <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                   Watermark="?? Search models..."
+                   Width="300"/>
+          
+          <!-- NSFW Toggle -->
+          <CheckBox Content="Show NSFW"
+                    IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
+                    VerticalAlignment="Center"/>
+          
+          <!-- Reset Filters -->
+          <Button Content="Reset"
+                  Command="{Binding ResetFiltersCommand}"
+                  VerticalAlignment="Center"/>
+          
+        </StackPanel>
+
+        <!-- Center: Model Count -->
+        <StackPanel Grid.Column="1" 
+                    Orientation="Horizontal" 
+                    Spacing="8"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+          <TextBlock Text="{Binding FilteredModelCount}" FontWeight="SemiBold"/>
+          <TextBlock Text="of" Opacity="0.6"/>
+          <TextBlock Text="{Binding TotalModelCount}"/>
+          <TextBlock Text="models" Opacity="0.6"/>
+        </StackPanel>
+
+        <!-- Right: Actions -->
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          
+          <Button Content="? Refresh"
+                  Command="{Binding RefreshCommand}"/>
+          
+          <Button Content="?? Download Metadata"
+                  Command="{Binding DownloadMissingMetadataCommand}"/>
+          
+          <Button Content="?? Scan Duplicates"
+                  Command="{Binding ScanDuplicatesCommand}"/>
+          
+        </StackPanel>
+        
+      </Grid>
+    </Border>
+
+    <!-- Main Content -->
+    <Grid Grid.Row="1">
+      
+      <!-- Model Tiles Grid using WrapPanel -->
+      <ScrollViewer Padding="16"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        
+        <ItemsControl ItemsSource="{Binding FilteredTiles}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel Orientation="Horizontal"/>
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ModelTileViewModel">
+              <Border Margin="6" Width="250">
+                <controls:ModelTileControl/>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        
+      </ScrollViewer>
+
+      <!-- Empty State -->
+      <Border IsVisible="{Binding !FilteredModelCount}"
+              Background="#1A1A1A"
+              CornerRadius="8"
+              Margin="16"
+              Padding="32"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center">
+        <StackPanel Spacing="16" HorizontalAlignment="Center">
+          <TextBlock Text="??" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
+          <TextBlock Text="No Models Found" 
+                     FontSize="20" 
+                     FontWeight="SemiBold"
+                     HorizontalAlignment="Center"/>
+          <TextBlock Text="Add LoRA source folders in Settings, then click Refresh."
+                     Opacity="0.6"
+                     HorizontalAlignment="Center"/>
+          <Button Content="Open Settings"
+                  HorizontalAlignment="Center"
+                  Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Loading Overlay -->
+      <Border IsVisible="{Binding IsBusy}"
+              Background="#CC000000">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+          <ProgressBar IsIndeterminate="True" Width="300"/>
+          <TextBlock Text="{Binding BusyMessage}"
+                     Foreground="White"
+                     HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Border>
+      
+    </Grid>
+
+  </Grid>
+</UserControl>

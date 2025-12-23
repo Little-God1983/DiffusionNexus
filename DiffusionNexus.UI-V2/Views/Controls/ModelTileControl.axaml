@@ -1,0 +1,166 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="250" d:DesignHeight="320"
+             x:Class="DiffusionNexus.UI.Views.Controls.ModelTileControl"
+             x:DataType="vm:ModelTileViewModel">
+
+  <Design.DataContext>
+    <vm:ModelTileViewModel/>
+  </Design.DataContext>
+
+  <Border Background="#2D2D2D"
+          CornerRadius="8"
+          BorderBrush="#3D3D3D"
+          BorderThickness="1"
+          ClipToBounds="True"
+          Cursor="Hand">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+      
+      <!-- Thumbnail Area -->
+      <Border Grid.Row="0"
+              Height="180"
+              Background="#1A1A1A"
+              CornerRadius="8,8,0,0"
+              ClipToBounds="True">
+        
+        <Grid>
+          <!-- Actual Image -->
+          <Image Source="{Binding ThumbnailImage}"
+                 Stretch="UniformToFill"
+                 IsVisible="{Binding HasThumbnail}"/>
+          
+          <!-- Placeholder -->
+          <Border IsVisible="{Binding ShowPlaceholder}"
+                  Background="#252525">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+              <TextBlock Text="??" FontSize="48" HorizontalAlignment="Center" Opacity="0.3"/>
+              <TextBlock Text="No Preview" FontSize="12" Opacity="0.3" HorizontalAlignment="Center"/>
+            </StackPanel>
+          </Border>
+
+          <!-- Loading Indicator -->
+          <Border IsVisible="{Binding IsLoading}"
+                  Background="#80000000">
+            <ProgressBar IsIndeterminate="True" Width="100" VerticalAlignment="Center"/>
+          </Border>
+
+          <!-- NSFW Badge -->
+          <Border IsVisible="{Binding IsNsfw}"
+                  Background="#E53935"
+                  CornerRadius="4"
+                  Padding="6,2"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Top"
+                  Margin="8">
+            <TextBlock Text="NSFW" FontSize="10" FontWeight="Bold" Foreground="White"/>
+          </Border>
+
+          <!-- Version Badge -->
+          <Border IsVisible="{Binding HasMultipleVersions}"
+                  Background="#1976D2"
+                  CornerRadius="4"
+                  Padding="6,2"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Top"
+                  Margin="8">
+            <TextBlock Text="{Binding VersionCountDisplay}" FontSize="10" Foreground="White"/>
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- Model Info -->
+      <StackPanel Grid.Row="1" Margin="12,8" Spacing="4">
+        
+        <!-- Model Name -->
+        <TextBlock Text="{Binding DisplayName}"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis"
+                   MaxLines="2"
+                   TextWrapping="Wrap"
+                   ToolTip.Tip="{Binding DisplayName}"/>
+
+        <!-- Creator -->
+        <TextBlock Text="{Binding CreatorName}"
+                   FontSize="11"
+                   Opacity="0.6"
+                   TextTrimming="CharacterEllipsis"/>
+
+      </StackPanel>
+
+      <!-- Footer with Base Models and Stats -->
+      <Border Grid.Row="2"
+              Background="#252525"
+              Padding="12,8"
+              CornerRadius="0,0,8,8">
+        
+        <Grid ColumnDefinitions="*,Auto">
+          
+          <!-- Base Models -->
+          <Border Grid.Column="0"
+                  Background="#3D3D3D"
+                  CornerRadius="4"
+                  Padding="8,4"
+                  HorizontalAlignment="Left"
+                  ToolTip.Tip="Compatible Base Models">
+            <TextBlock Text="{Binding BaseModelsDisplay}"
+                       FontSize="11"
+                       FontWeight="SemiBold"/>
+          </Border>
+
+          <!-- Download Count -->
+          <StackPanel Grid.Column="1" 
+                      Orientation="Horizontal" 
+                      Spacing="4"
+                      VerticalAlignment="Center">
+            <TextBlock Text="?" FontSize="11" Opacity="0.6"/>
+            <TextBlock Text="{Binding DownloadCountDisplay}"
+                       FontSize="11"
+                       Opacity="0.8"/>
+          </StackPanel>
+          
+        </Grid>
+      </Border>
+
+      <!-- Hover Overlay with Actions -->
+      <Border Grid.RowSpan="3"
+              Background="#CC000000"
+              CornerRadius="8"
+              IsVisible="False"
+              Name="ActionOverlay">
+        <StackPanel VerticalAlignment="Center" 
+                    HorizontalAlignment="Center"
+                    Spacing="8">
+          
+          <Button Content="?? Open on Civitai"
+                  Command="{Binding OpenOnCivitaiCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"/>
+          
+          <Button Content="?? Copy Trigger Words"
+                  Command="{Binding CopyTriggerWordsCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"/>
+          
+          <Button Content="?? Open Folder"
+                  Command="{Binding OpenFolderCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"/>
+          
+        </StackPanel>
+      </Border>
+
+    </Grid>
+
+    <Border.Styles>
+      <Style Selector="Border:pointerover > Grid > Border#ActionOverlay">
+        <Setter Property="IsVisible" Value="True"/>
+      </Style>
+    </Border.Styles>
+
+  </Border>
+</UserControl>

@@ -5,7 +5,7 @@
         x:DataType="vm:DiffusionNexusMainWindowViewModel"
         Title="Diffusion Nexus"
         MinWidth="1300" MinHeight="800"
-        Name="MainWin">
+        x:Name="MainWin">
     
     <Design.DataContext>
         <vm:DiffusionNexusMainWindowViewModel/>
@@ -41,12 +41,12 @@
                         <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
                             <ItemsControl ItemsSource="{Binding Modules}">
                                 <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ModuleItem">
+                                    <DataTemplate>
                                         <Button Width="196" 
                                                 Height="40"
                                                 Margin="2,2"
-                                                Command="{Binding DataContext.NavigateToModuleCommand, ElementName=MainWin}"
-                                                CommandParameter="{Binding .}"
+                                                Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
+                                                CommandParameter="{Binding}"
                                                 HorizontalContentAlignment="Left">
                                             <StackPanel Orientation="Horizontal" Spacing="12">
                                                 <!-- Icon placeholder when no image -->
@@ -65,7 +65,7 @@
                                                        IsVisible="{Binding IconPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                                 <TextBlock Text="{Binding Name}"
                                                            VerticalAlignment="Center"
-                                                           IsVisible="{Binding DataContext.IsMenuOpen, ElementName=MainWin}"/>
+                                                           IsVisible="{Binding $parent[Window].DataContext.IsMenuOpen}"/>
                                             </StackPanel>
                                         </Button>
                                     </DataTemplate>
