@@ -28,7 +28,7 @@
           
           <!-- Search Box -->
           <TextBox Text="{Binding SearchText, Mode=TwoWay}"
-                   Watermark="?? Search models..."
+                   Watermark="&#x1F50D; Search models..."
                    Width="300"/>
           
           <!-- NSFW Toggle -->
@@ -58,13 +58,13 @@
         <!-- Right: Actions -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
           
-          <Button Content="? Refresh"
+          <Button Content="&#x1F504; Refresh"
                   Command="{Binding RefreshCommand}"/>
           
-          <Button Content="?? Download Metadata"
+          <Button Content="&#x1F4E5; Download Metadata"
                   Command="{Binding DownloadMissingMetadataCommand}"/>
           
-          <Button Content="?? Scan Duplicates"
+          <Button Content="&#x1F50E; Scan Duplicates"
                   Command="{Binding ScanDuplicatesCommand}"/>
           
         </StackPanel>
@@ -106,7 +106,7 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Center">
         <StackPanel Spacing="16" HorizontalAlignment="Center">
-          <TextBlock Text="??" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
+          <TextBlock Text="&#x1F4E6;" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
           <TextBlock Text="No Models Found" 
                      FontSize="20" 
                      FontWeight="SemiBold"
