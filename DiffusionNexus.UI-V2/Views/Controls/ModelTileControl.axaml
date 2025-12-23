@@ -30,14 +30,18 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:VersionButtonViewModel">
-              <ToggleButton Content="{Binding Label}"
-                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
+              <ToggleButton IsChecked="{Binding IsSelected, Mode=TwoWay}"
                             Command="{Binding SelectCommand}"
                             ToolTip.Tip="{Binding ToolTip}"
                             Margin="0,0,4,4"
                             Padding="6,3"
                             FontSize="10"
-                            MinWidth="40"/>
+                            MinWidth="40">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <TextBlock Text="{Binding Icon}" IsVisible="{Binding HasIcon}"/>
+                  <TextBlock Text="{Binding Label}"/>
+                </StackPanel>
+              </ToggleButton>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
@@ -61,7 +65,7 @@
           <Border IsVisible="{Binding ShowPlaceholder}"
                   Background="#252525">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-              <TextBlock Text="??" FontSize="40" HorizontalAlignment="Center" Opacity="0.3"/>
+              <TextBlock Text="&#x1F5BC;" FontSize="40" HorizontalAlignment="Center" Opacity="0.3"/>
               <TextBlock Text="No Preview" FontSize="11" Opacity="0.3" HorizontalAlignment="Center"/>
             </StackPanel>
           </Border>
@@ -115,7 +119,7 @@
           
           <!-- Open on Civitai -->
           <Button Grid.Column="0"
-                  Content="??"
+                  Content="&#x1F310;"
                   Command="{Binding OpenOnCivitaiCommand}"
                   ToolTip.Tip="Open on Civitai"
                   HorizontalAlignment="Center"
@@ -124,7 +128,7 @@
           
           <!-- Copy Trigger Words -->
           <Button Grid.Column="1"
-                  Content="??"
+                  Content="&#x1F4CB;"
                   Command="{Binding CopyTriggerWordsCommand}"
                   ToolTip.Tip="Copy Trigger Words"
                   HorizontalAlignment="Center"
@@ -133,7 +137,7 @@
           
           <!-- Open Folder -->
           <Button Grid.Column="2"
-                  Content="??"
+                  Content="&#x1F4C2;"
                   Command="{Binding OpenFolderCommand}"
                   ToolTip.Tip="Open Folder"
                   HorizontalAlignment="Center"
@@ -142,7 +146,7 @@
           
           <!-- Delete -->
           <Button Grid.Column="3"
-                  Content="?"
+                  Content="&#x274C;"
                   Command="{Binding DeleteCommand}"
                   ToolTip.Tip="Delete Model"
                   HorizontalAlignment="Center"

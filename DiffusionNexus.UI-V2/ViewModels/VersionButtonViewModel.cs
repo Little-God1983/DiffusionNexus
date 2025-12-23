@@ -22,6 +22,16 @@ public partial class VersionButtonViewModel : ObservableObject
     public string Label { get; }
 
     /// <summary>
+    /// Optional icon/symbol for the button.
+    /// </summary>
+    public string? Icon { get; }
+
+    /// <summary>
+    /// Whether an icon is available.
+    /// </summary>
+    public bool HasIcon => !string.IsNullOrEmpty(Icon);
+
+    /// <summary>
     /// Full tooltip text.
     /// </summary>
     public string ToolTip { get; }
@@ -32,10 +42,11 @@ public partial class VersionButtonViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSelected;
 
-    public VersionButtonViewModel(ModelVersion version, string label, Action<VersionButtonViewModel> onSelected)
+    public VersionButtonViewModel(ModelVersion version, string label, string? icon, Action<VersionButtonViewModel> onSelected)
     {
         Version = version;
         Label = label;
+        Icon = icon;
         ToolTip = version.Name ?? label;
         _onSelected = onSelected;
     }

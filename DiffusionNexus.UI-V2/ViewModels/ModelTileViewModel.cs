@@ -277,8 +277,8 @@ public partial class ModelTileViewModel : ViewModelBase
                 Versions.Add(version);
                 
                 // Create button with short label from base model
-                var label = GetVersionButtonLabel(version);
-                var button = new VersionButtonViewModel(version, label, OnVersionButtonSelected);
+                var (label, icon) = GetVersionButtonInfo(version);
+                var button = new VersionButtonViewModel(version, label, icon, OnVersionButtonSelected);
                 VersionButtons.Add(button);
             }
         }
@@ -330,25 +330,23 @@ public partial class ModelTileViewModel : ViewModelBase
         SelectedVersion = selected.Version;
     }
 
-    private static string GetVersionButtonLabel(ModelVersion version)
+    private static (string Label, string? Icon) GetVersionButtonInfo(ModelVersion version)
     {
         // Try to get short label from base model
         if (!string.IsNullOrWhiteSpace(version.BaseModelRaw))
         {
             if (BaseModelMappings.TryGetValue(version.BaseModelRaw, out var mapping))
             {
-                return mapping.Icon is not null
-                    ? $"{mapping.Icon}{mapping.Short}"
-                    : mapping.Short;
+                return (mapping.Short, mapping.Icon);
             }
             
             // Truncate if too long
             var baseModel = version.BaseModelRaw;
             if (baseModel.Length > 8)
             {
-                return baseModel[..7] + "…";
+                return (baseModel[..7] + "…", null);
             }
-            return baseModel;
+            return (baseModel, null);
         }
         
         // Fall back to version name
@@ -357,12 +355,12 @@ public partial class ModelTileViewModel : ViewModelBase
             var name = version.Name;
             if (name.Length > 8)
             {
-                return name[..7] + "…";
+                return (name[..7] + "…", null);
             }
-            return name;
+            return (name, null);
         }
         
-        return "v?";
+        return ("v?", null);
     }
 
     private static string FormatBaseModel(string? baseModel)
