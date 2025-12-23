@@ -1,4 +1,4 @@
-using Avalonia.Media.Imaging;
+﻿using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -51,16 +51,15 @@ public partial class ModelTileViewModel : ViewModelBase
         ["SD 1.5"] = ("1.5", null),
         ["SDXL 1.0"] = ("XL", null),
         ["SDXL 0.9"] = ("XL 0.9", null),
-        ["SDXL Turbo"] = ("XL Turbo", null),
-        ["SDXL Lightning"] = ("XL ?", null),
-        ["Pony"] = ("Pony", "??"),
+        ["SDXL Turbo"] = ("XL ⚡", null),
+        ["SDXL Lightning"] = ("XL ⚡⚡", null),
+        ["Pony"] = ("Pony", "🐎"),
         ["Illustrious"] = ("IL", null),
         ["Flux.1 S"] = ("Flux S", null),
-        ["Flux.1 D"] = ("Flux D", null),
-        ["Z-Image-Turbo"] = ("ZIT", "?"),
-        ["Wan Video 14B t2v"] = ("Wan 14B", "??"),
-        ["Wan Video 1.3B t2v"] = ("Wan 1.3B", "??"),
-        ["SVD"] = ("SVD", "??"),
+        ["Flux.1 D"] = ("F.1D", null),
+        ["Z-Image-Turbo"] = ("ZIT", "ZI⚡"),
+        ["Wan Video 14B t2v"] = ("Wan 14B", "🎬"),
+        ["Wan Video 1.3B t2v"] = ("Wan 1.3B", "🎬 1.3"),
         ["NoobAI"] = ("Noob", null),
     };
 
@@ -277,7 +276,7 @@ public partial class ModelTileViewModel : ViewModelBase
         }
 
         // Return truncated original if no mapping
-        return baseModel.Length > 12 ? baseModel[..11] + "�" : baseModel;
+        return baseModel.Length > 12 ? baseModel[..11] + "…" : baseModel;
     }
 
     private void LoadThumbnailFromVersion()
