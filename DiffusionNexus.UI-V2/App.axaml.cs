@@ -81,7 +81,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(new ModuleItem(
             "LoRA Helper",
-            string.Empty, // Icon path - add asset later
+            "avares://DiffusionNexus.UI-V2/Assets/LoraSort.png",
             loraHelperView));
 
         // Settings module
@@ -90,7 +90,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(new ModuleItem(
             "Settings",
-            string.Empty, // Icon path - add asset later
+            "avares://DiffusionNexus.UI-V2/Assets/settings.png",
             settingsView));
 
         // Load settings on startup

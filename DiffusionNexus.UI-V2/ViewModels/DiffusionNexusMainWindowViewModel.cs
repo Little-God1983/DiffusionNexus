@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -13,7 +16,7 @@ public partial class ModuleItem : ObservableObject
     private string _name = string.Empty;
 
     [ObservableProperty]
-    private string _iconPath = string.Empty;
+    private IImage? _icon;
 
     [ObservableProperty]
     private object? _view;
@@ -21,8 +24,21 @@ public partial class ModuleItem : ObservableObject
     public ModuleItem(string name, string iconPath, object? view = null)
     {
         Name = name;
-        IconPath = iconPath;
         View = view;
+        
+        if (!string.IsNullOrEmpty(iconPath))
+        {
+            try
+            {
+                using var stream = AssetLoader.Open(new Uri(iconPath));
+                Icon = new Bitmap(stream);
+            }
+            catch
+            {
+                // Fallback or log error if needed
+                Icon = null;
+            }
+        }
     }
 }
 

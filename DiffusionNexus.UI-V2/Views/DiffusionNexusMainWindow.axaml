@@ -30,10 +30,11 @@
                     <DockPanel>
                         <!-- Hamburger Menu Toggle -->
                         <Button DockPanel.Dock="Top"
-                                Content="?" 
+                                Content="&#x2630;" 
                                 Command="{Binding ToggleMenuCommand}"
                                 HorizontalContentAlignment="Center"
                                 VerticalContentAlignment="Center" 
+                                FontSize="20"
                                 Width="48" Height="48"
                                 Margin="0,8,0,16"/>
 
@@ -53,16 +54,16 @@
                                                 <Border Width="24" Height="24"
                                                         Background="#3C3C3C"
                                                         CornerRadius="4"
-                                                        IsVisible="{Binding IconPath, Converter={x:Static StringConverters.IsNullOrEmpty}}">
+                                                        IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNull}}">
                                                     <TextBlock Text="?" 
                                                                HorizontalAlignment="Center"
                                                                VerticalAlignment="Center"
                                                                FontSize="14"/>
                                                 </Border>
                                                 <!-- Actual icon when provided -->
-                                                <Image Source="{Binding IconPath}" 
+                                                <Image Source="{Binding Icon}" 
                                                        Width="24" Height="24"
-                                                       IsVisible="{Binding IconPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                       IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                                                 <TextBlock Text="{Binding Name}"
                                                            VerticalAlignment="Center"
                                                            IsVisible="{Binding $parent[Window].DataContext.IsMenuOpen}"/>

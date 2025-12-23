@@ -102,7 +102,7 @@
                         
                         <!-- Remove Button -->
                         <Button Grid.Column="3"
-                                Content="?"
+                                Content="&#x1F5D1;"
                                 Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveLoraSourceCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="Remove this source"/>
