@@ -132,15 +132,22 @@ public partial class SettingsViewModel : BusyViewModelBase
             LoraSortTargetPath = settings.LoraSortTargetPath;
 
             // Map LoRA sources
+            foreach (var existing in LoraSources)
+            {
+                existing.SourceChanged -= OnLoraSourceChanged;
+            }
             LoraSources.Clear();
+            
             foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
             {
-                LoraSources.Add(new LoraSourceViewModel
+                var sourceVm = new LoraSourceViewModel
                 {
                     Id = source.Id,
                     FolderPath = source.FolderPath,
                     IsEnabled = source.IsEnabled
-                });
+                };
+                sourceVm.SourceChanged += OnLoraSourceChanged;
+                LoraSources.Add(sourceVm);
             }
 
             HasChanges = false;
@@ -180,6 +187,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 settings.LoraSources.Add(new LoraSource
                 {
                     Id = sourceVm.Id,
+                    AppSettingsId = 1, // Always link to the singleton settings
                     FolderPath = sourceVm.FolderPath!,
                     IsEnabled = sourceVm.IsEnabled,
                     Order = order++
@@ -209,7 +217,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     [RelayCommand]
     private void AddLoraSource()
     {
-        LoraSources.Add(new LoraSourceViewModel { IsEnabled = true });
+        var source = new LoraSourceViewModel { IsEnabled = true };
+        source.SourceChanged += OnLoraSourceChanged;
+        LoraSources.Add(source);
         HasChanges = true;
     }
 
@@ -221,6 +231,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     {
         if (source is not null)
         {
+            source.SourceChanged -= OnLoraSourceChanged;
             LoraSources.Remove(source);
             HasChanges = true;
         }
@@ -283,6 +294,11 @@ public partial class SettingsViewModel : BusyViewModelBase
         }
     }
 
+    private void OnLoraSourceChanged(object? sender, EventArgs e)
+    {
+        HasChanges = true;
+    }
+
     partial void OnCivitaiApiKeyChanged(string? value) => HasChanges = true;
     partial void OnShowNsfwChanged(bool value) => HasChanges = true;
     partial void OnGenerateVideoThumbnailsChanged(bool value) => HasChanges = true;
@@ -314,4 +330,12 @@ public partial class LoraSourceViewModel : ObservableObject
     /// </summary>
     [ObservableProperty]
     private bool _isEnabled = true;
+
+    /// <summary>
+    /// Event raised when any property changes (for parent to detect changes).
+    /// </summary>
+    public event EventHandler? SourceChanged;
+
+    partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
 }

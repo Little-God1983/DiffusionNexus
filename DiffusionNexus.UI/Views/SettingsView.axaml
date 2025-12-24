@@ -18,6 +18,7 @@
                      Width="350"/>
             <Button Content="Delete" Command="{Binding DeleteApiKeyCommand}"/>
           </StackPanel>
+          <Button Content="Open Database Folder" Command="{Binding OpenDatabaseFolderCommand}" HorizontalAlignment="Left"/>
         </StackPanel>
       </Expander>
 

@@ -47,6 +47,19 @@ public sealed class AppSettingsService : IAppSettingsService
         foreach (var source in settings.LoraSources)
         {
             source.Order = order++;
+            source.AppSettingsId = 1; // Ensure FK is set
+        }
+
+        // Get the incoming source data before querying (to avoid tracking issues)
+        var incomingSourceData = settings.LoraSources
+            .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
+            .ToList();
+
+        // Detach any tracked LoraSource entities to avoid conflicts
+        var trackedLoraSources = _dbContext.ChangeTracker.Entries<LoraSource>().ToList();
+        foreach (var entry in trackedLoraSources)
+        {
+            entry.State = EntityState.Detached;
         }
 
         var existingSettings = await _dbContext.AppSettings
@@ -56,40 +69,75 @@ public sealed class AppSettingsService : IAppSettingsService
         if (existingSettings is null)
         {
             settings.Id = 1;
+            // Re-create LoraSources from the captured data
+            settings.LoraSources = incomingSourceData
+                .Select(s => new LoraSource
+                {
+                    Id = 0, // New sources get auto-generated IDs
+                    AppSettingsId = 1,
+                    FolderPath = s.FolderPath,
+                    IsEnabled = s.IsEnabled,
+                    Order = s.Order
+                })
+                .ToList();
             _dbContext.AppSettings.Add(settings);
         }
         else
         {
             // Update scalar properties
-            _dbContext.Entry(existingSettings).CurrentValues.SetValues(settings);
+            existingSettings.EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey;
+            existingSettings.ShowNsfw = settings.ShowNsfw;
+            existingSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+            existingSettings.ShowVideoPreview = settings.ShowVideoPreview;
+            existingSettings.UseForgeStylePrompts = settings.UseForgeStylePrompts;
+            existingSettings.MergeLoraSources = settings.MergeLoraSources;
+            existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
+            existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
+            existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
+            existingSettings.UpdatedAt = settings.UpdatedAt;
 
             // Handle LoRA sources (remove deleted, update existing, add new)
-            var existingSourceIds = existingSettings.LoraSources.Select(s => s.Id).ToHashSet();
-            var newSourceIds = settings.LoraSources.Where(s => s.Id > 0).Select(s => s.Id).ToHashSet();
+            // Only consider persisted sources (Id > 0)
+            var existingSourceIds = existingSettings.LoraSources
+                .Where(s => s.Id > 0)
+                .Select(s => s.Id)
+                .ToHashSet();
+            var incomingSourceIds = incomingSourceData
+                .Where(s => s.Id > 0)
+                .Select(s => s.Id)
+                .ToHashSet();
 
-            // Remove deleted sources
+            // Remove deleted sources (only those that exist in the database)
             foreach (var source in existingSettings.LoraSources.ToList())
             {
-                if (!newSourceIds.Contains(source.Id))
+                if (source.Id > 0 && !incomingSourceIds.Contains(source.Id))
                 {
                     _dbContext.LoraSources.Remove(source);
                 }
             }
 
             // Update or add sources
-            foreach (var source in settings.LoraSources)
+            foreach (var sourceData in incomingSourceData)
             {
-                source.AppSettingsId = 1;
-
-                if (source.Id > 0 && existingSourceIds.Contains(source.Id))
+                if (sourceData.Id > 0 && existingSourceIds.Contains(sourceData.Id))
                 {
-                    var existingSource = existingSettings.LoraSources.First(s => s.Id == source.Id);
-                    _dbContext.Entry(existingSource).CurrentValues.SetValues(source);
+                    // Update existing source
+                    var existingSource = existingSettings.LoraSources.First(s => s.Id == sourceData.Id);
+                    existingSource.FolderPath = sourceData.FolderPath;
+                    existingSource.IsEnabled = sourceData.IsEnabled;
+                    existingSource.Order = sourceData.Order;
                 }
                 else
                 {
-                    source.Id = 0; // Ensure new sources get auto-generated IDs
-                    _dbContext.LoraSources.Add(source);
+                    // Add new source
+                    var newSource = new LoraSource
+                    {
+                        AppSettingsId = 1,
+                        FolderPath = sourceData.FolderPath,
+                        IsEnabled = sourceData.IsEnabled,
+                        Order = sourceData.Order
+                    };
+                    _dbContext.LoraSources.Add(newSource);
                 }
             }
         }
