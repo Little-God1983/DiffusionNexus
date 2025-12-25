@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -13,6 +14,7 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class LoraHelperViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
+    private readonly IModelSyncService? _syncService;
 
     #region Observable Properties
 
@@ -46,6 +48,12 @@ public partial class LoraHelperViewModel : BusyViewModelBase
     [ObservableProperty]
     private int _filteredModelCount;
 
+    /// <summary>
+    /// Status message for sync progress.
+    /// </summary>
+    [ObservableProperty]
+    private string? _syncStatus;
+
     #endregion
 
     #region Collections
@@ -70,15 +78,18 @@ public partial class LoraHelperViewModel : BusyViewModelBase
     public LoraHelperViewModel()
     {
         _settingsService = null;
+        _syncService = null;
+        // Load demo data for design-time preview
         LoadDemoData();
     }
 
     /// <summary>
     /// Runtime constructor with DI.
     /// </summary>
-    public LoraHelperViewModel(IAppSettingsService settingsService)
+    public LoraHelperViewModel(IAppSettingsService settingsService, IModelSyncService syncService)
     {
-        _settingsService = settingsService;
+        _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
     }
 
     #endregion
@@ -87,17 +98,124 @@ public partial class LoraHelperViewModel : BusyViewModelBase
 
     /// <summary>
     /// Refresh the model list.
+    /// Uses database-first approach: load cached data immediately, then discover new files.
     /// </summary>
     [RelayCommand]
     private async Task RefreshAsync()
     {
-        await RunBusyAsync(async () =>
+        // Design-time or missing services fallback
+        if (_syncService is null)
         {
-            // In the future, this will scan folders and load from DB
-            // For now, load demo data
             LoadDemoData();
-            await Task.CompletedTask;
-        }, "Loading models...");
+            return;
+        }
+
+        try
+        {
+            SyncStatus = "Starting refresh...";
+
+            // Phase 1: Discover new files first (so they get saved to DB)
+            await DiscoverNewFilesAsync();
+
+            // Phase 2: Load all from database (includes newly discovered)
+            await RunBusyAsync(async () =>
+            {
+                SyncStatus = "Loading models from database...";
+                var allModels = await _syncService.LoadCachedModelsAsync();
+
+                // Update UI on dispatcher thread
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    AllTiles.Clear();
+                    foreach (var model in allModels)
+                    {
+                        AllTiles.Add(ModelTileViewModel.FromModel(model));
+                    }
+                    TotalModelCount = AllTiles.Count;
+                    ApplyFilters();
+                });
+
+                SyncStatus = $"Loaded {allModels.Count} models";
+
+            }, "Loading models...");
+
+            // Phase 3: Verify existing files in background (low priority)
+            _ = VerifyFilesInBackgroundAsync();
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"Error: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Discover new files and add them to the database.
+    /// </summary>
+    private async Task DiscoverNewFilesAsync()
+    {
+        if (_syncService is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var progress = new Progress<SyncProgress>(p =>
+            {
+                // Update status on UI thread
+                Dispatcher.UIThread.Post(() =>
+                {
+                    SyncStatus = p.CurrentItem is not null
+                        ? $"{p.Phase}: {p.CurrentItem}"
+                        : p.Phase;
+                });
+            });
+
+            var newModels = await _syncService.DiscoverNewFilesAsync(progress);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                SyncStatus = $"Discovered {newModels.Count} new files";
+            });
+        }
+        catch (Exception ex)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                SyncStatus = $"Discovery error: {ex.Message}";
+            });
+        }
+    }
+
+    /// <summary>
+    /// Background task to verify file existence.
+    /// </summary>
+    private async Task VerifyFilesInBackgroundAsync()
+    {
+        if (_syncService is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var progress = new Progress<SyncProgress>(p =>
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (p.Phase == "Verification complete")
+                    {
+                        SyncStatus = null; // Clear status when done
+                    }
+                });
+            });
+
+            await _syncService.VerifyAndSyncFilesAsync(progress);
+        }
+        catch
+        {
+            // Silently fail - this is background work
+        }
     }
 
     /// <summary>
@@ -108,7 +226,7 @@ public partial class LoraHelperViewModel : BusyViewModelBase
     {
         await RunBusyAsync(async () =>
         {
-            // TODO: Implement metadata download
+            // TODO: Implement metadata download using Civitai API
             await Task.Delay(1000); // Simulate work
         }, "Downloading metadata...");
     }
@@ -166,6 +284,7 @@ public partial class LoraHelperViewModel : BusyViewModelBase
             var search = SearchText.Trim();
             query = query.Where(t =>
                 t.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                t.FileName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 t.CreatorName.Contains(search, StringComparison.OrdinalIgnoreCase));
         }
 

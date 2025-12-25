@@ -30,7 +30,12 @@
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
-    <ProjectReference Include="..\DiffusionNexus.UI\DiffusionNexus.UI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="LoraSort\UI\" />
+    <Folder Include="LoraSort\ViewModels\" />
+    <Folder Include="UI\ViewModels\" />
   </ItemGroup>
 
 </Project>

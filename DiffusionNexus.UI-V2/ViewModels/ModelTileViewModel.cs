@@ -76,6 +76,7 @@ public partial class ModelTileViewModel : ViewModelBase
         ["Wan Video 14B t2v"] = ("Wan 14B", "🎬"),
         ["Wan Video 1.3B t2v"] = ("Wan 1.3B", "🎬 1.3"),
         ["NoobAI"] = ("Noob", null),
+        ["???"] = ("???", null), // Unknown base model indicator
     };
 
     #endregion
@@ -103,7 +104,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 var lastDot = name.LastIndexOf('.');
                 return lastDot > 0 ? name[..lastDot] : name;
             }
-            return string.Empty;
+            return DisplayName; // Fall back to display name if no file info
         }
     }
 
@@ -124,7 +125,7 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 return FormatBaseModel(SelectedVersion.BaseModelRaw);
             }
-            return "?";
+            return "???";
         }
     }
 
@@ -360,14 +361,14 @@ public partial class ModelTileViewModel : ViewModelBase
             return (name, null);
         }
         
-        return ("v?", null);
+        return ("???", null);
     }
 
     private static string FormatBaseModel(string? baseModel)
     {
         if (string.IsNullOrWhiteSpace(baseModel))
         {
-            return "?";
+            return "???";
         }
 
         if (BaseModelMappings.TryGetValue(baseModel, out var mapping))

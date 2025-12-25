@@ -9,6 +9,7 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI;
@@ -19,6 +20,11 @@ public partial class App : Application
     /// Service provider for dependency injection.
     /// </summary>
     public static IServiceProvider? Services { get; private set; }
+
+    /// <summary>
+    /// Service scope for the application lifetime.
+    /// </summary>
+    private static IServiceScope? _appScope;
 
     public override void Initialize()
     {
@@ -35,14 +41,15 @@ public partial class App : Application
             // Configure services
             var services = new ServiceCollection();
             ConfigureServices(services);
-            Services = services.BuildServiceProvider();
+            var rootProvider = services.BuildServiceProvider();
 
-            // Ensure database is created
-            using (var scope = Services.CreateScope())
-            {
-                var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
-                dbContext.Database.EnsureCreated();
-            }
+            // Create a scope for the application lifetime
+            _appScope = rootProvider.CreateScope();
+            Services = _appScope.ServiceProvider;
+
+            // Ensure database is created (use EnsureCreated for simplicity)
+            var dbContext = Services.GetRequiredService<DiffusionNexusCoreDbContext>();
+            dbContext.Database.EnsureCreated();
 
             // Create main window with modules
             var mainViewModel = new DiffusionNexusMainWindowViewModel();
@@ -51,6 +58,12 @@ public partial class App : Application
             desktop.MainWindow = new DiffusionNexusMainWindow
             {
                 DataContext = mainViewModel
+            };
+
+            // Cleanup on shutdown
+            desktop.ShutdownRequested += (_, _) =>
+            {
+                _appScope?.Dispose();
             };
         }
 
@@ -65,12 +78,13 @@ public partial class App : Application
         // Infrastructure services (secure storage, image caching)
         services.AddInfrastructureServices();
 
-        // Application services
+        // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();
+        services.AddScoped<IModelSyncService, ModelFileSyncService>();
 
-        // ViewModels (transient - new instance each time)
-        services.AddTransient<SettingsViewModel>();
-        services.AddTransient<LoraHelperViewModel>();
+        // ViewModels (scoped to app lifetime)
+        services.AddScoped<SettingsViewModel>();
+        services.AddScoped<LoraHelperViewModel>();
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
@@ -95,6 +109,9 @@ public partial class App : Application
 
         // Load settings on startup
         settingsVm.LoadCommand.Execute(null);
+        
+        // Load models on startup
+        loraHelperVm.RefreshCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

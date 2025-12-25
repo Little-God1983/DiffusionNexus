@@ -23,6 +23,9 @@ public class ModelFile
     /// <summary>File size in KB.</summary>
     public double SizeKB { get; set; }
 
+    /// <summary>File size in bytes for exact matching when files are moved.</summary>
+    public long? FileSizeBytes { get; set; }
+
     /// <summary>File type (e.g., "Model", "Training Data").</summary>
     public string FileType { get; set; } = "Model";
 

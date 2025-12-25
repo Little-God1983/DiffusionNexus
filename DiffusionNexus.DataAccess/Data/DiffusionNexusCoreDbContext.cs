@@ -167,6 +167,7 @@ public class DiffusionNexusCoreDbContext : DbContext
             entity.HasIndex(e => e.ModelVersionId);
             entity.HasIndex(e => e.HashSHA256);
             entity.HasIndex(e => e.LocalPath);
+            entity.HasIndex(e => e.FileSizeBytes);
 
             // Properties
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
