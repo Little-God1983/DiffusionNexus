@@ -84,19 +84,29 @@ public partial class App : Application
 
         // ViewModels (scoped to app lifetime)
         services.AddScoped<SettingsViewModel>();
-        services.AddScoped<LoraHelperViewModel>();
+        services.AddScoped<LoraViewerViewModel>();
+        services.AddScoped<LoraDatasetHelperViewModel>();
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
     {
-        // LoRA Helper module - main feature
-        var loraHelperVm = Services!.GetRequiredService<LoraHelperViewModel>();
-        var loraHelperView = new LoraHelperView { DataContext = loraHelperVm };
+        // LoRA Viewer module - main feature
+        var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
+        var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
 
         mainViewModel.RegisterModule(new ModuleItem(
-            "LoRA Helper",
+            "LoRA Viewer",
             "avares://DiffusionNexus.UI-V2/Assets/LoraSort.png",
-            loraHelperView));
+            loraViewerView));
+
+        // LoRA Dataset Helper module
+        var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
+        var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
+
+        mainViewModel.RegisterModule(new ModuleItem(
+            "LoRA Dataset Helper",
+            "avares://DiffusionNexus.UI-V2/Assets/LoraTrain.png",
+            loraDatasetHelperView));
 
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
@@ -111,7 +121,7 @@ public partial class App : Application
         settingsVm.LoadCommand.Execute(null);
         
         // Load models on startup
-        loraHelperVm.RefreshCommand.Execute(null);
+        loraViewerVm.RefreshCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

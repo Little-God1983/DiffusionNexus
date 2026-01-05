@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.LoraDatasetHelperView"
+             x:DataType="vm:LoraDatasetHelperViewModel">
+
+  <Design.DataContext>
+    <vm:LoraDatasetHelperViewModel/>
+  </Design.DataContext>
+
+  <Grid>
+    <TabControl>
+      
+      <!-- Dataset Management Tab -->
+      <TabItem Header="Dataset Management">
+        <Grid>
+          <TextBlock Text="Dataset Management"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     FontSize="24"
+                     Opacity="0.5"/>
+        </Grid>
+      </TabItem>
+
+      <!-- Image Edit Tab -->
+      <TabItem Header="Image Edit">
+        <Grid>
+          <TextBlock Text="Image Edit"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     FontSize="24"
+                     Opacity="0.5"/>
+        </Grid>
+      </TabItem>
+
+      <!-- Captioning Tab -->
+      <TabItem Header="Captioning">
+        <Grid>
+          <TextBlock Text="Captioning"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     FontSize="24"
+                     Opacity="0.5"/>
+        </Grid>
+      </TabItem>
+
+      <!-- Auto Scale/Crop Tab -->
+      <TabItem Header="Auto Scale/Crop">
+        <Grid>
+          <TextBlock Text="Auto Scale/Crop"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     FontSize="24"
+                     Opacity="0.5"/>
+        </Grid>
+      </TabItem>
+
+    </TabControl>
+  </Grid>
+</UserControl>

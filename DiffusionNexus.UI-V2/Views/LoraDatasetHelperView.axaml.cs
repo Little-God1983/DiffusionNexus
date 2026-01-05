@@ -4,11 +4,11 @@ using Avalonia.Markup.Xaml;
 namespace DiffusionNexus.UI.Views;
 
 /// <summary>
-/// View for browsing and managing LoRA models.
+/// View for the LoRA Dataset Helper module.
 /// </summary>
-public partial class LoraHelperView : UserControl
+public partial class LoraDatasetHelperView : UserControl
 {
-    public LoraHelperView()
+    public LoraDatasetHelperView()
     {
         InitializeComponent();
     }

@@ -9,9 +9,9 @@ using DiffusionNexus.Domain.Services;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel for the LoRA Helper view displaying model tiles.
+/// ViewModel for the LoRA Viewer view displaying model tiles.
 /// </summary>
-public partial class LoraHelperViewModel : BusyViewModelBase
+public partial class LoraViewerViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IModelSyncService? _syncService;
@@ -75,7 +75,7 @@ public partial class LoraHelperViewModel : BusyViewModelBase
     /// <summary>
     /// Design-time constructor with demo data.
     /// </summary>
-    public LoraHelperViewModel()
+    public LoraViewerViewModel()
     {
         _settingsService = null;
         _syncService = null;
@@ -86,7 +86,7 @@ public partial class LoraHelperViewModel : BusyViewModelBase
     /// <summary>
     /// Runtime constructor with DI.
     /// </summary>
-    public LoraHelperViewModel(IAppSettingsService settingsService, IModelSyncService syncService)
+    public LoraViewerViewModel(IAppSettingsService settingsService, IModelSyncService syncService)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
