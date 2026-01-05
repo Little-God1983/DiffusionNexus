@@ -21,6 +21,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private DatasetCardViewModel? _activeDataset;
     private bool _isLoading;
     private bool _hasUnsavedChanges;
+    private int _selectedTabIndex;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -81,6 +82,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         get => _hasUnsavedChanges;
         set => SetProperty(ref _hasUnsavedChanges, value);
+    }
+
+    /// <summary>
+    /// Selected tab index for programmatic tab switching.
+    /// </summary>
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => SetProperty(ref _selectedTabIndex, value);
     }
 
     #endregion
@@ -491,9 +501,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         if (image is null) return;
 
-        // TODO: Implement navigation to Image Edit tab with this image
-        // For now, just show a status message
-        StatusMessage = $"Send to Image Edit: {image.FullFileName} (not yet implemented)";
+        ImageEditor.LoadImage(image.ImagePath);
+        SelectedTabIndex = 1; // Switch to Image Edit tab
+        StatusMessage = $"Editing: {image.FullFileName}";
     }
 
     private void ExportDataset()
@@ -506,4 +516,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     #endregion
+
+    /// <summary>
+    /// Gets the Image Editor ViewModel.
+    /// </summary>
+    public ImageEditorViewModel ImageEditor { get; } = new();
 }

@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraDatasetHelperView"
              x:DataType="vm:LoraDatasetHelperViewModel">
@@ -17,7 +18,7 @@
   </Design.DataContext>
 
   <Grid RowDefinitions="*,Auto">
-    <TabControl Grid.Row="0">
+    <TabControl Grid.Row="0" SelectedIndex="{Binding SelectedTabIndex}">
       
       <!-- Dataset Management Tab -->
       <TabItem Header="Dataset Management">
@@ -319,12 +320,93 @@
 
       <!-- Image Edit Tab -->
       <TabItem Header="Image Edit">
-        <Grid>
-          <TextBlock Text="Image Edit"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
+        <Grid RowDefinitions="Auto,*,Auto">
+          
+          <!-- Toolbar -->
+          <Border Grid.Row="0" 
+                  Background="#1E1E1E" 
+                  Padding="16,12"
+                  BorderBrush="#333"
+                  BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+              
+              <!-- Image Info -->
+              <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                <TextBlock Text="{Binding ImageEditor.ImageFileName, FallbackValue='No image loaded'}"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Opacity="{Binding ImageEditor.HasImage, Converter={x:Static converters:BoolConverters.BoolToOpacity}}"/>
+                <TextBlock Text="{Binding ImageEditor.ImageDimensions}"
+                           FontSize="14"
+                           VerticalAlignment="Center"
+                           Opacity="0.6"
+                           IsVisible="{Binding ImageEditor.HasImage}"/>
+              </StackPanel>
+              
+              <!-- Spacer -->
+              <Border Grid.Column="2"/>
+              
+              <!-- Reset Button -->
+              <Button Grid.Column="3"
+                      Content="↺ Reset"
+                      Command="{Binding ImageEditor.ResetImageCommand}"
+                      Margin="0,0,8,0"
+                      ToolTip.Tip="Reset to original image"/>
+              
+              <!-- Clear Button -->
+              <Button Grid.Column="4"
+                      Content="✕ Clear"
+                      Command="{Binding ImageEditor.ClearImageCommand}"
+                      ToolTip.Tip="Clear the image"/>
+              
+            </Grid>
+          </Border>
+          
+          <!-- Image Editor Canvas -->
+          <Border Grid.Row="1" 
+                  Background="#1A1A1A"
+                  Margin="16">
+            <Grid>
+              <!-- Placeholder when no image -->
+              <StackPanel HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding !ImageEditor.HasImage}">
+                <TextBlock Text="🖼️" 
+                           FontSize="64" 
+                           Opacity="0.2"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="No image loaded" 
+                           FontSize="16"
+                           Opacity="0.4"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+                <TextBlock Text="Use 'Send to Image Edit' from Dataset Management"
+                           FontSize="12"
+                           Opacity="0.3"
+                           HorizontalAlignment="Center"
+                           Margin="0,4,0,0"/>
+              </StackPanel>
+              
+              <!-- Image Editor Control -->
+              <controls:ImageEditorControl x:Name="ImageEditorCanvas"
+                                           ImagePath="{Binding ImageEditor.CurrentImagePath}"
+                                           IsVisible="{Binding ImageEditor.HasImage}"/>
+            </Grid>
+          </Border>
+          
+          <!-- Status Bar -->
+          <Border Grid.Row="2"
+                  Background="#1E1E1E"
+                  Padding="8,4"
+                  BorderBrush="#333"
+                  BorderThickness="0,1,0,0"
+                  IsVisible="{Binding ImageEditor.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding ImageEditor.StatusMessage}" 
+                       Opacity="0.8"
+                       FontSize="12"/>
+          </Border>
+          
         </Grid>
       </TabItem>
 
