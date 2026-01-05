@@ -1,0 +1,234 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+  
+  <Design.DataContext>
+    <vm:SettingsViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    
+    <!-- Fixed Header Area -->
+    <StackPanel Grid.Row="0" Spacing="16" Margin="20,20,20,0">
+      <!-- Header -->
+      <TextBlock Text="Settings" 
+                 FontSize="28" 
+                 FontWeight="Bold"/>
+
+      <!-- Status Message -->
+      <Border Background="#2D7D46" 
+              CornerRadius="4" 
+              Padding="12,8"
+              IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <TextBlock Text="{Binding StatusMessage}" Foreground="White"/>
+      </Border>
+    </StackPanel>
+
+    <!-- Scrollable Content Area -->
+    <ScrollViewer Grid.Row="1" Padding="20">
+      <StackPanel Spacing="16" Width="700" HorizontalAlignment="Left">
+        
+        <!-- General Settings -->
+        <Expander Header="General" IsExpanded="True" HorizontalAlignment="Stretch">
+          <Border Padding="16">
+            <StackPanel Spacing="12">
+              
+              <!-- Civitai API Key -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Civitai API Key" FontWeight="SemiBold"/>
+                <TextBlock Text="Required for downloading model metadata. Get your key from civitai.com/user/account" 
+                           FontSize="12" 
+                           Opacity="0.7"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Grid.Column="0"
+                           PasswordChar="•" 
+                           Watermark="Paste your API key here"
+                           Text="{Binding CivitaiApiKey, Mode=TwoWay}"/>
+                  <Button Grid.Column="1" 
+                          Content="Clear" 
+                          Command="{Binding DeleteApiKeyCommand}"
+                          Margin="8,0,0,0"/>
+                </Grid>
+              </StackPanel>
+              
+            </StackPanel>
+          </Border>
+        </Expander>
+
+        <!-- LoRA Helper (combined Sources + Settings) -->
+        <Expander Header="LoRA Helper" IsExpanded="True" HorizontalAlignment="Stretch">
+          <Border Padding="16">
+            <StackPanel Spacing="16">
+              
+              <!-- Source Folders Section -->
+              <StackPanel Spacing="8">
+                <TextBlock Text="Source Folders" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Folders containing your LoRA models. All subfolders will be scanned." 
+                           FontSize="12" 
+                           Opacity="0.7"/>
+                
+                <!-- Add Button -->
+                <Button Content="+ Add Source Folder" 
+                        Command="{Binding AddLoraSourceCommand}"
+                        HorizontalAlignment="Left"/>
+                
+                <!-- Source List -->
+                <ItemsControl ItemsSource="{Binding LoraSources}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:LoraSourceViewModel">
+                      <Border Background="#20FFFFFF"
+                              CornerRadius="4"
+                              Padding="12"
+                              Margin="0,4">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                          
+                          <!-- Enabled Checkbox -->
+                          <CheckBox Grid.Column="0"
+                                    IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Enable/disable this source"/>
+                          
+                          <!-- Path -->
+                          <TextBox Grid.Column="1"
+                                   Text="{Binding FolderPath, Mode=TwoWay}"
+                                   Watermark="Enter folder path..."
+                                   Margin="8,0"/>
+                          
+                          <!-- Browse Button -->
+                          <Button Grid.Column="2"
+                                  Content="Browse..."
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).BrowseLoraSourceCommand}"
+                                  CommandParameter="{Binding}"
+                                  Margin="0,0,8,0"/>
+                          
+                          <!-- Remove Button -->
+                          <Button Grid.Column="3"
+                                  Content="&#x1F5D1;"
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveLoraSourceCommand}"
+                                  CommandParameter="{Binding}"
+                                  ToolTip.Tip="Remove this source"/>
+                          
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <!-- Separator -->
+              <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+
+              <!-- Display Options Section -->
+              <StackPanel Spacing="8">
+                <TextBlock Text="Display Options" FontWeight="SemiBold" FontSize="14"/>
+                
+                <CheckBox Content="Show NSFW content by default"
+                          IsChecked="{Binding ShowNsfw, Mode=TwoWay}"/>
+                
+                <CheckBox Content="Automatic thumbnail generation from videos"
+                          IsChecked="{Binding GenerateVideoThumbnails, Mode=TwoWay}"/>
+                
+                <CheckBox Content="Show video preview (experimental, slower)"
+                          IsChecked="{Binding ShowVideoPreview, Mode=TwoWay}"/>
+                
+                <CheckBox Content="A1111/Forge style prompts"
+                          IsChecked="{Binding UseForgeStylePrompts, Mode=TwoWay}"/>
+                
+                <CheckBox Content="Merge LoRA sources by base model (experimental)"
+                          IsChecked="{Binding MergeLoraSources, Mode=TwoWay}"/>
+              </StackPanel>
+              
+            </StackPanel>
+          </Border>
+        </Expander>
+
+        <!-- LoRA Sort Settings -->
+        <Expander Header="LoRA Sort" IsExpanded="False" HorizontalAlignment="Stretch">
+          <Border Padding="16">
+            <StackPanel Spacing="12">
+              
+              <TextBlock Text="Default folders for the LoRA Sort tool." 
+                         FontSize="12" 
+                         Opacity="0.7"/>
+              
+              <!-- Source Folder -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Source Folder" FontWeight="SemiBold"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Grid.Column="0"
+                           Text="{Binding LoraSortSourcePath, Mode=TwoWay}"
+                           Watermark="Select source folder..."/>
+                  <Button Grid.Column="1"
+                          Content="Browse..."
+                          Command="{Binding BrowseLoraSortSourceCommand}"
+                          Margin="8,0,0,0"/>
+                </Grid>
+              </StackPanel>
+              
+              <!-- Target Folder -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Target Folder" FontWeight="SemiBold"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Grid.Column="0"
+                           Text="{Binding LoraSortTargetPath, Mode=TwoWay}"
+                           Watermark="Select target folder..."/>
+                  <Button Grid.Column="1"
+                          Content="Browse..."
+                          Command="{Binding BrowseLoraSortTargetCommand}"
+                          Margin="8,0,0,0"/>
+                </Grid>
+              </StackPanel>
+              
+            </StackPanel>
+          </Border>
+        </Expander>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Fixed Footer with Save Button -->
+    <Border Grid.Row="2" 
+            Background="#252526" 
+            BorderBrush="#333" 
+            BorderThickness="0,1,0,0"
+            Padding="20,16">
+      <Grid>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+          
+          <TextBlock Text="Unsaved changes"
+                     VerticalAlignment="Center"
+                     Foreground="Orange"
+                     IsVisible="{Binding HasChanges}"/>
+          
+          <Button Content="Save Settings"
+                  Command="{Binding SaveCommand}"
+                  MinWidth="120"
+                  Classes="accent"/>
+          
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Busy Overlay -->
+    <Border Grid.Row="0" Grid.RowSpan="3"
+            Background="#80000000"
+            IsVisible="{Binding IsBusy}"
+            IsHitTestVisible="{Binding IsBusy}"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <ProgressBar IsIndeterminate="True" Width="200"/>
+        <TextBlock Text="{Binding BusyMessage}" 
+                   Foreground="White"
+                   HorizontalAlignment="Center"
+                   Margin="0,8,0,0"/>
+      </StackPanel>
+    </Border>
+
+  </Grid>
+</UserControl>

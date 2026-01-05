@@ -2,6 +2,7 @@
  * Licensed under the terms found in the LICENSE file in the root directory.
  * For non-commercial use only. See LICENSE for details.
  */
+using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Services.IO;
 using System.IO;
@@ -12,11 +13,13 @@ namespace DiffusionNexus.Service.Services
     {
         private readonly IModelMetadataProvider[] _metadataProviders;
         private readonly DiskUtility _diskUtility;
+        private readonly DiffusionNexusDbContext? _dbContext;
 
         public FileControllerService(DiskUtility? diskUtility = null, params IModelMetadataProvider[] metadataProviders)
         {
             _diskUtility = diskUtility ?? new DiskUtility();
             _metadataProviders = metadataProviders ?? Array.Empty<IModelMetadataProvider>();
+            _dbContext = null;
         }
 
         public FileControllerService(params IModelMetadataProvider[] metadataProviders)
@@ -24,12 +27,24 @@ namespace DiffusionNexus.Service.Services
         {
         }
 
+        public FileControllerService(DiffusionNexusDbContext dbContext, DiskUtility? diskUtility = null, params IModelMetadataProvider[] metadataProviders)
+        {
+            _dbContext = dbContext;
+            _diskUtility = diskUtility ?? new DiskUtility();
+            _metadataProviders = metadataProviders ?? Array.Empty<IModelMetadataProvider>();
+        }
+
         private async Task ComputeFolderInternal(IProgress<ProgressReport>? progress, CancellationToken token, SelectedOptions options)
         {
-            progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Start processing LoRA's", LogLevel = LogSeverity.Info });
+            progress?.Report(new ProgressReport { Percentage = 0, StatusMessage = "Start processing models", LogLevel = LogSeverity.Info });
             token.ThrowIfCancellationRequested();
 
-            var reader = new JsonInfoFileReaderService(options.BasePath, GetModelMetadataWithFallbackAsync);
+            var reader = new EnhancedJsonInfoFileReaderService(
+                options.BasePath,
+                GetModelMetadataWithFallbackAsync,
+                _dbContext,
+                useDatabaseIfAvailable: _dbContext != null);
+
             var models = await reader.GetModelData(progress, token);
 
             if (models == null || models.Count == 0)

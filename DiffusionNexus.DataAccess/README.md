@@ -1,6 +1,8 @@
 # DiffusionNexus.DataAccess
 
-This project contains the core data access abstractions and simple entity classes used by the application.
+> **Documentation moved**: See [documentation/V2/DataAccess.md](../documentation/V2/DataAccess.md)
+
+This project contains the core data access abstractions and entity classes used by the application.
 
 ## Adding new storage providers
 

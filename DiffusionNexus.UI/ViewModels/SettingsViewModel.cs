@@ -6,6 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using System.Linq;
 using DiffusionNexus.Service.Classes;
+using System.Diagnostics;
+using System.IO;
+using System;
 
 namespace DiffusionNexus.UI.ViewModels
 {
@@ -24,6 +27,7 @@ namespace DiffusionNexus.UI.ViewModels
         public IAsyncRelayCommand<LoraHelperSourceModel?> BrowseLoraHelperSourceCommand { get; }
         public IRelayCommand AddLoraHelperSourceCommand { get; }
         public IRelayCommand<LoraHelperSourceModel?> RemoveLoraHelperSourceCommand { get; }
+        public IRelayCommand OpenDatabaseFolderCommand { get; }
 
         private readonly ILogEventService _logEventService;
 
@@ -42,6 +46,7 @@ namespace DiffusionNexus.UI.ViewModels
             BrowseLoraHelperSourceCommand = new AsyncRelayCommand<LoraHelperSourceModel?>(BrowseLoraHelperSourceAsync);
             AddLoraHelperSourceCommand = new RelayCommand(AddLoraHelperSource);
             RemoveLoraHelperSourceCommand = new RelayCommand<LoraHelperSourceModel?>(RemoveLoraHelperSource, source => source != null);
+            OpenDatabaseFolderCommand = new RelayCommand(OpenDatabaseFolder);
             _ = LoadAsync();
         }
 
@@ -107,6 +112,24 @@ namespace DiffusionNexus.UI.ViewModels
             if (!string.IsNullOrEmpty(path))
             {
                 source.FolderPath = path;
+            }
+        }
+
+        private void OpenDatabaseFolder()
+        {
+            try
+            {
+                // The core database is in the Data subfolder
+                var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiffusionNexus", "Data");
+                if (!Directory.Exists(path))
+                {
+                    Directory.CreateDirectory(path);
+                }
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                _logEventService.Publish(LogSeverity.Error, $"Failed to open database folder: {ex.Message}");
             }
         }
     }

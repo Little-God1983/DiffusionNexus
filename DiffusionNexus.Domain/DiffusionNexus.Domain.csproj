@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DiffusionNexus.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 
+    Domain entities are designed to be EF Core friendly.
+    EF Core package will be added when implementing persistence layer.
+  -->
+</Project>
