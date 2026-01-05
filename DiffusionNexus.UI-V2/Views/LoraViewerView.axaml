@@ -5,11 +5,11 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
-             x:Class="DiffusionNexus.UI.Views.LoraHelperView"
-             x:DataType="vm:LoraHelperViewModel">
+             x:Class="DiffusionNexus.UI.Views.LoraViewerView"
+             x:DataType="vm:LoraViewerViewModel">
 
   <Design.DataContext>
-    <vm:LoraHelperViewModel/>
+    <vm:LoraViewerViewModel/>
   </Design.DataContext>
 
   <Grid RowDefinitions="Auto,*,Auto">
