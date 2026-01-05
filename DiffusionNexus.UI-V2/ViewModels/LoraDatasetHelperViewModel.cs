@@ -111,6 +111,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
+    public IRelayCommand ExportDatasetCommand { get; }
 
     #endregion
 
@@ -131,6 +132,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
+        ExportDatasetCommand = new RelayCommand(ExportDataset);
     }
 
     /// <summary>
@@ -492,6 +494,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // TODO: Implement navigation to Image Edit tab with this image
         // For now, just show a status message
         StatusMessage = $"Send to Image Edit: {image.FullFileName} (not yet implemented)";
+    }
+
+    private void ExportDataset()
+    {
+        // TODO: Implement dataset export functionality
+        // - Export as zip with images and captions
+        // - Export in kohya_ss format
+        // - Export in other training formats
+        StatusMessage = "Export Dataset: Not yet implemented";
     }
 
     #endregion
