@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.Views.Dialogs;
 
 namespace DiffusionNexus.UI.Services;
 
@@ -69,5 +70,18 @@ public class DialogService : IDialogService
         await Task.CompletedTask;
         // TODO: Implement custom confirm dialog
         return true;
+    }
+
+    public async Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null)
+    {
+        var dialog = new TextInputDialog
+        {
+            Message = message,
+            InputText = defaultValue ?? string.Empty
+        };
+        dialog.Title = title;
+
+        await dialog.ShowDialog(_window);
+        return dialog.ResultText;
     }
 }

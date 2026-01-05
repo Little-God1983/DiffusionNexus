@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.TextInputDialog"
+        x:DataType="local:TextInputDialog"
+        Width="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+  
+  <Grid Margin="20" RowDefinitions="Auto,Auto,Auto">
+    
+    <!-- Message -->
+    <TextBlock Grid.Row="0" 
+               Text="{Binding Message}"
+               TextWrapping="Wrap"
+               Margin="0,0,0,12"/>
+    
+    <!-- Input TextBox -->
+    <TextBox Grid.Row="1" 
+             x:Name="InputTextBox"
+             Text="{Binding InputText, Mode=TwoWay}"
+             Watermark="Enter name..."
+             Margin="0,0,0,16"/>
+    
+    <!-- Buttons -->
+    <StackPanel Grid.Row="2" 
+                Orientation="Horizontal" 
+                HorizontalAlignment="Right" 
+                Spacing="8">
+      <Button Content="Cancel" 
+              Width="80"
+              Click="OnCancelClick"/>
+      <Button Content="OK" 
+              Width="80"
+              IsDefault="True"
+              Click="OnOkClick"/>
+    </StackPanel>
+    
+  </Grid>
+</Window>

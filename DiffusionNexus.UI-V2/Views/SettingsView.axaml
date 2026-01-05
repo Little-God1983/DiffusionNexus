@@ -123,6 +123,26 @@
               <!-- Separator -->
               <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
 
+              <!-- Dataset Storage Section -->
+              <StackPanel Spacing="8">
+                <TextBlock Text="Dataset Storage" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Default folder where new LoRA training datasets will be created." 
+                           FontSize="12" 
+                           Opacity="0.7"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Grid.Column="0"
+                           Text="{Binding DatasetStoragePath, Mode=TwoWay}"
+                           Watermark="Select dataset storage folder..."/>
+                  <Button Grid.Column="1"
+                          Content="Browse..."
+                          Command="{Binding BrowseDatasetStorageCommand}"
+                          Margin="8,0,0,0"/>
+                </Grid>
+              </StackPanel>
+
+              <!-- Separator -->
+              <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+
               <!-- Display Options Section -->
               <StackPanel Spacing="8">
                 <TextBlock Text="Display Options" FontWeight="SemiBold" FontSize="14"/>

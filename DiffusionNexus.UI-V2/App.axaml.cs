@@ -9,6 +9,7 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,9 +48,8 @@ public partial class App : Application
             _appScope = rootProvider.CreateScope();
             Services = _appScope.ServiceProvider;
 
-            // Ensure database is created (use EnsureCreated for simplicity)
-            var dbContext = Services.GetRequiredService<DiffusionNexusCoreDbContext>();
-            dbContext.Database.EnsureCreated();
+            // Ensure database is migrated
+            InitializeDatabase();
 
             // Create main window with modules
             var mainViewModel = new DiffusionNexusMainWindowViewModel();
@@ -68,6 +68,42 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static void InitializeDatabase()
+    {
+        var scope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+
+        try
+        {
+            dbContext.Database.Migrate();
+        }
+        catch (SqliteException ex) when (ex.Message.Contains("already exists"))
+        {
+            // If migration fails because tables already exist (legacy EnsureCreated usage),
+            // recreate the database to ensure clean state with migrations
+            scope.Dispose();
+            ResetDatabase();
+            return;
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
+        {
+            scope.Dispose();
+            ResetDatabase();
+            return;
+        }
+
+        scope.Dispose();
+    }
+
+    private static void ResetDatabase()
+    {
+        // Use a fresh context for delete + migrate
+        using var freshScope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshContext = freshScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        freshContext.Database.EnsureDeleted();
+        freshContext.Database.Migrate();
     }
 
     private static void ConfigureServices(IServiceCollection services)

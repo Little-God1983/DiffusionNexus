@@ -11,17 +11,71 @@
     <vm:LoraDatasetHelperViewModel/>
   </Design.DataContext>
 
-  <Grid>
-    <TabControl>
+  <Grid RowDefinitions="*,Auto">
+    <TabControl Grid.Row="0">
       
       <!-- Dataset Management Tab -->
       <TabItem Header="Dataset Management">
-        <Grid>
-          <TextBlock Text="Dataset Management"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
+        <Grid RowDefinitions="Auto,*">
+          
+          <!-- Toolbar -->
+          <Border Grid.Row="0" 
+                  Background="#1E1E1E" 
+                  Padding="16,12"
+                  BorderBrush="#333"
+                  BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Button Content="+ New Dataset" 
+                      Command="{Binding CreateDatasetCommand}"/>
+            </StackPanel>
+          </Border>
+
+          <!-- Content Area -->
+          <Grid Grid.Row="1">
+            
+            <!-- Configuration Warning -->
+            <Border IsVisible="{Binding !IsStorageConfigured}"
+                    Background="#1A1A1A"
+                    CornerRadius="8"
+                    Margin="16"
+                    Padding="32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+              <StackPanel Spacing="16" HorizontalAlignment="Center">
+                <TextBlock Text="??" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
+                <TextBlock Text="Dataset Storage Not Configured" 
+                           FontSize="20" 
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Please configure the Dataset Storage Path in Settings before creating datasets."
+                           Opacity="0.6"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           MaxWidth="400"/>
+              </StackPanel>
+            </Border>
+
+            <!-- Empty State (when configured but no datasets) -->
+            <Border IsVisible="{Binding IsStorageConfigured}"
+                    Background="#1A1A1A"
+                    CornerRadius="8"
+                    Margin="16"
+                    Padding="32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+              <StackPanel Spacing="16" HorizontalAlignment="Center">
+                <TextBlock Text="??" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
+                <TextBlock Text="No Datasets Yet" 
+                           FontSize="20" 
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Click '+ New Dataset' to create your first LoRA training dataset."
+                           Opacity="0.6"
+                           HorizontalAlignment="Center"/>
+              </StackPanel>
+            </Border>
+            
+          </Grid>
         </Grid>
       </TabItem>
 
@@ -59,5 +113,17 @@
       </TabItem>
 
     </TabControl>
+
+    <!-- Status Bar -->
+    <Border Grid.Row="1"
+            Background="#1E1E1E"
+            Padding="8,4"
+            BorderBrush="#333"
+            BorderThickness="0,1,0,0"
+            IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+      <TextBlock Text="{Binding StatusMessage}" 
+                 Opacity="0.8"
+                 FontSize="12"/>
+    </Border>
   </Grid>
 </UserControl>

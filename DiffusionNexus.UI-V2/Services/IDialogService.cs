@@ -53,6 +53,15 @@ public interface IDialogService
     /// <param name="message">Question to ask.</param>
     /// <returns>True if confirmed, false otherwise.</returns>
     Task<bool> ShowConfirmAsync(string title, string message);
+
+    /// <summary>
+    /// Shows an input dialog for text entry.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="message">Prompt message.</param>
+    /// <param name="defaultValue">Optional default value.</param>
+    /// <returns>The entered text, or null if cancelled.</returns>
+    Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null);
 }
 
 /// <summary>
