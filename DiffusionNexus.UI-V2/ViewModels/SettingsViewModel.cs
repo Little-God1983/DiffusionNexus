@@ -65,6 +65,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _loraSortTargetPath;
 
     /// <summary>
+    /// Default storage path for LoRA training datasets.
+    /// </summary>
+    [ObservableProperty]
+    private string? _datasetStoragePath;
+
+    /// <summary>
     /// Collection of LoRA source folders.
     /// </summary>
     [ObservableProperty]
@@ -130,6 +136,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             MergeLoraSources = settings.MergeLoraSources;
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
+            DatasetStoragePath = settings.DatasetStoragePath;
 
             // Map LoRA sources
             foreach (var existing in LoraSources)
@@ -178,6 +185,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             settings.MergeLoraSources = MergeLoraSources;
             settings.LoraSortSourcePath = LoraSortSourcePath;
             settings.LoraSortTargetPath = LoraSortTargetPath;
+            settings.DatasetStoragePath = DatasetStoragePath;
 
             // Map LoRA sources (remove empty ones)
             settings.LoraSources.Clear();
@@ -294,6 +302,25 @@ public partial class SettingsViewModel : BusyViewModelBase
         }
     }
 
+    /// <summary>
+    /// Browse for Dataset Storage folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseDatasetStorageAsync()
+    {
+        if (DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Dataset Storage Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            DatasetStoragePath = path;
+            HasChanges = true;
+        }
+    }
+
     private void OnLoraSourceChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
@@ -307,6 +334,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
+    partial void OnDatasetStoragePathChanged(string? value) => HasChanges = true;
 }
 
 /// <summary>

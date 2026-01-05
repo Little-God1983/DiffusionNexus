@@ -74,6 +74,16 @@ public class AppSettings
 
     #endregion
 
+    #region LoRA Dataset Helper Settings
+
+    /// <summary>
+    /// Default storage path for LoRA training datasets.
+    /// Each dataset will be created as a subfolder within this path.
+    /// </summary>
+    public string? DatasetStoragePath { get; set; }
+
+    #endregion
+
     #region Timestamps
 
     /// <summary>

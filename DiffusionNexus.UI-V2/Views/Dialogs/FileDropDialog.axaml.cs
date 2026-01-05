@@ -1,0 +1,266 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
+
+namespace DiffusionNexus.UI.Views.Dialogs;
+
+/// <summary>
+/// A reusable drag-and-drop file picker dialog.
+/// Supports dragging files onto the dialog or clicking to browse.
+/// </summary>
+public partial class FileDropDialog : Window, INotifyPropertyChanged
+{
+    private static readonly string[] DefaultImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] DefaultTextExtensions = [".txt", ".caption"];
+    
+    private string[] _allowedExtensions = [];
+
+    public FileDropDialog()
+    {
+        InitializeComponent();
+        DataContext = this;
+        
+        // Set up drag-drop handlers
+        AddHandler(DragDrop.DropEvent, OnDrop);
+        AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
+    }
+
+    private void InitializeComponent()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
+    #region Properties
+
+    /// <summary>
+    /// Title displayed at the top of the dialog.
+    /// </summary>
+    public string DialogTitle { get; set; } = "Add Files";
+
+    /// <summary>
+    /// Collection of selected files.
+    /// </summary>
+    public ObservableCollection<SelectedFileItem> SelectedFiles { get; } = [];
+
+    /// <summary>
+    /// Whether any files have been selected.
+    /// </summary>
+    public bool HasFiles => SelectedFiles.Count > 0;
+
+    /// <summary>
+    /// Text showing file count.
+    /// </summary>
+    public string FileCountText => SelectedFiles.Count == 1 
+        ? "1 file selected" 
+        : $"{SelectedFiles.Count} files selected";
+
+    /// <summary>
+    /// Result file paths after dialog closes. Null if cancelled.
+    /// </summary>
+    public List<string>? ResultFiles { get; private set; }
+
+    #endregion
+
+    #region Configuration
+
+    /// <summary>
+    /// Configures the dialog to accept image files.
+    /// </summary>
+    public FileDropDialog ForImages()
+    {
+        _allowedExtensions = DefaultImageExtensions;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the dialog to accept image and text/caption files.
+    /// </summary>
+    public FileDropDialog ForImagesAndText()
+    {
+        _allowedExtensions = [..DefaultImageExtensions, ..DefaultTextExtensions];
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the dialog with custom allowed extensions.
+    /// </summary>
+    public FileDropDialog WithExtensions(params string[] extensions)
+    {
+        _allowedExtensions = extensions;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the dialog title.
+    /// </summary>
+    public FileDropDialog WithTitle(string title)
+    {
+        DialogTitle = title;
+        return this;
+    }
+
+    #endregion
+
+    #region Drag and Drop Handlers
+
+    private void OnDragEnter(object? sender, DragEventArgs e)
+    {
+        var dropZone = this.FindControl<Border>("DropZone");
+        dropZone?.Classes.Add("dragover");
+        e.DragEffects = DragDropEffects.Copy;
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e)
+    {
+        var dropZone = this.FindControl<Border>("DropZone");
+        dropZone?.Classes.Remove("dragover");
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        var dropZone = this.FindControl<Border>("DropZone");
+        dropZone?.Classes.Remove("dragover");
+
+        var files = e.Data.GetFiles();
+        if (files is null) return;
+
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                AddFile(file.Path.LocalPath);
+            }
+            else if (item is IStorageFolder folder)
+            {
+                AddFilesFromFolder(folder.Path.LocalPath);
+            }
+        }
+
+        NotifyPropertiesChanged();
+    }
+
+    #endregion
+
+    #region Event Handlers
+
+    private async void OnBrowseClick(object? sender, RoutedEventArgs e)
+    {
+        var filters = new List<FilePickerFileType>();
+        
+        if (_allowedExtensions.Length > 0)
+        {
+            filters.Add(new FilePickerFileType("Allowed Files")
+            {
+                Patterns = _allowedExtensions.Select(ext => $"*{ext}").ToList()
+            });
+        }
+        
+        filters.Add(new FilePickerFileType("All Files") { Patterns = ["*.*"] });
+
+        var result = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select Files",
+            AllowMultiple = true,
+            FileTypeFilter = filters
+        });
+
+        foreach (var file in result)
+        {
+            AddFile(file.Path.LocalPath);
+        }
+
+        NotifyPropertiesChanged();
+    }
+
+    private void OnRemoveFileClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is SelectedFileItem item)
+        {
+            SelectedFiles.Remove(item);
+            NotifyPropertiesChanged();
+        }
+    }
+
+    private void OnDoneClick(object? sender, RoutedEventArgs e)
+    {
+        ResultFiles = SelectedFiles.Select(f => f.FilePath).ToList();
+        Close(true);
+    }
+
+    private void OnCancelClick(object? sender, RoutedEventArgs e)
+    {
+        ResultFiles = null;
+        Close(false);
+    }
+
+    #endregion
+
+    #region Helper Methods
+
+    private void AddFile(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath)) return;
+        
+        if (_allowedExtensions.Length > 0)
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (!_allowedExtensions.Contains(ext)) return;
+        }
+
+        if (SelectedFiles.Any(f => f.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        SelectedFiles.Add(new SelectedFileItem(filePath));
+    }
+
+    private void AddFilesFromFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return;
+
+        var files = Directory.EnumerateFiles(folderPath);
+        foreach (var file in files)
+        {
+            AddFile(file);
+        }
+    }
+
+    private void NotifyPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(HasFiles));
+        OnPropertyChanged(nameof(FileCountText));
+    }
+
+    #endregion
+
+    #region INotifyPropertyChanged
+
+    public new event PropertyChangedEventHandler? PropertyChanged;
+
+    protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Represents a selected file in the file drop dialog.
+/// </summary>
+public class SelectedFileItem
+{
+    public SelectedFileItem(string filePath)
+    {
+        FilePath = filePath;
+        FileName = Path.GetFileName(filePath);
+    }
+
+    public string FilePath { get; }
+    public string FileName { get; }
+}

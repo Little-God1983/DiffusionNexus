@@ -1,27 +1,319 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraDatasetHelperView"
              x:DataType="vm:LoraDatasetHelperViewModel">
+
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+  </UserControl.Resources>
 
   <Design.DataContext>
     <vm:LoraDatasetHelperViewModel/>
   </Design.DataContext>
 
-  <Grid>
-    <TabControl>
+  <Grid RowDefinitions="*,Auto">
+    <TabControl Grid.Row="0">
       
       <!-- Dataset Management Tab -->
       <TabItem Header="Dataset Management">
-        <Grid>
-          <TextBlock Text="Dataset Management"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
+        <Grid RowDefinitions="Auto,*">
+          
+          <!-- Toolbar -->
+          <Border Grid.Row="0" 
+                  Background="#1E1E1E" 
+                  Padding="16,12"
+                  BorderBrush="#333"
+                  BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+              
+              <!-- Back to Overview Button (only visible when viewing a dataset) -->
+              <Button Grid.Column="0"
+                      Content="← Overview"
+                      Command="{Binding GoToOverviewCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      Margin="0,0,16,0"/>
+              
+              <!-- Dataset Title (when viewing) -->
+              <TextBlock Grid.Column="1"
+                         Text="{Binding ActiveDataset.Name, StringFormat='Dataset: {0}'}"
+                         FontSize="18"
+                         FontWeight="SemiBold"
+                         VerticalAlignment="Center"
+                         IsVisible="{Binding IsViewingDataset}"/>
+              
+              <!-- Spacer -->
+              <Border Grid.Column="2"/>
+              
+              <!-- Open Folder Button (when viewing dataset) -->
+              <Button Grid.Column="3"
+                      Content="📂 Open Folder"
+                      Command="{Binding OpenContainingFolderCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      Margin="0,0,8,0"
+                      ToolTip.Tip="Open dataset folder in file explorer"/>
+              
+              <!-- Export Dataset Button (when viewing dataset) -->
+              <Button Grid.Column="4"
+                      Content="📦 Export Dataset"
+                      Command="{Binding ExportDatasetCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      Margin="0,0,8,0"
+                      ToolTip.Tip="Export dataset for training"/>
+              
+              <!-- Add Images Button (when viewing dataset) -->
+              <Button Grid.Column="5"
+                      Content="+ Add Images"
+                      Command="{Binding AddImagesCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      Margin="0,0,8,0"/>
+              
+              <!-- Save Captions Button (when viewing dataset with changes) -->
+              <Button Grid.Column="6"
+                      Content="Save Captions"
+                      Command="{Binding SaveAllCaptionsCommand}"
+                      IsVisible="{Binding HasUnsavedChanges}"
+                      Margin="0,0,8,0"
+                      Background="#2D7D46"/>
+              
+              <!-- New Dataset Button (only in overview) -->
+              <Button Grid.Column="7"
+                      Content="+ New Dataset" 
+                      Command="{Binding CreateDatasetCommand}"
+                      IsVisible="{Binding !IsViewingDataset}"/>
+              
+            </Grid>
+          </Border>
+
+          <!-- Content Area -->
+          <Grid Grid.Row="1">
+            
+            <!-- Loading Overlay -->
+            <Border IsVisible="{Binding IsLoading}"
+                    Background="#80000000"
+                    ZIndex="100">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading..." 
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+              </StackPanel>
+            </Border>
+            
+            <!-- Configuration Warning -->
+            <Border IsVisible="{Binding !IsStorageConfigured}"
+                    Background="#1A1A1A"
+                    CornerRadius="8"
+                    Margin="16"
+                    Padding="32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+              <StackPanel Spacing="16" HorizontalAlignment="Center">
+                <TextBlock Text="⚠️" FontSize="64" HorizontalAlignment="Center" Opacity="0.3"/>
+                <TextBlock Text="Dataset Storage Not Configured" 
+                           FontSize="20" 
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Please configure the Dataset Storage Path in Settings before creating datasets."
+                           Opacity="0.6"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           MaxWidth="400"/>
+              </StackPanel>
+            </Border>
+
+            <!-- Dataset Overview (Netflix-style cards) -->
+            <ScrollViewer IsVisible="{Binding !IsViewingDataset}"
+                          Padding="16">
+              <ItemsControl ItemsSource="{Binding Datasets}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                    <Button Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).OpenDatasetCommand}"
+                            CommandParameter="{Binding}"
+                            Margin="8"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand">
+                      <Border Width="200" 
+                              Height="240"
+                              Background="#2A2A2A"
+                              CornerRadius="8"
+                              ClipToBounds="True"
+                              BorderBrush="#444"
+                              BorderThickness="1">
+                        <Grid RowDefinitions="*,Auto">
+                          
+                          <!-- Thumbnail Area -->
+                          <Border Grid.Row="0" 
+                                  Background="#1A1A1A"
+                                  CornerRadius="8,8,0,0"
+                                  ClipToBounds="True">
+                            <Grid>
+                              <!-- Placeholder when no thumbnail -->
+                              <TextBlock Text="📁" 
+                                         FontSize="64" 
+                                         Opacity="0.2"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         IsVisible="{Binding !HasThumbnail}"/>
+                              
+                              <!-- Thumbnail image using converter -->
+                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                     Stretch="UniformToFill"
+                                     IsVisible="{Binding HasThumbnail}"/>
+                              
+                              <!-- Delete button overlay -->
+                              <Button Content="🗑️"
+                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).DeleteDatasetCommand}"
+                                      CommandParameter="{Binding}"
+                                      HorizontalAlignment="Right"
+                                      VerticalAlignment="Top"
+                                      Margin="8"
+                                      Padding="6"
+                                      Background="#80000000"
+                                      CornerRadius="4"
+                                      Opacity="0.7"/>
+                            </Grid>
+                          </Border>
+                          
+                          <!-- Info Area -->
+                          <Border Grid.Row="1" 
+                                  Padding="12,8"
+                                  Background="#2A2A2A">
+                            <StackPanel>
+                              <TextBlock Text="{Binding Name}"
+                                         FontWeight="SemiBold"
+                                         FontSize="14"
+                                         TextTrimming="CharacterEllipsis"
+                                         MaxLines="1"/>
+                              <TextBlock Text="{Binding ImageCountText}"
+                                         FontSize="12"
+                                         Opacity="0.6"/>
+                            </StackPanel>
+                          </Border>
+                          
+                        </Grid>
+                      </Border>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <!-- Dataset Detail View (Images with Captions) -->
+            <ScrollViewer IsVisible="{Binding IsViewingDataset}"
+                          Padding="16">
+              <ItemsControl ItemsSource="{Binding DatasetImages}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DatasetImageViewModel">
+                    <Border Width="280" 
+                            Margin="8"
+                            Background="#2A2A2A"
+                            CornerRadius="8"
+                            ClipToBounds="True"
+                            BorderBrush="#444"
+                            BorderThickness="1">
+                      <Grid RowDefinitions="200,Auto,Auto">
+                        
+                        <!-- Image with action buttons -->
+                        <Border Grid.Row="0" 
+                                Background="#1A1A1A"
+                                CornerRadius="8,8,0,0"
+                                ClipToBounds="True">
+                          <Panel>
+                            <!-- Image using converter -->
+                            <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
+                                   Stretch="UniformToFill"/>
+                            
+                            <!-- Action buttons overlay -->
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Margin="8"
+                                        Spacing="4">
+                              <!-- Send to Image Edit button -->
+                              <Button Content="🖼️"
+                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
+                                      CommandParameter="{Binding}"
+                                      Padding="8,6"
+                                      Background="#80000000"
+                                      CornerRadius="4"
+                                      ToolTip.Tip="Send to Image Edit"/>
+                              <!-- Delete button -->
+                              <Button Content="🗑️"
+                                      Command="{Binding DeleteCommand}"
+                                      Padding="8,6"
+                                      Background="#80000000"
+                                      CornerRadius="4"
+                                      ToolTip.Tip="Delete image"/>
+                            </StackPanel>
+                          </Panel>
+                        </Border>
+                        
+                        <!-- Filename -->
+                        <Border Grid.Row="1" 
+                                Padding="8,4"
+                                Background="#222">
+                          <TextBlock Text="{Binding FullFileName}"
+                                     FontSize="11"
+                                     Opacity="0.6"
+                                     TextTrimming="CharacterEllipsis"/>
+                        </Border>
+                        
+                        <!-- Caption Editor -->
+                        <Border Grid.Row="2" Padding="8">
+                          <Grid RowDefinitions="*,Auto">
+                            <TextBox Grid.Row="0"
+                                     Text="{Binding Caption, Mode=TwoWay}"
+                                     Watermark="Enter caption..."
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     MinHeight="60"
+                                     MaxHeight="100"/>
+                            
+                            <!-- Unsaved indicator + Save button -->
+                            <StackPanel Grid.Row="1" 
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,4,0,0"
+                                        IsVisible="{Binding HasUnsavedChanges}">
+                              <TextBlock Text="Modified"
+                                         Foreground="Orange"
+                                         FontSize="11"
+                                         VerticalAlignment="Center"
+                                         Margin="0,0,8,0"/>
+                              <Button Content="Save"
+                                      Command="{Binding SaveCaptionCommand}"
+                                      FontSize="11"
+                                      Padding="8,2"/>
+                            </StackPanel>
+                          </Grid>
+                        </Border>
+                        
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+            
+          </Grid>
         </Grid>
       </TabItem>
 
@@ -59,5 +351,17 @@
       </TabItem>
 
     </TabControl>
+
+    <!-- Status Bar -->
+    <Border Grid.Row="1"
+            Background="#1E1E1E"
+            Padding="8,4"
+            BorderBrush="#333"
+            BorderThickness="0,1,0,0"
+            IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+      <TextBlock Text="{Binding StatusMessage}" 
+                 Opacity="0.8"
+                 FontSize="12"/>
+    </Border>
   </Grid>
 </UserControl>
