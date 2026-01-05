@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -12,42 +13,139 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware
 {
     private readonly IAppSettingsService _settingsService;
+    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+
+    private bool _isStorageConfigured;
+    private string? _statusMessage;
+    private bool _isViewingDataset;
+    private DatasetCardViewModel? _activeDataset;
+    private bool _isLoading;
+    private bool _hasUnsavedChanges;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
 
+    #region Observable Properties
+
     /// <summary>
     /// Indicates whether the dataset storage path is configured.
     /// </summary>
-    [ObservableProperty]
-    private bool _isStorageConfigured;
+    public bool IsStorageConfigured
+    {
+        get => _isStorageConfigured;
+        set => SetProperty(ref _isStorageConfigured, value);
+    }
 
     /// <summary>
     /// Status message to display to the user.
     /// </summary>
-    [ObservableProperty]
-    private string? _statusMessage;
+    public string? StatusMessage
+    {
+        get => _statusMessage;
+        set => SetProperty(ref _statusMessage, value);
+    }
+
+    /// <summary>
+    /// Whether we are currently viewing a dataset's contents (vs overview).
+    /// </summary>
+    public bool IsViewingDataset
+    {
+        get => _isViewingDataset;
+        set => SetProperty(ref _isViewingDataset, value);
+    }
+
+    /// <summary>
+    /// The currently selected/active dataset.
+    /// </summary>
+    public DatasetCardViewModel? ActiveDataset
+    {
+        get => _activeDataset;
+        set => SetProperty(ref _activeDataset, value);
+    }
+
+    /// <summary>
+    /// Whether images are currently loading.
+    /// </summary>
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set => SetProperty(ref _isLoading, value);
+    }
+
+    /// <summary>
+    /// Whether there are unsaved caption changes.
+    /// </summary>
+    public bool HasUnsavedChanges
+    {
+        get => _hasUnsavedChanges;
+        set => SetProperty(ref _hasUnsavedChanges, value);
+    }
+
+    #endregion
+
+    #region Collections
+
+    /// <summary>
+    /// Collection of dataset cards (folders in the storage path).
+    /// </summary>
+    public ObservableCollection<DatasetCardViewModel> Datasets { get; } = [];
+
+    /// <summary>
+    /// Collection of images in the active dataset.
+    /// </summary>
+    public ObservableCollection<DatasetImageViewModel> DatasetImages { get; } = [];
+
+    #endregion
+
+    #region Commands
+
+    public IAsyncRelayCommand CheckStorageConfigurationCommand { get; }
+    public IAsyncRelayCommand LoadDatasetsCommand { get; }
+    public IAsyncRelayCommand<DatasetCardViewModel?> OpenDatasetCommand { get; }
+    public IAsyncRelayCommand GoToOverviewCommand { get; }
+    public IAsyncRelayCommand CreateDatasetCommand { get; }
+    public IAsyncRelayCommand AddImagesCommand { get; }
+    public IRelayCommand SaveAllCaptionsCommand { get; }
+    public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
+
+    #endregion
+
+    #region Constructors
 
     public LoraDatasetHelperViewModel(IAppSettingsService settingsService)
     {
         _settingsService = settingsService;
+        
+        // Initialize commands
+        CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
+        LoadDatasetsCommand = new AsyncRelayCommand(LoadDatasetsAsync);
+        OpenDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(OpenDatasetAsync);
+        GoToOverviewCommand = new AsyncRelayCommand(GoToOverviewAsync);
+        CreateDatasetCommand = new AsyncRelayCommand(CreateDatasetAsync);
+        AddImagesCommand = new AsyncRelayCommand(AddImagesAsync);
+        SaveAllCaptionsCommand = new RelayCommand(SaveAllCaptions);
+        DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
     }
 
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel()
+    public LoraDatasetHelperViewModel() : this(null!)
     {
-        _settingsService = null!;
         IsStorageConfigured = true;
+        
+        // Design-time demo data
+        Datasets.Add(new DatasetCardViewModel { Name = "Character Training", ImageCount = 45 });
+        Datasets.Add(new DatasetCardViewModel { Name = "Style Reference", ImageCount = 23 });
+        Datasets.Add(new DatasetCardViewModel { Name = "Background Scenes", ImageCount = 12 });
     }
 
-    /// <summary>
-    /// Checks if the dataset storage path is configured.
-    /// </summary>
-    [RelayCommand]
+    #endregion
+
+    #region Command Implementations
+
     private async Task CheckStorageConfigurationAsync()
     {
         if (_settingsService is null) return;
@@ -55,12 +153,117 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         var settings = await _settingsService.GetSettingsAsync();
         IsStorageConfigured = !string.IsNullOrWhiteSpace(settings.DatasetStoragePath)
                               && Directory.Exists(settings.DatasetStoragePath);
+
+        if (IsStorageConfigured)
+        {
+            await LoadDatasetsAsync();
+        }
     }
 
-    /// <summary>
-    /// Creates a new dataset folder.
-    /// </summary>
-    [RelayCommand]
+    private async Task LoadDatasetsAsync()
+    {
+        if (_settingsService is null) return;
+
+        IsLoading = true;
+        try
+        {
+            var settings = await _settingsService.GetSettingsAsync();
+            if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+            {
+                IsStorageConfigured = false;
+                return;
+            }
+
+            IsStorageConfigured = true;
+            Datasets.Clear();
+
+            var folders = Directory.GetDirectories(settings.DatasetStoragePath);
+            foreach (var folder in folders.OrderBy(f => Path.GetFileName(f)))
+            {
+                var card = DatasetCardViewModel.FromFolder(folder);
+                Datasets.Add(card);
+            }
+
+            StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading datasets: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task OpenDatasetAsync(DatasetCardViewModel? dataset)
+    {
+        if (dataset is null) return;
+
+        IsLoading = true;
+        try
+        {
+            ActiveDataset = dataset;
+            DatasetImages.Clear();
+
+            if (!Directory.Exists(dataset.FolderPath))
+            {
+                StatusMessage = "Dataset folder no longer exists.";
+                return;
+            }
+
+            var imageFiles = Directory.EnumerateFiles(dataset.FolderPath)
+                .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var imagePath in imageFiles)
+            {
+                var imageVm = DatasetImageViewModel.FromFile(
+                    imagePath,
+                    OnImageDeleteRequested,
+                    OnCaptionChanged);
+                DatasetImages.Add(imageVm);
+            }
+
+            IsViewingDataset = true;
+            HasUnsavedChanges = false;
+            StatusMessage = $"Loaded {DatasetImages.Count} images";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading dataset: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task GoToOverviewAsync()
+    {
+        // Check for unsaved changes
+        if (HasUnsavedChanges && DialogService is not null)
+        {
+            var save = await DialogService.ShowConfirmAsync(
+                "Unsaved Changes",
+                "You have unsaved caption changes. Save them before leaving?");
+            
+            if (save)
+            {
+                SaveAllCaptions();
+            }
+        }
+
+        ActiveDataset = null;
+        DatasetImages.Clear();
+        IsViewingDataset = false;
+        HasUnsavedChanges = false;
+
+        // Refresh the datasets list
+        await LoadDatasetsAsync();
+    }
+
     private async Task CreateDatasetAsync()
     {
         if (DialogService is null || _settingsService is null) return;
@@ -118,10 +321,146 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             Directory.CreateDirectory(datasetPath);
             StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
+            
+            // Refresh the list
+            await LoadDatasetsAsync();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Failed to create dataset: {ex.Message}";
         }
     }
+
+    private async Task AddImagesAsync()
+    {
+        if (DialogService is null || ActiveDataset is null) return;
+
+        // Show drag-drop file picker dialog
+        var files = await DialogService.ShowFileDropDialogAsync($"Add Images to: {ActiveDataset.Name}");
+        if (files is null || files.Count == 0) return;
+
+        IsLoading = true;
+        try
+        {
+            var copied = 0;
+            var skipped = 0;
+
+            foreach (var sourceFile in files)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destPath = Path.Combine(ActiveDataset.FolderPath, fileName);
+
+                if (!File.Exists(destPath))
+                {
+                    File.Copy(sourceFile, destPath);
+                    copied++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            StatusMessage = skipped > 0 
+                ? $"Added {copied} files, skipped {skipped} duplicates"
+                : $"Added {copied} files to dataset";
+            
+            // Reload the dataset
+            await OpenDatasetAsync(ActiveDataset);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error adding files: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void SaveAllCaptions()
+    {
+        var saved = 0;
+        foreach (var image in DatasetImages.Where(i => i.HasUnsavedChanges))
+        {
+            image.SaveCaptionCommand.Execute(null);
+            saved++;
+        }
+
+        HasUnsavedChanges = false;
+        StatusMessage = saved > 0 ? $"Saved {saved} captions" : "No changes to save";
+    }
+
+    private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
+    {
+        if (dataset is null || DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Dataset",
+            $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in this dataset.");
+
+        if (!confirm) return;
+
+        try
+        {
+            Directory.Delete(dataset.FolderPath, recursive: true);
+            Datasets.Remove(dataset);
+            StatusMessage = $"Deleted dataset '{dataset.Name}'";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting dataset: {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region Private Methods
+
+    private async void OnImageDeleteRequested(DatasetImageViewModel image)
+    {
+        if (DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Image",
+            $"Delete '{image.FullFileName}' and its caption?");
+
+        if (!confirm) return;
+
+        try
+        {
+            // Delete image file
+            if (File.Exists(image.ImagePath))
+            {
+                File.Delete(image.ImagePath);
+            }
+
+            // Delete caption file
+            if (File.Exists(image.CaptionFilePath))
+            {
+                File.Delete(image.CaptionFilePath);
+            }
+
+            DatasetImages.Remove(image);
+            
+            // Update the dataset card count
+            if (ActiveDataset is not null)
+            {
+                ActiveDataset.ImageCount = DatasetImages.Count;
+            }
+
+            StatusMessage = $"Deleted '{image.FullFileName}'";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting image: {ex.Message}";
+        }
+    }
+
+    private void OnCaptionChanged(DatasetImageViewModel image)
+    {
+        HasUnsavedChanges = DatasetImages.Any(i => i.HasUnsavedChanges);
+    }
+
+    #endregion
 }

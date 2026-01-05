@@ -84,4 +84,24 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.ResultText;
     }
+
+    public async Task<List<string>?> ShowFileDropDialogAsync(string title)
+    {
+        var dialog = new FileDropDialog()
+            .WithTitle(title)
+            .ForImagesAndText();
+
+        await dialog.ShowDialog(_window);
+        return dialog.ResultFiles;
+    }
+
+    public async Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions)
+    {
+        var dialog = new FileDropDialog()
+            .WithTitle(title)
+            .WithExtensions(allowedExtensions);
+
+        await dialog.ShowDialog(_window);
+        return dialog.ResultFiles;
+    }
 }

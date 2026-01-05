@@ -29,5 +29,11 @@ public partial class LoraDatasetHelperView : UserControl
         {
             aware.DialogService = new DialogService(window);
         }
+
+        // Load datasets on first attach
+        if (DataContext is LoraDatasetHelperViewModel vm)
+        {
+            vm.CheckStorageConfigurationCommand.Execute(null);
+        }
     }
 }

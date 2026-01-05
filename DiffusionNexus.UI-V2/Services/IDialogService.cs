@@ -62,6 +62,21 @@ public interface IDialogService
     /// <param name="defaultValue">Optional default value.</param>
     /// <returns>The entered text, or null if cancelled.</returns>
     Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null);
+
+    /// <summary>
+    /// Shows a drag-and-drop file picker dialog for images and text files.
+    /// </summary>
+    /// <param name="title">Dialog title (e.g., "Add Images to: MyDataset").</param>
+    /// <returns>List of selected file paths, or null if cancelled.</returns>
+    Task<List<string>?> ShowFileDropDialogAsync(string title);
+
+    /// <summary>
+    /// Shows a drag-and-drop file picker dialog with custom extensions.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="allowedExtensions">Allowed file extensions (e.g., ".png", ".jpg").</param>
+    /// <returns>List of selected file paths, or null if cancelled.</returns>
+    Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
 }
 
 /// <summary>
