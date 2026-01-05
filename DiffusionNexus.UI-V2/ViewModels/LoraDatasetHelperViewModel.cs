@@ -109,6 +109,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IAsyncRelayCommand AddImagesCommand { get; }
     public IRelayCommand SaveAllCaptionsCommand { get; }
     public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
+    public IRelayCommand OpenContainingFolderCommand { get; }
+    public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
 
     #endregion
 
@@ -127,6 +129,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         AddImagesCommand = new AsyncRelayCommand(AddImagesAsync);
         SaveAllCaptionsCommand = new RelayCommand(SaveAllCaptions);
         DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
+        OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
+        SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
     }
 
     /// <summary>
@@ -460,6 +464,34 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private void OnCaptionChanged(DatasetImageViewModel image)
     {
         HasUnsavedChanges = DatasetImages.Any(i => i.HasUnsavedChanges);
+    }
+
+    private void OpenContainingFolder()
+    {
+        if (ActiveDataset is null || !Directory.Exists(ActiveDataset.FolderPath)) return;
+
+        try
+        {
+            // Open folder in file explorer
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ActiveDataset.FolderPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening folder: {ex.Message}";
+        }
+    }
+
+    private void SendToImageEdit(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        // TODO: Implement navigation to Image Edit tab with this image
+        // For now, just show a status message
+        StatusMessage = $"Send to Image Edit: {image.FullFileName} (not yet implemented)";
     }
 
     #endregion
