@@ -15,6 +15,8 @@ namespace DiffusionNexus.UI.Views;
 public partial class LoraDatasetHelperView : UserControl
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
 
     private ImageEditorControl? _imageEditorCanvas;
     private Border? _emptyDatasetDropZone;
@@ -233,50 +235,50 @@ public partial class LoraDatasetHelperView : UserControl
         var files = e.Data.GetFiles();
         if (files is null) return;
 
-        var imageFiles = new List<string>();
+        var mediaFiles = new List<string>();
 
         foreach (var item in files)
         {
             if (item is IStorageFile file)
             {
                 var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
-                if (ImageExtensions.Contains(ext))
+                if (MediaExtensions.Contains(ext))
                 {
-                    imageFiles.Add(file.Path.LocalPath);
+                    mediaFiles.Add(file.Path.LocalPath);
                 }
             }
             else if (item is IStorageFolder folder)
             {
-                // Add images from folder
-                AddImagesFromFolder(folder.Path.LocalPath, imageFiles);
+                // Add media files from folder
+                AddMediaFromFolder(folder.Path.LocalPath, mediaFiles);
             }
         }
 
-        if (imageFiles.Count == 0)
+        if (mediaFiles.Count == 0)
         {
-            vm.StatusMessage = "No valid image files found in the dropped items.";
+            vm.StatusMessage = "No valid media files found in the dropped items.";
             return;
         }
 
         // Copy files to dataset
-        await CopyFilesToDatasetAsync(vm, imageFiles);
+        await CopyFilesToDatasetAsync(vm, mediaFiles);
     }
 
-    private void AddImagesFromFolder(string folderPath, List<string> imageFiles)
+    private void AddMediaFromFolder(string folderPath, List<string> mediaFiles)
     {
         if (!Directory.Exists(folderPath)) return;
 
         foreach (var file in Directory.EnumerateFiles(folderPath))
         {
             var ext = Path.GetExtension(file).ToLowerInvariant();
-            if (ImageExtensions.Contains(ext))
+            if (MediaExtensions.Contains(ext))
             {
-                imageFiles.Add(file);
+                mediaFiles.Add(file);
             }
         }
     }
 
-    private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> imageFiles)
+    private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> mediaFiles)
     {
         if (vm.ActiveDataset is null) return;
 
@@ -290,7 +292,7 @@ public partial class LoraDatasetHelperView : UserControl
             // Ensure the folder exists
             Directory.CreateDirectory(destFolderPath);
 
-            foreach (var sourceFile in imageFiles)
+            foreach (var sourceFile in mediaFiles)
             {
                 var fileName = Path.GetFileName(sourceFile);
                 var destPath = Path.Combine(destFolderPath, fileName);
@@ -306,16 +308,20 @@ public partial class LoraDatasetHelperView : UserControl
                 }
             }
 
+            var fileType = mediaFiles.Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())) 
+                ? "files" 
+                : "images";
+            
             vm.StatusMessage = skipped > 0
-                ? $"Added {copied} images, skipped {skipped} duplicates"
-                : $"Added {copied} images to dataset";
+                ? $"Added {copied} {fileType}, skipped {skipped} duplicates"
+                : $"Added {copied} {fileType} to dataset";
 
-            // Refresh the dataset to show new images
+            // Refresh the dataset to show new files
             await vm.RefreshActiveDatasetAsync();
         }
         catch (Exception ex)
         {
-            vm.StatusMessage = $"Error adding images: {ex.Message}";
+            vm.StatusMessage = $"Error adding files: {ex.Message}";
         }
         finally
         {
