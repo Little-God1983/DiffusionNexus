@@ -328,7 +328,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Image Info -->
               <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
@@ -344,18 +344,44 @@
                            IsVisible="{Binding ImageEditor.HasImage}"/>
               </StackPanel>
               
+              <!-- Tool Separator -->
+              <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+              
+              <!-- Tools -->
+              <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <!-- Crop Tool Button -->
+                <ToggleButton Content="✂️ Crop"
+                              IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}"
+                              ToolTip.Tip="Crop tool (C to apply, Escape to cancel)"
+                              Padding="12,6"/>
+              </StackPanel>
+              
               <!-- Spacer -->
-              <Border Grid.Column="2"/>
+              <Border Grid.Column="3"/>
+              
+              <!-- Crop Actions (visible when crop tool is active) -->
+              <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+                <Button Content="✓ Apply Crop"
+                        Command="{Binding ImageEditor.ApplyCropCommand}"
+                        Background="#2D7D46"
+                        ToolTip.Tip="Apply crop (C or Enter)"/>
+                <Button Content="✕ Cancel"
+                        Command="{Binding ImageEditor.CancelCropCommand}"
+                        ToolTip.Tip="Cancel crop (Escape)"/>
+              </StackPanel>
+              
+              <!-- Separator -->
+              <Border Grid.Column="5" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
               
               <!-- Reset Button -->
-              <Button Grid.Column="3"
+              <Button Grid.Column="6"
                       Content="↺ Reset"
                       Command="{Binding ImageEditor.ResetImageCommand}"
                       Margin="0,0,8,0"
                       ToolTip.Tip="Reset to original image"/>
               
               <!-- Clear Button -->
-              <Button Grid.Column="4"
+              <Button Grid.Column="7"
                       Content="✕ Clear"
                       Command="{Binding ImageEditor.ClearImageCommand}"
                       ToolTip.Tip="Clear the image"/>
@@ -391,6 +417,7 @@
               <!-- Image Editor Control -->
               <controls:ImageEditorControl x:Name="ImageEditorCanvas"
                                            ImagePath="{Binding ImageEditor.CurrentImagePath}"
+                                           IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
                                            IsVisible="{Binding ImageEditor.HasImage}"/>
             </Grid>
           </Border>

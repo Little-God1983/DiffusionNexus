@@ -13,6 +13,11 @@ public class ImageEditorCore : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Gets the crop tool instance.
+    /// </summary>
+    public CropTool CropTool { get; } = new();
+
+    /// <summary>
     /// Gets the current working bitmap width.
     /// </summary>
     public int Width => _workingBitmap?.Width ?? 0;
@@ -130,6 +135,11 @@ public class ImageEditorCore : IDisposable
 
         var imageRect = CalculateFitRect(canvasWidth, canvasHeight);
         canvas.DrawBitmap(_workingBitmap, imageRect);
+
+        // Update crop tool with current image bounds and render overlay
+        CropTool.SetImageBounds(imageRect);
+        CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
         return imageRect;
     }
 
@@ -189,6 +199,71 @@ public class ImageEditorCore : IDisposable
     /// Gets the working bitmap for external rendering (read-only access recommended).
     /// </summary>
     public SKBitmap? GetWorkingBitmap() => _workingBitmap;
+
+    /// <summary>
+    /// Crops the image to the specified rectangle in image coordinates.
+    /// </summary>
+    /// <param name="cropRect">The crop rectangle in image pixel coordinates.</param>
+    /// <returns>True if the crop was successful.</returns>
+    public bool Crop(SKRectI cropRect)
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        // Validate crop rectangle
+        if (cropRect.Width <= 0 || cropRect.Height <= 0)
+            return false;
+
+        // Clamp to image bounds
+        var clampedRect = new SKRectI(
+            Math.Clamp(cropRect.Left, 0, _workingBitmap.Width),
+            Math.Clamp(cropRect.Top, 0, _workingBitmap.Height),
+            Math.Clamp(cropRect.Right, 0, _workingBitmap.Width),
+            Math.Clamp(cropRect.Bottom, 0, _workingBitmap.Height));
+
+        if (clampedRect.Width <= 0 || clampedRect.Height <= 0)
+            return false;
+
+        try
+        {
+            // Create new bitmap with cropped dimensions
+            var croppedBitmap = new SKBitmap(clampedRect.Width, clampedRect.Height);
+
+            using (var canvas = new SKCanvas(croppedBitmap))
+            {
+                var srcRect = new SKRect(clampedRect.Left, clampedRect.Top, clampedRect.Right, clampedRect.Bottom);
+                var destRect = new SKRect(0, 0, clampedRect.Width, clampedRect.Height);
+                canvas.DrawBitmap(_workingBitmap, srcRect, destRect);
+            }
+
+            // Replace working bitmap
+            _workingBitmap.Dispose();
+            _workingBitmap = croppedBitmap;
+
+            // Clear crop tool state
+            CropTool.ClearCropRegion();
+
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Applies the current crop selection from the crop tool.
+    /// </summary>
+    /// <returns>True if the crop was successful.</returns>
+    public bool ApplyCrop()
+    {
+        if (!CropTool.HasCropRegion || _workingBitmap is null)
+            return false;
+
+        var cropRect = CropTool.GetImageCropRect(_workingBitmap.Width, _workingBitmap.Height);
+        return Crop(cropRect);
+    }
 
     protected virtual void OnImageChanged()
     {

@@ -14,6 +14,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
+    private bool _isCropToolActive;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -92,6 +93,24 @@ public partial class ImageEditorViewModel : ObservableObject
     public string ImageDimensions => HasImage ? $"{ImageWidth} × {ImageHeight}" : string.Empty;
 
     /// <summary>
+    /// Whether the crop tool is currently active.
+    /// </summary>
+    public bool IsCropToolActive
+    {
+        get => _isCropToolActive;
+        set
+        {
+            if (SetProperty(ref _isCropToolActive, value))
+            {
+                ToggleCropToolCommand.NotifyCanExecuteChanged();
+                ApplyCropCommand.NotifyCanExecuteChanged();
+                CancelCropCommand.NotifyCanExecuteChanged();
+                StatusMessage = value ? "Crop: Drag to select region. Press C or Enter to apply, Escape to cancel." : null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Command to clear the current image.
     /// </summary>
     public IRelayCommand ClearImageCommand { get; }
@@ -100,6 +119,21 @@ public partial class ImageEditorViewModel : ObservableObject
     /// Command to reset to the original image.
     /// </summary>
     public IRelayCommand ResetImageCommand { get; }
+
+    /// <summary>
+    /// Command to toggle the crop tool.
+    /// </summary>
+    public IRelayCommand ToggleCropToolCommand { get; }
+
+    /// <summary>
+    /// Command to apply the current crop.
+    /// </summary>
+    public IRelayCommand ApplyCropCommand { get; }
+
+    /// <summary>
+    /// Command to cancel the current crop.
+    /// </summary>
+    public IRelayCommand CancelCropCommand { get; }
 
     /// <summary>
     /// Event raised when image should be cleared in the control.
@@ -111,10 +145,33 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler? ResetRequested;
 
+    /// <summary>
+    /// Event raised when crop tool should be activated in the control.
+    /// </summary>
+    public event EventHandler? CropToolActivated;
+
+    /// <summary>
+    /// Event raised when crop tool should be deactivated in the control.
+    /// </summary>
+    public event EventHandler? CropToolDeactivated;
+
+    /// <summary>
+    /// Event raised when crop should be applied in the control.
+    /// </summary>
+    public event EventHandler? ApplyCropRequested;
+
+    /// <summary>
+    /// Event raised when crop should be cancelled in the control.
+    /// </summary>
+    public event EventHandler? CancelCropRequested;
+
     public ImageEditorViewModel()
     {
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
+        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage);
+        ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
+        CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
     }
 
     /// <summary>
@@ -141,17 +198,54 @@ public partial class ImageEditorViewModel : ObservableObject
         ImageHeight = height;
     }
 
+    /// <summary>
+    /// Called when crop is successfully applied.
+    /// </summary>
+    public void OnCropApplied()
+    {
+        IsCropToolActive = false;
+        StatusMessage = "Crop applied successfully.";
+        // Update dimensions will be called by the control's ImageChanged event
+    }
+
+    private void ExecuteToggleCropTool()
+    {
+        IsCropToolActive = !IsCropToolActive;
+        if (IsCropToolActive)
+        {
+            CropToolActivated?.Invoke(this, EventArgs.Empty);
+        }
+        else
+        {
+            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ExecuteApplyCrop()
+    {
+        ApplyCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteCancelCrop()
+    {
+        IsCropToolActive = false;
+        CancelCropRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Crop cancelled.";
+    }
+
     private void ExecuteClearImage()
     {
         CurrentImagePath = null;
         ImageWidth = 0;
         ImageHeight = 0;
+        IsCropToolActive = false;
         StatusMessage = "Image cleared.";
         ClearRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void ExecuteResetImage()
     {
+        IsCropToolActive = false;
         StatusMessage = "Image reset to original.";
         ResetRequested?.Invoke(this, EventArgs.Empty);
     }

@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
@@ -28,6 +29,12 @@ public class ImageEditorControl : Control
         AvaloniaProperty.Register<ImageEditorControl, Color>(nameof(CanvasBackground), Color.FromRgb(0x1A, 0x1A, 0x1A));
 
     /// <summary>
+    /// Defines the <see cref="IsCropToolActive"/> property.
+    /// </summary>
+    public static readonly StyledProperty<bool> IsCropToolActiveProperty =
+        AvaloniaProperty.Register<ImageEditorControl, bool>(nameof(IsCropToolActive));
+
+    /// <summary>
     /// Gets or sets the path to the image to display.
     /// </summary>
     public string? ImagePath
@@ -43,6 +50,15 @@ public class ImageEditorControl : Control
     {
         get => GetValue(CanvasBackgroundProperty);
         set => SetValue(CanvasBackgroundProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets whether the crop tool is active.
+    /// </summary>
+    public bool IsCropToolActive
+    {
+        get => GetValue(IsCropToolActiveProperty);
+        set => SetValue(IsCropToolActiveProperty, value);
     }
 
     /// <summary>
@@ -70,16 +86,23 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler? ImageChanged;
 
+    /// <summary>
+    /// Event raised when crop is applied.
+    /// </summary>
+    public event EventHandler? CropApplied;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
         _editorCore.ImageChanged += OnEditorCoreImageChanged;
+        _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
         ClipToBounds = true;
+        Focusable = true;
     }
 
     static ImageEditorControl()
     {
-        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty);
+        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty);
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -98,6 +121,102 @@ public class ImageEditorControl : Control
                 _editorCore.Clear();
             }
         }
+        else if (change.Property == IsCropToolActiveProperty)
+        {
+            _editorCore.CropTool.IsActive = (bool)change.NewValue!;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+
+        if (!_editorCore.HasImage) return;
+
+        var point = e.GetPosition(this);
+        var skPoint = new SKPoint((float)point.X, (float)point.Y);
+
+        if (_editorCore.CropTool.OnPointerPressed(skPoint))
+        {
+            e.Handled = true;
+            InvalidateVisual();
+        }
+
+        Focus();
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+
+        if (!_editorCore.HasImage) return;
+
+        var point = e.GetPosition(this);
+        var skPoint = new SKPoint((float)point.X, (float)point.Y);
+
+        if (_editorCore.CropTool.OnPointerMoved(skPoint))
+        {
+            e.Handled = true;
+            InvalidateVisual();
+        }
+
+        // Update cursor based on handle
+        UpdateCursor(skPoint);
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+
+        if (_editorCore.CropTool.OnPointerReleased())
+        {
+            e.Handled = true;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (!_editorCore.HasImage) return;
+
+        // Apply crop with C or Enter when crop tool is active
+        if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
+        {
+            if (e.Key == Key.C || e.Key == Key.Enter)
+            {
+                ApplyCrop();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                _editorCore.CropTool.ClearCropRegion();
+                InvalidateVisual();
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void UpdateCursor(SKPoint point)
+    {
+        if (!_editorCore.CropTool.IsActive)
+        {
+            Cursor = Cursor.Default;
+            return;
+        }
+
+        var handle = _editorCore.CropTool.GetCursorForPoint(point);
+        Cursor = handle switch
+        {
+            ImageEditor.CropHandle.TopLeft or ImageEditor.CropHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
+            ImageEditor.CropHandle.TopRight or ImageEditor.CropHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
+            ImageEditor.CropHandle.Top or ImageEditor.CropHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+            ImageEditor.CropHandle.Left or ImageEditor.CropHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+            ImageEditor.CropHandle.Move => new Cursor(StandardCursorType.SizeAll),
+            _ => new Cursor(StandardCursorType.Cross)
+        };
     }
 
     public override void Render(DrawingContext context)
@@ -158,16 +277,52 @@ public class ImageEditorControl : Control
         _editorCore.ResetToOriginal();
     }
 
+    /// <summary>
+    /// Applies the current crop selection.
+    /// </summary>
+    public bool ApplyCrop()
+    {
+        var result = _editorCore.ApplyCrop();
+        if (result)
+        {
+            CropApplied?.Invoke(this, EventArgs.Empty);
+            InvalidateVisual();
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Activates the crop tool.
+    /// </summary>
+    public void ActivateCropTool()
+    {
+        IsCropToolActive = true;
+    }
+
+    /// <summary>
+    /// Deactivates the crop tool.
+    /// </summary>
+    public void DeactivateCropTool()
+    {
+        IsCropToolActive = false;
+    }
+
     private void OnEditorCoreImageChanged(object? sender, EventArgs e)
     {
         InvalidateVisual();
         ImageChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void OnCropRegionChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
         _editorCore.ImageChanged -= OnEditorCoreImageChanged;
+        _editorCore.CropTool.CropRegionChanged -= OnCropRegionChanged;
         _editorCore.Dispose();
     }
 

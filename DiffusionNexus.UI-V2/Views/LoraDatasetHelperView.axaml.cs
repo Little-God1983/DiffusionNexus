@@ -56,6 +56,12 @@ public partial class LoraDatasetHelperView : UserControl
                 _imageEditorCanvas.ImageHeight);
         };
 
+        // Handle crop applied
+        _imageEditorCanvas.CropApplied += (_, _) =>
+        {
+            vm.ImageEditor.OnCropApplied();
+        };
+
         // Handle clear/reset requests from ViewModel
         vm.ImageEditor.ClearRequested += (_, _) =>
         {
@@ -65,6 +71,32 @@ public partial class LoraDatasetHelperView : UserControl
         vm.ImageEditor.ResetRequested += (_, _) =>
         {
             _imageEditorCanvas.ResetToOriginal();
+        };
+
+        // Handle crop tool activation/deactivation
+        vm.ImageEditor.CropToolActivated += (_, _) =>
+        {
+            _imageEditorCanvas.ActivateCropTool();
+        };
+
+        vm.ImageEditor.CropToolDeactivated += (_, _) =>
+        {
+            _imageEditorCanvas.DeactivateCropTool();
+        };
+
+        // Handle crop apply/cancel requests
+        vm.ImageEditor.ApplyCropRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas.ApplyCrop())
+            {
+                vm.ImageEditor.OnCropApplied();
+            }
+        };
+
+        vm.ImageEditor.CancelCropRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.ClearCropRegion();
+            _imageEditorCanvas.DeactivateCropTool();
         };
     }
 }
