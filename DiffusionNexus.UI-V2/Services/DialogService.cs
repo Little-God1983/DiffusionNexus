@@ -97,7 +97,7 @@ public class DialogService : IDialogService
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
-            .ForImagesAndText();
+            .ForMediaAndText();
 
         await dialog.ShowDialog(_window);
         return dialog.ResultFiles;

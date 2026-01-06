@@ -4,10 +4,12 @@ using CommunityToolkit.Mvvm.Input;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel representing a single image in a dataset with its editable caption.
+/// ViewModel representing a single media item (image or video) in a dataset with its editable caption.
 /// </summary>
 public class DatasetImageViewModel : ObservableObject
 {
+    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
     private readonly Action<DatasetImageViewModel>? _onCaptionChanged;
     private readonly Action<DatasetImageViewModel>? _onRatingChanged;
@@ -18,15 +20,60 @@ public class DatasetImageViewModel : ObservableObject
     private bool _hasUnsavedChanges;
     private bool _isSelected;
     private ImageRatingStatus _ratingStatus = ImageRatingStatus.Unrated;
+    private string? _thumbnailPath;
 
     /// <summary>
-    /// Full path to the image file.
+    /// Full path to the media file (image or video).
     /// </summary>
     public string ImagePath
     {
         get => _imagePath;
-        set => SetProperty(ref _imagePath, value);
+        set
+        {
+            if (SetProperty(ref _imagePath, value))
+            {
+                OnPropertyChanged(nameof(IsVideo));
+                OnPropertyChanged(nameof(IsImage));
+                OnPropertyChanged(nameof(MediaType));
+                OnPropertyChanged(nameof(FileName));
+                OnPropertyChanged(nameof(FullFileName));
+                OnPropertyChanged(nameof(FileExtension));
+            }
+        }
     }
+
+    /// <summary>
+    /// Path to the thumbnail for this media item.
+    /// For images, this is the same as ImagePath.
+    /// For videos, this is the generated thumbnail (.webp) if available.
+    /// </summary>
+    public string? ThumbnailPath
+    {
+        get => _thumbnailPath ?? (_isVideo ? GetVideoThumbnailPath() : _imagePath);
+        set => SetProperty(ref _thumbnailPath, value);
+    }
+
+    /// <summary>
+    /// Whether this media item is a video file.
+    /// </summary>
+    public bool IsVideo => _isVideo;
+
+    /// <summary>
+    /// Whether this media item is an image file.
+    /// </summary>
+    public bool IsImage => !_isVideo;
+
+    /// <summary>
+    /// Display text for the media type.
+    /// </summary>
+    public string MediaType => _isVideo ? "Video" : "Image";
+
+    /// <summary>
+    /// File extension of the media file.
+    /// </summary>
+    public string FileExtension => Path.GetExtension(_imagePath).ToUpperInvariant().TrimStart('.');
+
+    private bool _isVideo;
 
     /// <summary>
     /// Caption text (loaded from .txt file with same name).
@@ -54,7 +101,7 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether this image is currently selected.
+    /// Whether this item is currently selected.
     /// </summary>
     public bool IsSelected
     {
@@ -63,7 +110,7 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The quality rating status of this image.
+    /// The quality rating status of this media item.
     /// </summary>
     public ImageRatingStatus RatingStatus
     {
@@ -81,17 +128,17 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether the image is marked as approved/production-ready.
+    /// Whether the item is marked as approved/production-ready.
     /// </summary>
     public bool IsApproved => _ratingStatus == ImageRatingStatus.Approved;
 
     /// <summary>
-    /// Whether the image is marked as rejected/failed.
+    /// Whether the item is marked as rejected/failed.
     /// </summary>
     public bool IsRejected => _ratingStatus == ImageRatingStatus.Rejected;
 
     /// <summary>
-    /// Whether the image has not been rated yet.
+    /// Whether the item has not been rated yet.
     /// </summary>
     public bool IsUnrated => _ratingStatus == ImageRatingStatus.Unrated;
 
@@ -126,17 +173,17 @@ public class DatasetImageViewModel : ObservableObject
     public IRelayCommand RevertCaptionCommand { get; }
 
     /// <summary>
-    /// Command to delete this image.
+    /// Command to delete this item.
     /// </summary>
     public IRelayCommand DeleteCommand { get; }
 
     /// <summary>
-    /// Command to mark the image as approved (production-ready).
+    /// Command to mark the item as approved (production-ready).
     /// </summary>
     public IRelayCommand MarkApprovedCommand { get; }
 
     /// <summary>
-    /// Command to mark the image as rejected (failed).
+    /// Command to mark the item as rejected (failed).
     /// </summary>
     public IRelayCommand MarkRejectedCommand { get; }
 
@@ -167,21 +214,46 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Creates a DatasetImageViewModel from an image file path.
+    /// Creates a DatasetImageViewModel from a media file path (image or video).
     /// </summary>
     public static DatasetImageViewModel FromFile(
-        string imagePath,
+        string mediaPath,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         Action<DatasetImageViewModel>? onCaptionChanged = null,
         Action<DatasetImageViewModel>? onRatingChanged = null)
     {
         var vm = new DatasetImageViewModel(onDeleteRequested, onCaptionChanged, onRatingChanged)
         {
-            ImagePath = imagePath
+            ImagePath = mediaPath,
+            _isVideo = IsVideoFile(mediaPath)
         };
         vm.LoadCaption();
         vm.LoadRating();
         return vm;
+    }
+
+    /// <summary>
+    /// Checks if a file is a video file based on its extension.
+    /// </summary>
+    public static bool IsVideoFile(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return false;
+        
+        var ext = Path.GetExtension(filePath);
+        return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Gets the path to the video thumbnail (generated .webp file).
+    /// </summary>
+    private string? GetVideoThumbnailPath()
+    {
+        if (string.IsNullOrWhiteSpace(_imagePath))
+            return null;
+        
+        var thumbnailPath = Path.ChangeExtension(_imagePath, ".webp");
+        return File.Exists(thumbnailPath) ? thumbnailPath : null;
     }
 
     /// <summary>

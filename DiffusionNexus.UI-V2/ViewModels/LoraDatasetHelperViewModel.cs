@@ -9,12 +9,16 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the LoRA Dataset Helper module providing dataset management,
-/// image editing, captioning, and auto scale/crop functionality.
+/// image/video editing, captioning, and auto scale/crop functionality.
 /// </summary>
 public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
+    
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
 
     private bool _isStorageConfigured;
     private string? _statusMessage;
@@ -157,7 +161,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     /// <summary>
-    /// Whether the active dataset has no images (empty state).
+    /// Whether the active dataset has no media files (empty state).
     /// Used to show the drag-and-drop zone when a dataset is newly created or empty.
     /// </summary>
     public bool HasNoImages => IsViewingDataset && DatasetImages.Count == 0;
@@ -213,9 +217,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     #region Constructors
 
-    public LoraDatasetHelperViewModel(IAppSettingsService settingsService)
+    public LoraDatasetHelperViewModel(IAppSettingsService settingsService, IVideoThumbnailService? videoThumbnailService = null)
     {
         _settingsService = settingsService;
+        _videoThumbnailService = videoThumbnailService;
         
         // Subscribe to DatasetImages collection changes to update HasNoImages
         DatasetImages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoImages));
@@ -238,7 +243,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!)
+    public LoraDatasetHelperViewModel() : this(null!, null)
     {
         IsStorageConfigured = true;
         
@@ -421,25 +426,33 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             OnPropertyChanged(nameof(SelectedVersion));
 
             // Use the current version folder path (versioned or legacy)
-            var imageFolderPath = dataset.CurrentVersionFolderPath;
-            if (!Directory.Exists(imageFolderPath))
+            var mediaFolderPath = dataset.CurrentVersionFolderPath;
+            if (!Directory.Exists(mediaFolderPath))
             {
                 StatusMessage = "Dataset folder no longer exists.";
                 return;
             }
 
-            var imageFiles = Directory.EnumerateFiles(imageFolderPath)
-                .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            // Load all media files (images and videos)
+            var mediaFiles = Directory.EnumerateFiles(mediaFolderPath)
+                .Where(f => MediaExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .OrderBy(f => f)
                 .ToList();
 
-            foreach (var imagePath in imageFiles)
+            foreach (var mediaPath in mediaFiles)
             {
-                var imageVm = DatasetImageViewModel.FromFile(
-                    imagePath,
+                var mediaVm = DatasetImageViewModel.FromFile(
+                    mediaPath,
                     OnImageDeleteRequested,
                     OnCaptionChanged);
-                DatasetImages.Add(imageVm);
+                
+                // Generate thumbnail for video files if service is available
+                if (mediaVm.IsVideo && _videoThumbnailService is not null)
+                {
+                    await GenerateVideoThumbnailAsync(mediaVm);
+                }
+                
+                DatasetImages.Add(mediaVm);
             }
 
             // Set selected category based on dataset metadata
@@ -448,9 +461,22 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
             IsViewingDataset = true;
             HasUnsavedChanges = false;
-            StatusMessage = dataset.HasMultipleVersions 
-                ? $"Loaded {DatasetImages.Count} images (Version {dataset.CurrentVersion} of {dataset.TotalVersions})"
-                : $"Loaded {DatasetImages.Count} images";
+            
+            var imageCount = DatasetImages.Count(m => m.IsImage);
+            var videoCount = DatasetImages.Count(m => m.IsVideo);
+            
+            if (dataset.HasMultipleVersions)
+            {
+                StatusMessage = videoCount > 0
+                    ? $"Loaded {imageCount} images, {videoCount} videos (Version {dataset.CurrentVersion} of {dataset.TotalVersions})"
+                    : $"Loaded {imageCount} images (Version {dataset.CurrentVersion} of {dataset.TotalVersions})";
+            }
+            else
+            {
+                StatusMessage = videoCount > 0
+                    ? $"Loaded {imageCount} images, {videoCount} videos"
+                    : $"Loaded {imageCount} images";
+            }
         }
         catch (Exception ex)
         {
@@ -460,6 +486,112 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Generates a thumbnail for a video file if it doesn't already exist.
+    /// </summary>
+    private async Task GenerateVideoThumbnailAsync(DatasetImageViewModel mediaVm)
+    {
+        if (_videoThumbnailService is null || !mediaVm.IsVideo)
+            return;
+
+        try
+        {
+            var result = await _videoThumbnailService.GenerateThumbnailAsync(mediaVm.ImagePath);
+            if (result.Success && result.ThumbnailPath is not null)
+            {
+                mediaVm.ThumbnailPath = result.ThumbnailPath;
+            }
+        }
+        catch
+        {
+            // Ignore thumbnail generation errors - video will display without preview
+        }
+    }
+
+    private async Task AddImagesAsync()
+    {
+        if (DialogService is null || ActiveDataset is null) return;
+
+        // Show drag-drop file picker dialog
+        var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
+        if (files is null || files.Count == 0) return;
+
+        IsLoading = true;
+        try
+        {
+            var copied = 0;
+            var skipped = 0;
+            var videoThumbnailsGenerated = 0;
+
+            // Add to the current version folder
+            var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
+            
+            // Ensure the folder exists (for new versioned datasets)
+            Directory.CreateDirectory(destFolderPath);
+
+            foreach (var sourceFile in files)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destPath = Path.Combine(destFolderPath, fileName);
+
+                if (!File.Exists(destPath))
+                {
+                    File.Copy(sourceFile, destPath);
+                    copied++;
+                    
+                    // Generate thumbnail for video files
+                    if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                    {
+                        var result = await _videoThumbnailService.GenerateThumbnailAsync(destPath);
+                        if (result.Success)
+                        {
+                            videoThumbnailsGenerated++;
+                        }
+                    }
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            var message = skipped > 0 
+                ? $"Added {copied} files, skipped {skipped} duplicates"
+                : $"Added {copied} files to dataset";
+            
+            if (videoThumbnailsGenerated > 0)
+            {
+                message += $" ({videoThumbnailsGenerated} video thumbnails generated)";
+            }
+            
+            StatusMessage = message;
+            
+            // Reload the dataset
+            await OpenDatasetAsync(ActiveDataset);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error adding files: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void SaveAllCaptions()
+    {
+        var saved = 0;
+        foreach (var image in DatasetImages.Where(i => i.HasUnsavedChanges))
+        {
+            image.SaveCaptionCommand.Execute(null);
+            saved++;
+        }
+
+        HasUnsavedChanges = false;
+        StatusMessage = saved > 0 ? $"Saved {saved} captions" : "No changes to save";
     }
 
     /// <summary>
@@ -588,70 +720,39 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
-    private async Task AddImagesAsync()
+    private void OpenContainingFolder()
     {
-        if (DialogService is null || ActiveDataset is null) return;
+        if (ActiveDataset is null) return;
 
-        // Show drag-drop file picker dialog
-        var files = await DialogService.ShowFileDropDialogAsync($"Add Images to: {ActiveDataset.Name}");
-        if (files is null || files.Count == 0) return;
+        // Open the current version folder (not the base folder)
+        var folderPath = ActiveDataset.CurrentVersionFolderPath;
+        
+        // Fall back to base folder if version folder doesn't exist
+        if (!Directory.Exists(folderPath))
+        {
+            folderPath = ActiveDataset.FolderPath;
+        }
 
-        IsLoading = true;
+        if (!Directory.Exists(folderPath)) return;
+
         try
         {
-            var copied = 0;
-            var skipped = 0;
-
-            // Add to the current version folder
-            var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
-            
-            // Ensure the folder exists (for new versioned datasets)
-            Directory.CreateDirectory(destFolderPath);
-
-            foreach (var sourceFile in files)
+            // Open folder in file explorer
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                var fileName = Path.GetFileName(sourceFile);
-                var destPath = Path.Combine(destFolderPath, fileName);
-
-                if (!File.Exists(destPath))
-                {
-                    File.Copy(sourceFile, destPath);
-                    copied++;
-                }
-                else
-                {
-                    skipped++;
-                }
-            }
-
-            StatusMessage = skipped > 0 
-                ? $"Added {copied} files, skipped {skipped} duplicates"
-                : $"Added {copied} files to dataset";
-            
-            // Reload the dataset
-            await OpenDatasetAsync(ActiveDataset);
+                FileName = folderPath,
+                UseShellExecute = true
+            });
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Error adding files: {ex.Message}";
-        }
-        finally
-        {
-            IsLoading = false;
+            StatusMessage = $"Error opening folder: {ex.Message}";
         }
     }
 
-    private void SaveAllCaptions()
+    private void OnCaptionChanged(DatasetImageViewModel image)
     {
-        var saved = 0;
-        foreach (var image in DatasetImages.Where(i => i.HasUnsavedChanges))
-        {
-            image.SaveCaptionCommand.Execute(null);
-            saved++;
-        }
-
-        HasUnsavedChanges = false;
-        StatusMessage = saved > 0 ? $"Saved {saved} captions" : "No changes to save";
+        HasUnsavedChanges = DatasetImages.Any(i => i.HasUnsavedChanges);
     }
 
     private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
@@ -788,7 +889,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Create V1 folder
         Directory.CreateDirectory(v1Path);
 
-        // Move all image and text files to V1
+        // Move all media and text files to V1
         var filesToMove = Directory.EnumerateFiles(rootPath)
             .Where(f =>
             {
@@ -798,8 +899,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 // Skip .dataset folder files and hidden files
                 if (fileName.StartsWith(".")) return false;
                 
-                // Include images and text files
-                return ImageExtensions.Contains(ext) || ext == ".txt";
+                // Include images, videos, and text files
+                return MediaExtensions.Contains(ext) || ext == ".txt";
             })
             .ToList();
 
@@ -824,14 +925,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         if (DialogService is null) return;
 
         var confirm = await DialogService.ShowConfirmAsync(
-            "Delete Image",
+            "Delete Media",
             $"Delete '{image.FullFileName}' and its caption?");
 
         if (!confirm) return;
 
         try
         {
-            // Delete image file
+            // Delete media file
             if (File.Exists(image.ImagePath))
             {
                 File.Delete(image.ImagePath);
@@ -842,61 +943,44 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             {
                 File.Delete(image.CaptionFilePath);
             }
+            
+            // Delete video thumbnail if exists
+            if (image.IsVideo)
+            {
+                var thumbnailPath = Path.ChangeExtension(image.ImagePath, ".webp");
+                if (File.Exists(thumbnailPath))
+                {
+                    File.Delete(thumbnailPath);
+                }
+            }
 
             DatasetImages.Remove(image);
             
-            // Update the dataset card count
+            // Update the dataset card counts
             if (ActiveDataset is not null)
             {
-                ActiveDataset.ImageCount = DatasetImages.Count;
+                ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
             }
 
             StatusMessage = $"Deleted '{image.FullFileName}'";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Error deleting image: {ex.Message}";
-        }
-    }
-
-    private void OnCaptionChanged(DatasetImageViewModel image)
-    {
-        HasUnsavedChanges = DatasetImages.Any(i => i.HasUnsavedChanges);
-    }
-
-    private void OpenContainingFolder()
-    {
-        if (ActiveDataset is null) return;
-
-        // Open the current version folder (not the base folder)
-        var folderPath = ActiveDataset.CurrentVersionFolderPath;
-        
-        // Fall back to base folder if version folder doesn't exist
-        if (!Directory.Exists(folderPath))
-        {
-            folderPath = ActiveDataset.FolderPath;
-        }
-
-        if (!Directory.Exists(folderPath)) return;
-
-        try
-        {
-            // Open folder in file explorer
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = folderPath,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Error opening folder: {ex.Message}";
+            StatusMessage = $"Error deleting media: {ex.Message}";
         }
     }
 
     private void SendToImageEdit(DatasetImageViewModel? image)
     {
         if (image is null) return;
+
+        // Only allow image editing for images, not videos
+        if (image.IsVideo)
+        {
+            StatusMessage = "Video editing is not supported. Use an external video editor.";
+            return;
+        }
 
         ImageEditor.LoadImage(image.ImagePath);
         SelectedTabIndex = 1; // Switch to Image Edit tab

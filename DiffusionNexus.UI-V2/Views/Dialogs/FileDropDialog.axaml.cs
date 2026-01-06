@@ -16,7 +16,9 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 public partial class FileDropDialog : Window, INotifyPropertyChanged
 {
     private static readonly string[] DefaultImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] DefaultVideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     private static readonly string[] DefaultTextExtensions = [".txt", ".caption"];
+    private static readonly string[] DefaultMediaExtensions = [..DefaultImageExtensions, ..DefaultVideoExtensions];
     
     private string[] _allowedExtensions = [];
 
@@ -70,7 +72,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     #region Configuration
 
     /// <summary>
-    /// Configures the dialog to accept image files.
+    /// Configures the dialog to accept image files only.
     /// </summary>
     public FileDropDialog ForImages()
     {
@@ -79,8 +81,37 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Configures the dialog to accept video files only.
+    /// </summary>
+    public FileDropDialog ForVideos()
+    {
+        _allowedExtensions = DefaultVideoExtensions;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the dialog to accept media files (images and videos).
+    /// </summary>
+    public FileDropDialog ForMedia()
+    {
+        _allowedExtensions = DefaultMediaExtensions;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the dialog to accept media and text/caption files.
+    /// This is the recommended mode for dataset file drops.
+    /// </summary>
+    public FileDropDialog ForMediaAndText()
+    {
+        _allowedExtensions = [..DefaultMediaExtensions, ..DefaultTextExtensions];
+        return this;
+    }
+
+    /// <summary>
     /// Configures the dialog to accept image and text/caption files.
     /// </summary>
+    [Obsolete("Use ForMediaAndText() to also support video files")]
     public FileDropDialog ForImagesAndText()
     {
         _allowedExtensions = [..DefaultImageExtensions, ..DefaultTextExtensions];

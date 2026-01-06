@@ -4,7 +4,7 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel representing a single dataset folder as a card.
-/// Displays folder name, image count, and thumbnail preview.
+/// Displays folder name, media count, and thumbnail preview.
 /// 
 /// Folder structure:
 /// - Legacy: DatasetName/images+captions (flat structure)
@@ -13,10 +13,13 @@ namespace DiffusionNexus.UI.ViewModels;
 public class DatasetCardViewModel : ObservableObject
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
     
     private string _name = string.Empty;
     private string _folderPath = string.Empty;
     private int _imageCount;
+    private int _videoCount;
     private string? _thumbnailPath;
     private bool _isSelected;
     private int? _categoryId;
@@ -56,10 +59,41 @@ public class DatasetCardViewModel : ObservableObject
             if (SetProperty(ref _imageCount, value))
             {
                 OnPropertyChanged(nameof(ImageCountText));
+                OnPropertyChanged(nameof(MediaCountText));
+                OnPropertyChanged(nameof(TotalMediaCount));
                 OnPropertyChanged(nameof(CanIncrementVersion));
             }
         }
     }
+
+    /// <summary>
+    /// Number of videos in the current version.
+    /// </summary>
+    public int VideoCount
+    {
+        get => _videoCount;
+        set
+        {
+            if (SetProperty(ref _videoCount, value))
+            {
+                OnPropertyChanged(nameof(VideoCountText));
+                OnPropertyChanged(nameof(MediaCountText));
+                OnPropertyChanged(nameof(TotalMediaCount));
+                OnPropertyChanged(nameof(HasVideos));
+                OnPropertyChanged(nameof(CanIncrementVersion));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Total number of media files (images + videos).
+    /// </summary>
+    public int TotalMediaCount => _imageCount + _videoCount;
+
+    /// <summary>
+    /// Whether this dataset contains video files.
+    /// </summary>
+    public bool HasVideos => _videoCount > 0;
 
     /// <summary>
     /// Path to the first image for thumbnail preview.
@@ -197,6 +231,26 @@ public class DatasetCardViewModel : ObservableObject
     public string ImageCountText => _imageCount == 1 ? "1 image" : $"{_imageCount} images";
 
     /// <summary>
+    /// Display text showing video count.
+    /// </summary>
+    public string VideoCountText => _videoCount == 1 ? "1 video" : $"{_videoCount} videos";
+
+    /// <summary>
+    /// Display text showing combined media count (images + videos).
+    /// </summary>
+    public string MediaCountText
+    {
+        get
+        {
+            if (_videoCount == 0)
+                return ImageCountText;
+            if (_imageCount == 0)
+                return VideoCountText;
+            return $"{_imageCount} images, {_videoCount} videos";
+        }
+    }
+
+    /// <summary>
     /// Display text for version (e.g., "V1" or "V2 of 3").
     /// </summary>
     public string VersionDisplayText => _totalVersions > 1 
@@ -223,9 +277,9 @@ public class DatasetCardViewModel : ObservableObject
     public bool HasMultipleVersions => _totalVersions > 1;
 
     /// <summary>
-    /// Whether this dataset has images and can have its version incremented.
+    /// Whether this dataset has media files and can have its version incremented.
     /// </summary>
-    public bool CanIncrementVersion => _imageCount > 0;
+    public bool CanIncrementVersion => TotalMediaCount > 0;
 
     /// <summary>
     /// Whether this dataset has a thumbnail to display.
@@ -264,6 +318,48 @@ public class DatasetCardViewModel : ObservableObject
     public event EventHandler? CategoryChanged;
 
     /// <summary>
+    /// Checks if a file is an image file.
+    /// </summary>
+    public static bool IsImageFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        return ImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Checks if a file is a video file.
+    /// </summary>
+    public static bool IsVideoFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Checks if a file is a media file (image or video).
+    /// </summary>
+    public static bool IsMediaFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        return MediaExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Gets supported media extensions (images + videos).
+    /// </summary>
+    public static IReadOnlyList<string> GetMediaExtensions() => MediaExtensions;
+
+    /// <summary>
+    /// Gets supported image extensions.
+    /// </summary>
+    public static IReadOnlyList<string> GetImageExtensions() => ImageExtensions;
+
+    /// <summary>
+    /// Gets supported video extensions.
+    /// </summary>
+    public static IReadOnlyList<string> GetVideoExtensions() => VideoExtensions;
+
+    /// <summary>
     /// Creates a DatasetCardViewModel from a folder path.
     /// Detects whether it's a legacy or versioned structure.
     /// </summary>
@@ -280,8 +376,8 @@ public class DatasetCardViewModel : ObservableObject
         // Load metadata (will detect and migrate legacy structure if needed)
         vm.LoadMetadata();
         
-        // Detect folder structure and load images
-        vm.DetectAndLoadImages();
+        // Detect folder structure and load media files
+        vm.DetectAndLoadMedia();
 
         return vm;
     }
@@ -307,15 +403,30 @@ public class DatasetCardViewModel : ObservableObject
             DisplayVersion = version
         };
 
-        // Load images from this specific version folder
+        // Load media files from this specific version folder
         if (Directory.Exists(versionPath))
         {
-            var images = Directory.EnumerateFiles(versionPath)
-                .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                .ToList();
-
-            card.ImageCount = images.Count;
-            card.ThumbnailPath = images.FirstOrDefault();
+            var files = Directory.EnumerateFiles(versionPath).ToList();
+            
+            card.ImageCount = files.Count(f => IsImageFile(f));
+            card.VideoCount = files.Count(f => IsVideoFile(f));
+            
+            // Prefer image for thumbnail, fallback to video thumbnail if available
+            var firstImage = files.FirstOrDefault(f => IsImageFile(f));
+            if (firstImage is not null)
+            {
+                card.ThumbnailPath = firstImage;
+            }
+            else
+            {
+                // For videos, look for an existing thumbnail (.webp or .jpg with same name)
+                var firstVideo = files.FirstOrDefault(f => IsVideoFile(f));
+                if (firstVideo is not null)
+                {
+                    var videoThumbnail = Path.ChangeExtension(firstVideo, ".webp");
+                    card.ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
+                }
+            }
         }
 
         return card;
@@ -339,13 +450,14 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Detects the folder structure (versioned or legacy) and loads image info.
+    /// Detects the folder structure (versioned or legacy) and loads media file info.
     /// </summary>
-    private void DetectAndLoadImages()
+    private void DetectAndLoadMedia()
     {
         if (!Directory.Exists(_folderPath))
         {
             ImageCount = 0;
+            VideoCount = 0;
             ThumbnailPath = null;
             return;
         }
@@ -371,26 +483,45 @@ public class DatasetCardViewModel : ObservableObject
         }
         else
         {
-            // Legacy or empty structure - check if there are images in root
+            // Legacy or empty structure - check if there are media files in root
             IsVersionedStructure = false;
             TotalVersions = 1;
             CurrentVersion = 1;
         }
 
-        // Load images from current version folder
-        var imagesPath = CurrentVersionFolderPath;
-        if (Directory.Exists(imagesPath))
+        // Load media files from current version folder
+        var mediaPath = CurrentVersionFolderPath;
+        if (Directory.Exists(mediaPath))
         {
-            var images = Directory.EnumerateFiles(imagesPath)
-                .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                .ToList();
+            var files = Directory.EnumerateFiles(mediaPath).ToList();
+            
+            var images = files.Where(f => IsImageFile(f)).ToList();
+            var videos = files.Where(f => IsVideoFile(f)).ToList();
 
             ImageCount = images.Count;
-            ThumbnailPath = images.FirstOrDefault();
+            VideoCount = videos.Count;
+            
+            // Prefer image for thumbnail, fallback to video thumbnail if available
+            if (images.Count > 0)
+            {
+                ThumbnailPath = images.First();
+            }
+            else if (videos.Count > 0)
+            {
+                // For videos, look for an existing thumbnail (.webp with same name)
+                var firstVideo = videos.First();
+                var videoThumbnail = Path.ChangeExtension(firstVideo, ".webp");
+                ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
+            }
+            else
+            {
+                ThumbnailPath = null;
+            }
         }
         else
         {
             ImageCount = 0;
+            VideoCount = 0;
             ThumbnailPath = null;
         }
     }
@@ -520,11 +651,11 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Refreshes the image count and thumbnail from the current version folder.
+    /// Refreshes the media count and thumbnail from the current version folder.
     /// </summary>
     public void RefreshImageInfo()
     {
-        DetectAndLoadImages();
+        DetectAndLoadMedia();
     }
 }
 
