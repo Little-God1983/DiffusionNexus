@@ -41,25 +41,27 @@
               
               <!-- Dataset Title (when viewing) -->
               <StackPanel Grid.Column="1"
-                          Orientation="Vertical"
+                          Orientation="Horizontal"
+                          Spacing="12"
                           VerticalAlignment="Center"
                           IsVisible="{Binding IsViewingDataset}">
-                <TextBlock Text="{Binding ActiveDataset.Name, StringFormat='Dataset: {0}'}"
+                <TextBlock Text="{Binding ActiveDataset.Name}"
                            FontSize="18"
-                           FontWeight="SemiBold"/>
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
                 <!-- Editable Description for current version -->
-                <TextBox x:Name="DescriptionTextBox"
-                         Text="{Binding ActiveDataset.Description, Mode=TwoWay}"
-                         Watermark="Add description for this version..."
+                <TextBox Text="{Binding ActiveDataset.Description, Mode=TwoWay}"
+                         x:Name="DescriptionTextBox"
+                         Watermark="Add description..."
                          FontSize="12"
-                         MinWidth="250"
-                         MaxWidth="400"
-                         Margin="0,4,0,0"
-                         Padding="4,2"
+                         MinWidth="200"
+                         MaxWidth="350"
+                         Padding="6,4"
                          Background="#333"
                          BorderBrush="#444"
                          BorderThickness="1"
-                         CornerRadius="4"/>
+                         CornerRadius="4"
+                         VerticalAlignment="Center"/>
               </StackPanel>
               
               <!-- Version Dropdown (when viewing dataset with multiple versions) -->
