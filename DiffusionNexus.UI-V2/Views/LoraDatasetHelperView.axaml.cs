@@ -625,7 +625,7 @@ public partial class LoraDatasetHelperView : UserControl
     }
 
     /// <summary>
-    /// Handles pointer press on image cards for Ctrl+Click selection.
+    /// Handles pointer press on image cards for Ctrl+Click and Shift+Click selection.
     /// </summary>
     private void OnImageCardPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -638,13 +638,14 @@ public partial class LoraDatasetHelperView : UserControl
         // Only handle left mouse button
         if (!props.IsLeftButtonPressed) return;
 
-        // Check for Ctrl key modifier
+        // Check for modifier keys
         var isCtrlPressed = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var isShiftPressed = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
-        if (isCtrlPressed)
+        if (isShiftPressed || isCtrlPressed)
         {
-            // Toggle selection on Ctrl+Click
-            vm.ToggleSelectionCommand.Execute(image);
+            // Use the ViewModel's modifier-aware selection
+            vm.SelectWithModifiers(image, isShiftPressed, isCtrlPressed);
             e.Handled = true;
         }
         // Note: Normal clicks are handled by the CheckBox inside the card

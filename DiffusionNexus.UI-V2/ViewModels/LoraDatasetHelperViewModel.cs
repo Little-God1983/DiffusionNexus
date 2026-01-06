@@ -34,6 +34,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _flattenVersions;
     private bool _isFileDialogOpen;
     private int _selectionCount;
+    private DatasetImageViewModel? _lastClickedImage;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -1418,6 +1419,78 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         if (image is null) return;
 
         image.IsSelected = !image.IsSelected;
+        _lastClickedImage = image;
+        UpdateSelectionCount();
+    }
+
+    /// <summary>
+    /// Handles selection with modifier keys (Shift for range, Ctrl for toggle).
+    /// </summary>
+    public void SelectWithModifiers(DatasetImageViewModel? image, bool isShiftPressed, bool isCtrlPressed)
+    {
+        if (image is null) return;
+
+        if (isShiftPressed && _lastClickedImage is not null)
+        {
+            // Range selection: select all images between last clicked and current
+            SelectRange(_lastClickedImage, image);
+        }
+        else if (isCtrlPressed)
+        {
+            // Toggle selection (Ctrl+Click)
+            image.IsSelected = !image.IsSelected;
+            _lastClickedImage = image;
+        }
+        else
+        {
+            // Normal click: clear other selections and select this one
+            ClearSelectionSilent();
+            image.IsSelected = true;
+            _lastClickedImage = image;
+        }
+
+        UpdateSelectionCount();
+    }
+
+    /// <summary>
+    /// Selects all images in a range between two images (inclusive).
+    /// </summary>
+    private void SelectRange(DatasetImageViewModel from, DatasetImageViewModel to)
+    {
+        var fromIndex = DatasetImages.IndexOf(from);
+        var toIndex = DatasetImages.IndexOf(to);
+
+        if (fromIndex == -1 || toIndex == -1) return;
+
+        var startIndex = Math.Min(fromIndex, toIndex);
+        var endIndex = Math.Max(fromIndex, toIndex);
+
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            DatasetImages[i].IsSelected = true;
+        }
+
+        _lastClickedImage = to;
+    }
+
+    /// <summary>
+    /// Selects images by their indices (used for marquee/drag selection).
+    /// </summary>
+    public void SelectByIndices(IEnumerable<int> indices, bool addToSelection)
+    {
+        if (!addToSelection)
+        {
+            ClearSelectionSilent();
+        }
+
+        foreach (var index in indices)
+        {
+            if (index >= 0 && index < DatasetImages.Count)
+            {
+                DatasetImages[index].IsSelected = true;
+            }
+        }
+
         UpdateSelectionCount();
     }
 
