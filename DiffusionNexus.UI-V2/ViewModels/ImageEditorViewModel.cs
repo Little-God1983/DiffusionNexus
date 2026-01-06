@@ -321,6 +321,12 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler? ZoomToActualRequested;
 
+    /// <summary>
+    /// Event raised when an image save completes successfully.
+    /// The string parameter contains the saved file path.
+    /// </summary>
+    public event EventHandler<string>? ImageSaved;
+
     public ImageEditorViewModel()
     {
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
@@ -394,6 +400,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnSaveAsNewCompleted(string newPath)
     {
         StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
+
+        // Update current image path to the new file
+        CurrentImagePath = newPath;
+
+        // Notify that the image was saved
+        ImageSaved?.Invoke(this, newPath);
     }
 
     /// <summary>
@@ -402,6 +414,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnSaveOverwriteCompleted()
     {
         StatusMessage = $"Saved: {ImageFileName}";
+
+        // Notify that the image was saved (path remains the same)
+        if (CurrentImagePath is not null)
+        {
+            ImageSaved?.Invoke(this, CurrentImagePath);
+        }
     }
 
     private void ExecuteToggleCropTool()

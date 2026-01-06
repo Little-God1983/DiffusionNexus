@@ -367,6 +367,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Subscribe to DatasetImages collection changes to update HasNoImages
         DatasetImages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoImages));
         
+        // Subscribe to ImageEditor save events to refresh the thumbnail list
+        ImageEditor.ImageSaved += OnImageEditorImageSaved;
+        
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
         LoadDatasetsCommand = new AsyncRelayCommand(LoadDatasetsAsync);
@@ -1772,6 +1775,89 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     #region Image Edit Tab Dataset Navigation
 
     /// <summary>
+    /// Handles the ImageSaved event from the ImageEditor.
+    /// Refreshes the version dropdown and image list, maintaining the current selection.
+    /// </summary>
+    private async void OnImageEditorImageSaved(object? sender, string savedImagePath)
+    {
+        if (_selectedEditorDataset is null || _selectedEditorVersion is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Remember the current version
+            var currentVersionNumber = _selectedEditorVersion.Version;
+            
+            // Reload the version items (to update image counts)
+            var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
+            EditorVersionItems.Clear();
+            
+            foreach (var version in versionNumbers)
+            {
+                var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
+                var imageCount = 0;
+                
+                if (Directory.Exists(versionPath))
+                {
+                    imageCount = Directory.EnumerateFiles(versionPath)
+                        .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+                }
+                
+                EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
+            }
+
+            // Re-select the same version
+            var versionToSelect = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersionNumber);
+            if (versionToSelect is not null)
+            {
+                // Manually reload images to avoid double-loading
+                EditorDatasetImages.Clear();
+                
+                var versionPath = _selectedEditorDataset.GetVersionFolderPath(currentVersionNumber);
+                if (Directory.Exists(versionPath))
+                {
+                    var imageFiles = Directory.EnumerateFiles(versionPath)
+                        .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                        .OrderBy(f => f)
+                        .ToList();
+
+                    foreach (var imagePath in imageFiles)
+                    {
+                        var imageVm = DatasetImageViewModel.FromFile(
+                            imagePath,
+                            onDeleteRequested: null,
+                            onCaptionChanged: null,
+                            onRatingChanged: null,
+                            onSelectionChanged: null);
+                        
+                        EditorDatasetImages.Add(imageVm);
+                    }
+                }
+
+                // Update the selected version without triggering reload
+                _selectedEditorVersion = versionToSelect;
+                OnPropertyChanged(nameof(SelectedEditorVersion));
+                
+                // Find and select the saved image in the list
+                var savedImageVm = EditorDatasetImages.FirstOrDefault(img => 
+                    string.Equals(img.ImagePath, savedImagePath, StringComparison.OrdinalIgnoreCase));
+                
+                if (savedImageVm is not null)
+                {
+                    _selectedEditorImage = savedImageVm;
+                    OnPropertyChanged(nameof(SelectedEditorImage));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing images: {ex.Message}";
+        }
+    }
+
+    /// <summary>
     /// Loads the specified image into the Image Editor.
     /// </summary>
     private void LoadEditorImage(DatasetImageViewModel? image)
@@ -1884,4 +1970,29 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     #endregion
+
+    /// <summary>
+    /// Event handler for when an image is saved in the Image Editor.
+    /// Refreshes the thumbnail list for the current dataset.
+    /// </summary>
+    private async void OnImageEditorImageSaved(string imagePath)
+    {
+        if (ActiveDataset is null || !IsViewingDataset)
+        {
+            return;
+        }
+
+        try
+        {
+            // Refresh the dataset card's image info from current version folder
+            ActiveDataset.RefreshImageInfo();
+
+            // Reload images for the current dataset
+            await OpenDatasetAsync(ActiveDataset);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing dataset: {ex.Message}";
+        }
+    }
 }
