@@ -145,19 +145,26 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         var dropZone = this.FindControl<Border>("DropZone");
         if (dropZone is null) return;
 
-        // Check if any of the dragged files are valid
-        var hasValidFiles = HasValidFilesInDrag(e);
+        // Check the dragged files
+        var (hasValidFiles, hasInvalidFiles) = AnalyzeFilesInDrag(e);
         
-        if (hasValidFiles)
+        if (hasValidFiles && hasInvalidFiles)
         {
-            // Green border for valid files
+            // Dark yellow/orange border for mixed files (some valid, some invalid)
+            dropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#DAA520")); // Goldenrod
+            dropZone.BorderThickness = new Avalonia.Thickness(3);
+            e.DragEffects = DragDropEffects.Copy;
+        }
+        else if (hasValidFiles)
+        {
+            // Green border for all valid files
             dropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
             dropZone.BorderThickness = new Avalonia.Thickness(3);
             e.DragEffects = DragDropEffects.Copy;
         }
         else
         {
-            // Red border for invalid/unsupported files
+            // Red border for all invalid/unsupported files
             dropZone.BorderBrush = Avalonia.Media.Brushes.Red;
             dropZone.BorderThickness = new Avalonia.Thickness(3);
             e.DragEffects = DragDropEffects.None;
@@ -198,29 +205,69 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Checks if the drag event contains any valid files based on allowed extensions.
+    /// Analyzes the drag event to determine if it contains valid files, invalid files, or both.
     /// </summary>
-    private bool HasValidFilesInDrag(DragEventArgs e)
+    /// <returns>A tuple of (hasValidFiles, hasInvalidFiles)</returns>
+    private (bool HasValid, bool HasInvalid) AnalyzeFilesInDrag(DragEventArgs e)
     {
         var files = e.Data.GetFiles();
-        if (files is null) return false;
+        if (files is null) return (false, false);
+
+        var hasValid = false;
+        var hasInvalid = false;
 
         foreach (var item in files)
         {
             if (item is IStorageFile file)
             {
                 if (IsFileAllowed(file.Path.LocalPath))
-                    return true;
+                    hasValid = true;
+                else
+                    hasInvalid = true;
             }
             else if (item is IStorageFolder folder)
             {
-                // For folders, check if any files inside would be valid
-                if (HasValidFilesInFolder(folder.Path.LocalPath))
-                    return true;
+                var (folderHasValid, folderHasInvalid) = AnalyzeFilesInFolder(folder.Path.LocalPath);
+                if (folderHasValid) hasValid = true;
+                if (folderHasInvalid) hasInvalid = true;
             }
+
+            // Early exit if we've found both types
+            if (hasValid && hasInvalid) break;
         }
 
-        return false;
+        return (hasValid, hasInvalid);
+    }
+
+    /// <summary>
+    /// Analyzes a folder to determine if it contains valid files, invalid files, or both.
+    /// </summary>
+    private (bool HasValid, bool HasInvalid) AnalyzeFilesInFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return (false, false);
+
+        var hasValid = false;
+        var hasInvalid = false;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folderPath))
+            {
+                if (IsFileAllowed(file))
+                    hasValid = true;
+                else
+                    hasInvalid = true;
+
+                // Early exit if we've found both types
+                if (hasValid && hasInvalid) break;
+            }
+        }
+        catch
+        {
+            // Ignore access errors
+        }
+
+        return (hasValid, hasInvalid);
     }
 
     /// <summary>
@@ -233,29 +280,6 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
         return _allowedExtensions.Contains(ext);
-    }
-
-    /// <summary>
-    /// Checks if a folder contains any valid files.
-    /// </summary>
-    private bool HasValidFilesInFolder(string folderPath)
-    {
-        if (!Directory.Exists(folderPath)) return false;
-
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(folderPath))
-            {
-                if (IsFileAllowed(file))
-                    return true;
-            }
-        }
-        catch
-        {
-            // Ignore access errors
-        }
-
-        return false;
     }
 
     #endregion

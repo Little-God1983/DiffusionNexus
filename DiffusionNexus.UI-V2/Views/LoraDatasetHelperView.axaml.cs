@@ -216,19 +216,26 @@ public partial class LoraDatasetHelperView : UserControl
         
         if (_emptyDatasetDropZone is null) return;
 
-        // Check if any of the dragged files are valid media files
-        var hasValidFiles = HasValidMediaFilesInDrag(e);
+        // Analyze the dragged files
+        var (hasValidFiles, hasInvalidFiles) = AnalyzeMediaFilesInDrag(e);
         
-        if (hasValidFiles)
+        if (hasValidFiles && hasInvalidFiles)
         {
-            // Green border for valid files
+            // Dark yellow/orange border for mixed files (some valid, some invalid)
+            _emptyDatasetDropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#DAA520")); // Goldenrod
+            _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+            e.DragEffects = DragDropEffects.Copy;
+        }
+        else if (hasValidFiles)
+        {
+            // Green border for all valid files
             _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
             e.DragEffects = DragDropEffects.Copy;
         }
         else
         {
-            // Red border for invalid/unsupported files
+            // Red border for all invalid/unsupported files
             _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.Red;
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
             e.DragEffects = DragDropEffects.None;
@@ -246,12 +253,16 @@ public partial class LoraDatasetHelperView : UserControl
     }
 
     /// <summary>
-    /// Checks if the drag event contains any valid media files.
+    /// Analyzes the drag event to determine if it contains valid media files, invalid files, or both.
     /// </summary>
-    private bool HasValidMediaFilesInDrag(DragEventArgs e)
+    /// <returns>A tuple of (hasValidFiles, hasInvalidFiles)</returns>
+    private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInDrag(DragEventArgs e)
     {
         var files = e.Data.GetFiles();
-        if (files is null) return false;
+        if (files is null) return (false, false);
+
+        var hasValid = false;
+        var hasInvalid = false;
 
         foreach (var item in files)
         {
@@ -259,25 +270,33 @@ public partial class LoraDatasetHelperView : UserControl
             {
                 var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
                 if (MediaExtensions.Contains(ext))
-                    return true;
+                    hasValid = true;
+                else
+                    hasInvalid = true;
             }
             else if (item is IStorageFolder folder)
             {
-                // For folders, check if any files inside would be valid
-                if (HasValidMediaFilesInFolder(folder.Path.LocalPath))
-                    return true;
+                var (folderHasValid, folderHasInvalid) = AnalyzeMediaFilesInFolder(folder.Path.LocalPath);
+                if (folderHasValid) hasValid = true;
+                if (folderHasInvalid) hasInvalid = true;
             }
+
+            // Early exit if we've found both types
+            if (hasValid && hasInvalid) break;
         }
 
-        return false;
+        return (hasValid, hasInvalid);
     }
 
     /// <summary>
-    /// Checks if a folder contains any valid media files.
+    /// Analyzes a folder to determine if it contains valid media files, invalid files, or both.
     /// </summary>
-    private bool HasValidMediaFilesInFolder(string folderPath)
+    private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInFolder(string folderPath)
     {
-        if (!Directory.Exists(folderPath)) return false;
+        if (!Directory.Exists(folderPath)) return (false, false);
+
+        var hasValid = false;
+        var hasInvalid = false;
 
         try
         {
@@ -285,7 +304,12 @@ public partial class LoraDatasetHelperView : UserControl
             {
                 var ext = Path.GetExtension(file).ToLowerInvariant();
                 if (MediaExtensions.Contains(ext))
-                    return true;
+                    hasValid = true;
+                else
+                    hasInvalid = true;
+
+                // Early exit if we've found both types
+                if (hasValid && hasInvalid) break;
             }
         }
         catch
@@ -293,7 +317,7 @@ public partial class LoraDatasetHelperView : UserControl
             // Ignore access errors
         }
 
-        return false;
+        return (hasValid, hasInvalid);
     }
 
     private async void OnEmptyDatasetDrop(object? sender, DragEventArgs e)
