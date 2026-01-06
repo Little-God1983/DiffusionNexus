@@ -341,133 +341,185 @@
             <!-- Dataset Detail View (Images with Captions) -->
             <ScrollViewer IsVisible="{Binding IsViewingDataset}"
                           Padding="16">
-              <ItemsControl ItemsSource="{Binding DatasetImages}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
-                  </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DatasetImageViewModel">
-                    <Border Width="280" 
-                            Margin="8"
-                            Background="#2A2A2A"
-                            CornerRadius="8"
-                            ClipToBounds="True"
-                            BorderBrush="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBorder}}"
-                            BorderThickness="2">
-                      <Grid RowDefinitions="200,Auto,Auto">
-                        
-                        <!-- Image with action buttons -->
-                        <Border Grid.Row="0" 
-                                Background="#1A1A1A"
-                                CornerRadius="6,6,0,0"
-                                ClipToBounds="True">
-                          <Panel>
-                            <!-- Image using converter -->
-                            <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
-                                   Stretch="UniformToFill"/>
-                            
-                            <!-- Rating status indicator (top-left) -->
-                            <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
-                                    CornerRadius="4"
-                                    Padding="6,3"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Top"
-                                    Margin="8"
-                                    IsVisible="{Binding !IsUnrated}">
-                              <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
-                                         FontSize="11"
-                                         FontWeight="SemiBold"
-                                         Foreground="White"/>
-                            </Border>
-                            
-                            <!-- Action buttons overlay (top-right) -->
-                            <StackPanel Orientation="Horizontal"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Top"
-                                        Margin="8"
-                                        Spacing="4">
-                              <!-- Mark Approved (up arrow) -->
-                              <Button Content="▲"
-                                      Command="{Binding MarkApprovedCommand}"
-                                      Padding="8,6"
-                                      Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
-                                      Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+              <Grid>
+                <!-- Empty Dataset Drop Zone -->
+                <Border x:Name="EmptyDatasetDropZone"
+                        IsVisible="{Binding HasNoImages}"
+                        Background="#1A1A1A"
+                        CornerRadius="12"
+                        BorderThickness="3"
+                        BorderBrush="#444"
+                        Margin="32"
+                        Padding="48"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MinWidth="500"
+                        MinHeight="300"
+                        DragDrop.AllowDrop="True">
+                  <StackPanel VerticalAlignment="Center" 
+                              HorizontalAlignment="Center"
+                              Spacing="16">
+                    <TextBlock Text="📁" 
+                               FontSize="72" 
+                               HorizontalAlignment="Center"
+                               Opacity="0.4"/>
+                    <TextBlock Text="This dataset is empty"
+                               FontSize="20"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center"
+                               Opacity="0.8"/>
+                    <TextBlock Text="Drag and drop images here to get started"
+                               FontSize="14"
+                               Foreground="#888"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="or"
+                               FontSize="12"
+                               Foreground="#666"
+                               HorizontalAlignment="Center"
+                               Margin="0,8"/>
+                    <Button Content="📂 Browse for Images"
+                            Command="{Binding AddImagesCommand}"
+                            HorizontalAlignment="Center"
+                            Padding="16,10"
+                            FontSize="14"/>
+                    <TextBlock Text="Supported: PNG, JPG, JPEG, WebP, BMP, GIF"
+                               FontSize="11"
+                               Foreground="#666"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0"/>
+                  </StackPanel>
+                </Border>
+                
+                <!-- Image Cards (when there are images) -->
+                <ItemsControl ItemsSource="{Binding DatasetImages}"
+                              IsVisible="{Binding !HasNoImages}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DatasetImageViewModel">
+                      <Border Width="280" 
+                              Margin="8"
+                              Background="#2A2A2A"
+                              CornerRadius="8"
+                              ClipToBounds="True"
+                              BorderBrush="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBorder}}"
+                              BorderThickness="2">
+                        <Grid RowDefinitions="200,Auto,Auto">
+                          
+                          <!-- Image with action buttons -->
+                          <Border Grid.Row="0" 
+                                  Background="#1A1A1A"
+                                  CornerRadius="6,6,0,0"
+                                  ClipToBounds="True">
+                            <Panel>
+                              <!-- Image using converter -->
+                              <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
+                                     Stretch="UniformToFill"/>
+                              
+                              <!-- Rating status indicator (top-left) -->
+                              <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
                                       CornerRadius="4"
-                                      ToolTip.Tip="Mark as production-ready (click again to clear)"/>
-                              <!-- Mark Rejected (down arrow) -->
-                              <Button Content="▼"
-                                      Command="{Binding MarkRejectedCommand}"
-                                      Padding="8,6"
-                                      Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
-                                      Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
-                                      CornerRadius="4"
-                                      ToolTip.Tip="Mark as failed/rejected (click again to clear)"/>
-                              <!-- Send to Image Edit button -->
-                              <Button Content="🖼️"
-                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
-                                      CommandParameter="{Binding}"
-                                      Padding="8,6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      ToolTip.Tip="Send to Image Edit"/>
-                              <!-- Delete button -->
-                              <Button Content="🗑️"
-                                      Command="{Binding DeleteCommand}"
-                                      Padding="8,6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      ToolTip.Tip="Delete image"/>
-                            </StackPanel>
-                          </Panel>
-                        </Border>
-                        
-                        <!-- Filename -->
-                        <Border Grid.Row="1" 
-                                Padding="8,4"
-                                Background="#222">
-                          <TextBlock Text="{Binding FullFileName}"
-                                     FontSize="11"
-                                     Opacity="0.6"
-                                     TextTrimming="CharacterEllipsis"/>
-                        </Border>
-                        
-                        <!-- Caption Editor -->
-                        <Border Grid.Row="2" Padding="8">
-                          <Grid RowDefinitions="*,Auto">
-                            <TextBox Grid.Row="0"
-                                     Text="{Binding Caption, Mode=TwoWay}"
-                                     Watermark="Enter caption..."
-                                     TextWrapping="Wrap"
-                                     AcceptsReturn="True"
-                                     MinHeight="60"
-                                     MaxHeight="100"/>
-                            
-                            <!-- Unsaved indicator + Save button -->
-                            <StackPanel Grid.Row="1" 
-                                        Orientation="Horizontal"
-                                        HorizontalAlignment="Right"
-                                        Margin="0,4,0,0"
-                                        IsVisible="{Binding HasUnsavedChanges}">
-                              <TextBlock Text="Modified"
-                                         Foreground="Orange"
-                                         FontSize="11"
-                                         VerticalAlignment="Center"
-                                         Margin="0,0,8,0"/>
-                              <Button Content="Save"
-                                      Command="{Binding SaveCaptionCommand}"
-                                      FontSize="11"
-                                      Padding="8,2"/>
-                            </StackPanel>
-                          </Grid>
-                        </Border>
-                        
-                      </Grid>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
+                                      Padding="6,3"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Top"
+                                      Margin="8"
+                                      IsVisible="{Binding !IsUnrated}">
+                                <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="White"/>
+                              </Border>
+                              
+                              <!-- Action buttons overlay (top-right) -->
+                              <StackPanel Orientation="Horizontal"
+                                          HorizontalAlignment="Right"
+                                          VerticalAlignment="Top"
+                                          Margin="8"
+                                          Spacing="4">
+                                <!-- Mark Approved (up arrow) -->
+                                <Button Content="▲"
+                                        Command="{Binding MarkApprovedCommand}"
+                                        Padding="8,6"
+                                        Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                                        Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Mark as production-ready (click again to clear)"/>
+                                <!-- Mark Rejected (down arrow) -->
+                                <Button Content="▼"
+                                        Command="{Binding MarkRejectedCommand}"
+                                        Padding="8,6"
+                                        Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                                        Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Mark as failed/rejected (click again to clear)"/>
+                                <!-- Send to Image Edit button -->
+                                <Button Content="🖼️"
+                                        Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
+                                        CommandParameter="{Binding}"
+                                        Padding="8,6"
+                                        Background="#80000000"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Send to Image Edit"/>
+                                <!-- Delete button -->
+                                <Button Content="🗑️"
+                                        Command="{Binding DeleteCommand}"
+                                        Padding="8,6"
+                                        Background="#80000000"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Delete image"/>
+                              </StackPanel>
+                            </Panel>
+                          </Border>
+                          
+                          <!-- Filename -->
+                          <Border Grid.Row="1" 
+                                  Padding="8,4"
+                                  Background="#222">
+                            <TextBlock Text="{Binding FullFileName}"
+                                       FontSize="11"
+                                       Opacity="0.6"
+                                       TextTrimming="CharacterEllipsis"/>
+                          </Border>
+                          
+                          <!-- Caption Editor -->
+                          <Border Grid.Row="2" Padding="8">
+                            <Grid RowDefinitions="*,Auto">
+                              <TextBox Grid.Row="0"
+                                       Text="{Binding Caption, Mode=TwoWay}"
+                                       Watermark="Enter caption..."
+                                       TextWrapping="Wrap"
+                                       AcceptsReturn="True"
+                                       MinHeight="60"
+                                       MaxHeight="100"/>
+                              
+                              <!-- Unsaved indicator + Save button -->
+                              <StackPanel Grid.Row="1" 
+                                          Orientation="Horizontal"
+                                          HorizontalAlignment="Right"
+                                          Margin="0,4,0,0"
+                                          IsVisible="{Binding HasUnsavedChanges}">
+                                <TextBlock Text="Modified"
+                                           Foreground="Orange"
+                                           FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <Button Content="Save"
+                                        Command="{Binding SaveCaptionCommand}"
+                                        FontSize="11"
+                                        Padding="8,2"/>
+                              </StackPanel>
+                            </Grid>
+                          </Border>
+                          
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
             </ScrollViewer>
             
           </Grid>

@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
@@ -12,7 +14,10 @@ namespace DiffusionNexus.UI.Views;
 /// </summary>
 public partial class LoraDatasetHelperView : UserControl
 {
+    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+
     private ImageEditorControl? _imageEditorCanvas;
+    private Border? _emptyDatasetDropZone;
     private bool _isInitialized;
 
     public LoraDatasetHelperView()
@@ -25,6 +30,15 @@ public partial class LoraDatasetHelperView : UserControl
     {
         AvaloniaXamlLoader.Load(this);
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
+        _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
+
+        // Set up drag-drop handlers for empty dataset drop zone
+        if (_emptyDatasetDropZone is not null)
+        {
+            _emptyDatasetDropZone.AddHandler(DragDrop.DropEvent, OnEmptyDatasetDrop);
+            _emptyDatasetDropZone.AddHandler(DragDrop.DragEnterEvent, OnEmptyDatasetDragEnter);
+            _emptyDatasetDropZone.AddHandler(DragDrop.DragLeaveEvent, OnEmptyDatasetDragLeave);
+        }
     }
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
@@ -186,6 +200,126 @@ public partial class LoraDatasetHelperView : UserControl
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
+        }
+    }
+
+    private void OnEmptyDatasetDragEnter(object? sender, DragEventArgs e)
+    {
+        if (_emptyDatasetDropZone is not null)
+        {
+            _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
+            _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+        }
+        e.DragEffects = DragDropEffects.Copy;
+    }
+
+    private void OnEmptyDatasetDragLeave(object? sender, DragEventArgs e)
+    {
+        if (_emptyDatasetDropZone is not null)
+        {
+            _emptyDatasetDropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#444"));
+            _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+        }
+    }
+
+    private async void OnEmptyDatasetDrop(object? sender, DragEventArgs e)
+    {
+        // Reset border style
+        OnEmptyDatasetDragLeave(sender, e);
+
+        if (DataContext is not LoraDatasetHelperViewModel vm || vm.ActiveDataset is null)
+            return;
+
+        var files = e.Data.GetFiles();
+        if (files is null) return;
+
+        var imageFiles = new List<string>();
+
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
+                if (ImageExtensions.Contains(ext))
+                {
+                    imageFiles.Add(file.Path.LocalPath);
+                }
+            }
+            else if (item is IStorageFolder folder)
+            {
+                // Add images from folder
+                AddImagesFromFolder(folder.Path.LocalPath, imageFiles);
+            }
+        }
+
+        if (imageFiles.Count == 0)
+        {
+            vm.StatusMessage = "No valid image files found in the dropped items.";
+            return;
+        }
+
+        // Copy files to dataset
+        await CopyFilesToDatasetAsync(vm, imageFiles);
+    }
+
+    private void AddImagesFromFolder(string folderPath, List<string> imageFiles)
+    {
+        if (!Directory.Exists(folderPath)) return;
+
+        foreach (var file in Directory.EnumerateFiles(folderPath))
+        {
+            var ext = Path.GetExtension(file).ToLowerInvariant();
+            if (ImageExtensions.Contains(ext))
+            {
+                imageFiles.Add(file);
+            }
+        }
+    }
+
+    private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> imageFiles)
+    {
+        if (vm.ActiveDataset is null) return;
+
+        vm.IsLoading = true;
+        try
+        {
+            var copied = 0;
+            var skipped = 0;
+            var destFolderPath = vm.ActiveDataset.CurrentVersionFolderPath;
+
+            // Ensure the folder exists
+            Directory.CreateDirectory(destFolderPath);
+
+            foreach (var sourceFile in imageFiles)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destPath = Path.Combine(destFolderPath, fileName);
+
+                if (!File.Exists(destPath))
+                {
+                    File.Copy(sourceFile, destPath);
+                    copied++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            vm.StatusMessage = skipped > 0
+                ? $"Added {copied} images, skipped {skipped} duplicates"
+                : $"Added {copied} images to dataset";
+
+            // Refresh the dataset to show new images
+            await vm.RefreshActiveDatasetAsync();
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = $"Error adding images: {ex.Message}";
+        }
+        finally
+        {
+            vm.IsLoading = false;
         }
     }
 }

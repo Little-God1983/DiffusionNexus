@@ -57,7 +57,13 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public bool IsViewingDataset
     {
         get => _isViewingDataset;
-        set => SetProperty(ref _isViewingDataset, value);
+        set
+        {
+            if (SetProperty(ref _isViewingDataset, value))
+            {
+                OnPropertyChanged(nameof(HasNoImages));
+            }
+        }
     }
 
     /// <summary>
@@ -150,6 +156,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
+    /// <summary>
+    /// Whether the active dataset has no images (empty state).
+    /// Used to show the drag-and-drop zone when a dataset is newly created or empty.
+    /// </summary>
+    public bool HasNoImages => IsViewingDataset && DatasetImages.Count == 0;
+
     #endregion
 
     #region Collections
@@ -204,6 +216,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public LoraDatasetHelperViewModel(IAppSettingsService settingsService)
     {
         _settingsService = settingsService;
+        
+        // Subscribe to DatasetImages collection changes to update HasNoImages
+        DatasetImages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoImages));
         
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
@@ -560,8 +575,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             Directory.CreateDirectory(datasetPath);
             StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
             
-            // Refresh the list
-            await LoadDatasetsAsync();
+            // Create a DatasetCardViewModel for the new dataset and navigate into it
+            var newDataset = DatasetCardViewModel.FromFolder(datasetPath);
+            Datasets.Add(newDataset);
+            
+            // Navigate into the new dataset
+            await OpenDatasetAsync(newDataset);
         }
         catch (Exception ex)
         {
