@@ -53,6 +53,9 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>LoRA source folders.</summary>
     public DbSet<LoraSource> LoraSources => Set<LoraSource>();
 
+    /// <summary>Dataset categories for organizing training datasets.</summary>
+    public DbSet<DatasetCategory> DatasetCategories => Set<DatasetCategory>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -69,6 +72,7 @@ public class DiffusionNexusCoreDbContext : DbContext
         ConfigureTriggerWord(modelBuilder);
         ConfigureAppSettings(modelBuilder);
         ConfigureLoraSource(modelBuilder);
+        ConfigureDatasetCategory(modelBuilder);
     }
 
     #region Entity Configurations
@@ -317,11 +321,17 @@ public class DiffusionNexusCoreDbContext : DbContext
             entity.Property(e => e.EncryptedCivitaiApiKey).HasMaxLength(2000);
             entity.Property(e => e.LoraSortSourcePath).HasMaxLength(1000);
             entity.Property(e => e.LoraSortTargetPath).HasMaxLength(1000);
+            entity.Property(e => e.DatasetStoragePath).HasMaxLength(1000);
 
             // Relationships
             entity.HasMany(e => e.LoraSources)
                 .WithOne(s => s.AppSettings)
                 .HasForeignKey(s => s.AppSettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(e => e.DatasetCategories)
+                .WithOne(c => c.AppSettings)
+                .HasForeignKey(c => c.AppSettingsId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
@@ -339,6 +349,26 @@ public class DiffusionNexusCoreDbContext : DbContext
 
             // Properties
             entity.Property(e => e.FolderPath).IsRequired().HasMaxLength(1000);
+        });
+    }
+
+    private static void ConfigureDatasetCategory(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DatasetCategory>(entity =>
+        {
+            entity.ToTable("DatasetCategories");
+            entity.HasKey(e => e.Id);
+
+            // Indexes
+            entity.HasIndex(e => e.AppSettingsId);
+            entity.HasIndex(e => e.Name);
+
+            // Properties
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+
+            // NOTE: Default categories are seeded at runtime via IAppSettingsService
+            // to ensure AppSettings row exists first
         });
     }
 

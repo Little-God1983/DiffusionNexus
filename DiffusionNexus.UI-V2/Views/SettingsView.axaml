@@ -150,7 +150,7 @@
         <!-- LoRA Dataset Helper (NEW) -->
         <Expander Header="LoRA Dataset Helper" IsExpanded="True" HorizontalAlignment="Stretch">
           <Border Padding="16">
-            <StackPanel Spacing="12">
+            <StackPanel Spacing="16">
               
               <!-- Dataset Storage Section -->
               <StackPanel Spacing="8">
@@ -168,6 +168,68 @@
                           Command="{Binding BrowseDatasetStorageCommand}"
                           Margin="8,0,0,0"/>
                 </Grid>
+              </StackPanel>
+
+              <!-- Separator -->
+              <Border Height="1" Background="#40FFFFFF" Margin="0,4"/>
+
+              <!-- Dataset Categories Section -->
+              <StackPanel Spacing="8">
+                <TextBlock Text="Dataset Categories" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Categories for organizing your training datasets. Default categories (Character, Style, Concept) cannot be deleted." 
+                           FontSize="12" 
+                           Opacity="0.7"
+                           TextWrapping="Wrap"/>
+                
+                <!-- Add Button -->
+                <Button Content="+ Add Category" 
+                        Command="{Binding AddCategoryCommand}"
+                        HorizontalAlignment="Left"/>
+                
+                <!-- Category List -->
+                <ItemsControl ItemsSource="{Binding DatasetCategories}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DatasetCategoryViewModel">
+                      <Border Background="#20FFFFFF"
+                              CornerRadius="4"
+                              Padding="12"
+                              Margin="0,4">
+                        <Grid ColumnDefinitions="*,*,Auto">
+                          
+                          <!-- Name -->
+                          <TextBox Grid.Column="0"
+                                   Text="{Binding Name, Mode=TwoWay}"
+                                   Watermark="Category name..."
+                                   IsReadOnly="{Binding IsDefault}"
+                                   Margin="0,0,8,0"/>
+                          
+                          <!-- Description -->
+                          <TextBox Grid.Column="1"
+                                   Text="{Binding Description, Mode=TwoWay}"
+                                   Watermark="Optional description..."
+                                   Margin="0,0,8,0"/>
+                          
+                          <!-- Remove Button (hidden for defaults) -->
+                          <Button Grid.Column="2"
+                                  Content="&#x1F5D1;"
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveCategoryCommand}"
+                                  CommandParameter="{Binding}"
+                                  IsVisible="{Binding !IsDefault}"
+                                  ToolTip.Tip="Remove this category"/>
+                          
+                          <!-- Lock icon for defaults -->
+                          <TextBlock Grid.Column="2"
+                                     Text="??"
+                                     VerticalAlignment="Center"
+                                     Opacity="0.5"
+                                     IsVisible="{Binding IsDefault}"
+                                     ToolTip.Tip="Default category - cannot be deleted"/>
+                          
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
               </StackPanel>
               
             </StackPanel>

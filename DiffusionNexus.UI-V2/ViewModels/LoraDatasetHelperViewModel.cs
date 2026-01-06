@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 
@@ -22,6 +23,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _isLoading;
     private bool _hasUnsavedChanges;
     private int _selectedTabIndex;
+    private DatasetCategoryViewModel? _selectedCategory;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -93,6 +95,26 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         set => SetProperty(ref _selectedTabIndex, value);
     }
 
+    /// <summary>
+    /// Selected category for the active dataset.
+    /// </summary>
+    public DatasetCategoryViewModel? SelectedCategory
+    {
+        get => _selectedCategory;
+        set
+        {
+            if (SetProperty(ref _selectedCategory, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.CategoryId = value?.Id;
+                ActiveDataset.CategoryName = value?.Name;
+                ActiveDataset.SaveMetadata();
+                StatusMessage = value is not null 
+                    ? $"Category set to '{value.Name}'" 
+                    : "Category cleared";
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -106,6 +128,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Collection of images in the active dataset.
     /// </summary>
     public ObservableCollection<DatasetImageViewModel> DatasetImages { get; } = [];
+
+    /// <summary>
+    /// Available dataset categories.
+    /// </summary>
+    public ObservableCollection<DatasetCategoryViewModel> AvailableCategories { get; } = [];
 
     #endregion
 
@@ -156,6 +183,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         Datasets.Add(new DatasetCardViewModel { Name = "Character Training", ImageCount = 45 });
         Datasets.Add(new DatasetCardViewModel { Name = "Style Reference", ImageCount = 23 });
         Datasets.Add(new DatasetCardViewModel { Name = "Background Scenes", ImageCount = 12 });
+
+        // Design-time categories
+        AvailableCategories.Add(new DatasetCategoryViewModel { Id = 1, Name = "Character" });
+        AvailableCategories.Add(new DatasetCategoryViewModel { Id = 2, Name = "Style" });
+        AvailableCategories.Add(new DatasetCategoryViewModel { Id = 3, Name = "Concept" });
     }
 
     #endregion
@@ -170,9 +202,31 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IsStorageConfigured = !string.IsNullOrWhiteSpace(settings.DatasetStoragePath)
                               && Directory.Exists(settings.DatasetStoragePath);
 
+        // Load categories
+        await LoadCategoriesAsync(settings);
+
         if (IsStorageConfigured)
         {
             await LoadDatasetsAsync();
+        }
+    }
+
+    private async Task LoadCategoriesAsync(AppSettings? settings = null)
+    {
+        if (_settingsService is null) return;
+
+        settings ??= await _settingsService.GetSettingsAsync();
+
+        AvailableCategories.Clear();
+        foreach (var category in settings.DatasetCategories.OrderBy(c => c.Order))
+        {
+            AvailableCategories.Add(new DatasetCategoryViewModel
+            {
+                Id = category.Id,
+                Name = category.Name,
+                Description = category.Description,
+                IsDefault = category.IsDefault
+            });
         }
     }
 
@@ -241,6 +295,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                     OnCaptionChanged);
                 DatasetImages.Add(imageVm);
             }
+
+            // Set selected category based on dataset metadata
+            _selectedCategory = AvailableCategories.FirstOrDefault(c => c.Id == dataset.CategoryId);
+            OnPropertyChanged(nameof(SelectedCategory));
 
             IsViewingDataset = true;
             HasUnsavedChanges = false;

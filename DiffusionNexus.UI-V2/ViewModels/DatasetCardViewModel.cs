@@ -13,6 +13,8 @@ public class DatasetCardViewModel : ObservableObject
     private int _imageCount;
     private string? _thumbnailPath;
     private bool _isSelected;
+    private int? _categoryId;
+    private string? _categoryName;
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -72,6 +74,36 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Category ID for this dataset.
+    /// </summary>
+    public int? CategoryId
+    {
+        get => _categoryId;
+        set
+        {
+            if (SetProperty(ref _categoryId, value))
+            {
+                OnPropertyChanged(nameof(HasCategory));
+                CategoryChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Category name for display.
+    /// </summary>
+    public string? CategoryName
+    {
+        get => _categoryName;
+        set => SetProperty(ref _categoryName, value);
+    }
+
+    /// <summary>
+    /// Whether this dataset has a category assigned.
+    /// </summary>
+    public bool HasCategory => _categoryId.HasValue;
+
+    /// <summary>
     /// Display text showing image count.
     /// </summary>
     public string ImageCountText => _imageCount == 1 ? "1 image" : $"{_imageCount} images";
@@ -80,6 +112,16 @@ public class DatasetCardViewModel : ObservableObject
     /// Whether this dataset has a thumbnail to display.
     /// </summary>
     public bool HasThumbnail => !string.IsNullOrEmpty(_thumbnailPath);
+
+    /// <summary>
+    /// Path to the metadata file for this dataset.
+    /// </summary>
+    public string MetadataFilePath => Path.Combine(_folderPath, ".dataset.json");
+
+    /// <summary>
+    /// Event raised when category changes.
+    /// </summary>
+    public event EventHandler? CategoryChanged;
 
     /// <summary>
     /// Creates a DatasetCardViewModel from a folder path.
@@ -95,12 +137,74 @@ public class DatasetCardViewModel : ObservableObject
                 .ToList()
             : [];
 
-        return new DatasetCardViewModel
+        var vm = new DatasetCardViewModel
         {
             Name = name,
             FolderPath = folderPath,
             ImageCount = images.Count,
             ThumbnailPath = images.FirstOrDefault()
         };
+
+        // Load metadata if exists
+        vm.LoadMetadata();
+
+        return vm;
     }
+
+    /// <summary>
+    /// Loads metadata from the .dataset.json file.
+    /// </summary>
+    public void LoadMetadata()
+    {
+        if (!File.Exists(MetadataFilePath))
+            return;
+
+        try
+        {
+            var json = File.ReadAllText(MetadataFilePath);
+            var metadata = System.Text.Json.JsonSerializer.Deserialize<DatasetMetadata>(json);
+            if (metadata is not null)
+            {
+                CategoryId = metadata.CategoryId;
+            }
+        }
+        catch
+        {
+            // Ignore errors reading metadata
+        }
+    }
+
+    /// <summary>
+    /// Saves metadata to the .dataset.json file.
+    /// </summary>
+    public void SaveMetadata()
+    {
+        try
+        {
+            var metadata = new DatasetMetadata
+            {
+                CategoryId = CategoryId
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            File.WriteAllText(MetadataFilePath, json);
+        }
+        catch
+        {
+            // Ignore errors writing metadata
+        }
+    }
+}
+
+/// <summary>
+/// Metadata stored in each dataset folder.
+/// </summary>
+public class DatasetMetadata
+{
+    /// <summary>
+    /// Category ID for this dataset.
+    /// </summary>
+    public int? CategoryId { get; set; }
 }

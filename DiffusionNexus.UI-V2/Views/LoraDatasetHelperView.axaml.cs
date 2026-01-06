@@ -13,6 +13,7 @@ namespace DiffusionNexus.UI.Views;
 public partial class LoraDatasetHelperView : UserControl
 {
     private ImageEditorControl? _imageEditorCanvas;
+    private bool _isInitialized;
 
     public LoraDatasetHelperView()
     {
@@ -28,6 +29,9 @@ public partial class LoraDatasetHelperView : UserControl
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
+        if (_isInitialized) return;
+        _isInitialized = true;
+
         // Inject DialogService into the ViewModel
         if (VisualRoot is Window window && DataContext is IDialogServiceAware aware)
         {

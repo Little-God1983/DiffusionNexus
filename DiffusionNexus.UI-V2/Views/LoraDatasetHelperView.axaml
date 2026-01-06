@@ -30,7 +30,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Back to Overview Button (only visible when viewing a dataset) -->
               <Button Grid.Column="0"
@@ -47,11 +47,27 @@
                          VerticalAlignment="Center"
                          IsVisible="{Binding IsViewingDataset}"/>
               
+              <!-- Category Dropdown (when viewing dataset) -->
+              <StackPanel Grid.Column="2" 
+                          Orientation="Horizontal" 
+                          Spacing="8"
+                          IsVisible="{Binding IsViewingDataset}"
+                          Margin="16,0,0,0">
+                <TextBlock Text="Category:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"/>
+                <ComboBox ItemsSource="{Binding AvailableCategories}"
+                          SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                          DisplayMemberBinding="{Binding Name}"
+                          MinWidth="120"
+                          PlaceholderText="Select category..."/>
+              </StackPanel>
+              
               <!-- Spacer -->
-              <Border Grid.Column="2"/>
+              <Border Grid.Column="4"/>
               
               <!-- Open Folder Button (when viewing dataset) -->
-              <Button Grid.Column="3"
+              <Button Grid.Column="5"
                       Content="📂 Open Folder"
                       Command="{Binding OpenContainingFolderCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -59,7 +75,7 @@
                       ToolTip.Tip="Open dataset folder in file explorer"/>
               
               <!-- Export Dataset Button (when viewing dataset) -->
-              <Button Grid.Column="4"
+              <Button Grid.Column="6"
                       Content="📦 Export Dataset"
                       Command="{Binding ExportDatasetCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -67,14 +83,14 @@
                       ToolTip.Tip="Export dataset for training"/>
               
               <!-- Add Images Button (when viewing dataset) -->
-              <Button Grid.Column="5"
+              <Button Grid.Column="7"
                       Content="+ Add Images"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
               
               <!-- Save Captions Button (when viewing dataset with changes) -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="8"
                       Content="Save Captions"
                       Command="{Binding SaveAllCaptionsCommand}"
                       IsVisible="{Binding HasUnsavedChanges}"
@@ -82,7 +98,7 @@
                       Background="#2D7D46"/>
               
               <!-- New Dataset Button (only in overview) -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="9"
                       Content="+ New Dataset" 
                       Command="{Binding CreateDatasetCommand}"
                       IsVisible="{Binding !IsViewingDataset}"/>
