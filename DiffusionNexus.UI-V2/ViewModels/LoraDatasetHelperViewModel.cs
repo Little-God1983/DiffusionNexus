@@ -33,6 +33,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private DatasetType? _selectedType;
     private bool _flattenVersions;
     private bool _isFileDialogOpen;
+    private int _selectionCount;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -199,6 +200,32 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public bool HasNoImages => IsViewingDataset && DatasetImages.Count == 0;
 
+    /// <summary>
+    /// Number of currently selected images.
+    /// </summary>
+    public int SelectionCount
+    {
+        get => _selectionCount;
+        private set
+        {
+            if (SetProperty(ref _selectionCount, value))
+            {
+                OnPropertyChanged(nameof(HasSelection));
+                OnPropertyChanged(nameof(SelectionText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether any images are currently selected.
+    /// </summary>
+    public bool HasSelection => _selectionCount > 0;
+
+    /// <summary>
+    /// Text describing the current selection (e.g., "3 selected").
+    /// </summary>
+    public string SelectionText => _selectionCount == 1 ? "1 selected" : $"{_selectionCount} selected";
+
     #endregion
 
     #region Collections
@@ -250,6 +277,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
+    
+    // Selection commands
+    public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
+    public IRelayCommand SelectAllCommand { get; }
+    public IRelayCommand ClearSelectionCommand { get; }
+    public IRelayCommand ApproveSelectedCommand { get; }
+    public IRelayCommand RejectSelectedCommand { get; }
+    public IRelayCommand ClearRatingSelectedCommand { get; }
 
     #endregion
 
@@ -276,6 +311,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
+        
+        // Selection commands
+        ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
+        SelectAllCommand = new RelayCommand(SelectAll);
+        ClearSelectionCommand = new RelayCommand(ClearSelection);
+        ApproveSelectedCommand = new RelayCommand(ApproveSelected);
+        RejectSelectedCommand = new RelayCommand(RejectSelected);
+        ClearRatingSelectedCommand = new RelayCommand(ClearRatingSelected);
     }
 
     /// <summary>
@@ -1354,4 +1397,101 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             }
         }
     }
+
+    #region Selection Methods
+
+    /// <summary>
+    /// Toggles selection state of an image.
+    /// </summary>
+    private void ToggleSelection(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        image.IsSelected = !image.IsSelected;
+        UpdateSelectionCount();
+    }
+
+    /// <summary>
+    /// Selects all images in the current dataset.
+    /// </summary>
+    private void SelectAll()
+    {
+        foreach (var image in DatasetImages)
+        {
+            image.IsSelected = true;
+        }
+        UpdateSelectionCount();
+        StatusMessage = $"Selected all {SelectionCount} items";
+    }
+
+    /// <summary>
+    /// Clears all selections.
+    /// </summary>
+    private void ClearSelection()
+    {
+        foreach (var image in DatasetImages)
+        {
+            image.IsSelected = false;
+        }
+        UpdateSelectionCount();
+        StatusMessage = "Selection cleared";
+    }
+
+    /// <summary>
+    /// Marks all selected images as approved (production-ready).
+    /// </summary>
+    private void ApproveSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            image.RatingStatus = ImageRatingStatus.Approved;
+            image.SaveRating();
+        }
+        StatusMessage = $"Marked {selected.Count} items as production-ready";
+    }
+
+    /// <summary>
+    /// Marks all selected images as rejected (failed).
+    /// </summary>
+    private void RejectSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            image.RatingStatus = ImageRatingStatus.Rejected;
+            image.SaveRating();
+        }
+        StatusMessage = $"Marked {selected.Count} items as failed";
+    }
+
+    /// <summary>
+    /// Clears rating for all selected images.
+    /// </summary>
+    private void ClearRatingSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            image.RatingStatus = ImageRatingStatus.Unrated;
+            image.SaveRating();
+        }
+        StatusMessage = $"Cleared rating for {selected.Count} items";
+    }
+
+    /// <summary>
+    /// Updates the selection count based on currently selected images.
+    /// </summary>
+    private void UpdateSelectionCount()
+    {
+        SelectionCount = DatasetImages.Count(i => i.IsSelected);
+    }
+
+    #endregion
 }

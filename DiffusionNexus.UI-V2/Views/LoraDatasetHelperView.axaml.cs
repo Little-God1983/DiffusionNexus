@@ -31,6 +31,9 @@ public partial class LoraDatasetHelperView : UserControl
     {
         InitializeComponent();
         AttachedToVisualTree += OnAttachedToVisualTree;
+        
+        // Add keyboard handler for selection shortcuts
+        KeyDown += OnKeyDown;
     }
 
     private void InitializeComponent()
@@ -618,6 +621,54 @@ public partial class LoraDatasetHelperView : UserControl
         finally
         {
             vm.IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Handles pointer press on image cards for Ctrl+Click selection.
+    /// </summary>
+    private void OnImageCardPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Border border) return;
+        if (border.DataContext is not DatasetImageViewModel image) return;
+        if (DataContext is not LoraDatasetHelperViewModel vm) return;
+
+        var props = e.GetCurrentPoint(border).Properties;
+        
+        // Only handle left mouse button
+        if (!props.IsLeftButtonPressed) return;
+
+        // Check for Ctrl key modifier
+        var isCtrlPressed = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+
+        if (isCtrlPressed)
+        {
+            // Toggle selection on Ctrl+Click
+            vm.ToggleSelectionCommand.Execute(image);
+            e.Handled = true;
+        }
+        // Note: Normal clicks are handled by the CheckBox inside the card
+    }
+
+    /// <summary>
+    /// Handles keyboard shortcuts for selection.
+    /// </summary>
+    private void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not LoraDatasetHelperViewModel vm) return;
+        if (!vm.IsViewingDataset) return;
+
+        // Ctrl+A: Select All
+        if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            vm.SelectAllCommand.Execute(null);
+            e.Handled = true;
+        }
+        // Escape: Clear Selection
+        else if (e.Key == Key.Escape && vm.HasSelection)
+        {
+            vm.ClearSelectionCommand.Execute(null);
+            e.Handled = true;
         }
     }
 }

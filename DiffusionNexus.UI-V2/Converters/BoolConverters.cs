@@ -20,6 +20,25 @@ public static class BoolConverters
     public static readonly IValueConverter BoolToOpacityLow =
         new FuncValueConverter<bool, double>(b => b ? 1.0 : 0.3);
 
+    #region Selection Converters
+
+    private static readonly IBrush SelectionBlueBrush = new SolidColorBrush(Color.Parse("#2196F3"));
+    private static readonly IBrush DefaultBorderBrush = new SolidColorBrush(Color.Parse("#444"));
+
+    /// <summary>
+    /// Converts IsSelected to border brush (blue if selected, default gray otherwise).
+    /// </summary>
+    public static readonly IValueConverter BoolToSelectionBorder =
+        new FuncValueConverter<bool, IBrush>(b => b ? SelectionBlueBrush : DefaultBorderBrush);
+
+    /// <summary>
+    /// Converts IsSelected to border thickness (3 if selected, 2 otherwise).
+    /// </summary>
+    public static readonly IValueConverter BoolToSelectionThickness =
+        new FuncValueConverter<bool, Avalonia.Thickness>(b => b ? new Avalonia.Thickness(3) : new Avalonia.Thickness(2));
+
+    #endregion
+
     #region Rating Converters
 
     private static readonly IBrush ApprovedGreen = new SolidColorBrush(Color.Parse("#4CAF50"));
