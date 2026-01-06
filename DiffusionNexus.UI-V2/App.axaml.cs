@@ -129,16 +129,7 @@ public partial class App : Application
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
     {
-        // LoRA Viewer module - main feature
-        var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
-        var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
-
-        mainViewModel.RegisterModule(new ModuleItem(
-            "LoRA Viewer",
-            "avares://DiffusionNexus.UI-V2/Assets/LoraSort.png",
-            loraViewerView));
-
-        // LoRA Dataset Helper module
+        // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
         var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
 
@@ -146,6 +137,15 @@ public partial class App : Application
             "LoRA Dataset Helper",
             "avares://DiffusionNexus.UI-V2/Assets/LoraTrain.png",
             loraDatasetHelperView));
+
+        // LoRA Viewer module
+        var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
+        var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
+
+        mainViewModel.RegisterModule(new ModuleItem(
+            "LoRA Viewer",
+            "avares://DiffusionNexus.UI-V2/Assets/LoraSort.png",
+            loraViewerView));
 
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
