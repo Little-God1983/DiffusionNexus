@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Controls;
@@ -670,6 +671,30 @@ public partial class LoraDatasetHelperView : UserControl
         {
             vm.ClearSelectionCommand.Execute(null);
             e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Handles double-click on an image to open the full-screen viewer.
+    /// </summary>
+    private void OnImageDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is not Border border) return;
+        
+        // Walk up to find the DatasetImageViewModel
+        var parent = border.Parent;
+        while (parent is not null)
+        {
+            if (parent.DataContext is DatasetImageViewModel image)
+            {
+                if (DataContext is LoraDatasetHelperViewModel vm)
+                {
+                    vm.OpenImageViewerCommand.Execute(image);
+                }
+                e.Handled = true;
+                return;
+            }
+            parent = parent.Parent as Control;
         }
     }
 }

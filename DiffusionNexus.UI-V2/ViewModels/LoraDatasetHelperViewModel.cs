@@ -278,6 +278,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
+    public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
     
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -315,6 +316,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
+        OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
         
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -1247,6 +1249,23 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ImageEditor.LoadImage(image.ImagePath);
         SelectedTabIndex = 1; // Switch to Image Edit tab
         StatusMessage = $"Editing: {image.FullFileName}";
+    }
+
+    /// <summary>
+    /// Opens the full-screen image viewer for the specified image.
+    /// </summary>
+    private async Task OpenImageViewerAsync(DatasetImageViewModel? image)
+    {
+        if (DialogService is null || image is null) return;
+        
+        var index = DatasetImages.IndexOf(image);
+        if (index < 0) return;
+        
+        await DialogService.ShowImageViewerDialogAsync(
+            DatasetImages,
+            index,
+            onSendToImageEditor: SendToImageEdit,
+            onDeleteRequested: OnImageDeleteRequested);
     }
 
     private async Task ExportDatasetAsync()

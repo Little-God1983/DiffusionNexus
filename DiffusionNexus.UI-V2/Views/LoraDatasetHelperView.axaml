@@ -563,7 +563,9 @@
                             <Border Grid.Row="0" 
                                     Background="#1A1A1A"
                                     CornerRadius="6,6,0,0"
-                                    ClipToBounds="True">
+                                    ClipToBounds="True"
+                                    DoubleTapped="OnImageDoubleTapped"
+                                    Cursor="Hand">
                               <Grid>
                                 <!-- Image/Video thumbnail using converter -->
                                 <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"

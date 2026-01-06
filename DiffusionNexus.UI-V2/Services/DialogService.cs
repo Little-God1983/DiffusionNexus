@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.ViewModels;
@@ -143,5 +144,17 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateDatasetResult.Cancelled();
+    }
+
+    public async Task ShowImageViewerDialogAsync(
+        ObservableCollection<DatasetImageViewModel> images,
+        int startIndex,
+        Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onDeleteRequested = null)
+    {
+        var dialog = new ImageViewerDialog()
+            .WithImages(images, startIndex, onSendToImageEditor, onDeleteRequested);
+
+        await dialog.ShowDialog(_window);
     }
 }

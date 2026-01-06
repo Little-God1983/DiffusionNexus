@@ -1,6 +1,7 @@
 namespace DiffusionNexus.UI.Services;
 
 using DiffusionNexus.UI.ViewModels;
+using System.Collections.ObjectModel;
 
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
@@ -103,6 +104,19 @@ public interface IDialogService
     /// <param name="availableCategories">Categories to show in the dropdown.</param>
     /// <returns>Create result with name, category, and type, or cancelled result.</returns>
     Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories);
+
+    /// <summary>
+    /// Shows the full-screen image viewer dialog for browsing dataset images.
+    /// </summary>
+    /// <param name="images">Collection of all images in the dataset.</param>
+    /// <param name="startIndex">Index of the image to display first.</param>
+    /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
+    /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
+    Task ShowImageViewerDialogAsync(
+        ObservableCollection<DatasetImageViewModel> images,
+        int startIndex,
+        Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onDeleteRequested = null);
 }
 
 /// <summary>
