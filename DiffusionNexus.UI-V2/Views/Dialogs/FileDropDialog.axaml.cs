@@ -143,20 +143,41 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
         var dropZone = this.FindControl<Border>("DropZone");
-        dropZone?.Classes.Add("dragover");
-        e.DragEffects = DragDropEffects.Copy;
+        if (dropZone is null) return;
+
+        // Check if any of the dragged files are valid
+        var hasValidFiles = HasValidFilesInDrag(e);
+        
+        if (hasValidFiles)
+        {
+            // Green border for valid files
+            dropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
+            dropZone.BorderThickness = new Avalonia.Thickness(3);
+            e.DragEffects = DragDropEffects.Copy;
+        }
+        else
+        {
+            // Red border for invalid/unsupported files
+            dropZone.BorderBrush = Avalonia.Media.Brushes.Red;
+            dropZone.BorderThickness = new Avalonia.Thickness(3);
+            e.DragEffects = DragDropEffects.None;
+        }
     }
 
     private void OnDragLeave(object? sender, DragEventArgs e)
     {
         var dropZone = this.FindControl<Border>("DropZone");
-        dropZone?.Classes.Remove("dragover");
+        if (dropZone is null) return;
+        
+        // Reset to default border
+        dropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#666"));
+        dropZone.BorderThickness = new Avalonia.Thickness(2);
     }
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
-        var dropZone = this.FindControl<Border>("DropZone");
-        dropZone?.Classes.Remove("dragover");
+        // Reset border style
+        OnDragLeave(sender, e);
 
         var files = e.Data.GetFiles();
         if (files is null) return;
@@ -174,6 +195,67 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         }
 
         NotifyPropertiesChanged();
+    }
+
+    /// <summary>
+    /// Checks if the drag event contains any valid files based on allowed extensions.
+    /// </summary>
+    private bool HasValidFilesInDrag(DragEventArgs e)
+    {
+        var files = e.Data.GetFiles();
+        if (files is null) return false;
+
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                if (IsFileAllowed(file.Path.LocalPath))
+                    return true;
+            }
+            else if (item is IStorageFolder folder)
+            {
+                // For folders, check if any files inside would be valid
+                if (HasValidFilesInFolder(folder.Path.LocalPath))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a file is allowed based on configured extensions.
+    /// </summary>
+    private bool IsFileAllowed(string filePath)
+    {
+        if (_allowedExtensions.Length == 0)
+            return true; // No restrictions
+
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return _allowedExtensions.Contains(ext);
+    }
+
+    /// <summary>
+    /// Checks if a folder contains any valid files.
+    /// </summary>
+    private bool HasValidFilesInFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folderPath))
+            {
+                if (IsFileAllowed(file))
+                    return true;
+            }
+        }
+        catch
+        {
+            // Ignore access errors
+        }
+
+        return false;
     }
 
     #endregion

@@ -214,21 +214,86 @@ public partial class LoraDatasetHelperView : UserControl
             return;
         }
         
-        if (_emptyDatasetDropZone is not null)
+        if (_emptyDatasetDropZone is null) return;
+
+        // Check if any of the dragged files are valid media files
+        var hasValidFiles = HasValidMediaFilesInDrag(e);
+        
+        if (hasValidFiles)
         {
+            // Green border for valid files
             _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+            e.DragEffects = DragDropEffects.Copy;
         }
-        e.DragEffects = DragDropEffects.Copy;
+        else
+        {
+            // Red border for invalid/unsupported files
+            _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.Red;
+            _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+            e.DragEffects = DragDropEffects.None;
+        }
     }
 
     private void OnEmptyDatasetDragLeave(object? sender, DragEventArgs e)
     {
         if (_emptyDatasetDropZone is not null)
         {
+            // Reset to default border
             _emptyDatasetDropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#444"));
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
         }
+    }
+
+    /// <summary>
+    /// Checks if the drag event contains any valid media files.
+    /// </summary>
+    private bool HasValidMediaFilesInDrag(DragEventArgs e)
+    {
+        var files = e.Data.GetFiles();
+        if (files is null) return false;
+
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
+                if (MediaExtensions.Contains(ext))
+                    return true;
+            }
+            else if (item is IStorageFolder folder)
+            {
+                // For folders, check if any files inside would be valid
+                if (HasValidMediaFilesInFolder(folder.Path.LocalPath))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a folder contains any valid media files.
+    /// </summary>
+    private bool HasValidMediaFilesInFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folderPath))
+            {
+                var ext = Path.GetExtension(file).ToLowerInvariant();
+                if (MediaExtensions.Contains(ext))
+                    return true;
+            }
+        }
+        catch
+        {
+            // Ignore access errors
+        }
+
+        return false;
     }
 
     private async void OnEmptyDatasetDrop(object? sender, DragEventArgs e)
