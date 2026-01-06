@@ -130,7 +130,7 @@
               
               <!-- Add Images Button (when viewing dataset) -->
               <Button Grid.Column="8"
-                      Content="+ Add Images"
+                      Content="+ Add Files"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
@@ -339,60 +339,54 @@
             </ScrollViewer>
 
             <!-- Dataset Detail View (Images with Captions) -->
-            <ScrollViewer IsVisible="{Binding IsViewingDataset}"
-                          Padding="16">
-              <Grid>
-                <!-- Empty Dataset Drop Zone -->
-                <Border x:Name="EmptyDatasetDropZone"
-                        IsVisible="{Binding HasNoImages}"
-                        Background="#1A1A1A"
-                        CornerRadius="12"
-                        BorderThickness="3"
-                        BorderBrush="#444"
-                        Margin="32"
-                        Padding="48"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        MinWidth="500"
-                        MinHeight="300"
-                        DragDrop.AllowDrop="True">
-                  <StackPanel VerticalAlignment="Center" 
-                              HorizontalAlignment="Center"
-                              Spacing="16">
-                    <TextBlock Text="📁" 
-                               FontSize="72" 
-                               HorizontalAlignment="Center"
-                               Opacity="0.4"/>
-                    <TextBlock Text="This dataset is empty"
-                               FontSize="20"
-                               FontWeight="SemiBold"
-                               HorizontalAlignment="Center"
-                               Opacity="0.8"/>
-                    <TextBlock Text="Drag and drop images here to get started"
-                               FontSize="14"
-                               Foreground="#888"
-                               HorizontalAlignment="Center"/>
-                    <TextBlock Text="or"
-                               FontSize="12"
-                               Foreground="#666"
-                               HorizontalAlignment="Center"
-                               Margin="0,8"/>
-                    <Button Content="📂 Browse for Images"
-                            Command="{Binding AddImagesCommand}"
+            <Grid IsVisible="{Binding IsViewingDataset}">
+              <!-- Empty Dataset Drop Zone - Full area background -->
+              <Border x:Name="EmptyDatasetDropZone"
+                      IsVisible="{Binding HasNoImages}"
+                      Background="#1A1A1A"
+                      BorderThickness="3"
+                      BorderBrush="#444"
+                      Margin="16"
+                      CornerRadius="12"
+                      DragDrop.AllowDrop="True">
+                <StackPanel VerticalAlignment="Center" 
                             HorizontalAlignment="Center"
-                            Padding="16,10"
-                            FontSize="14"/>
-                    <TextBlock Text="Supported: PNG, JPG, JPEG, WebP, BMP, GIF"
-                               FontSize="11"
-                               Foreground="#666"
-                               HorizontalAlignment="Center"
-                               Margin="0,8,0,0"/>
-                  </StackPanel>
-                </Border>
-                
-                <!-- Image Cards (when there are images) -->
-                <ItemsControl ItemsSource="{Binding DatasetImages}"
-                              IsVisible="{Binding !HasNoImages}">
+                            Spacing="16">
+                  <TextBlock Text="📁" 
+                             FontSize="72" 
+                             HorizontalAlignment="Center"
+                             Opacity="0.4"/>
+                  <TextBlock Text="This dataset is empty"
+                             FontSize="20"
+                             FontWeight="SemiBold"
+                             HorizontalAlignment="Center"
+                             Opacity="0.8"/>
+                  <TextBlock Text="Drag and drop images here to get started"
+                             FontSize="14"
+                             Foreground="#888"
+                             HorizontalAlignment="Center"/>
+                  <TextBlock Text="or"
+                             FontSize="12"
+                             Foreground="#666"
+                             HorizontalAlignment="Center"
+                             Margin="0,8"/>
+                  <Button Content="📂 Browse for Images"
+                          Command="{Binding AddImagesCommand}"
+                          HorizontalAlignment="Center"
+                          Padding="16,10"
+                          FontSize="14"/>
+                  <TextBlock Text="Supported: PNG, JPG, JPEG, WebP, BMP, GIF"
+                             FontSize="11"
+                             Foreground="#666"
+                             HorizontalAlignment="Center"
+                             Margin="0,8,0,0"/>
+                </StackPanel>
+              </Border>
+              
+              <!-- Image Cards (when there are images) -->
+              <ScrollViewer IsVisible="{Binding !HasNoImages}"
+                            Padding="16">
+                <ItemsControl ItemsSource="{Binding DatasetImages}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                       <WrapPanel Orientation="Horizontal"/>
@@ -519,9 +513,8 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-              </Grid>
-            </ScrollViewer>
-            
+              </ScrollViewer>
+            </Grid>
           </Grid>
         </Grid>
       </TabItem>
