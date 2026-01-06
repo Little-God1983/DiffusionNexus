@@ -726,12 +726,31 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
         try
         {
+            // Create the main dataset folder
             Directory.CreateDirectory(datasetPath);
-            StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
             
-            // Create a DatasetCardViewModel for the new dataset and navigate into it
-            var newDataset = DatasetCardViewModel.FromFolder(datasetPath);
+            // Create V1 subfolder immediately for versioned structure
+            var v1Path = Path.Combine(datasetPath, "V1");
+            Directory.CreateDirectory(v1Path);
+            
+            // Create a DatasetCardViewModel for the new dataset
+            var newDataset = new DatasetCardViewModel
+            {
+                Name = sanitizedName,
+                FolderPath = datasetPath,
+                IsVersionedStructure = true,
+                CurrentVersion = 1,
+                TotalVersions = 1,
+                ImageCount = 0,
+                VideoCount = 0
+            };
+            
+            // Save metadata to establish versioned structure
+            newDataset.SaveMetadata();
+            
             Datasets.Add(newDataset);
+            
+            StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
             
             // Navigate into the new dataset
             await OpenDatasetAsync(newDataset);
