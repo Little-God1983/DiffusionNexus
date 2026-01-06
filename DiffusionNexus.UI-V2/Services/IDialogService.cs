@@ -77,6 +77,15 @@ public interface IDialogService
     /// <param name="allowedExtensions">Allowed file extensions (e.g., ".png", ".jpg").</param>
     /// <returns>List of selected file paths, or null if cancelled.</returns>
     Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
+
+    /// <summary>
+    /// Shows an option selection dialog with multiple choices.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="message">Message/description.</param>
+    /// <param name="options">Array of option labels to display as buttons.</param>
+    /// <returns>The index of the selected option (0-based), or -1 if cancelled.</returns>
+    Task<int> ShowOptionsAsync(string title, string message, params string[] options);
 }
 
 /// <summary>

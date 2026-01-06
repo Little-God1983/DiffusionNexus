@@ -658,59 +658,75 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     /// <summary>
-    /// Increments the dataset version by copying all images and captions to a new version folder.
-    /// This allows different captioning styles for different training approaches (e.g., SDXL vs Flux).
+    /// Increments the dataset version by creating a new version folder.
+    /// User can choose to copy current version's files or start fresh (empty).
     /// </summary>
     private async Task IncrementVersionAsync()
     {
         if (ActiveDataset is null || DialogService is null) return;
 
-        // Check if we have images to copy
-        if (ActiveDataset.ImageCount == 0)
+        var currentVersion = ActiveDataset.CurrentVersion;
+        var nextVersion = ActiveDataset.GetNextVersionNumber();
+        
+        // Show 3-option dialog: Cancel, Copy from existing, Start fresh
+        var selectedOption = await DialogService.ShowOptionsAsync(
+            "Create New Version",
+            $"Create Version {nextVersion} from Version {currentVersion}.\n\n" +
+            $"Choose how to initialize the new version:",
+            "Cancel",
+            "Start Fresh (Empty)",
+            $"Copy from V{currentVersion}");
+
+        // 0 = Cancel, 1 = Start Fresh, 2 = Copy
+        if (selectedOption == 0 || selectedOption == -1)
         {
-            StatusMessage = "Cannot create new version: No images in current version.";
+            // User cancelled
             return;
         }
 
-        // Confirm with user
-        var nextVersion = ActiveDataset.GetNextVersionNumber();
-        var confirm = await DialogService.ShowConfirmAsync(
-            "Create New Version",
-            $"This will create Version {nextVersion} by copying all images and captions from the current version.\n\n" +
-            $"Use this when you want different captions for different training approaches (e.g., SDXL vs Flux).\n\n" +
-            $"Continue?");
+        var copyFiles = selectedOption == 2;
 
-        if (!confirm) return;
+        // If they chose to copy but there are no images, warn them
+        if (copyFiles && ActiveDataset.ImageCount == 0)
+        {
+            await DialogService.ShowMessageAsync(
+                "No Images",
+                "There are no images in the current version to copy. Creating an empty version instead.");
+            copyFiles = false;
+        }
 
         IsLoading = true;
         try
         {
-            var sourcePath = ActiveDataset.CurrentVersionFolderPath;
             var destPath = ActiveDataset.GetVersionFolderPath(nextVersion);
 
             // Handle migration from legacy (non-versioned) to versioned structure
-            if (!ActiveDataset.IsVersionedStructure)
+            if (!ActiveDataset.IsVersionedStructure && ActiveDataset.ImageCount > 0)
             {
                 // First, move existing files to V1 folder
                 await MigrateLegacyToVersionedAsync(ActiveDataset);
-                sourcePath = ActiveDataset.GetVersionFolderPath(1);
             }
 
             // Create the new version folder
             Directory.CreateDirectory(destPath);
 
-            // Copy all files (images and captions)
-            var files = Directory.EnumerateFiles(sourcePath)
-                .Where(f => !Path.GetFileName(f).StartsWith(".")) // Skip hidden files
-                .ToList();
-
             var copied = 0;
-            foreach (var sourceFile in files)
+            if (copyFiles)
             {
-                var fileName = Path.GetFileName(sourceFile);
-                var destFile = Path.Combine(destPath, fileName);
-                File.Copy(sourceFile, destFile, overwrite: false);
-                copied++;
+                var sourcePath = ActiveDataset.GetVersionFolderPath(currentVersion);
+                
+                // Copy all files (images and captions)
+                var files = Directory.EnumerateFiles(sourcePath)
+                    .Where(f => !Path.GetFileName(f).StartsWith(".")) // Skip hidden files
+                    .ToList();
+
+                foreach (var sourceFile in files)
+                {
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destFile = Path.Combine(destPath, fileName);
+                    File.Copy(sourceFile, destFile, overwrite: false);
+                    copied++;
+                }
             }
 
             // Update metadata
@@ -724,7 +740,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             // Reload images for the new version
             await OpenDatasetAsync(ActiveDataset);
 
-            StatusMessage = $"Created Version {nextVersion} with {copied} files copied.";
+            StatusMessage = copyFiles 
+                ? $"Created V{nextVersion} with {copied} files copied from V{currentVersion}."
+                : $"Created V{nextVersion} (empty - ready to add images).";
         }
         catch (Exception ex)
         {

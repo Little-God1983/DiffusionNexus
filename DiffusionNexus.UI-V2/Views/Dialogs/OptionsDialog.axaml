@@ -1,0 +1,45 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.OptionsDialog"
+        x:DataType="local:OptionsDialog"
+        Width="480"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#1E1E1E">
+  
+  <Grid Margin="24" RowDefinitions="Auto,Auto">
+    
+    <!-- Message -->
+    <TextBlock Grid.Row="0" 
+               Text="{Binding Message}"
+               TextWrapping="Wrap"
+               FontSize="14"
+               Margin="0,0,0,24"/>
+    
+    <!-- Buttons -->
+    <ItemsControl Grid.Row="1" 
+                  ItemsSource="{Binding OptionItems}"
+                  x:Name="OptionsPanel">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <StackPanel Orientation="Horizontal" 
+                      HorizontalAlignment="Right" 
+                      Spacing="8"/>
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Button Content="{Binding Label}"
+                  MinWidth="120"
+                  Padding="16,8"
+                  Background="{Binding Background}"
+                  Click="OnOptionClick"
+                  Tag="{Binding Index}"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    
+  </Grid>
+</Window>

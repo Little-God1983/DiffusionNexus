@@ -112,4 +112,17 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.ResultFiles;
     }
+
+    public async Task<int> ShowOptionsAsync(string title, string message, params string[] options)
+    {
+        var dialog = new OptionsDialog
+        {
+            Message = message
+        };
+        dialog.Title = title;
+        dialog.SetOptions(options);
+
+        await dialog.ShowDialog(_window);
+        return dialog.SelectedIndex;
+    }
 }
