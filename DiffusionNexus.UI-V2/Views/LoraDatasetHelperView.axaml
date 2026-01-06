@@ -361,7 +361,7 @@
                              FontWeight="SemiBold"
                              HorizontalAlignment="Center"
                              Opacity="0.8"/>
-                  <TextBlock Text="Drag and drop images here to get started"
+                  <TextBlock Text="Drag and drop images or videos here to get started"
                              FontSize="14"
                              Foreground="#888"
                              HorizontalAlignment="Center"/>
@@ -370,12 +370,12 @@
                              Foreground="#666"
                              HorizontalAlignment="Center"
                              Margin="0,8"/>
-                  <Button Content="📂 Browse for Images"
+                  <Button Content="📂 Browse for Files"
                           Command="{Binding AddImagesCommand}"
                           HorizontalAlignment="Center"
                           Padding="16,10"
                           FontSize="14"/>
-                  <TextBlock Text="Supported: PNG, JPG, JPEG, WebP, BMP, GIF"
+                  <TextBlock Text="Supported: PNG, JPG, WebP, GIF, MP4, MOV, WebM, AVI, MKV"
                              FontSize="11"
                              Foreground="#666"
                              HorizontalAlignment="Center"

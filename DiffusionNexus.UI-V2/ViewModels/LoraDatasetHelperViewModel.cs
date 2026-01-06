@@ -29,6 +29,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private int _selectedTabIndex;
     private DatasetCategoryViewModel? _selectedCategory;
     private bool _flattenVersions;
+    private bool _isFileDialogOpen;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -142,6 +143,16 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 _ = LoadDatasetsAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// Indicates whether a file dialog is currently open.
+    /// Used to disable drag-drop on the base view while the dialog is open.
+    /// </summary>
+    public bool IsFileDialogOpen
+    {
+        get => _isFileDialogOpen;
+        set => SetProperty(ref _isFileDialogOpen, value);
     }
 
     /// <summary>
@@ -514,70 +525,81 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         if (DialogService is null || ActiveDataset is null) return;
 
-        // Show drag-drop file picker dialog
-        var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
-        if (files is null || files.Count == 0) return;
-
-        IsLoading = true;
+        // Set flag to disable drag-drop on base view while dialog is open
+        IsFileDialogOpen = true;
+        
         try
         {
-            var copied = 0;
-            var skipped = 0;
-            var videoThumbnailsGenerated = 0;
+            // Show drag-drop file picker dialog
+            var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
+            if (files is null || files.Count == 0) return;
 
-            // Add to the current version folder
-            var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
-            
-            // Ensure the folder exists (for new versioned datasets)
-            Directory.CreateDirectory(destFolderPath);
-
-            foreach (var sourceFile in files)
+            IsLoading = true;
+            try
             {
-                var fileName = Path.GetFileName(sourceFile);
-                var destPath = Path.Combine(destFolderPath, fileName);
+                var copied = 0;
+                var skipped = 0;
+                var videoThumbnailsGenerated = 0;
 
-                if (!File.Exists(destPath))
+                // Add to the current version folder
+                var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
+                
+                // Ensure the folder exists (for new versioned datasets)
+                Directory.CreateDirectory(destFolderPath);
+
+                foreach (var sourceFile in files)
                 {
-                    File.Copy(sourceFile, destPath);
-                    copied++;
-                    
-                    // Generate thumbnail for video files
-                    if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destPath = Path.Combine(destFolderPath, fileName);
+
+                    if (!File.Exists(destPath))
                     {
-                        var result = await _videoThumbnailService.GenerateThumbnailAsync(destPath);
-                        if (result.Success)
+                        File.Copy(sourceFile, destPath);
+                        copied++;
+                        
+                        // Generate thumbnail for video files
+                        if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
                         {
-                            videoThumbnailsGenerated++;
+                            var result = await _videoThumbnailService.GenerateThumbnailAsync(destPath);
+                            if (result.Success)
+                            {
+                                videoThumbnailsGenerated++;
+                            }
                         }
                     }
+                    else
+                    {
+                        skipped++;
+                    }
                 }
-                else
-                {
-                    skipped++;
-                }
-            }
 
-            var message = skipped > 0 
-                ? $"Added {copied} files, skipped {skipped} duplicates"
-                : $"Added {copied} files to dataset";
-            
-            if (videoThumbnailsGenerated > 0)
-            {
-                message += $" ({videoThumbnailsGenerated} video thumbnails generated)";
+                var message = skipped > 0 
+                    ? $"Added {copied} files, skipped {skipped} duplicates"
+                    : $"Added {copied} files to dataset";
+                
+                if (videoThumbnailsGenerated > 0)
+                {
+                    message += $" ({videoThumbnailsGenerated} video thumbnails generated)";
+                }
+                
+                StatusMessage = message;
+                
+                // Reload the dataset
+                await OpenDatasetAsync(ActiveDataset);
             }
-            
-            StatusMessage = message;
-            
-            // Reload the dataset
-            await OpenDatasetAsync(ActiveDataset);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Error adding files: {ex.Message}";
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error adding files: {ex.Message}";
+            }
+            finally
+            {
+                IsLoading = false;
+            }
         }
         finally
         {
-            IsLoading = false;
+            // Always reset the flag when dialog closes
+            IsFileDialogOpen = false;
         }
     }
 

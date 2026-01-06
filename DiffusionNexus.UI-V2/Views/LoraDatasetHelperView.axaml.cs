@@ -207,6 +207,13 @@ public partial class LoraDatasetHelperView : UserControl
 
     private void OnEmptyDatasetDragEnter(object? sender, DragEventArgs e)
     {
+        // Don't accept drops while file dialog is open
+        if (DataContext is LoraDatasetHelperViewModel vm && vm.IsFileDialogOpen)
+        {
+            e.DragEffects = DragDropEffects.None;
+            return;
+        }
+        
         if (_emptyDatasetDropZone is not null)
         {
             _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
@@ -230,6 +237,10 @@ public partial class LoraDatasetHelperView : UserControl
         OnEmptyDatasetDragLeave(sender, e);
 
         if (DataContext is not LoraDatasetHelperViewModel vm || vm.ActiveDataset is null)
+            return;
+
+        // Don't accept drops while file dialog is open
+        if (vm.IsFileDialogOpen)
             return;
 
         var files = e.Data.GetFiles();
