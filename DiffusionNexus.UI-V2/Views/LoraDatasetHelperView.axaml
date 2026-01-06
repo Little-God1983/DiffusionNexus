@@ -439,7 +439,7 @@
                         BorderBrush="#333"
                         BorderThickness="0,0,0,1"
                         IsVisible="{Binding HasSelection}">
-                  <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
+                  <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
                     
                     <!-- Selection Count -->
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -462,17 +462,38 @@
                               ToolTip.Tip="Clear all selections (Escape)"/>
                     </StackPanel>
                     
+                    <!-- Separator -->
+                    <Border Grid.Column="2" Width="1" Background="#444" Margin="12,4"/>
+                    
+                    <!-- Quick Select by Rating -->
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="Quick Select:"
+                                 VerticalAlignment="Center"
+                                 Opacity="0.7"
+                                 Margin="0,0,4,0"/>
+                      <Button Content="✓ Ready"
+                              Command="{Binding SelectApprovedCommand}"
+                              Padding="8,4"
+                              Background="#2D7D46"
+                              ToolTip.Tip="Select all production-ready items"/>
+                      <Button Content="✗ Failed"
+                              Command="{Binding SelectRejectedCommand}"
+                              Padding="8,4"
+                              Background="#D9534F"
+                              ToolTip.Tip="Select all failed/rejected items"/>
+                    </StackPanel>
+                    
                     <!-- Spacer -->
-                    <Border Grid.Column="2"/>
+                    <Border Grid.Column="4"/>
                     
                     <!-- Bulk Actions -->
-                    <TextBlock Grid.Column="3" 
+                    <TextBlock Grid.Column="5" 
                                Text="Bulk Actions:"
                                VerticalAlignment="Center"
                                Opacity="0.7"
                                Margin="0,0,8,0"/>
                     
-                    <Button Grid.Column="4"
+                    <Button Grid.Column="6"
                             Content="▲ Mark Ready"
                             Command="{Binding ApproveSelectedCommand}"
                             Background="#2D7D46"
@@ -480,7 +501,7 @@
                             Margin="0,0,4,0"
                             ToolTip.Tip="Mark selected items as production-ready"/>
                     
-                    <Button Grid.Column="5"
+                    <Button Grid.Column="7"
                             Content="▼ Mark Failed"
                             Command="{Binding RejectSelectedCommand}"
                             Background="#D9534F"
@@ -488,11 +509,23 @@
                             Margin="0,0,4,0"
                             ToolTip.Tip="Mark selected items as failed/rejected"/>
                     
-                    <Button Grid.Column="6"
+                    <Button Grid.Column="8"
                             Content="Clear Rating"
                             Command="{Binding ClearRatingSelectedCommand}"
                             Padding="12,6"
+                            Margin="0,0,4,0"
                             ToolTip.Tip="Clear rating for selected items"/>
+                    
+                    <!-- Separator -->
+                    <Border Grid.Column="9" Width="1" Background="#444" Margin="8,4"/>
+                    
+                    <!-- Delete Selected -->
+                    <Button Grid.Column="10"
+                            Content="🗑️ Delete Selected"
+                            Command="{Binding DeleteSelectedCommand}"
+                            Background="#B22222"
+                            Padding="12,6"
+                            ToolTip.Tip="Delete all selected items"/>
                     
                   </Grid>
                 </Border>

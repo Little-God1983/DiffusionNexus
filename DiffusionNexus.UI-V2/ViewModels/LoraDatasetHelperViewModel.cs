@@ -283,9 +283,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
     public IRelayCommand SelectAllCommand { get; }
     public IRelayCommand ClearSelectionCommand { get; }
+    public IRelayCommand SelectApprovedCommand { get; }
+    public IRelayCommand SelectRejectedCommand { get; }
     public IRelayCommand ApproveSelectedCommand { get; }
     public IRelayCommand RejectSelectedCommand { get; }
     public IRelayCommand ClearRatingSelectedCommand { get; }
+    public IAsyncRelayCommand DeleteSelectedCommand { get; }
 
     #endregion
 
@@ -320,6 +323,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ApproveSelectedCommand = new RelayCommand(ApproveSelected);
         RejectSelectedCommand = new RelayCommand(RejectSelected);
         ClearRatingSelectedCommand = new RelayCommand(ClearRatingSelected);
+        SelectApprovedCommand = new RelayCommand(SelectApproved);
+        SelectRejectedCommand = new RelayCommand(SelectRejected);
+        DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
     }
 
     /// <summary>
@@ -1575,6 +1581,98 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             image.SaveRating();
         }
         StatusMessage = $"Cleared rating for {selected.Count} items";
+    }
+
+    /// <summary>
+    /// Selects all approved images.
+    /// </summary>
+    private void SelectApproved()
+    {
+        // Clear current selection
+        ClearSelectionSilent();
+
+        foreach (var image in DatasetImages.Where(i => i.RatingStatus == ImageRatingStatus.Approved))
+        {
+            image.IsSelected = true;
+        }
+        UpdateSelectionCount();
+        StatusMessage = $"Selected {SelectionCount} approved items";
+    }
+
+    /// <summary>
+    /// Selects all rejected images.
+    /// </summary>
+    private void SelectRejected()
+    {
+        // Clear current selection
+        ClearSelectionSilent();
+
+        foreach (var image in DatasetImages.Where(i => i.RatingStatus == ImageRatingStatus.Rejected))
+        {
+            image.IsSelected = true;
+        }
+        UpdateSelectionCount();
+        StatusMessage = $"Selected {SelectionCount} rejected items";
+    }
+
+    /// <summary>
+    /// Deletes all selected images.
+    /// </summary>
+    private async Task DeleteSelectedAsync()
+    {
+        if (DialogService is null) return;
+
+        var selectedImages = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selectedImages.Count == 0) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Selected Media",
+            $"Are you sure you want to delete {selectedImages.Count} selected media items?");
+
+        if (!confirm) return;
+
+        try
+        {
+            foreach (var image in selectedImages)
+            {
+                // Delete media file
+                if (File.Exists(image.ImagePath))
+                {
+                    File.Delete(image.ImagePath);
+                }
+
+                // Delete caption file
+                if (File.Exists(image.CaptionFilePath))
+                {
+                    File.Delete(image.CaptionFilePath);
+                }
+                
+                // Delete video thumbnail if exists
+                if (image.IsVideo)
+                {
+                    var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
+                    if (File.Exists(thumbnailPath))
+                    {
+                        File.Delete(thumbnailPath);
+                    }
+                }
+
+                DatasetImages.Remove(image);
+            }
+
+            // Update the dataset card counts
+            if (ActiveDataset is not null)
+            {
+                ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+            }
+
+            StatusMessage = $"Deleted {selectedImages.Count} items";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting selected media: {ex.Message}";
+        }
     }
 
     /// <summary>
