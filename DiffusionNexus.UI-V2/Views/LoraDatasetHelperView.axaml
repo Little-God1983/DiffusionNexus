@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraDatasetHelperView"
              x:DataType="vm:LoraDatasetHelperViewModel">
@@ -17,7 +18,7 @@
   </Design.DataContext>
 
   <Grid RowDefinitions="*,Auto">
-    <TabControl Grid.Row="0">
+    <TabControl Grid.Row="0" SelectedIndex="{Binding SelectedTabIndex}">
       
       <!-- Dataset Management Tab -->
       <TabItem Header="Dataset Management">
@@ -29,7 +30,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Back to Overview Button (only visible when viewing a dataset) -->
               <Button Grid.Column="0"
@@ -46,11 +47,73 @@
                          VerticalAlignment="Center"
                          IsVisible="{Binding IsViewingDataset}"/>
               
+              <!-- Version Dropdown (when viewing dataset with multiple versions) -->
+              <StackPanel Grid.Column="2"
+                          Orientation="Horizontal"
+                          Spacing="6"
+                          Margin="8,0,0,0"
+                          IsVisible="{Binding IsViewingDataset}"
+                          VerticalAlignment="Center">
+                <TextBlock Text="Version:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"
+                           IsVisible="{Binding ActiveDataset.HasMultipleVersions}"/>
+                <ComboBox ItemsSource="{Binding AvailableVersions}"
+                          SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                          MinWidth="70"
+                          IsVisible="{Binding ActiveDataset.HasMultipleVersions}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding StringFormat='V{0}'}"
+                                 Foreground="#4CAF50"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <!-- Single version display (when only one version exists) -->
+                <Border Background="#333"
+                        CornerRadius="4"
+                        Padding="8,4"
+                        IsVisible="{Binding !ActiveDataset.HasMultipleVersions}">
+                  <TextBlock Text="V1"
+                             FontSize="12"
+                             Foreground="#4CAF50"
+                             VerticalAlignment="Center"/>
+                </Border>
+              </StackPanel>
+              
+              <!-- Category Dropdown (when viewing dataset) -->
+              <StackPanel Grid.Column="3" 
+                          Orientation="Horizontal" 
+                          Spacing="8"
+                          IsVisible="{Binding IsViewingDataset}"
+                          Margin="16,0,0,0">
+                <TextBlock Text="Category:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"/>
+                <ComboBox ItemsSource="{Binding AvailableCategories}"
+                          SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                          DisplayMemberBinding="{Binding Name}"
+                          MinWidth="120"
+                          PlaceholderText="Select category..."/>
+              </StackPanel>
+              
+              <!-- Flatten Versions Toggle (only in overview) -->
+              <StackPanel Grid.Column="4"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          IsVisible="{Binding !IsViewingDataset}"
+                          VerticalAlignment="Center">
+                <ToggleSwitch IsChecked="{Binding FlattenVersions, Mode=TwoWay}"
+                              OnContent="Flatten Versions"
+                              OffContent="Flatten Versions"
+                              ToolTip.Tip="Show individual cards for each version folder"/>
+              </StackPanel>
+              
               <!-- Spacer -->
-              <Border Grid.Column="2"/>
+              <Border Grid.Column="5"/>
               
               <!-- Open Folder Button (when viewing dataset) -->
-              <Button Grid.Column="3"
+              <Button Grid.Column="6"
                       Content="📂 Open Folder"
                       Command="{Binding OpenContainingFolderCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -58,7 +121,7 @@
                       ToolTip.Tip="Open dataset folder in file explorer"/>
               
               <!-- Export Dataset Button (when viewing dataset) -->
-              <Button Grid.Column="4"
+              <Button Grid.Column="7"
                       Content="📦 Export Dataset"
                       Command="{Binding ExportDatasetCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -66,14 +129,23 @@
                       ToolTip.Tip="Export dataset for training"/>
               
               <!-- Add Images Button (when viewing dataset) -->
-              <Button Grid.Column="5"
+              <Button Grid.Column="8"
                       Content="+ Add Images"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
               
+              <!-- Increment Version Button (when viewing dataset with images) -->
+              <Button Grid.Column="9"
+                      Content="📋 New Version"
+                      Command="{Binding IncrementVersionCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      IsEnabled="{Binding ActiveDataset.CanIncrementVersion}"
+                      Margin="0,0,8,0"
+                      ToolTip.Tip="Create a new version by copying all images and captions. Use for different captioning styles (e.g., SDXL vs Flux)."/>
+              
               <!-- Save Captions Button (when viewing dataset with changes) -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="10"
                       Content="Save Captions"
                       Command="{Binding SaveAllCaptionsCommand}"
                       IsVisible="{Binding HasUnsavedChanges}"
@@ -81,7 +153,7 @@
                       Background="#2D7D46"/>
               
               <!-- New Dataset Button (only in overview) -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="12"
                       Content="+ New Dataset" 
                       Command="{Binding CreateDatasetCommand}"
                       IsVisible="{Binding !IsViewingDataset}"/>
@@ -127,85 +199,140 @@
               </StackPanel>
             </Border>
 
-            <!-- Dataset Overview (Netflix-style cards) -->
+            <!-- Dataset Overview (Grouped by Category with separator lines) -->
             <ScrollViewer IsVisible="{Binding !IsViewingDataset}"
                           Padding="16">
-              <ItemsControl ItemsSource="{Binding Datasets}">
+              <ItemsControl ItemsSource="{Binding GroupedDatasets}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
+                    <StackPanel Orientation="Vertical" Spacing="8"/>
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DatasetCardViewModel">
-                    <Button Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).OpenDatasetCommand}"
-                            CommandParameter="{Binding}"
-                            Margin="8"
-                            Padding="0"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Cursor="Hand">
-                      <Border Width="200" 
-                              Height="240"
-                              Background="#2A2A2A"
-                              CornerRadius="8"
-                              ClipToBounds="True"
-                              BorderBrush="#444"
-                              BorderThickness="1">
-                        <Grid RowDefinitions="*,Auto">
-                          
-                          <!-- Thumbnail Area -->
-                          <Border Grid.Row="0" 
-                                  Background="#1A1A1A"
-                                  CornerRadius="8,8,0,0"
-                                  ClipToBounds="True">
-                            <Grid>
-                              <!-- Placeholder when no thumbnail -->
-                              <TextBlock Text="📁" 
-                                         FontSize="64" 
-                                         Opacity="0.2"
-                                         HorizontalAlignment="Center"
-                                         VerticalAlignment="Center"
-                                         IsVisible="{Binding !HasThumbnail}"/>
-                              
-                              <!-- Thumbnail image using converter -->
-                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
-                                     Stretch="UniformToFill"
-                                     IsVisible="{Binding HasThumbnail}"/>
-                              
-                              <!-- Delete button overlay -->
-                              <Button Content="🗑️"
-                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).DeleteDatasetCommand}"
-                                      CommandParameter="{Binding}"
-                                      HorizontalAlignment="Right"
-                                      VerticalAlignment="Top"
-                                      Margin="8"
-                                      Padding="6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      Opacity="0.7"/>
-                            </Grid>
-                          </Border>
-                          
-                          <!-- Info Area -->
-                          <Border Grid.Row="1" 
-                                  Padding="12,8"
-                                  Background="#2A2A2A">
-                            <StackPanel>
-                              <TextBlock Text="{Binding Name}"
-                                         FontWeight="SemiBold"
-                                         FontSize="14"
-                                         TextTrimming="CharacterEllipsis"
-                                         MaxLines="1"/>
-                              <TextBlock Text="{Binding ImageCountText}"
-                                         FontSize="12"
-                                         Opacity="0.6"/>
-                            </StackPanel>
-                          </Border>
-                          
-                        </Grid>
-                      </Border>
-                    </Button>
+                  <DataTemplate x:DataType="vm:DatasetGroupViewModel">
+                    <!-- Category Group Section -->
+                    <StackPanel Spacing="8">
+                      
+                      <!-- Category Header with Separator Line -->
+                      <Grid ColumnDefinitions="Auto,8,*,8,Auto" Margin="8,8,8,4">
+                        <!-- Category Name -->
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Name}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Foreground="#888"
+                                   VerticalAlignment="Center"/>
+                        
+                        <!-- Separator Line -->
+                        <Border Grid.Column="2"
+                                Height="1"
+                                Background="#444"
+                                VerticalAlignment="Center"/>
+                        
+                        <!-- Dataset Count -->
+                        <TextBlock Grid.Column="4"
+                                   Text="{Binding DatasetCountText}"
+                                   FontSize="12"
+                                   Foreground="#666"
+                                   VerticalAlignment="Center"/>
+                      </Grid>
+                      
+                      <!-- Datasets in this category -->
+                      <ItemsControl ItemsSource="{Binding Datasets}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                            <Button Command="{Binding $parent[ScrollViewer].((vm:LoraDatasetHelperViewModel)DataContext).OpenDatasetCommand}"
+                                    CommandParameter="{Binding}"
+                                    Margin="8"
+                                    Padding="0"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Cursor="Hand">
+                              <Border Width="200" 
+                                      Height="240"
+                                      Background="#2A2A2A"
+                                      CornerRadius="8"
+                                      ClipToBounds="True"
+                                      BorderBrush="#444"
+                                      BorderThickness="1">
+                                <Grid RowDefinitions="*,Auto">
+                                  
+                                  <!-- Thumbnail Area -->
+                                  <Border Grid.Row="0" 
+                                          Background="#1A1A1A"
+                                          CornerRadius="8,8,0,0"
+                                          ClipToBounds="True">
+                                    <Grid>
+                                      <!-- Placeholder when no thumbnail -->
+                                      <TextBlock Text="📁" 
+                                                 FontSize="64" 
+                                                 Opacity="0.2"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center"
+                                                 IsVisible="{Binding !HasThumbnail}"/>
+                                      
+                                      <!-- Thumbnail image using converter -->
+                                      <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                             Stretch="UniformToFill"
+                                             IsVisible="{Binding HasThumbnail}"/>
+                                      
+                                      <!-- Version Badge (top-left) -->
+                                      <Border Background="#4CAF50"
+                                              CornerRadius="4"
+                                              Padding="6,3"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Margin="8"
+                                              IsVisible="{Binding ShowVersionBadge}">
+                                        <TextBlock Text="{Binding VersionBadgeText}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White"/>
+                                      </Border>
+                                      
+                                      <!-- Delete button overlay -->
+                                      <Button Content="🗑️"
+                                              Command="{Binding $parent[ScrollViewer].((vm:LoraDatasetHelperViewModel)DataContext).DeleteDatasetCommand}"
+                                              CommandParameter="{Binding}"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Top"
+                                              Margin="8"
+                                              Padding="6"
+                                              Background="#80000000"
+                                              CornerRadius="4"
+                                              Opacity="0.7"/>
+                                    </Grid>
+                                  </Border>
+                                  
+                                  <!-- Info Area -->
+                                  <Border Grid.Row="1" 
+                                          Padding="12,8"
+                                          Background="#2A2A2A">
+                                    <StackPanel>
+                                      <TextBlock Text="{Binding Name}"
+                                                 FontWeight="SemiBold"
+                                                 FontSize="14"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 MaxLines="1"/>
+                                      <TextBlock Text="{Binding ImageCountText}"
+                                                 FontSize="12"
+                                                 Opacity="0.6"/>
+                                    </StackPanel>
+                                  </Border>
+                                  
+                                </Grid>
+                              </Border>
+                            </Button>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                      
+                    </StackPanel>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
@@ -319,12 +446,246 @@
 
       <!-- Image Edit Tab -->
       <TabItem Header="Image Edit">
-        <Grid>
-          <TextBlock Text="Image Edit"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
+        <Grid ColumnDefinitions="*,Auto">
+          <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto">
+          
+            <!-- Toolbar -->
+            <Border Grid.Row="0" 
+                    Background="#1E1E1E" 
+                    Padding="16,12"
+                    BorderBrush="#333"
+                    BorderThickness="0,0,0,1">
+              <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                
+                <!-- Image Info -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                  <TextBlock Text="{Binding ImageEditor.ImageFileName, FallbackValue='No image loaded'}"
+                             FontSize="16"
+                             FontWeight="SemiBold"
+                             VerticalAlignment="Center"
+                             Opacity="{Binding ImageEditor.HasImage, Converter={x:Static converters:BoolConverters.BoolToOpacity}}"/>
+                  <TextBlock Text="{Binding ImageEditor.ImageDimensions}"
+                             FontSize="14"
+                             VerticalAlignment="Center"
+                             Opacity="0.6"
+                             IsVisible="{Binding ImageEditor.HasImage}"/>
+                </StackPanel>
+                
+                <!-- Tool Separator -->
+                <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                
+                <!-- Tools -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                  <!-- Crop Tool Button -->
+                  <ToggleButton Content="✂️ Crop"
+                                IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}"
+                                ToolTip.Tip="Crop tool (C to apply, Escape to cancel)"
+                                Padding="12,6"/>
+                </StackPanel>
+                
+                <!-- Spacer -->
+                <Border Grid.Column="3"/>
+                
+                <!-- Crop Actions (visible when crop tool is active) -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+                  <Button Content="✓ Apply Crop"
+                          Command="{Binding ImageEditor.ApplyCropCommand}"
+                          Background="#2D7D46"
+                          ToolTip.Tip="Apply crop (C or Enter)"/>
+                  <Button Content="✕ Cancel"
+                          Command="{Binding ImageEditor.CancelCropCommand}"
+                          ToolTip.Tip="Cancel crop (Escape)"/>
+                </StackPanel>
+                
+                <!-- Separator -->
+                <Border Grid.Column="5" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                
+                <!-- Save Buttons -->
+                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                  <Button Content="💾 Save As New"
+                          Command="{Binding ImageEditor.SaveAsNewCommand}"
+                          Background="#2D7D46"
+                          ToolTip.Tip="Save as a new file"/>
+                  <Button Content="💾 Save"
+                          Command="{Binding ImageEditor.SaveOverwriteCommand}"
+                          ToolTip.Tip="Overwrite original file"/>
+                </StackPanel>
+                
+                <!-- Separator -->
+                <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                
+                <!-- Reset Button -->
+                <Button Grid.Column="8"
+                        Content="↺ Reset"
+                        Command="{Binding ImageEditor.ResetImageCommand}"
+                        Margin="0,0,8,0"
+                        ToolTip.Tip="Reset to original image"/>
+                
+                <!-- Clear Button -->
+                <Button Grid.Column="9"
+                        Content="✕ Clear"
+                        Command="{Binding ImageEditor.ClearImageCommand}"
+                        ToolTip.Tip="Clear the image"/>
+                
+              </Grid>
+            </Border>
+            
+            <!-- Image Editor Canvas -->
+            <Border Grid.Row="1" 
+                    Background="#1A1A1A"
+                    Margin="16">
+              <Grid>
+                <!-- Placeholder when no image -->
+                <StackPanel HorizontalAlignment="Center" 
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding !ImageEditor.HasImage}">
+                  <TextBlock Text="🖼️" 
+                             FontSize="64" 
+                             Opacity="0.2"
+                             HorizontalAlignment="Center"/>
+                  <TextBlock Text="No image loaded" 
+                             FontSize="16"
+                             Opacity="0.4"
+                             HorizontalAlignment="Center"
+                             Margin="0,8,0,0"/>
+                  <TextBlock Text="Use 'Send to Image Edit' from Dataset Management"
+                             FontSize="12"
+                             Opacity="0.3"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,0"/>
+                </StackPanel>
+                
+                <!-- Image Editor Control -->
+                <controls:ImageEditorControl x:Name="ImageEditorCanvas"
+                                             ImagePath="{Binding ImageEditor.CurrentImagePath}"
+                                             IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
+                                             IsVisible="{Binding ImageEditor.HasImage}"/>
+              </Grid>
+            </Border>
+            
+            <!-- Bottom Status Bar with Zoom -->
+            <Border Grid.Row="2"
+                    Background="#1E1E1E"
+                    Padding="8,4"
+                    BorderBrush="#333"
+                    BorderThickness="0,1,0,0">
+              <Grid ColumnDefinitions="*,Auto">
+                <!-- Status Message -->
+                <TextBlock Grid.Column="0"
+                           Text="{Binding ImageEditor.StatusMessage}" 
+                           Opacity="0.8"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding ImageEditor.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                
+                <!-- Zoom Controls -->
+                <StackPanel Grid.Column="1" 
+                            Orientation="Horizontal" 
+                            Spacing="4"
+                            IsVisible="{Binding ImageEditor.HasImage}">
+                  <Button Content="-"
+                          Command="{Binding ImageEditor.ZoomOutCommand}"
+                          Width="28" Height="28"
+                          Padding="0"
+                          ToolTip.Tip="Zoom out"/>
+                  <Border Background="#333" 
+                          CornerRadius="4" 
+                          Padding="8,4"
+                          MinWidth="50">
+                    <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}"
+                               HorizontalAlignment="Center"
+                               FontSize="12"
+                               Foreground="#4CAF50"/>
+                  </Border>
+                  <Button Content="+"
+                          Command="{Binding ImageEditor.ZoomInCommand}"
+                          Width="28" Height="28"
+                          Padding="0"
+                          ToolTip.Tip="Zoom in"/>
+                  <Button Content="Fit"
+                          Command="{Binding ImageEditor.ZoomToFitCommand}"
+                          Padding="8,4"
+                          ToolTip.Tip="Fit to window"/>
+                  <Button Content="100%"
+                          Command="{Binding ImageEditor.ZoomToActualCommand}"
+                          Padding="8,4"
+                          ToolTip.Tip="Actual size"/>
+                </StackPanel>
+              </Grid>
+            </Border>
+            
+          </Grid>
+          
+          <!-- Right Side Panel - Info -->
+          <Border Grid.Column="1"
+                  Width="200"
+                  Background="#1E1E1E"
+                  BorderBrush="#333"
+                  BorderThickness="1,0,0,0"
+                  IsVisible="{Binding ImageEditor.HasImage}">
+            <ScrollViewer>
+              <StackPanel Margin="12" Spacing="16">
+                
+                <!-- Information Section -->
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Information"
+                             FontWeight="SemiBold"
+                             FontSize="14"/>
+                  <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+                    <StackPanel Spacing="4">
+                      <TextBlock FontSize="12" Opacity="0.8">
+                        <Run Text="Size: "/>
+                        <Run Text="{Binding ImageEditor.ImageWidth}"/>
+                        <Run Text=" × "/>
+                        <Run Text="{Binding ImageEditor.ImageHeight}"/>
+                        <Run Text=" px"/>
+                      </TextBlock>
+                      <TextBlock Text="{Binding ImageEditor.ImageDpi, StringFormat='Resolution: {0} DPI'}"
+                                 FontSize="12"
+                                 Opacity="0.8"/>
+                      <TextBlock Text="{Binding ImageEditor.FileSizeText, StringFormat='File: {0}'}"
+                                 FontSize="12"
+                                 Opacity="0.8"/>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+                
+                <!-- Zoom Section -->
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Zoom"
+                             FontWeight="SemiBold"
+                             FontSize="14"/>
+                  <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}"
+                                 FontSize="18"
+                                 FontWeight="SemiBold"
+                                 Foreground="#4CAF50"
+                                 HorizontalAlignment="Center"/>
+                      <Slider Minimum="10" 
+                              Maximum="500"
+                              Value="{Binding ImageEditor.ZoomPercentage}"
+                              x:Name="ZoomSlider"/>
+                      <Grid ColumnDefinitions="*,*">
+                        <Button Grid.Column="0"
+                                Content="Fit"
+                                Command="{Binding ImageEditor.ZoomToFitCommand}"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,0,2,0"/>
+                        <Button Grid.Column="1"
+                                Content="100%"
+                                Command="{Binding ImageEditor.ZoomToActualCommand}"
+                                HorizontalAlignment="Stretch"
+                                Margin="2,0,0,0"/>
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+                
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+          
         </Grid>
       </TabItem>
 

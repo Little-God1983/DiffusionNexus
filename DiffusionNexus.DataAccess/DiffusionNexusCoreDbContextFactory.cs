@@ -9,15 +9,14 @@ namespace DiffusionNexus.DataAccess;
 /// Used by EF Core tools for migrations.
 /// </summary>
 /// <remarks>
-/// To create migrations, run:
+/// To create migrations, run from the solution root:
 /// <code>
-/// cd DiffusionNexus.DataAccess
-/// dotnet ef migrations add InitialCreate --context DiffusionNexusCoreDbContext --output-dir Migrations/Core
+/// dotnet ef migrations add MigrationName --project DiffusionNexus.DataAccess --startup-project DiffusionNexus.UI-V2 --context DiffusionNexusCoreDbContext --output-dir Migrations/Core
 /// </code>
 /// 
 /// To apply migrations:
 /// <code>
-/// dotnet ef database update --context DiffusionNexusCoreDbContext
+/// dotnet ef database update --project DiffusionNexus.DataAccess --startup-project DiffusionNexus.UI-V2 --context DiffusionNexusCoreDbContext
 /// </code>
 /// </remarks>
 public class DiffusionNexusCoreDbContextFactory : IDesignTimeDbContextFactory<DiffusionNexusCoreDbContext>
@@ -26,9 +25,9 @@ public class DiffusionNexusCoreDbContextFactory : IDesignTimeDbContextFactory<Di
     {
         var optionsBuilder = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>();
         
-        // Use a local database file for design-time operations
-        var dbPath = Path.Combine(Directory.GetCurrentDirectory(), DiffusionNexusCoreDbContext.DatabaseFileName);
-        optionsBuilder.UseSqlite($"Data Source={dbPath}");
+        // Use the same path as runtime to ensure consistency
+        // This ensures migrations run against the actual app database
+        optionsBuilder.UseSqlite(DiffusionNexusCoreDbContext.GetConnectionString());
 
         return new DiffusionNexusCoreDbContext(optionsBuilder.Options);
     }

@@ -77,6 +77,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private ObservableCollection<LoraSourceViewModel> _loraSources = [];
 
     /// <summary>
+    /// Collection of dataset categories.
+    /// </summary>
+    [ObservableProperty]
+    private ObservableCollection<DatasetCategoryViewModel> _datasetCategories = [];
+
+    /// <summary>
     /// Status message for the user.
     /// </summary>
     [ObservableProperty]
@@ -112,6 +118,12 @@ public partial class SettingsViewModel : BusyViewModelBase
         [
             new LoraSourceViewModel { FolderPath = @"C:\Models\LoRA", IsEnabled = true },
             new LoraSourceViewModel { FolderPath = @"D:\AI\Models\LoRA", IsEnabled = true },
+        ];
+
+        DatasetCategories =
+        [
+            new DatasetCategoryViewModel { Name = "Category 1", Description = "First category", IsDefault = true },
+            new DatasetCategoryViewModel { Name = "Category 2", Description = "Second category", IsDefault = false },
         ];
     }
 
@@ -157,6 +169,26 @@ public partial class SettingsViewModel : BusyViewModelBase
                 LoraSources.Add(sourceVm);
             }
 
+            // Map dataset categories
+            foreach (var existing in DatasetCategories)
+            {
+                existing.CategoryChanged -= OnCategoryChanged;
+            }
+            DatasetCategories.Clear();
+
+            foreach (var category in settings.DatasetCategories.OrderBy(c => c.Order))
+            {
+                var categoryVm = new DatasetCategoryViewModel
+                {
+                    Id = category.Id,
+                    Name = category.Name,
+                    Description = category.Description,
+                    IsDefault = category.IsDefault
+                };
+                categoryVm.CategoryChanged += OnCategoryChanged;
+                DatasetCategories.Add(categoryVm);
+            }
+
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
@@ -199,6 +231,22 @@ public partial class SettingsViewModel : BusyViewModelBase
                     FolderPath = sourceVm.FolderPath!,
                     IsEnabled = sourceVm.IsEnabled,
                     Order = order++
+                });
+            }
+
+            // Map dataset categories (remove empty ones)
+            settings.DatasetCategories.Clear();
+            var categoryOrder = 0;
+            foreach (var categoryVm in DatasetCategories.Where(c => !string.IsNullOrWhiteSpace(c.Name)))
+            {
+                settings.DatasetCategories.Add(new DatasetCategory
+                {
+                    Id = categoryVm.Id,
+                    AppSettingsId = 1,
+                    Name = categoryVm.Name!,
+                    Description = categoryVm.Description,
+                    IsDefault = categoryVm.IsDefault,
+                    Order = categoryOrder++
                 });
             }
 
@@ -321,7 +369,38 @@ public partial class SettingsViewModel : BusyViewModelBase
         }
     }
 
+    /// <summary>
+    /// Adds a new dataset category.
+    /// </summary>
+    [RelayCommand]
+    private void AddCategory()
+    {
+        var category = new DatasetCategoryViewModel { IsDefault = false };
+        category.CategoryChanged += OnCategoryChanged;
+        DatasetCategories.Add(category);
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Removes a dataset category (only non-default ones).
+    /// </summary>
+    [RelayCommand]
+    private void RemoveCategory(DatasetCategoryViewModel? category)
+    {
+        if (category is null || category.IsDefault)
+            return;
+
+        category.CategoryChanged -= OnCategoryChanged;
+        DatasetCategories.Remove(category);
+        HasChanges = true;
+    }
+
     private void OnLoraSourceChanged(object? sender, EventArgs e)
+    {
+        HasChanges = true;
+    }
+
+    private void OnCategoryChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
     }
@@ -335,6 +414,43 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
     partial void OnDatasetStoragePathChanged(string? value) => HasChanges = true;
+}
+
+/// <summary>
+/// ViewModel for a single dataset category.
+/// </summary>
+public partial class DatasetCategoryViewModel : ObservableObject
+{
+    /// <summary>
+    /// Database ID (0 for new categories).
+    /// </summary>
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Category name.
+    /// </summary>
+    [ObservableProperty]
+    private string? _name;
+
+    /// <summary>
+    /// Category description.
+    /// </summary>
+    [ObservableProperty]
+    private string? _description;
+
+    /// <summary>
+    /// Whether this is a default category (cannot be deleted).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDefault;
+
+    /// <summary>
+    /// Event raised when any property changes.
+    /// </summary>
+    public event EventHandler? CategoryChanged;
+
+    partial void OnNameChanged(string? value) => CategoryChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnDescriptionChanged(string? value) => CategoryChanged?.Invoke(this, EventArgs.Empty);
 }
 
 /// <summary>

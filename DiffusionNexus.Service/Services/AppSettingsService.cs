@@ -24,17 +24,58 @@ public sealed class AppSettingsService : IAppSettingsService
     {
         var settings = await _dbContext.AppSettings
             .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
+            .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
             .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
 
         if (settings is null)
         {
-            // Create default settings
+            // Create default settings with default categories
             settings = new AppSettings { Id = 1 };
             _dbContext.AppSettings.Add(settings);
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // Seed default categories
+            await SeedDefaultCategoriesAsync(cancellationToken);
+
+            // Reload to get the categories
+            settings = await _dbContext.AppSettings
+                .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
+                .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
+                .FirstAsync(s => s.Id == 1, cancellationToken);
+        }
+        else if (!settings.DatasetCategories.Any())
+        {
+            // Seed default categories if none exist
+            await SeedDefaultCategoriesAsync(cancellationToken);
+
+            // Reload to get the categories
+            settings = await _dbContext.AppSettings
+                .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
+                .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
+                .FirstAsync(s => s.Id == 1, cancellationToken);
         }
 
         return settings;
+    }
+
+    private async Task SeedDefaultCategoriesAsync(CancellationToken cancellationToken = default)
+    {
+        // Check if any categories already exist to avoid duplicates
+        var existingCount = await _dbContext.DatasetCategories.CountAsync(cancellationToken);
+        if (existingCount > 0)
+        {
+            return;
+        }
+
+        var defaultCategories = new[]
+        {
+            new DatasetCategory { Name = "Character", Order = 0, IsDefault = true, AppSettingsId = 1 },
+            new DatasetCategory { Name = "Style", Order = 1, IsDefault = true, AppSettingsId = 1 },
+            new DatasetCategory { Name = "Concept", Order = 2, IsDefault = true, AppSettingsId = 1 }
+        };
+
+        _dbContext.DatasetCategories.AddRange(defaultCategories);
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     /// <inheritdoc />
@@ -50,20 +91,39 @@ public sealed class AppSettingsService : IAppSettingsService
             source.AppSettingsId = 1; // Ensure FK is set
         }
 
-        // Get the incoming source data before querying (to avoid tracking issues)
+        // Update category order
+        var categoryOrder = 0;
+        foreach (var category in settings.DatasetCategories)
+        {
+            category.Order = categoryOrder++;
+            category.AppSettingsId = 1; // Ensure FK is set
+        }
+
+        // Get the incoming data before querying (to avoid tracking issues)
         var incomingSourceData = settings.LoraSources
             .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
             .ToList();
 
-        // Detach any tracked LoraSource entities to avoid conflicts
+        var incomingCategoryData = settings.DatasetCategories
+            .Select(c => new { c.Id, c.Name, c.Description, c.IsDefault, c.Order })
+            .ToList();
+
+        // Detach any tracked entities to avoid conflicts
         var trackedLoraSources = _dbContext.ChangeTracker.Entries<LoraSource>().ToList();
         foreach (var entry in trackedLoraSources)
         {
             entry.State = EntityState.Detached;
         }
 
+        var trackedCategories = _dbContext.ChangeTracker.Entries<DatasetCategory>().ToList();
+        foreach (var entry in trackedCategories)
+        {
+            entry.State = EntityState.Detached;
+        }
+
         var existingSettings = await _dbContext.AppSettings
             .Include(s => s.LoraSources)
+            .Include(s => s.DatasetCategories)
             .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
 
         if (existingSettings is null)
@@ -73,11 +133,22 @@ public sealed class AppSettingsService : IAppSettingsService
             settings.LoraSources = incomingSourceData
                 .Select(s => new LoraSource
                 {
-                    Id = 0, // New sources get auto-generated IDs
+                    Id = 0,
                     AppSettingsId = 1,
                     FolderPath = s.FolderPath,
                     IsEnabled = s.IsEnabled,
                     Order = s.Order
+                })
+                .ToList();
+            settings.DatasetCategories = incomingCategoryData
+                .Select(c => new DatasetCategory
+                {
+                    Id = 0,
+                    AppSettingsId = 1,
+                    Name = c.Name,
+                    Description = c.Description,
+                    IsDefault = c.IsDefault,
+                    Order = c.Order
                 })
                 .ToList();
             _dbContext.AppSettings.Add(settings);
@@ -93,11 +164,11 @@ public sealed class AppSettingsService : IAppSettingsService
             existingSettings.MergeLoraSources = settings.MergeLoraSources;
             existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
             existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
+            existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
             existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
             existingSettings.UpdatedAt = settings.UpdatedAt;
 
             // Handle LoRA sources (remove deleted, update existing, add new)
-            // Only consider persisted sources (Id > 0)
             var existingSourceIds = existingSettings.LoraSources
                 .Where(s => s.Id > 0)
                 .Select(s => s.Id)
@@ -107,7 +178,6 @@ public sealed class AppSettingsService : IAppSettingsService
                 .Select(s => s.Id)
                 .ToHashSet();
 
-            // Remove deleted sources (only those that exist in the database)
             foreach (var source in existingSettings.LoraSources.ToList())
             {
                 if (source.Id > 0 && !incomingSourceIds.Contains(source.Id))
@@ -116,12 +186,10 @@ public sealed class AppSettingsService : IAppSettingsService
                 }
             }
 
-            // Update or add sources
             foreach (var sourceData in incomingSourceData)
             {
                 if (sourceData.Id > 0 && existingSourceIds.Contains(sourceData.Id))
                 {
-                    // Update existing source
                     var existingSource = existingSettings.LoraSources.First(s => s.Id == sourceData.Id);
                     existingSource.FolderPath = sourceData.FolderPath;
                     existingSource.IsEnabled = sourceData.IsEnabled;
@@ -129,7 +197,6 @@ public sealed class AppSettingsService : IAppSettingsService
                 }
                 else
                 {
-                    // Add new source
                     var newSource = new LoraSource
                     {
                         AppSettingsId = 1,
@@ -138,6 +205,52 @@ public sealed class AppSettingsService : IAppSettingsService
                         Order = sourceData.Order
                     };
                     _dbContext.LoraSources.Add(newSource);
+                }
+            }
+
+            // Handle DatasetCategories (remove deleted non-defaults, update existing, add new)
+            var existingCategoryIds = existingSettings.DatasetCategories
+                .Where(c => c.Id > 0)
+                .Select(c => c.Id)
+                .ToHashSet();
+            var incomingCategoryIds = incomingCategoryData
+                .Where(c => c.Id > 0)
+                .Select(c => c.Id)
+                .ToHashSet();
+
+            foreach (var category in existingSettings.DatasetCategories.ToList())
+            {
+                // Only remove non-default categories that are not in incoming data
+                if (category.Id > 0 && !category.IsDefault && !incomingCategoryIds.Contains(category.Id))
+                {
+                    _dbContext.DatasetCategories.Remove(category);
+                }
+            }
+
+            foreach (var categoryData in incomingCategoryData)
+            {
+                if (categoryData.Id > 0 && existingCategoryIds.Contains(categoryData.Id))
+                {
+                    var existingCategory = existingSettings.DatasetCategories.First(c => c.Id == categoryData.Id);
+                    // Don't update name for default categories
+                    if (!existingCategory.IsDefault)
+                    {
+                        existingCategory.Name = categoryData.Name;
+                    }
+                    existingCategory.Description = categoryData.Description;
+                    existingCategory.Order = categoryData.Order;
+                }
+                else if (categoryData.Id == 0)
+                {
+                    var newCategory = new DatasetCategory
+                    {
+                        AppSettingsId = 1,
+                        Name = categoryData.Name,
+                        Description = categoryData.Description,
+                        IsDefault = false,
+                        Order = categoryData.Order
+                    };
+                    _dbContext.DatasetCategories.Add(newCategory);
                 }
             }
         }

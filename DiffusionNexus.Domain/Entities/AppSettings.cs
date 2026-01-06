@@ -82,6 +82,11 @@ public class AppSettings
     /// </summary>
     public string? DatasetStoragePath { get; set; }
 
+    /// <summary>
+    /// Collection of dataset categories (Character, Style, Concept, custom...).
+    /// </summary>
+    public ICollection<DatasetCategory> DatasetCategories { get; set; } = new List<DatasetCategory>();
+
     #endregion
 
     #region Timestamps
