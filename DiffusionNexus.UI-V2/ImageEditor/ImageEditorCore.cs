@@ -11,6 +11,15 @@ public class ImageEditorCore : IDisposable
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
     private bool _disposed;
+    private float _zoomLevel = 1f;
+    private float _panX;
+    private float _panY;
+    private bool _isFitMode = true;
+    private int _imageDpi = 72;
+
+    private const float MinZoom = 0.1f;
+    private const float MaxZoom = 10f;
+    private const float ZoomStep = 0.1f;
 
     /// <summary>
     /// Gets the crop tool instance.
@@ -38,9 +47,79 @@ public class ImageEditorCore : IDisposable
     public string? CurrentImagePath { get; private set; }
 
     /// <summary>
+    /// Gets or sets the current zoom level (1.0 = 100%).
+    /// </summary>
+    public float ZoomLevel
+    {
+        get => _zoomLevel;
+        set
+        {
+            _zoomLevel = Math.Clamp(value, MinZoom, MaxZoom);
+            _isFitMode = false;
+            OnZoomChanged();
+        }
+    }
+
+    /// <summary>
+    /// Gets the zoom level as a percentage (0-1000).
+    /// </summary>
+    public int ZoomPercentage => (int)Math.Round(_zoomLevel * 100);
+
+    /// <summary>
+    /// Gets or sets the horizontal pan offset.
+    /// </summary>
+    public float PanX
+    {
+        get => _panX;
+        set => _panX = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the vertical pan offset.
+    /// </summary>
+    public float PanY
+    {
+        get => _panY;
+        set => _panY = value;
+    }
+
+    /// <summary>
+    /// Gets or sets whether the image should fit to the canvas.
+    /// </summary>
+    public bool IsFitMode
+    {
+        get => _isFitMode;
+        set
+        {
+            _isFitMode = value;
+            if (value)
+            {
+                _panX = 0;
+                _panY = 0;
+            }
+            OnZoomChanged();
+        }
+    }
+
+    /// <summary>
+    /// Gets the image DPI (dots per inch).
+    /// </summary>
+    public int ImageDpi => _imageDpi;
+
+    /// <summary>
+    /// Gets the file size in bytes.
+    /// </summary>
+    public long FileSizeBytes { get; private set; }
+
+    /// <summary>
     /// Event raised when the image is modified.
     /// </summary>
     public event EventHandler? ImageChanged;
+
+    /// <summary>
+    /// Event raised when zoom level changes.
+    /// </summary>
+    public event EventHandler? ZoomChanged;
 
     /// <summary>
     /// Loads an image from the specified file path.
@@ -57,14 +136,34 @@ public class ImageEditorCore : IDisposable
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
 
+            // Get file size
+            var fileInfo = new FileInfo(filePath);
+            FileSizeBytes = fileInfo.Length;
+
             using var stream = File.OpenRead(filePath);
+            
+            // Try to get DPI from codec
+            using var codec = SKCodec.Create(stream);
+            if (codec is not null)
+            {
+                // Reset stream position
+                stream.Position = 0;
+            }
+
             _originalBitmap = SKBitmap.Decode(stream);
 
             if (_originalBitmap is null)
                 return false;
 
+            // Try to extract DPI (default to 72 if not available)
+            _imageDpi = 72; // SkiaSharp doesn't directly expose DPI, would need EXIF parsing
+
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
+            
+            // Reset zoom and pan
+            ResetZoom();
+            
             OnImageChanged();
             return true;
         }
@@ -364,6 +463,109 @@ public class ImageEditorCore : IDisposable
             ".gif" => SKEncodedImageFormat.Gif,
             _ => SKEncodedImageFormat.Png
         };
+    }
+
+    /// <summary>
+    /// Renders the current image with zoom and pan support.
+    /// </summary>
+    public SKRect RenderWithZoom(SKCanvas canvas, float canvasWidth, float canvasHeight, SKColor backgroundColor)
+    {
+        canvas.Clear(backgroundColor);
+
+        if (_workingBitmap is null)
+            return SKRect.Empty;
+
+        SKRect imageRect;
+
+        if (_isFitMode)
+        {
+            imageRect = CalculateFitRect(canvasWidth, canvasHeight);
+            // Update zoom level to reflect fit
+            var fitScale = imageRect.Width / _workingBitmap.Width;
+            _zoomLevel = fitScale;
+        }
+        else
+        {
+            // Calculate zoomed size
+            var zoomedWidth = _workingBitmap.Width * _zoomLevel;
+            var zoomedHeight = _workingBitmap.Height * _zoomLevel;
+
+            // Center with pan offset
+            var x = (canvasWidth - zoomedWidth) / 2f + _panX;
+            var y = (canvasHeight - zoomedHeight) / 2f + _panY;
+
+            imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
+        }
+
+        canvas.DrawBitmap(_workingBitmap, imageRect);
+
+        // Update crop tool with current image bounds and render overlay
+        CropTool.SetImageBounds(imageRect);
+        CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+        return imageRect;
+    }
+
+    /// <summary>
+    /// Zooms in by one step.
+    /// </summary>
+    public void ZoomIn()
+    {
+        ZoomLevel = _zoomLevel + ZoomStep;
+    }
+
+    /// <summary>
+    /// Zooms out by one step.
+    /// </summary>
+    public void ZoomOut()
+    {
+        ZoomLevel = _zoomLevel - ZoomStep;
+    }
+
+    /// <summary>
+    /// Sets zoom to fit the image in the canvas.
+    /// </summary>
+    public void ZoomToFit()
+    {
+        IsFitMode = true;
+    }
+
+    /// <summary>
+    /// Sets zoom to 100% (actual size).
+    /// </summary>
+    public void ZoomToActual()
+    {
+        ZoomLevel = 1f;
+        _panX = 0;
+        _panY = 0;
+    }
+
+    /// <summary>
+    /// Resets zoom and pan to defaults.
+    /// </summary>
+    public void ResetZoom()
+    {
+        _zoomLevel = 1f;
+        _panX = 0;
+        _panY = 0;
+        _isFitMode = true;
+        OnZoomChanged();
+    }
+
+    /// <summary>
+    /// Pans the image by the specified delta.
+    /// </summary>
+    public void Pan(float deltaX, float deltaY)
+    {
+        if (_isFitMode) return;
+        
+        _panX += deltaX;
+        _panY += deltaY;
+    }
+
+    protected virtual void OnZoomChanged()
+    {
+        ZoomChanged?.Invoke(this, EventArgs.Empty);
     }
 
     protected virtual void OnImageChanged()

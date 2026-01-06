@@ -48,12 +48,23 @@ public partial class LoraDatasetHelperView : UserControl
     {
         if (_imageEditorCanvas is null) return;
 
-        // Update dimensions when image changes
+        // Update dimensions and file info when image changes
         _imageEditorCanvas.ImageChanged += (_, _) =>
         {
             vm.ImageEditor.UpdateDimensions(
                 _imageEditorCanvas.ImageWidth,
                 _imageEditorCanvas.ImageHeight);
+            vm.ImageEditor.UpdateFileInfo(
+                _imageEditorCanvas.ImageDpi,
+                _imageEditorCanvas.FileSizeBytes);
+        };
+
+        // Update zoom info when zoom changes
+        _imageEditorCanvas.ZoomChanged += (_, _) =>
+        {
+            vm.ImageEditor.UpdateZoomInfo(
+                _imageEditorCanvas.ZoomPercentage,
+                _imageEditorCanvas.IsFitMode);
         };
 
         // Handle crop applied
@@ -99,6 +110,27 @@ public partial class LoraDatasetHelperView : UserControl
             _imageEditorCanvas.DeactivateCropTool();
         };
 
+        // Handle zoom requests
+        vm.ImageEditor.ZoomInRequested += (_, _) =>
+        {
+            _imageEditorCanvas.ZoomIn();
+        };
+
+        vm.ImageEditor.ZoomOutRequested += (_, _) =>
+        {
+            _imageEditorCanvas.ZoomOut();
+        };
+
+        vm.ImageEditor.ZoomToFitRequested += (_, _) =>
+        {
+            _imageEditorCanvas.ZoomToFit();
+        };
+
+        vm.ImageEditor.ZoomToActualRequested += (_, _) =>
+        {
+            _imageEditorCanvas.ZoomToActual();
+        };
+
         // Handle save requests
         vm.ImageEditor.SaveAsNewRequested += async (_, _) =>
         {
@@ -137,5 +169,19 @@ public partial class LoraDatasetHelperView : UserControl
                 vm.ImageEditor.StatusMessage = "Failed to save image.";
             }
         };
+
+        // Wire up zoom slider
+        var zoomSlider = this.FindControl<Slider>("ZoomSlider");
+        if (zoomSlider is not null)
+        {
+            zoomSlider.PropertyChanged += (_, args) =>
+            {
+                if (args.Property.Name == nameof(Slider.Value))
+                {
+                    var percentage = (int)zoomSlider.Value;
+                    _imageEditorCanvas.SetZoom(percentage / 100f);
+                }
+            };
+        }
     }
 }

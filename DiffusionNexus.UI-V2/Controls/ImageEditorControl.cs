@@ -15,6 +15,8 @@ namespace DiffusionNexus.UI.Controls;
 public class ImageEditorControl : Control
 {
     private readonly ImageEditor.ImageEditorCore _editorCore;
+    private Point _lastPanPoint;
+    private bool _isPanning;
 
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
@@ -33,6 +35,12 @@ public class ImageEditorControl : Control
     /// </summary>
     public static readonly StyledProperty<bool> IsCropToolActiveProperty =
         AvaloniaProperty.Register<ImageEditorControl, bool>(nameof(IsCropToolActive));
+
+    /// <summary>
+    /// Defines the <see cref="ZoomLevel"/> property.
+    /// </summary>
+    public static readonly StyledProperty<float> ZoomLevelProperty =
+        AvaloniaProperty.Register<ImageEditorControl, float>(nameof(ZoomLevel), 1f);
 
     /// <summary>
     /// Gets or sets the path to the image to display.
@@ -60,6 +68,35 @@ public class ImageEditorControl : Control
         get => GetValue(IsCropToolActiveProperty);
         set => SetValue(IsCropToolActiveProperty, value);
     }
+
+    /// <summary>
+    /// Gets or sets the zoom level (1.0 = 100%).
+    /// </summary>
+    public float ZoomLevel
+    {
+        get => GetValue(ZoomLevelProperty);
+        set => SetValue(ZoomLevelProperty, value);
+    }
+
+    /// <summary>
+    /// Gets the zoom percentage.
+    /// </summary>
+    public int ZoomPercentage => _editorCore.ZoomPercentage;
+
+    /// <summary>
+    /// Gets whether fit mode is active.
+    /// </summary>
+    public bool IsFitMode => _editorCore.IsFitMode;
+
+    /// <summary>
+    /// Gets the image DPI.
+    /// </summary>
+    public int ImageDpi => _editorCore.ImageDpi;
+
+    /// <summary>
+    /// Gets the file size in bytes.
+    /// </summary>
+    public long FileSizeBytes => _editorCore.FileSizeBytes;
 
     /// <summary>
     /// Gets the underlying editor core for advanced operations.
@@ -91,18 +128,24 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler? CropApplied;
 
+    /// <summary>
+    /// Event raised when zoom changes.
+    /// </summary>
+    public event EventHandler? ZoomChanged;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
         _editorCore.ImageChanged += OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
+        _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         ClipToBounds = true;
         Focusable = true;
     }
 
     static ImageEditorControl()
     {
-        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty);
+        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty, ZoomLevelProperty);
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -126,6 +169,11 @@ public class ImageEditorControl : Control
             _editorCore.CropTool.IsActive = (bool)change.NewValue!;
             InvalidateVisual();
         }
+        else if (change.Property == ZoomLevelProperty)
+        {
+            _editorCore.ZoomLevel = (float)change.NewValue!;
+            InvalidateVisual();
+        }
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -136,6 +184,16 @@ public class ImageEditorControl : Control
 
         var point = e.GetPosition(this);
         var skPoint = new SKPoint((float)point.X, (float)point.Y);
+        var props = e.GetCurrentPoint(this).Properties;
+
+        // Middle mouse button for panning
+        if (props.IsMiddleButtonPressed)
+        {
+            _isPanning = true;
+            _lastPanPoint = point;
+            e.Handled = true;
+            return;
+        }
 
         if (_editorCore.CropTool.OnPointerPressed(skPoint))
         {
@@ -155,6 +213,18 @@ public class ImageEditorControl : Control
         var point = e.GetPosition(this);
         var skPoint = new SKPoint((float)point.X, (float)point.Y);
 
+        // Handle panning
+        if (_isPanning)
+        {
+            var deltaX = (float)(point.X - _lastPanPoint.X);
+            var deltaY = (float)(point.Y - _lastPanPoint.Y);
+            _editorCore.Pan(deltaX, deltaY);
+            _lastPanPoint = point;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -169,11 +239,38 @@ public class ImageEditorControl : Control
     {
         base.OnPointerReleased(e);
 
+        if (_isPanning)
+        {
+            _isPanning = false;
+            e.Handled = true;
+            return;
+        }
+
         if (_editorCore.CropTool.OnPointerReleased())
         {
             e.Handled = true;
             InvalidateVisual();
         }
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+
+        if (!_editorCore.HasImage) return;
+
+        // Zoom with mouse wheel
+        if (e.Delta.Y > 0)
+        {
+            _editorCore.ZoomIn();
+        }
+        else if (e.Delta.Y < 0)
+        {
+            _editorCore.ZoomOut();
+        }
+
+        InvalidateVisual();
+        e.Handled = true;
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -307,6 +404,51 @@ public class ImageEditorControl : Control
         IsCropToolActive = false;
     }
 
+    /// <summary>
+    /// Zooms in.
+    /// </summary>
+    public void ZoomIn()
+    {
+        _editorCore.ZoomIn();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Zooms out.
+    /// </summary>
+    public void ZoomOut()
+    {
+        _editorCore.ZoomOut();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Zooms to fit the canvas.
+    /// </summary>
+    public void ZoomToFit()
+    {
+        _editorCore.ZoomToFit();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Zooms to 100%.
+    /// </summary>
+    public void ZoomToActual()
+    {
+        _editorCore.ZoomToActual();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Sets zoom level.
+    /// </summary>
+    public void SetZoom(float level)
+    {
+        _editorCore.ZoomLevel = level;
+        InvalidateVisual();
+    }
+
     private void OnEditorCoreImageChanged(object? sender, EventArgs e)
     {
         InvalidateVisual();
@@ -318,11 +460,19 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
+    {
+        SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
+        ZoomChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
         _editorCore.ImageChanged -= OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged -= OnCropRegionChanged;
+        _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.Dispose();
     }
 
@@ -367,7 +517,7 @@ public class ImageEditorControl : Control
             using var lease = leaseFeature.Lease();
             var canvas = lease.SkCanvas;
 
-            _editorCore.RenderCentered(
+            _editorCore.RenderWithZoom(
                 canvas,
                 (float)_bounds.Width,
                 (float)_bounds.Height,

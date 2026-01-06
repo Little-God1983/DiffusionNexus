@@ -15,6 +15,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private int _imageWidth;
     private int _imageHeight;
     private bool _isCropToolActive;
+    private int _zoomPercentage = 100;
+    private bool _isFitMode = true;
+    private int _imageDpi = 72;
+    private long _fileSizeBytes;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -116,6 +120,88 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Current zoom percentage (10-1000).
+    /// </summary>
+    public int ZoomPercentage
+    {
+        get => _zoomPercentage;
+        set
+        {
+            if (SetProperty(ref _zoomPercentage, value))
+            {
+                OnPropertyChanged(nameof(ZoomPercentageText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Formatted zoom percentage for display.
+    /// </summary>
+    public string ZoomPercentageText => $"{ZoomPercentage}%";
+
+    /// <summary>
+    /// Whether fit mode is active.
+    /// </summary>
+    public bool IsFitMode
+    {
+        get => _isFitMode;
+        set => SetProperty(ref _isFitMode, value);
+    }
+
+    /// <summary>
+    /// Image DPI (dots per inch).
+    /// </summary>
+    public int ImageDpi
+    {
+        get => _imageDpi;
+        set
+        {
+            if (SetProperty(ref _imageDpi, value))
+            {
+                OnPropertyChanged(nameof(ImageInfo));
+            }
+        }
+    }
+
+    /// <summary>
+    /// File size in bytes.
+    /// </summary>
+    public long FileSizeBytes
+    {
+        get => _fileSizeBytes;
+        set
+        {
+            if (SetProperty(ref _fileSizeBytes, value))
+            {
+                OnPropertyChanged(nameof(FileSizeText));
+                OnPropertyChanged(nameof(ImageInfo));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Formatted file size for display.
+    /// </summary>
+    public string FileSizeText
+    {
+        get
+        {
+            if (FileSizeBytes < 1024)
+                return $"{FileSizeBytes} B";
+            if (FileSizeBytes < 1024 * 1024)
+                return $"{FileSizeBytes / 1024.0:F1} KB";
+            return $"{FileSizeBytes / (1024.0 * 1024.0):F1} MB";
+        }
+    }
+
+    /// <summary>
+    /// Combined image info for display.
+    /// </summary>
+    public string ImageInfo => HasImage
+        ? $"Size: {ImageWidth} × {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
+        : string.Empty;
+
+    /// <summary>
     /// Command to clear the current image.
     /// </summary>
     public IRelayCommand ClearImageCommand { get; }
@@ -149,6 +235,26 @@ public partial class ImageEditorViewModel : ObservableObject
     /// Command to save overwriting the original file.
     /// </summary>
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
+
+    /// <summary>
+    /// Command to zoom in.
+    /// </summary>
+    public IRelayCommand ZoomInCommand { get; }
+
+    /// <summary>
+    /// Command to zoom out.
+    /// </summary>
+    public IRelayCommand ZoomOutCommand { get; }
+
+    /// <summary>
+    /// Command to zoom to fit.
+    /// </summary>
+    public IRelayCommand ZoomToFitCommand { get; }
+
+    /// <summary>
+    /// Command to zoom to 100%.
+    /// </summary>
+    public IRelayCommand ZoomToActualCommand { get; }
 
     /// <summary>
     /// Event raised when image should be cleared in the control.
@@ -195,6 +301,26 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler? SaveOverwriteRequested;
 
+    /// <summary>
+    /// Event raised when zoom in is requested.
+    /// </summary>
+    public event EventHandler? ZoomInRequested;
+
+    /// <summary>
+    /// Event raised when zoom out is requested.
+    /// </summary>
+    public event EventHandler? ZoomOutRequested;
+
+    /// <summary>
+    /// Event raised when zoom to fit is requested.
+    /// </summary>
+    public event EventHandler? ZoomToFitRequested;
+
+    /// <summary>
+    /// Event raised when zoom to 100% is requested.
+    /// </summary>
+    public event EventHandler? ZoomToActualRequested;
+
     public ImageEditorViewModel()
     {
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
@@ -204,6 +330,10 @@ public partial class ImageEditorViewModel : ObservableObject
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
         SaveAsNewCommand = new RelayCommand(ExecuteSaveAsNew, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
+        ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
+        ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
+        ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
+        ZoomToActualCommand = new RelayCommand(ExecuteZoomToActual, () => HasImage);
     }
 
     /// <summary>
@@ -228,6 +358,24 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         ImageWidth = width;
         ImageHeight = height;
+    }
+
+    /// <summary>
+    /// Updates zoom info from the editor control.
+    /// </summary>
+    public void UpdateZoomInfo(int percentage, bool isFitMode)
+    {
+        ZoomPercentage = percentage;
+        IsFitMode = isFitMode;
+    }
+
+    /// <summary>
+    /// Updates file info from the editor control.
+    /// </summary>
+    public void UpdateFileInfo(int dpi, long fileSize)
+    {
+        ImageDpi = dpi;
+        FileSizeBytes = fileSize;
     }
 
     /// <summary>
@@ -319,6 +467,26 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private void ExecuteZoomIn()
+    {
+        ZoomInRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomOut()
+    {
+        ZoomOutRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomToFit()
+    {
+        ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomToActual()
+    {
+        ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
     /// Notifies all commands that depend on HasImage to re-evaluate CanExecute.
     /// </summary>
@@ -330,5 +498,9 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyCropCommand.NotifyCanExecuteChanged();
         SaveAsNewCommand.NotifyCanExecuteChanged();
         SaveOverwriteCommand.NotifyCanExecuteChanged();
+        ZoomInCommand.NotifyCanExecuteChanged();
+        ZoomOutCommand.NotifyCanExecuteChanged();
+        ZoomToFitCommand.NotifyCanExecuteChanged();
+        ZoomToActualCommand.NotifyCanExecuteChanged();
     }
 }
