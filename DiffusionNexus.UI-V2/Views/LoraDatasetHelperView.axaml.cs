@@ -18,6 +18,8 @@ public partial class LoraDatasetHelperView : UserControl
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+    private static readonly string[] TextExtensions = [".txt", ".caption"];
+    private static readonly string[] AllowedExtensions = [..MediaExtensions, ..TextExtensions];
     private static readonly string[] ArchiveExtensions = [".zip"];
 
     private ImageEditorControl? _imageEditorCanvas;
@@ -444,10 +446,10 @@ public partial class LoraDatasetHelperView : UserControl
     }
 
     /// <summary>
-    /// Extracts media files from a ZIP archive to a temporary directory.
+    /// Extracts media and caption files from a ZIP archive to a temporary directory.
     /// </summary>
     /// <param name="zipPath">Path to the ZIP file.</param>
-    /// <returns>List of extracted media file paths, or empty list if no media files found.</returns>
+    /// <returns>List of extracted file paths (media + captions), or empty list if no files found.</returns>
     private List<string> ExtractMediaFromZip(string zipPath)
     {
         var extractedFiles = new List<string>();
@@ -467,7 +469,9 @@ public partial class LoraDatasetHelperView : UserControl
                         continue;
 
                     var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                    if (MediaExtensions.Contains(ext))
+                    
+                    // Extract media files and text/caption files
+                    if (AllowedExtensions.Contains(ext))
                     {
                         // Extract to temp directory with flat structure (just filename)
                         var destPath = Path.Combine(tempDir, entry.Name);
@@ -487,7 +491,7 @@ public partial class LoraDatasetHelperView : UserControl
                 }
             }
 
-            // If no media files were found, clean up the temp directory
+            // If no files were found, clean up the temp directory
             if (extractedFiles.Count == 0 && Directory.Exists(tempDir))
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch { }
@@ -546,7 +550,7 @@ public partial class LoraDatasetHelperView : UserControl
         return (hasValid, hasInvalid);
     }
 
-    private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> mediaFiles)
+    private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> filesToCopy)
     {
         if (vm.ActiveDataset is null) return;
 
@@ -554,21 +558,27 @@ public partial class LoraDatasetHelperView : UserControl
         try
         {
             var copied = 0;
+            var captionsCopied = 0;
             var skipped = 0;
             var destFolderPath = vm.ActiveDataset.CurrentVersionFolderPath;
 
             // Ensure the folder exists
             Directory.CreateDirectory(destFolderPath);
 
-            foreach (var sourceFile in mediaFiles)
+            foreach (var sourceFile in filesToCopy)
             {
                 var fileName = Path.GetFileName(sourceFile);
                 var destPath = Path.Combine(destFolderPath, fileName);
+                var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
 
                 if (!File.Exists(destPath))
                 {
                     File.Copy(sourceFile, destPath);
-                    copied++;
+                    
+                    if (TextExtensions.Contains(ext))
+                        captionsCopied++;
+                    else
+                        copied++;
                 }
                 else
                 {
@@ -576,13 +586,27 @@ public partial class LoraDatasetHelperView : UserControl
                 }
             }
 
-            var fileType = mediaFiles.Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())) 
-                ? "files" 
-                : "images";
+            // Build status message
+            var hasVideos = filesToCopy.Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
+            var fileType = hasVideos ? "files" : "images";
             
-            vm.StatusMessage = skipped > 0
-                ? $"Added {copied} {fileType}, skipped {skipped} duplicates"
-                : $"Added {copied} {fileType} to dataset";
+            var parts = new List<string>();
+            if (copied > 0)
+                parts.Add($"{copied} {fileType}");
+            if (captionsCopied > 0)
+                parts.Add($"{captionsCopied} captions");
+            
+            if (parts.Count > 0)
+            {
+                var addedText = $"Added {string.Join(", ", parts)}";
+                vm.StatusMessage = skipped > 0
+                    ? $"{addedText}, skipped {skipped} duplicates"
+                    : $"{addedText} to dataset";
+            }
+            else if (skipped > 0)
+            {
+                vm.StatusMessage = $"Skipped {skipped} duplicates (files already exist)";
+            }
 
             // Refresh the dataset to show new files
             await vm.RefreshActiveDatasetAsync();
