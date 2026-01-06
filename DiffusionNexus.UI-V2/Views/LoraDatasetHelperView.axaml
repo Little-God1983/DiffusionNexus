@@ -47,18 +47,39 @@
                          VerticalAlignment="Center"
                          IsVisible="{Binding IsViewingDataset}"/>
               
-              <!-- Version Display (when viewing dataset with version info) -->
-              <Border Grid.Column="2"
-                      Background="#333"
-                      CornerRadius="4"
-                      Padding="8,4"
-                      Margin="8,0,0,0"
-                      IsVisible="{Binding IsViewingDataset}">
-                <TextBlock Text="{Binding ActiveDataset.VersionDisplayText}"
-                           FontSize="12"
-                           Foreground="#4CAF50"
-                           VerticalAlignment="Center"/>
-              </Border>
+              <!-- Version Dropdown (when viewing dataset with multiple versions) -->
+              <StackPanel Grid.Column="2"
+                          Orientation="Horizontal"
+                          Spacing="6"
+                          Margin="8,0,0,0"
+                          IsVisible="{Binding IsViewingDataset}"
+                          VerticalAlignment="Center">
+                <TextBlock Text="Version:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"
+                           IsVisible="{Binding ActiveDataset.HasMultipleVersions}"/>
+                <ComboBox ItemsSource="{Binding AvailableVersions}"
+                          SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                          MinWidth="70"
+                          IsVisible="{Binding ActiveDataset.HasMultipleVersions}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding StringFormat='V{0}'}"
+                                 Foreground="#4CAF50"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <!-- Single version display (when only one version exists) -->
+                <Border Background="#333"
+                        CornerRadius="4"
+                        Padding="8,4"
+                        IsVisible="{Binding !ActiveDataset.HasMultipleVersions}">
+                  <TextBlock Text="V1"
+                             FontSize="12"
+                             Foreground="#4CAF50"
+                             VerticalAlignment="Center"/>
+                </Border>
+              </StackPanel>
               
               <!-- Category Dropdown (when viewing dataset) -->
               <StackPanel Grid.Column="3" 

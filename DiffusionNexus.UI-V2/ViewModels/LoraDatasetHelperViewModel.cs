@@ -134,6 +134,22 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
+    /// <summary>
+    /// Currently selected version number for the active dataset.
+    /// Changing this reloads the dataset with the selected version.
+    /// </summary>
+    public int SelectedVersion
+    {
+        get => ActiveDataset?.CurrentVersion ?? 1;
+        set
+        {
+            if (ActiveDataset is not null && ActiveDataset.CurrentVersion != value)
+            {
+                _ = SwitchVersionAsync(value);
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -158,6 +174,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Available dataset categories.
     /// </summary>
     public ObservableCollection<DatasetCategoryViewModel> AvailableCategories { get; } = [];
+
+    /// <summary>
+    /// Available versions for the active dataset (for version dropdown).
+    /// </summary>
+    public ObservableCollection<int> AvailableVersions { get; } = [];
 
     #endregion
 
@@ -368,6 +389,21 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             ActiveDataset = dataset;
             DatasetImages.Clear();
+            
+            // Populate available versions for the dropdown
+            AvailableVersions.Clear();
+            if (dataset.IsVersionedStructure)
+            {
+                foreach (var version in dataset.GetAllVersionNumbers())
+                {
+                    AvailableVersions.Add(version);
+                }
+            }
+            else
+            {
+                AvailableVersions.Add(1);
+            }
+            OnPropertyChanged(nameof(SelectedVersion));
 
             // Use the current version folder path (versioned or legacy)
             var imageFolderPath = dataset.CurrentVersionFolderPath;
@@ -409,6 +445,37 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Switches to a different version of the current dataset.
+    /// </summary>
+    private async Task SwitchVersionAsync(int version)
+    {
+        if (ActiveDataset is null) return;
+
+        // Check for unsaved changes before switching
+        if (HasUnsavedChanges && DialogService is not null)
+        {
+            var save = await DialogService.ShowConfirmAsync(
+                "Unsaved Changes",
+                "You have unsaved caption changes. Save them before switching versions?");
+            
+            if (save)
+            {
+                SaveAllCaptions();
+            }
+        }
+
+        // Update the dataset's current version
+        ActiveDataset.CurrentVersion = version;
+        ActiveDataset.SaveMetadata();
+        ActiveDataset.RefreshImageInfo();
+
+        // Reload images for the new version
+        await OpenDatasetAsync(ActiveDataset);
+        
+        StatusMessage = $"Switched to Version {version}";
     }
 
     private async Task GoToOverviewAsync()
