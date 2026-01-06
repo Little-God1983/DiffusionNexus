@@ -1,5 +1,8 @@
 namespace DiffusionNexus.UI.Services;
 
+using DiffusionNexus.UI.ViewModels;
+using System.Collections.ObjectModel;
+
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
 /// Inject this interface to enable testable UI dialogs.
@@ -86,6 +89,34 @@ public interface IDialogService
     /// <param name="options">Array of option labels to display as buttons.</param>
     /// <returns>The index of the selected option (0-based), or -1 if cancelled.</returns>
     Task<int> ShowOptionsAsync(string title, string message, params string[] options);
+
+    /// <summary>
+    /// Shows the export dataset dialog with options and preview counts.
+    /// </summary>
+    /// <param name="datasetName">Name of the dataset being exported.</param>
+    /// <param name="mediaFiles">All media files in the dataset.</param>
+    /// <returns>Export result with selected options and files, or cancelled result.</returns>
+    Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles);
+
+    /// <summary>
+    /// Shows the create dataset dialog with name, category, and type options.
+    /// </summary>
+    /// <param name="availableCategories">Categories to show in the dropdown.</param>
+    /// <returns>Create result with name, category, and type, or cancelled result.</returns>
+    Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories);
+
+    /// <summary>
+    /// Shows the full-screen image viewer dialog for browsing dataset images.
+    /// </summary>
+    /// <param name="images">Collection of all images in the dataset.</param>
+    /// <param name="startIndex">Index of the image to display first.</param>
+    /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
+    /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
+    Task ShowImageViewerDialogAsync(
+        ObservableCollection<DatasetImageViewModel> images,
+        int startIndex,
+        Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onDeleteRequested = null);
 }
 
 /// <summary>

@@ -1,5 +1,7 @@
+using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 
 namespace DiffusionNexus.UI.Services;
@@ -97,7 +99,7 @@ public class DialogService : IDialogService
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
-            .ForImagesAndText();
+            .ForMediaAndText();
 
         await dialog.ShowDialog(_window);
         return dialog.ResultFiles;
@@ -124,5 +126,35 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.SelectedIndex;
+    }
+
+    public async Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles)
+    {
+        var dialog = new ExportDatasetDialog()
+            .WithDataset(datasetName, mediaFiles);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? ExportDatasetResult.Cancelled();
+    }
+
+    public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)
+    {
+        var dialog = new CreateDatasetDialog()
+            .WithCategories(availableCategories);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? CreateDatasetResult.Cancelled();
+    }
+
+    public async Task ShowImageViewerDialogAsync(
+        ObservableCollection<DatasetImageViewModel> images,
+        int startIndex,
+        Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onDeleteRequested = null)
+    {
+        var dialog = new ImageViewerDialog()
+            .WithImages(images, startIndex, onSendToImageEditor, onDeleteRequested);
+
+        await dialog.ShowDialog(_window);
     }
 }

@@ -30,7 +30,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Back to Overview Button (only visible when viewing a dataset) -->
               <Button Grid.Column="0"
@@ -40,12 +40,29 @@
                       Margin="0,0,16,0"/>
               
               <!-- Dataset Title (when viewing) -->
-              <TextBlock Grid.Column="1"
-                         Text="{Binding ActiveDataset.Name, StringFormat='Dataset: {0}'}"
-                         FontSize="18"
-                         FontWeight="SemiBold"
-                         VerticalAlignment="Center"
-                         IsVisible="{Binding IsViewingDataset}"/>
+              <StackPanel Grid.Column="1"
+                          Orientation="Horizontal"
+                          Spacing="12"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding IsViewingDataset}">
+                <TextBlock Text="{Binding ActiveDataset.Name}"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+                <!-- Editable Description for current version -->
+                <TextBox Text="{Binding ActiveDataset.Description, Mode=TwoWay}"
+                         x:Name="DescriptionTextBox"
+                         Watermark="Add description..."
+                         FontSize="12"
+                         MinWidth="200"
+                         MaxWidth="350"
+                         Padding="6,4"
+                         Background="#333"
+                         BorderBrush="#444"
+                         BorderThickness="1"
+                         CornerRadius="4"
+                         VerticalAlignment="Center"/>
+              </StackPanel>
               
               <!-- Version Dropdown (when viewing dataset with multiple versions) -->
               <StackPanel Grid.Column="2"
@@ -97,8 +114,29 @@
                           PlaceholderText="Select category..."/>
               </StackPanel>
               
-              <!-- Flatten Versions Toggle (only in overview) -->
+              <!-- Type Dropdown (when viewing dataset) -->
               <StackPanel Grid.Column="4"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          IsVisible="{Binding IsViewingDataset}"
+                          Margin="8,0,0,0">
+                <TextBlock Text="Type:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"/>
+                <ComboBox ItemsSource="{Binding AvailableTypes}"
+                          SelectedItem="{Binding SelectedType, Mode=TwoWay}"
+                          MinWidth="100"
+                          PlaceholderText="Select type...">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </StackPanel>
+              
+              <!-- Flatten Versions Toggle (only in overview) -->
+              <StackPanel Grid.Column="5"
                           Orientation="Horizontal"
                           Spacing="8"
                           IsVisible="{Binding !IsViewingDataset}"
@@ -110,10 +148,10 @@
               </StackPanel>
               
               <!-- Spacer -->
-              <Border Grid.Column="5"/>
+              <Border Grid.Column="6"/>
               
               <!-- Open Folder Button (when viewing dataset) -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="7"
                       Content="📂 Open Folder"
                       Command="{Binding OpenContainingFolderCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -121,7 +159,7 @@
                       ToolTip.Tip="Open dataset folder in file explorer"/>
               
               <!-- Export Dataset Button (when viewing dataset) -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="8"
                       Content="📦 Export Dataset"
                       Command="{Binding ExportDatasetCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -129,14 +167,14 @@
                       ToolTip.Tip="Export dataset for training"/>
               
               <!-- Add Images Button (when viewing dataset) -->
-              <Button Grid.Column="8"
-                      Content="+ Add Images"
+              <Button Grid.Column="9"
+                      Content="+ Add Files"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
               
               <!-- Increment Version Button (when viewing dataset with images) -->
-              <Button Grid.Column="9"
+              <Button Grid.Column="10"
                       Content="📋 New Version"
                       Command="{Binding IncrementVersionCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -145,7 +183,7 @@
                       ToolTip.Tip="Create a new version by copying all images and captions. Use for different captioning styles (e.g., SDXL vs Flux)."/>
               
               <!-- Save Captions Button (when viewing dataset with changes) -->
-              <Button Grid.Column="10"
+              <Button Grid.Column="11"
                       Content="Save Captions"
                       Command="{Binding SaveAllCaptionsCommand}"
                       IsVisible="{Binding HasUnsavedChanges}"
@@ -153,7 +191,7 @@
                       Background="#2D7D46"/>
               
               <!-- New Dataset Button (only in overview) -->
-              <Button Grid.Column="12"
+              <Button Grid.Column="13"
                       Content="+ New Dataset" 
                       Command="{Binding CreateDatasetCommand}"
                       IsVisible="{Binding !IsViewingDataset}"/>
@@ -319,9 +357,24 @@
                                                  FontSize="14"
                                                  TextTrimming="CharacterEllipsis"
                                                  MaxLines="1"/>
-                                      <TextBlock Text="{Binding ImageCountText}"
+                                      <!-- Description (if available) -->
+                                      <TextBlock Text="{Binding Description}"
+                                                 FontSize="11"
+                                                 Opacity="0.7"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 MaxLines="1"
+                                                 IsVisible="{Binding HasDescription}"
+                                                 Margin="0,2,0,0"/>
+                                      <!-- Show detailed counts for version cards (flattened view) -->
+                                      <TextBlock Text="{Binding DetailedCountText}"
                                                  FontSize="12"
-                                                 Opacity="0.6"/>
+                                                 Opacity="0.6"
+                                                 IsVisible="{Binding IsVersionCard}"/>
+                                      <!-- Show all versions totals for collapsed view -->
+                                      <TextBlock Text="{Binding AllVersionsDetailedCountText}"
+                                                 FontSize="12"
+                                                 Opacity="0.6"
+                                                 IsVisible="{Binding !IsVersionCard}"/>
                                     </StackPanel>
                                   </Border>
                                   
@@ -339,107 +392,332 @@
             </ScrollViewer>
 
             <!-- Dataset Detail View (Images with Captions) -->
-            <ScrollViewer IsVisible="{Binding IsViewingDataset}"
-                          Padding="16">
-              <ItemsControl ItemsSource="{Binding DatasetImages}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
-                  </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DatasetImageViewModel">
-                    <Border Width="280" 
-                            Margin="8"
-                            Background="#2A2A2A"
-                            CornerRadius="8"
-                            ClipToBounds="True"
-                            BorderBrush="#444"
-                            BorderThickness="1">
-                      <Grid RowDefinitions="200,Auto,Auto">
-                        
-                        <!-- Image with action buttons -->
-                        <Border Grid.Row="0" 
-                                Background="#1A1A1A"
-                                CornerRadius="8,8,0,0"
-                                ClipToBounds="True">
-                          <Panel>
-                            <!-- Image using converter -->
-                            <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
-                                   Stretch="UniformToFill"/>
+            <Grid IsVisible="{Binding IsViewingDataset}">
+              <!-- Empty Dataset Drop Zone - Full area background -->
+              <Border x:Name="EmptyDatasetDropZone"
+                      IsVisible="{Binding HasNoImages}"
+                      Background="#1A1A1A"
+                      BorderThickness="3"
+                      BorderBrush="#444"
+                      Margin="16"
+                      CornerRadius="12"
+                      DragDrop.AllowDrop="True">
+                <StackPanel VerticalAlignment="Center" 
+                            HorizontalAlignment="Center"
+                            Spacing="16">
+                  <TextBlock Text="📁" 
+                             FontSize="72" 
+                             HorizontalAlignment="Center"
+                             Opacity="0.4"/>
+                  <TextBlock Text="This dataset is empty"
+                             FontSize="20"
+                             FontWeight="SemiBold"
+                             HorizontalAlignment="Center"
+                             Opacity="0.8"/>
+                  <TextBlock Text="Drag and drop images or videos here to get started"
+                             FontSize="14"
+                             Foreground="#888"
+                             HorizontalAlignment="Center"/>
+                  <TextBlock Text="or"
+                             FontSize="12"
+                             Foreground="#666"
+                             HorizontalAlignment="Center"
+                             Margin="0,8"/>
+                  <Button Content="📂 Browse for Files"
+                          Command="{Binding AddImagesCommand}"
+                          HorizontalAlignment="Center"
+                          Padding="16,10"
+                          FontSize="14"/>
+                  <TextBlock Text="Supported: PNG, JPG, WebP, GIF, MP4, MOV, WebM, AVI, MKV"
+                             FontSize="11"
+                             Foreground="#666"
+                             HorizontalAlignment="Center"
+                             Margin="0,8,0,0"/>
+                </StackPanel>
+              </Border>
+              
+              <!-- Image Cards (when there are images) -->
+              <Grid IsVisible="{Binding !HasNoImages}" RowDefinitions="Auto,*">
+                
+                <!-- Selection Toolbar (shown when items are selected) -->
+                <Border Grid.Row="0"
+                        Background="#1E1E1E"
+                        Padding="12,8"
+                        BorderBrush="#333"
+                        BorderThickness="0,0,0,1"
+                        IsVisible="{Binding HasSelection}">
+                  <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                    
+                    <!-- Selection Count -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                      <Border Background="#4CAF50" CornerRadius="4" Padding="8,4">
+                        <TextBlock Text="{Binding SelectionText}"
+                                   FontWeight="SemiBold"
+                                   Foreground="White"/>
+                      </Border>
+                    </StackPanel>
+                    
+                    <!-- Select All / Clear Selection -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="16,0,0,0">
+                      <Button Content="Select All"
+                              Command="{Binding SelectAllCommand}"
+                              Padding="8,4"
+                              ToolTip.Tip="Select all items (Ctrl+A)"/>
+                      <Button Content="Clear Selection"
+                              Command="{Binding ClearSelectionCommand}"
+                              Padding="8,4"
+                              ToolTip.Tip="Clear all selections (Escape)"/>
+                    </StackPanel>
+                    
+                    <!-- Separator -->
+                    <Border Grid.Column="2" Width="1" Background="#444" Margin="12,4"/>
+                    
+                    <!-- Quick Select by Rating -->
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="Quick Select:"
+                                 VerticalAlignment="Center"
+                                 Opacity="0.7"
+                                 Margin="0,0,4,0"/>
+                      <Button Content="✓ Ready"
+                              Command="{Binding SelectApprovedCommand}"
+                              Padding="8,4"
+                              Background="#2D7D46"
+                              ToolTip.Tip="Select all production-ready items"/>
+                      <Button Content="✗ Failed"
+                              Command="{Binding SelectRejectedCommand}"
+                              Padding="8,4"
+                              Background="#D9534F"
+                              ToolTip.Tip="Select all failed/rejected items"/>
+                    </StackPanel>
+                    
+                    <!-- Spacer -->
+                    <Border Grid.Column="4"/>
+                    
+                    <!-- Bulk Actions -->
+                    <TextBlock Grid.Column="5" 
+                               Text="Bulk Actions:"
+                               VerticalAlignment="Center"
+                               Opacity="0.7"
+                               Margin="0,0,8,0"/>
+                    
+                    <Button Grid.Column="6"
+                            Content="▲ Mark Ready"
+                            Command="{Binding ApproveSelectedCommand}"
+                            Background="#2D7D46"
+                            Padding="12,6"
+                            Margin="0,0,4,0"
+                            ToolTip.Tip="Mark selected items as production-ready"/>
+                    
+                    <Button Grid.Column="7"
+                            Content="▼ Mark Failed"
+                            Command="{Binding RejectSelectedCommand}"
+                            Background="#D9534F"
+                            Padding="12,6"
+                            Margin="0,0,4,0"
+                            ToolTip.Tip="Mark selected items as failed/rejected"/>
+                    
+                    <Button Grid.Column="8"
+                            Content="Clear Rating"
+                            Command="{Binding ClearRatingSelectedCommand}"
+                            Padding="12,6"
+                            Margin="0,0,4,0"
+                            ToolTip.Tip="Clear rating for selected items"/>
+                    
+                    <!-- Separator -->
+                    <Border Grid.Column="9" Width="1" Background="#444" Margin="8,4"/>
+                    
+                    <!-- Delete Selected -->
+                    <Button Grid.Column="10"
+                            Content="🗑️ Delete Selected"
+                            Command="{Binding DeleteSelectedCommand}"
+                            Background="#B22222"
+                            Padding="12,6"
+                            ToolTip.Tip="Delete all selected items"/>
+                    
+                  </Grid>
+                </Border>
+                
+                <!-- Scrollable Image Grid -->
+                <ScrollViewer Grid.Row="1" Padding="16">
+                  <ItemsControl ItemsSource="{Binding DatasetImages}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DatasetImageViewModel">
+                        <Border Width="340" 
+                                Margin="8"
+                                Background="#2A2A2A"
+                                CornerRadius="8"
+                                ClipToBounds="True"
+                                BorderBrush="#444"
+                                BorderThickness="2"
+                                PointerPressed="OnImageCardPointerPressed">
+                          <Grid RowDefinitions="280,Auto,Auto">
                             
-                            <!-- Action buttons overlay -->
-                            <StackPanel Orientation="Horizontal"
+                            <!-- Selection overlay (absolute positioned, doesn't affect layout) -->
+                            <Border Grid.RowSpan="3"
+                                    CornerRadius="6"
+                                    BorderBrush="#2196F3"
+                                    BorderThickness="3"
+                                    Margin="-1"
+                                    IsVisible="{Binding IsSelected}"
+                                    IsHitTestVisible="False"/>
+                            
+                            <!-- Image area with overlaid controls -->
+                            <Border Grid.Row="0" 
+                                    Background="#1A1A1A"
+                                    CornerRadius="6,6,0,0"
+                                    ClipToBounds="True"
+                                    Tapped="OnImageTapped"
+                                    Cursor="Hand">
+                              <Grid>
+                                <!-- Image/Video thumbnail using converter -->
+                                <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                       Stretch="UniformToFill"/>
+                                
+                                <!-- Selection checkbox overlay (top-left corner) -->
+                                <Border Background="#80000000"
+                                        CornerRadius="4"
+                                        Padding="4"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Top"
+                                        Margin="8">
+                                  <CheckBox IsChecked="{Binding IsSelected}"
+                                            ToolTip.Tip="Click to select (Shift+Click for range, Ctrl+Click for multi)"/>
+                                </Border>
+                                
+                                <!-- Rating status indicator (top-right) -->
+                                <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
+                                        CornerRadius="4"
+                                        Padding="8,4"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
                                         Margin="8"
-                                        Spacing="4">
-                              <!-- Send to Image Edit button -->
-                              <Button Content="🖼️"
-                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
-                                      CommandParameter="{Binding}"
-                                      Padding="8,6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      ToolTip.Tip="Send to Image Edit"/>
-                              <!-- Delete button -->
-                              <Button Content="🗑️"
-                                      Command="{Binding DeleteCommand}"
-                                      Padding="8,6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      ToolTip.Tip="Delete image"/>
-                            </StackPanel>
-                          </Panel>
-                        </Border>
-                        
-                        <!-- Filename -->
-                        <Border Grid.Row="1" 
-                                Padding="8,4"
-                                Background="#222">
-                          <TextBlock Text="{Binding FullFileName}"
-                                     FontSize="11"
-                                     Opacity="0.6"
-                                     TextTrimming="CharacterEllipsis"/>
-                        </Border>
-                        
-                        <!-- Caption Editor -->
-                        <Border Grid.Row="2" Padding="8">
-                          <Grid RowDefinitions="*,Auto">
-                            <TextBox Grid.Row="0"
-                                     Text="{Binding Caption, Mode=TwoWay}"
-                                     Watermark="Enter caption..."
-                                     TextWrapping="Wrap"
-                                     AcceptsReturn="True"
-                                     MinHeight="60"
-                                     MaxHeight="100"/>
+                                        IsVisible="{Binding !IsUnrated}">
+                                  <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                                             FontSize="12"
+                                             FontWeight="SemiBold"
+                                             Foreground="White"/>
+                                </Border>
+                                
+                                <!-- Video indicator badge (bottom-left, above toolbar) -->
+                                <Border Background="#80000000"
+                                        CornerRadius="4"
+                                        Padding="6,3"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Bottom"
+                                        Margin="8,0,0,44"
+                                        IsVisible="{Binding IsVideo}">
+                                  <TextBlock Text="🎬 Video"
+                                             FontSize="12"
+                                             Foreground="White"/>
+                                </Border>
+                                
+                                <!-- Action buttons toolbar (bottom overlay, semi-transparent) -->
+                                <Border Background="#CC1A1A1A"
+                                        VerticalAlignment="Bottom"
+                                        Padding="8,6">
+                                  <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                                    <!-- Rating buttons (left) -->
+                                    <Button Grid.Column="0"
+                                            Content="▲"
+                                            Command="{Binding MarkApprovedCommand}"
+                                            Padding="12,6"
+                                            FontSize="14"
+                                            Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                                            Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                                            CornerRadius="4"
+                                            Margin="0,0,4,0"
+                                            ToolTip.Tip="Mark as production-ready"/>
+                                    <Button Grid.Column="1"
+                                            Content="▼"
+                                            Command="{Binding MarkRejectedCommand}"
+                                            Padding="12,6"
+                                            FontSize="14"
+                                            Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                                            Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                                            CornerRadius="4"
+                                            ToolTip.Tip="Mark as failed/rejected"/>
+                                    
+                                    <!-- Spacer -->
+                                    <Border Grid.Column="2"/>
+                                    
+                                    <!-- Action buttons (right) -->
+                                    <Button Grid.Column="3"
+                                            Content="🖼️"
+                                            Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
+                                            CommandParameter="{Binding}"
+                                            Padding="12,6"
+                                            FontSize="14"
+                                            Background="#80444444"
+                                            CornerRadius="4"
+                                            Margin="0,0,4,0"
+                                            ToolTip.Tip="Send to Image Edit"/>
+                                    <Button Grid.Column="4"
+                                            Content="🗑️"
+                                            Command="{Binding DeleteCommand}"
+                                            Padding="12,6"
+                                            FontSize="14"
+                                            Background="#80444444"
+                                            CornerRadius="4"
+                                            ToolTip.Tip="Delete image"/>
+                                  </Grid>
+                                </Border>
+                              </Grid>
+                            </Border>
                             
-                            <!-- Unsaved indicator + Save button -->
-                            <StackPanel Grid.Row="1" 
-                                        Orientation="Horizontal"
-                                        HorizontalAlignment="Right"
-                                        Margin="0,4,0,0"
-                                        IsVisible="{Binding HasUnsavedChanges}">
-                              <TextBlock Text="Modified"
-                                         Foreground="Orange"
-                                         FontSize="11"
-                                         VerticalAlignment="Center"
-                                         Margin="0,0,8,0"/>
-                              <Button Content="Save"
-                                      Command="{Binding SaveCaptionCommand}"
-                                      FontSize="11"
-                                      Padding="8,2"/>
-                            </StackPanel>
+                            <!-- Filename -->
+                            <Border Grid.Row="1" 
+                                    Padding="10,6"
+                                    Background="#222">
+                              <TextBlock Text="{Binding FullFileName}"
+                                         FontSize="12"
+                                         Opacity="0.7"
+                                         TextTrimming="CharacterEllipsis"/>
+                            </Border>
+                            
+                            <!-- Caption Editor -->
+                            <Border Grid.Row="2" Padding="10">
+                              <Grid RowDefinitions="*,Auto">
+                                <TextBox Grid.Row="0"
+                                         Text="{Binding Caption, Mode=TwoWay}"
+                                         Watermark="Enter caption..."
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         FontSize="13"
+                                         MinHeight="80"
+                                         MaxHeight="120"/>
+                                
+                                <!-- Unsaved indicator + Save button -->
+                                <StackPanel Grid.Row="1" 
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,6,0,0"
+                                            IsVisible="{Binding HasUnsavedChanges}">
+                                  <TextBlock Text="Modified"
+                                             Foreground="Orange"
+                                             FontSize="12"
+                                             VerticalAlignment="Center"
+                                             Margin="0,0,8,0"/>
+                                  <Button Content="Save"
+                                          Command="{Binding SaveCaptionCommand}"
+                                          FontSize="12"
+                                          Padding="10,4"/>
+                                </StackPanel>
+                              </Grid>
+                            </Border>
+                            
                           </Grid>
                         </Border>
-                        
-                      </Grid>
-                    </Border>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </ScrollViewer>
-            
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Grid>
           </Grid>
         </Grid>
       </TabItem>
@@ -568,7 +846,8 @@
                     Background="#1E1E1E"
                     Padding="8,4"
                     BorderBrush="#333"
-                    BorderThickness="0,1,0,0">
+                    BorderThickness="0,1,0,0"
+                    IsVisible="{Binding ImageEditor.HasImage}">
               <Grid ColumnDefinitions="*,Auto">
                 <!-- Status Message -->
                 <TextBlock Grid.Column="0"

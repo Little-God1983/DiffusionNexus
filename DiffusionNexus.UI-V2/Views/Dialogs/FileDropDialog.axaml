@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
         x:Class="DiffusionNexus.UI.Views.Dialogs.FileDropDialog"
@@ -36,7 +36,7 @@
                     VerticalAlignment="Center"
                     HorizontalAlignment="Center"
                     Spacing="12">
-          <TextBlock Text="??" 
+          <TextBlock Text="📁" 
                      FontSize="48" 
                      HorizontalAlignment="Center"
                      Opacity="0.5"/>
