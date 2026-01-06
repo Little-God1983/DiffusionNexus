@@ -16,12 +16,17 @@ public class DatasetCardViewModel : ObservableObject
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+    private static readonly string[] CaptionExtensions = [".txt", ".caption"];
     
     private string _name = string.Empty;
     private string _folderPath = string.Empty;
     private string? _currentVersionDescription;
     private int _imageCount;
     private int _videoCount;
+    private int _captionCount;
+    private int _totalImageCountAllVersions;
+    private int _totalVideoCountAllVersions;
+    private int _totalCaptionCountAllVersions;
     private string? _thumbnailPath;
     private bool _isSelected;
     private int? _categoryId;
@@ -122,9 +127,76 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Number of captions in the current version.
+    /// </summary>
+    public int CaptionCount
+    {
+        get => _captionCount;
+        set
+        {
+            if (SetProperty(ref _captionCount, value))
+            {
+                OnPropertyChanged(nameof(CaptionCountText));
+                OnPropertyChanged(nameof(DetailedCountText));
+            }
+        }
+    }
+
+    /// <summary>
     /// Total number of media files (images + videos).
     /// </summary>
     public int TotalMediaCount => _imageCount + _videoCount;
+
+    /// <summary>
+    /// Total number of images across all versions.
+    /// Used when displaying collapsed (non-flattened) view.
+    /// </summary>
+    public int TotalImageCountAllVersions
+    {
+        get => _totalImageCountAllVersions;
+        set
+        {
+            if (SetProperty(ref _totalImageCountAllVersions, value))
+            {
+                OnPropertyChanged(nameof(TotalImageCountAllVersionsText));
+                OnPropertyChanged(nameof(AllVersionsDetailedCountText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Total number of videos across all versions.
+    /// Used when displaying collapsed (non-flattened) view.
+    /// </summary>
+    public int TotalVideoCountAllVersions
+    {
+        get => _totalVideoCountAllVersions;
+        set
+        {
+            if (SetProperty(ref _totalVideoCountAllVersions, value))
+            {
+                OnPropertyChanged(nameof(TotalVideoCountAllVersionsText));
+                OnPropertyChanged(nameof(AllVersionsDetailedCountText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Total number of captions across all versions.
+    /// Used when displaying collapsed (non-flattened) view.
+    /// </summary>
+    public int TotalCaptionCountAllVersions
+    {
+        get => _totalCaptionCountAllVersions;
+        set
+        {
+            if (SetProperty(ref _totalCaptionCountAllVersions, value))
+            {
+                OnPropertyChanged(nameof(TotalCaptionCountAllVersionsText));
+                OnPropertyChanged(nameof(AllVersionsDetailedCountText));
+            }
+        }
+    }
 
     /// <summary>
     /// Whether this dataset contains video files.
@@ -303,6 +375,11 @@ public class DatasetCardViewModel : ObservableObject
     public string VideoCountText => _videoCount == 1 ? "1 video" : $"{_videoCount} videos";
 
     /// <summary>
+    /// Display text showing caption count.
+    /// </summary>
+    public string CaptionCountText => _captionCount == 1 ? "1 caption" : $"{_captionCount} captions";
+
+    /// <summary>
     /// Display text showing combined media count (images + videos).
     /// </summary>
     public string MediaCountText
@@ -314,6 +391,54 @@ public class DatasetCardViewModel : ObservableObject
             if (_imageCount == 0)
                 return VideoCountText;
             return $"{_imageCount} images, {_videoCount} videos";
+        }
+    }
+
+    /// <summary>
+    /// Display text showing total images across all versions.
+    /// </summary>
+    public string TotalImageCountAllVersionsText => _totalImageCountAllVersions == 1 ? "1 image" : $"{_totalImageCountAllVersions} images";
+
+    /// <summary>
+    /// Display text showing total videos across all versions.
+    /// </summary>
+    public string TotalVideoCountAllVersionsText => _totalVideoCountAllVersions == 1 ? "1 video" : $"{_totalVideoCountAllVersions} videos";
+
+    /// <summary>
+    /// Display text showing total captions across all versions.
+    /// </summary>
+    public string TotalCaptionCountAllVersionsText => _totalCaptionCountAllVersions == 1 ? "1 caption" : $"{_totalCaptionCountAllVersions} captions";
+
+    /// <summary>
+    /// Detailed count text showing images, videos, and captions for the current version.
+    /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// </summary>
+    public string DetailedCountText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_imageCount > 0) parts.Add($"{_imageCount} {(_imageCount == 1 ? "Image" : "Images")}");
+            if (_videoCount > 0) parts.Add($"{_videoCount} {(_videoCount == 1 ? "Video" : "Videos")}");
+            if (_captionCount > 0) parts.Add($"{_captionCount} {(_captionCount == 1 ? "Caption" : "Captions")}");
+            return parts.Count > 0 ? string.Join("; ", parts) : "Empty";
+        }
+    }
+
+    /// <summary>
+    /// Detailed count text showing total images, videos, and captions across all versions.
+    /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// Used in collapsed (non-flattened) view.
+    /// </summary>
+    public string AllVersionsDetailedCountText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_totalImageCountAllVersions > 0) parts.Add($"{_totalImageCountAllVersions} {(_totalImageCountAllVersions == 1 ? "Image" : "Images")}");
+            if (_totalVideoCountAllVersions > 0) parts.Add($"{_totalVideoCountAllVersions} {(_totalVideoCountAllVersions == 1 ? "Video" : "Videos")}");
+            if (_totalCaptionCountAllVersions > 0) parts.Add($"{_totalCaptionCountAllVersions} {(_totalCaptionCountAllVersions == 1 ? "Caption" : "Captions")}");
+            return parts.Count > 0 ? string.Join("; ", parts) : "Empty";
         }
     }
 
@@ -434,6 +559,15 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Checks if a file is a caption file.
+    /// </summary>
+    public static bool IsCaptionFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        return CaptionExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Gets supported media extensions (images + videos).
     /// </summary>
     public static IReadOnlyList<string> GetMediaExtensions() => MediaExtensions;
@@ -507,8 +641,17 @@ public class DatasetCardViewModel : ObservableObject
             // Count images, excluding video thumbnails (files ending with _thumb.webp etc.)
             var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
             
+            // Count captions
+            var captions = files.Where(f => IsCaptionFile(f)).ToList();
+            
             card.ImageCount = images.Count;
             card.VideoCount = videos.Count;
+            card.CaptionCount = captions.Count;
+            
+            // For version cards, the "all versions" totals are not used (they show current version info)
+            card.TotalImageCountAllVersions = images.Count;
+            card.TotalVideoCountAllVersions = videos.Count;
+            card.TotalCaptionCountAllVersions = captions.Count;
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
             if (images.Count > 0)
@@ -553,6 +696,10 @@ public class DatasetCardViewModel : ObservableObject
         {
             ImageCount = 0;
             VideoCount = 0;
+            CaptionCount = 0;
+            TotalImageCountAllVersions = 0;
+            TotalVideoCountAllVersions = 0;
+            TotalCaptionCountAllVersions = 0;
             ThumbnailPath = null;
             return;
         }
@@ -575,6 +722,21 @@ public class DatasetCardViewModel : ObservableObject
             {
                 CurrentVersion = maxVersion;
             }
+
+            // Calculate totals across all versions
+            var totalImages = 0;
+            var totalVideos = 0;
+            var totalCaptions = 0;
+            foreach (var versionFolder in versionFolders)
+            {
+                var files = Directory.EnumerateFiles(versionFolder).ToList();
+                totalImages += files.Count(f => IsImageFile(f) && !IsVideoThumbnailFile(f));
+                totalVideos += files.Count(f => IsVideoFile(f));
+                totalCaptions += files.Count(f => IsCaptionFile(f));
+            }
+            TotalImageCountAllVersions = totalImages;
+            TotalVideoCountAllVersions = totalVideos;
+            TotalCaptionCountAllVersions = totalCaptions;
         }
         else
         {
@@ -582,6 +744,8 @@ public class DatasetCardViewModel : ObservableObject
             IsVersionedStructure = false;
             TotalVersions = 1;
             CurrentVersion = 1;
+            
+            // For non-versioned, totals equal current counts (set below)
         }
 
         // Load media files from current version folder
@@ -594,9 +758,21 @@ public class DatasetCardViewModel : ObservableObject
             
             // Count images, excluding video thumbnails (files ending with _thumb.webp etc.)
             var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
+            
+            // Count captions
+            var captions = files.Where(f => IsCaptionFile(f)).ToList();
 
             ImageCount = images.Count;
             VideoCount = videos.Count;
+            CaptionCount = captions.Count;
+            
+            // For non-versioned structure, totals equal current counts
+            if (!IsVersionedStructure)
+            {
+                TotalImageCountAllVersions = images.Count;
+                TotalVideoCountAllVersions = videos.Count;
+                TotalCaptionCountAllVersions = captions.Count;
+            }
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
             if (images.Count > 0)
@@ -619,7 +795,15 @@ public class DatasetCardViewModel : ObservableObject
         {
             ImageCount = 0;
             VideoCount = 0;
+            CaptionCount = 0;
             ThumbnailPath = null;
+            
+            if (!IsVersionedStructure)
+            {
+                TotalImageCountAllVersions = 0;
+                TotalVideoCountAllVersions = 0;
+                TotalCaptionCountAllVersions = 0;
+            }
         }
     }
 

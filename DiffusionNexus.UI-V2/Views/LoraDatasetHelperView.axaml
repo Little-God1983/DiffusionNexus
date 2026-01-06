@@ -365,9 +365,16 @@
                                                  MaxLines="1"
                                                  IsVisible="{Binding HasDescription}"
                                                  Margin="0,2,0,0"/>
-                                      <TextBlock Text="{Binding ImageCountText}"
+                                      <!-- Show detailed counts for version cards (flattened view) -->
+                                      <TextBlock Text="{Binding DetailedCountText}"
                                                  FontSize="12"
-                                                 Opacity="0.6"/>
+                                                 Opacity="0.6"
+                                                 IsVisible="{Binding IsVersionCard}"/>
+                                      <!-- Show all versions totals for collapsed view -->
+                                      <TextBlock Text="{Binding AllVersionsDetailedCountText}"
+                                                 FontSize="12"
+                                                 Opacity="0.6"
+                                                 IsVisible="{Binding !IsVersionCard}"/>
                                     </StackPanel>
                                   </Border>
                                   
