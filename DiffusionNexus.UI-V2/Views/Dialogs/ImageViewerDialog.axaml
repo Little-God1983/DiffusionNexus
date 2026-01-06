@@ -22,9 +22,8 @@
   <!-- Full-screen overlay with image viewer -->
   <Grid>
     
-    <!-- Dark background that can be clicked to close -->
-    <Border Background="#000000" 
-            PointerPressed="OnBackgroundPressed"/>
+    <!-- Dark background -->
+    <Border Background="#000000"/>
     
     <!-- Main content area -->
     <Grid RowDefinitions="Auto,*,Auto" Margin="0">

@@ -564,7 +564,7 @@
                                     Background="#1A1A1A"
                                     CornerRadius="6,6,0,0"
                                     ClipToBounds="True"
-                                    DoubleTapped="OnImageDoubleTapped"
+                                    Tapped="OnImageTapped"
                                     Cursor="Hand">
                               <Grid>
                                 <!-- Image/Video thumbnail using converter -->

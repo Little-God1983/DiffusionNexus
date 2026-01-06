@@ -102,17 +102,4 @@ public partial class ImageViewerDialog : Window
                 break;
         }
     }
-
-    /// <summary>
-    /// Handles click on the background to close the viewer.
-    /// </summary>
-    private void OnBackgroundPressed(object? sender, PointerPressedEventArgs e)
-    {
-        // Only close if clicking directly on the background border
-        // The image and controls should not trigger this
-        if (e.Source == sender)
-        {
-            Close();
-        }
-    }
 }
