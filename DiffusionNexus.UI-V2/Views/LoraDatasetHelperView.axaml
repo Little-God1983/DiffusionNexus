@@ -548,10 +548,10 @@
                                 BorderBrush="#444"
                                 BorderThickness="2"
                                 PointerPressed="OnImageCardPointerPressed">
-                          <Grid RowDefinitions="200,Auto,Auto">
+                          <Grid RowDefinitions="180,Auto,Auto,Auto">
                             
                             <!-- Selection overlay (absolute positioned, doesn't affect layout) -->
-                            <Border Grid.RowSpan="3"
+                            <Border Grid.RowSpan="4"
                                     CornerRadius="6"
                                     BorderBrush="#2196F3"
                                     BorderThickness="3"
@@ -559,7 +559,7 @@
                                     IsVisible="{Binding IsSelected}"
                                     IsHitTestVisible="False"/>
                             
-                            <!-- Image with action buttons -->
+                            <!-- Image area -->
                             <Border Grid.Row="0" 
                                     Background="#1A1A1A"
                                     CornerRadius="6,6,0,0"
@@ -577,7 +577,7 @@
                                         VerticalAlignment="Top"
                                         Margin="8">
                                   <CheckBox IsChecked="{Binding IsSelected}"
-                                            ToolTip.Tip="Click to select (Ctrl+Click for multi-select)"/>
+                                            ToolTip.Tip="Click to select (Shift+Click for range, Ctrl+Click for multi)"/>
                                 </Border>
                                 
                                 <!-- Video indicator badge (for videos) -->
@@ -593,63 +593,71 @@
                                              Foreground="White"/>
                                 </Border>
                                 
-                                <!-- Rating status indicator -->
+                                <!-- Rating status indicator (top-right) -->
                                 <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
                                         CornerRadius="4"
                                         Padding="6,3"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
-                                        Margin="8,40,8,8"
+                                        Margin="8"
                                         IsVisible="{Binding !IsUnrated}">
                                   <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
                                              FontSize="11"
                                              FontWeight="SemiBold"
                                              Foreground="White"/>
                                 </Border>
-                                
-                                <!-- Action buttons overlay (top-right) -->
-                                <StackPanel Orientation="Horizontal"
-                                            HorizontalAlignment="Right"
-                                            VerticalAlignment="Top"
-                                            Margin="8"
-                                            Spacing="4">
-                                  <!-- Mark Approved (up arrow) -->
-                                  <Button Content="▲"
-                                          Command="{Binding MarkApprovedCommand}"
-                                          Padding="8,6"
-                                          Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
-                                          Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
-                                          CornerRadius="4"
-                                          ToolTip.Tip="Mark as production-ready (click again to clear)"/>
-                                  <!-- Mark Rejected (down arrow) -->
-                                  <Button Content="▼"
-                                          Command="{Binding MarkRejectedCommand}"
-                                          Padding="8,6"
-                                          Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
-                                          Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
-                                          CornerRadius="4"
-                                          ToolTip.Tip="Mark as failed/rejected (click again to clear)"/>
-                                  <!-- Send to Image Edit button -->
-                                  <Button Content="🖼️"
-                                          Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
-                                          CommandParameter="{Binding}"
-                                          Padding="8,6"
-                                          Background="#80000000"
-                                          CornerRadius="4"
-                                          ToolTip.Tip="Send to Image Edit"/>
-                                  <!-- Delete button -->
-                                  <Button Content="🗑️"
-                                          Command="{Binding DeleteCommand}"
-                                          Padding="8,6"
-                                          Background="#80000000"
-                                          CornerRadius="4"
-                                          ToolTip.Tip="Delete image"/>
-                                </StackPanel>
                               </Panel>
                             </Border>
                             
-                            <!-- Filename -->
+                            <!-- Action buttons toolbar (below image, above filename) -->
                             <Border Grid.Row="1" 
+                                    Background="#1A1A1A"
+                                    Padding="6,4">
+                              <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                                <!-- Rating buttons (left) -->
+                                <Button Grid.Column="0"
+                                        Content="▲"
+                                        Command="{Binding MarkApprovedCommand}"
+                                        Padding="10,4"
+                                        Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                                        Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                                        CornerRadius="4"
+                                        Margin="0,0,2,0"
+                                        ToolTip.Tip="Mark as production-ready"/>
+                                <Button Grid.Column="1"
+                                        Content="▼"
+                                        Command="{Binding MarkRejectedCommand}"
+                                        Padding="10,4"
+                                        Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                                        Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Mark as failed/rejected"/>
+                                
+                                <!-- Spacer -->
+                                <Border Grid.Column="2"/>
+                                
+                                <!-- Action buttons (right) -->
+                                <Button Grid.Column="3"
+                                        Content="🖼️"
+                                        Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
+                                        CommandParameter="{Binding}"
+                                        Padding="10,4"
+                                        Background="#444"
+                                        CornerRadius="4"
+                                        Margin="0,0,2,0"
+                                        ToolTip.Tip="Send to Image Edit"/>
+                                <Button Grid.Column="4"
+                                        Content="🗑️"
+                                        Command="{Binding DeleteCommand}"
+                                        Padding="10,4"
+                                        Background="#444"
+                                        CornerRadius="4"
+                                        ToolTip.Tip="Delete image"/>
+                              </Grid>
+                            </Border>
+                            
+                            <!-- Filename -->
+                            <Border Grid.Row="2" 
                                     Padding="8,4"
                                     Background="#222">
                               <TextBlock Text="{Binding FullFileName}"
@@ -659,7 +667,7 @@
                             </Border>
                             
                             <!-- Caption Editor -->
-                            <Border Grid.Row="2" Padding="8">
+                            <Border Grid.Row="3" Padding="8">
                               <Grid RowDefinitions="*,Auto">
                                 <TextBox Grid.Row="0"
                                          Text="{Binding Caption, Mode=TwoWay}"
