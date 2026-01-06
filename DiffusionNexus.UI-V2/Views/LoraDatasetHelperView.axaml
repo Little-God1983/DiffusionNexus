@@ -434,9 +434,22 @@
                                   CornerRadius="6,6,0,0"
                                   ClipToBounds="True">
                             <Panel>
-                              <!-- Image using converter -->
-                              <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
+                              <!-- Image/Video thumbnail using converter -->
+                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
                                      Stretch="UniformToFill"/>
+                              
+                              <!-- Video indicator badge (for videos) -->
+                              <Border Background="#80000000"
+                                      CornerRadius="4"
+                                      Padding="6,3"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Bottom"
+                                      Margin="8"
+                                      IsVisible="{Binding IsVideo}">
+                                <TextBlock Text="🎬 Video"
+                                           FontSize="11"
+                                           Foreground="White"/>
+                              </Border>
                               
                               <!-- Rating status indicator (top-left) -->
                               <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"

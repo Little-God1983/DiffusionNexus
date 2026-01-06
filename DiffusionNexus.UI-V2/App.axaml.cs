@@ -117,6 +117,9 @@ public partial class App : Application
         // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();
         services.AddScoped<IModelSyncService, ModelFileSyncService>();
+        
+        // Video thumbnail service (singleton - maintains FFmpeg initialization state)
+        services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
 
         // ViewModels (scoped to app lifetime)
         services.AddScoped<SettingsViewModel>();

@@ -444,9 +444,23 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 return;
             }
 
-            // Load all media files (images and videos)
-            var mediaFiles = Directory.EnumerateFiles(mediaFolderPath)
-                .Where(f => MediaExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            // Get all files in the folder
+            var allFiles = Directory.EnumerateFiles(mediaFolderPath).ToList();
+            
+            // Load all media files (images and videos), excluding video thumbnails
+            var mediaFiles = allFiles
+                .Where(f =>
+                {
+                    var ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (!MediaExtensions.Contains(ext))
+                        return false;
+                    
+                    // Exclude video thumbnail files (files ending with _thumb.webp etc.)
+                    if (DatasetCardViewModel.IsVideoThumbnailFile(f))
+                        return false;
+                    
+                    return true;
+                })
                 .OrderBy(f => f)
                 .ToList();
 
@@ -800,18 +814,126 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         if (dataset is null || DialogService is null) return;
 
-        var confirm = await DialogService.ShowConfirmAsync(
-            "Delete Dataset",
-            $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in this dataset.");
+        // Check if this is a version card (flattened view) or a full dataset
+        if (dataset.IsVersionCard && dataset.DisplayVersion.HasValue)
+        {
+            // Deleting a specific version
+            await DeleteVersionAsync(dataset, dataset.DisplayVersion.Value);
+        }
+        else
+        {
+            // Deleting the entire dataset
+            var confirm = await DialogService.ShowConfirmAsync(
+                "Delete Dataset",
+                $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in ALL versions of this dataset.");
 
+            if (!confirm) return;
+
+            try
+            {
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                Datasets.Remove(dataset);
+                
+                // Also remove from grouped datasets
+                foreach (var group in GroupedDatasets)
+                {
+                    group.Datasets.Remove(dataset);
+                }
+                
+                // Remove any empty groups
+                var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+                foreach (var emptyGroup in emptyGroups)
+                {
+                    GroupedDatasets.Remove(emptyGroup);
+                }
+                
+                StatusMessage = $"Deleted dataset '{dataset.Name}'";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error deleting dataset: {ex.Message}";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes a specific version from a dataset.
+    /// </summary>
+    private async Task DeleteVersionAsync(DatasetCardViewModel dataset, int version)
+    {
+        if (DialogService is null) return;
+
+        var versionPath = dataset.GetVersionFolderPath(version);
+        
+        // Count versions to determine if this would delete the last one
+        var allVersions = dataset.GetAllVersionNumbers();
+        var isLastVersion = allVersions.Count == 1;
+
+        string confirmMessage;
+        if (isLastVersion)
+        {
+            confirmMessage = $"Are you sure you want to delete V{version} of '{dataset.Name}'?\n\n" +
+                           "This is the only version - the entire dataset will be removed.";
+        }
+        else
+        {
+            confirmMessage = $"Are you sure you want to delete V{version} of '{dataset.Name}'?\n\n" +
+                           "This will permanently delete all images and captions in this version.";
+        }
+
+        var confirm = await DialogService.ShowConfirmAsync("Delete Version", confirmMessage);
         if (!confirm) return;
 
         try
         {
-            Directory.Delete(dataset.FolderPath, recursive: true);
-            Datasets.Remove(dataset);
+            if (isLastVersion)
+            {
+                // Delete entire dataset if last version
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                
+                // Remove from Datasets collection
+                var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+                if (parentDataset is not null)
+                {
+                    Datasets.Remove(parentDataset);
+                }
+            }
+            else
+            {
+                // Delete only the version folder
+                if (Directory.Exists(versionPath))
+                {
+                    Directory.Delete(versionPath, recursive: true);
+                }
+
+                // Clean up version metadata
+                dataset.VersionBranchedFrom.Remove(version);
+                dataset.VersionDescriptions.Remove(version);
+                
+                // Update the parent dataset's metadata
+                var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+                if (parentDataset is not null)
+                {
+                    parentDataset.VersionBranchedFrom.Remove(version);
+                    parentDataset.VersionDescriptions.Remove(version);
+                    
+                    // If we deleted the current version, switch to another version
+                    if (parentDataset.CurrentVersion == version)
+                    {
+                        var remainingVersions = parentDataset.GetAllVersionNumbers();
+                        parentDataset.CurrentVersion = remainingVersions.FirstOrDefault(v => v != version);
+                        if (parentDataset.CurrentVersion == 0)
+                        {
+                            parentDataset.CurrentVersion = remainingVersions.First();
+                        }
+                    }
+                    
+                    parentDataset.RefreshImageInfo();
+                    parentDataset.SaveMetadata();
+                }
+            }
             
-            // Also remove from grouped datasets
+            // Remove from grouped datasets
             foreach (var group in GroupedDatasets)
             {
                 group.Datasets.Remove(dataset);
@@ -824,11 +946,13 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 GroupedDatasets.Remove(emptyGroup);
             }
             
-            StatusMessage = $"Deleted dataset '{dataset.Name}'";
+            StatusMessage = isLastVersion 
+                ? $"Deleted dataset '{dataset.Name}'" 
+                : $"Deleted V{version} of '{dataset.Name}'";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Error deleting dataset: {ex.Message}";
+            StatusMessage = $"Error deleting version: {ex.Message}";
         }
     }
 
@@ -1002,7 +1126,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             // Delete video thumbnail if exists
             if (image.IsVideo)
             {
-                var thumbnailPath = Path.ChangeExtension(image.ImagePath, ".webp");
+                var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
                 if (File.Exists(thumbnailPath))
                 {
                     File.Delete(thumbnailPath);

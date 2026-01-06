@@ -245,14 +245,18 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Gets the path to the video thumbnail (generated .webp file).
+    /// Gets the path to the video thumbnail (generated _thumb.webp file).
     /// </summary>
     private string? GetVideoThumbnailPath()
     {
         if (string.IsNullOrWhiteSpace(_imagePath))
             return null;
         
-        var thumbnailPath = Path.ChangeExtension(_imagePath, ".webp");
+        // Use the _thumb.webp naming convention
+        var directory = Path.GetDirectoryName(_imagePath) ?? string.Empty;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(_imagePath);
+        var thumbnailPath = Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
+        
         return File.Exists(thumbnailPath) ? thumbnailPath : null;
     }
 

@@ -25,6 +25,15 @@ public interface IVideoThumbnailService
     bool IsVideoFile(string filePath);
 
     /// <summary>
+    /// Gets the expected thumbnail path for a video file.
+    /// Uses the naming convention: {videoname}_thumb.{format}
+    /// </summary>
+    /// <param name="videoPath">Path to the video file.</param>
+    /// <param name="format">Thumbnail format (default: WebP).</param>
+    /// <returns>The expected thumbnail file path.</returns>
+    string GetThumbnailPath(string videoPath, ThumbnailFormat format = ThumbnailFormat.WebP);
+
+    /// <summary>
     /// Gets the list of supported video file extensions.
     /// </summary>
     IReadOnlyList<string> SupportedExtensions { get; }

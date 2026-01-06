@@ -51,6 +51,12 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
     }
 
     /// <inheritdoc />
+    public string GetThumbnailPath(string videoPath, ThumbnailFormat format = ThumbnailFormat.WebP)
+    {
+        return GetDefaultThumbnailPath(videoPath, format);
+    }
+
+    /// <inheritdoc />
     public async Task EnsureFFmpegAvailableAsync(CancellationToken cancellationToken = default)
     {
         if (_ffmpegInitialized)
@@ -174,8 +180,12 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
 
     private static string GetDefaultThumbnailPath(string videoPath, ThumbnailFormat format)
     {
+        var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
         var extension = GetFormatExtension(format);
-        return Path.ChangeExtension(videoPath, extension);
+        
+        // Use _thumb suffix to clearly identify thumbnails
+        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb{extension}");
     }
 
     private static string GetFormatExtension(ThumbnailFormat format) => format switch

@@ -357,6 +357,28 @@ public class DatasetCardViewModel : ObservableObject
     public event EventHandler? CategoryChanged;
 
     /// <summary>
+    /// Gets the expected thumbnail path for a video file.
+    /// Uses the naming convention: {videoname}_thumb.webp
+    /// </summary>
+    public static string GetVideoThumbnailPath(string videoPath)
+    {
+        var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
+        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
+    }
+
+    /// <summary>
+    /// Checks if a file is a video thumbnail (ends with _thumb.webp, _thumb.jpg, or _thumb.png).
+    /// </summary>
+    public static bool IsVideoThumbnailFile(string filePath)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(filePath);
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return fileName.EndsWith("_thumb", StringComparison.OrdinalIgnoreCase) &&
+               (ext == ".webp" || ext == ".jpg" || ext == ".png");
+    }
+
+    /// <summary>
     /// Checks if a file is an image file.
     /// </summary>
     public static bool IsImageFile(string filePath)
@@ -451,24 +473,25 @@ public class DatasetCardViewModel : ObservableObject
         {
             var files = Directory.EnumerateFiles(versionPath).ToList();
             
-            card.ImageCount = files.Count(f => IsImageFile(f));
-            card.VideoCount = files.Count(f => IsVideoFile(f));
+            var videos = files.Where(f => IsVideoFile(f)).ToList();
+            
+            // Count images, excluding video thumbnails (files ending with _thumb.webp etc.)
+            var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
+            
+            card.ImageCount = images.Count;
+            card.VideoCount = videos.Count;
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
-            var firstImage = files.FirstOrDefault(f => IsImageFile(f));
-            if (firstImage is not null)
+            if (images.Count > 0)
             {
-                card.ThumbnailPath = firstImage;
+                card.ThumbnailPath = images.First();
             }
-            else
+            else if (videos.Count > 0)
             {
-                // For videos, look for an existing thumbnail (.webp or .jpg with same name)
-                var firstVideo = files.FirstOrDefault(f => IsVideoFile(f));
-                if (firstVideo is not null)
-                {
-                    var videoThumbnail = Path.ChangeExtension(firstVideo, ".webp");
-                    card.ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
-                }
+                // For videos, look for an existing thumbnail (video_thumb.webp)
+                var firstVideo = videos.First();
+                var videoThumbnail = GetVideoThumbnailPath(firstVideo);
+                card.ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
             }
         }
 
@@ -538,8 +561,10 @@ public class DatasetCardViewModel : ObservableObject
         {
             var files = Directory.EnumerateFiles(mediaPath).ToList();
             
-            var images = files.Where(f => IsImageFile(f)).ToList();
             var videos = files.Where(f => IsVideoFile(f)).ToList();
+            
+            // Count images, excluding video thumbnails (files ending with _thumb.webp etc.)
+            var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
 
             ImageCount = images.Count;
             VideoCount = videos.Count;
@@ -551,9 +576,9 @@ public class DatasetCardViewModel : ObservableObject
             }
             else if (videos.Count > 0)
             {
-                // For videos, look for an existing thumbnail (.webp with same name)
+                // For videos, look for an existing thumbnail (video_thumb.webp)
                 var firstVideo = videos.First();
-                var videoThumbnail = Path.ChangeExtension(firstVideo, ".webp");
+                var videoThumbnail = GetVideoThumbnailPath(firstVideo);
                 ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
             }
             else
