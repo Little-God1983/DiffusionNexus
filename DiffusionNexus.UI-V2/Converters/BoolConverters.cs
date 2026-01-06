@@ -45,7 +45,7 @@ public static class BoolConverters
     /// Converts IsApproved to text for badge.
     /// </summary>
     public static readonly IValueConverter BoolToApprovedText =
-        new FuncValueConverter<bool, string>(b => b ? "? Ready" : "? Failed");
+        new FuncValueConverter<bool, string>(b => b ? "Ready" : "Failed");
 
     /// <summary>
     /// Converts IsApproved to button background (highlighted when active).
