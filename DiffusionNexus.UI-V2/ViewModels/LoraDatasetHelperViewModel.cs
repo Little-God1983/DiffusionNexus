@@ -39,6 +39,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     // Image Edit tab dataset/version selection
     private DatasetCardViewModel? _selectedEditorDataset;
     private EditorVersionItem? _selectedEditorVersion;
+    private DatasetImageViewModel? _selectedEditorImage;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -263,6 +264,21 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
+    /// <summary>
+    /// Currently selected image in the Image Edit tab thumbnail list.
+    /// </summary>
+    public DatasetImageViewModel? SelectedEditorImage
+    {
+        get => _selectedEditorImage;
+        set
+        {
+            if (SetProperty(ref _selectedEditorImage, value) && value is not null)
+            {
+                LoadEditorImage(value);
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -326,6 +342,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
+    public IRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
     
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -364,6 +381,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
+        LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
         
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -1752,6 +1770,24 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     #endregion
 
     #region Image Edit Tab Dataset Navigation
+
+    /// <summary>
+    /// Loads the specified image into the Image Editor.
+    /// </summary>
+    private void LoadEditorImage(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+        
+        // Only allow image editing for images, not videos
+        if (image.IsVideo)
+        {
+            StatusMessage = "Video editing is not supported.";
+            return;
+        }
+
+        ImageEditor.LoadImage(image.ImagePath);
+        StatusMessage = $"Editing: {image.FullFileName}";
+    }
 
     /// <summary>
     /// Loads the available versions for the selected dataset in the Image Edit tab.
