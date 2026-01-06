@@ -354,26 +354,56 @@
                             Background="#2A2A2A"
                             CornerRadius="8"
                             ClipToBounds="True"
-                            BorderBrush="#444"
-                            BorderThickness="1">
+                            BorderBrush="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBorder}}"
+                            BorderThickness="2">
                       <Grid RowDefinitions="200,Auto,Auto">
                         
                         <!-- Image with action buttons -->
                         <Border Grid.Row="0" 
                                 Background="#1A1A1A"
-                                CornerRadius="8,8,0,0"
+                                CornerRadius="6,6,0,0"
                                 ClipToBounds="True">
                           <Panel>
                             <!-- Image using converter -->
                             <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
                                    Stretch="UniformToFill"/>
                             
-                            <!-- Action buttons overlay -->
+                            <!-- Rating status indicator (top-left) -->
+                            <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
+                                    CornerRadius="4"
+                                    Padding="6,3"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Top"
+                                    Margin="8"
+                                    IsVisible="{Binding !IsUnrated}">
+                              <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                                         FontSize="11"
+                                         FontWeight="SemiBold"
+                                         Foreground="White"/>
+                            </Border>
+                            
+                            <!-- Action buttons overlay (top-right) -->
                             <StackPanel Orientation="Horizontal"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
                                         Margin="8"
                                         Spacing="4">
+                              <!-- Mark Approved (up arrow) -->
+                              <Button Content="▲"
+                                      Command="{Binding MarkApprovedCommand}"
+                                      Padding="8,6"
+                                      Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                                      Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                                      CornerRadius="4"
+                                      ToolTip.Tip="Mark as production-ready (click again to clear)"/>
+                              <!-- Mark Rejected (down arrow) -->
+                              <Button Content="▼"
+                                      Command="{Binding MarkRejectedCommand}"
+                                      Padding="8,6"
+                                      Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                                      Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                                      CornerRadius="4"
+                                      ToolTip.Tip="Mark as failed/rejected (click again to clear)"/>
                               <!-- Send to Image Edit button -->
                               <Button Content="🖼️"
                                       Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
