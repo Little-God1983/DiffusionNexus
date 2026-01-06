@@ -507,9 +507,13 @@
                              FontSize="14"/>
                   <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
                     <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding ImageEditor.ImageDimensions, StringFormat='Size: {0} px'}"
-                                 FontSize="12"
-                                 Opacity="0.8"/>
+                      <TextBlock FontSize="12" Opacity="0.8">
+                        <Run Text="Size: "/>
+                        <Run Text="{Binding ImageEditor.ImageWidth}"/>
+                        <Run Text=" × "/>
+                        <Run Text="{Binding ImageEditor.ImageHeight}"/>
+                        <Run Text=" px"/>
+                      </TextBlock>
                       <TextBlock Text="{Binding ImageEditor.ImageDpi, StringFormat='Resolution: {0} DPI'}"
                                  FontSize="12"
                                  Opacity="0.8"/>
