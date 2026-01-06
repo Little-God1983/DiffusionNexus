@@ -125,6 +125,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public ObservableCollection<DatasetCardViewModel> Datasets { get; } = [];
 
     /// <summary>
+    /// Collection of datasets grouped by category for the overview display.
+    /// Each group represents a category with its datasets, shown as horizontal sections.
+    /// </summary>
+    public ObservableCollection<DatasetGroupViewModel> GroupedDatasets { get; } = [];
+
+    /// <summary>
     /// Collection of images in the active dataset.
     /// </summary>
     public ObservableCollection<DatasetImageViewModel> DatasetImages { get; } = [];
@@ -180,14 +186,27 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IsStorageConfigured = true;
         
         // Design-time demo data
-        Datasets.Add(new DatasetCardViewModel { Name = "Character Training", ImageCount = 45 });
-        Datasets.Add(new DatasetCardViewModel { Name = "Style Reference", ImageCount = 23 });
+        Datasets.Add(new DatasetCardViewModel { Name = "Character Training", ImageCount = 45, CategoryId = 1 });
+        Datasets.Add(new DatasetCardViewModel { Name = "Style Reference", ImageCount = 23, CategoryId = 2 });
         Datasets.Add(new DatasetCardViewModel { Name = "Background Scenes", ImageCount = 12 });
 
         // Design-time categories
         AvailableCategories.Add(new DatasetCategoryViewModel { Id = 1, Name = "Character" });
         AvailableCategories.Add(new DatasetCategoryViewModel { Id = 2, Name = "Style" });
         AvailableCategories.Add(new DatasetCategoryViewModel { Id = 3, Name = "Concept" });
+
+        // Design-time grouped datasets
+        var characterGroup = DatasetGroupViewModel.FromCategory(AvailableCategories[0], 0);
+        characterGroup.Datasets.Add(Datasets[0]);
+        GroupedDatasets.Add(characterGroup);
+
+        var styleGroup = DatasetGroupViewModel.FromCategory(AvailableCategories[1], 1);
+        styleGroup.Datasets.Add(Datasets[1]);
+        GroupedDatasets.Add(styleGroup);
+
+        var uncategorized = DatasetGroupViewModel.CreateUncategorized();
+        uncategorized.Datasets.Add(Datasets[2]);
+        GroupedDatasets.Add(uncategorized);
     }
 
     #endregion
@@ -246,12 +265,42 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
             IsStorageConfigured = true;
             Datasets.Clear();
+            GroupedDatasets.Clear();
 
             var folders = Directory.GetDirectories(settings.DatasetStoragePath);
             foreach (var folder in folders.OrderBy(f => Path.GetFileName(f)))
             {
                 var card = DatasetCardViewModel.FromFolder(folder);
                 Datasets.Add(card);
+            }
+
+            // Build category groups in order, then add uncategorized at the end
+            var sortOrder = 0;
+            foreach (var category in AvailableCategories)
+            {
+                var group = DatasetGroupViewModel.FromCategory(category, sortOrder++);
+                foreach (var dataset in Datasets.Where(d => d.CategoryId == category.Id))
+                {
+                    group.Datasets.Add(dataset);
+                }
+                
+                // Only add groups that have datasets
+                if (group.HasDatasets)
+                {
+                    GroupedDatasets.Add(group);
+                }
+            }
+
+            // Add uncategorized datasets at the end
+            var uncategorizedDatasets = Datasets.Where(d => d.CategoryId is null).ToList();
+            if (uncategorizedDatasets.Count > 0)
+            {
+                var uncategorized = DatasetGroupViewModel.CreateUncategorized(sortOrder);
+                foreach (var dataset in uncategorizedDatasets)
+                {
+                    uncategorized.Datasets.Add(dataset);
+                }
+                GroupedDatasets.Add(uncategorized);
             }
 
             StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";

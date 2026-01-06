@@ -144,85 +144,126 @@
               </StackPanel>
             </Border>
 
-            <!-- Dataset Overview (Netflix-style cards) -->
+            <!-- Dataset Overview (Grouped by Category with separator lines) -->
             <ScrollViewer IsVisible="{Binding !IsViewingDataset}"
                           Padding="16">
-              <ItemsControl ItemsSource="{Binding Datasets}">
+              <ItemsControl ItemsSource="{Binding GroupedDatasets}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
+                    <StackPanel Orientation="Vertical" Spacing="8"/>
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DatasetCardViewModel">
-                    <Button Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).OpenDatasetCommand}"
-                            CommandParameter="{Binding}"
-                            Margin="8"
-                            Padding="0"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Cursor="Hand">
-                      <Border Width="200" 
-                              Height="240"
-                              Background="#2A2A2A"
-                              CornerRadius="8"
-                              ClipToBounds="True"
-                              BorderBrush="#444"
-                              BorderThickness="1">
-                        <Grid RowDefinitions="*,Auto">
-                          
-                          <!-- Thumbnail Area -->
-                          <Border Grid.Row="0" 
-                                  Background="#1A1A1A"
-                                  CornerRadius="8,8,0,0"
-                                  ClipToBounds="True">
-                            <Grid>
-                              <!-- Placeholder when no thumbnail -->
-                              <TextBlock Text="📁" 
-                                         FontSize="64" 
-                                         Opacity="0.2"
-                                         HorizontalAlignment="Center"
-                                         VerticalAlignment="Center"
-                                         IsVisible="{Binding !HasThumbnail}"/>
-                              
-                              <!-- Thumbnail image using converter -->
-                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
-                                     Stretch="UniformToFill"
-                                     IsVisible="{Binding HasThumbnail}"/>
-                              
-                              <!-- Delete button overlay -->
-                              <Button Content="🗑️"
-                                      Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).DeleteDatasetCommand}"
-                                      CommandParameter="{Binding}"
-                                      HorizontalAlignment="Right"
-                                      VerticalAlignment="Top"
-                                      Margin="8"
-                                      Padding="6"
-                                      Background="#80000000"
-                                      CornerRadius="4"
-                                      Opacity="0.7"/>
-                            </Grid>
-                          </Border>
-                          
-                          <!-- Info Area -->
-                          <Border Grid.Row="1" 
-                                  Padding="12,8"
-                                  Background="#2A2A2A">
-                            <StackPanel>
-                              <TextBlock Text="{Binding Name}"
-                                         FontWeight="SemiBold"
-                                         FontSize="14"
-                                         TextTrimming="CharacterEllipsis"
-                                         MaxLines="1"/>
-                              <TextBlock Text="{Binding ImageCountText}"
-                                         FontSize="12"
-                                         Opacity="0.6"/>
-                            </StackPanel>
-                          </Border>
-                          
-                        </Grid>
-                      </Border>
-                    </Button>
+                  <DataTemplate x:DataType="vm:DatasetGroupViewModel">
+                    <!-- Category Group Section -->
+                    <StackPanel Spacing="8">
+                      
+                      <!-- Category Header with Separator Line -->
+                      <Grid ColumnDefinitions="Auto,8,*,8,Auto" Margin="8,8,8,4">
+                        <!-- Category Name -->
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Name}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Foreground="#888"
+                                   VerticalAlignment="Center"/>
+                        
+                        <!-- Separator Line -->
+                        <Border Grid.Column="2"
+                                Height="1"
+                                Background="#444"
+                                VerticalAlignment="Center"/>
+                        
+                        <!-- Dataset Count -->
+                        <TextBlock Grid.Column="4"
+                                   Text="{Binding DatasetCountText}"
+                                   FontSize="12"
+                                   Foreground="#666"
+                                   VerticalAlignment="Center"/>
+                      </Grid>
+                      
+                      <!-- Datasets in this category -->
+                      <ItemsControl ItemsSource="{Binding Datasets}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                            <Button Command="{Binding $parent[ScrollViewer].((vm:LoraDatasetHelperViewModel)DataContext).OpenDatasetCommand}"
+                                    CommandParameter="{Binding}"
+                                    Margin="8"
+                                    Padding="0"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Cursor="Hand">
+                              <Border Width="200" 
+                                      Height="240"
+                                      Background="#2A2A2A"
+                                      CornerRadius="8"
+                                      ClipToBounds="True"
+                                      BorderBrush="#444"
+                                      BorderThickness="1">
+                                <Grid RowDefinitions="*,Auto">
+                                  
+                                  <!-- Thumbnail Area -->
+                                  <Border Grid.Row="0" 
+                                          Background="#1A1A1A"
+                                          CornerRadius="8,8,0,0"
+                                          ClipToBounds="True">
+                                    <Grid>
+                                      <!-- Placeholder when no thumbnail -->
+                                      <TextBlock Text="📁" 
+                                                 FontSize="64" 
+                                                 Opacity="0.2"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center"
+                                                 IsVisible="{Binding !HasThumbnail}"/>
+                                      
+                                      <!-- Thumbnail image using converter -->
+                                      <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                             Stretch="UniformToFill"
+                                             IsVisible="{Binding HasThumbnail}"/>
+                                      
+                                      <!-- Delete button overlay -->
+                                      <Button Content="🗑️"
+                                              Command="{Binding $parent[ScrollViewer].((vm:LoraDatasetHelperViewModel)DataContext).DeleteDatasetCommand}"
+                                              CommandParameter="{Binding}"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Top"
+                                              Margin="8"
+                                              Padding="6"
+                                              Background="#80000000"
+                                              CornerRadius="4"
+                                              Opacity="0.7"/>
+                                    </Grid>
+                                  </Border>
+                                  
+                                  <!-- Info Area -->
+                                  <Border Grid.Row="1" 
+                                          Padding="12,8"
+                                          Background="#2A2A2A">
+                                    <StackPanel>
+                                      <TextBlock Text="{Binding Name}"
+                                                 FontWeight="SemiBold"
+                                                 FontSize="14"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 MaxLines="1"/>
+                                      <TextBlock Text="{Binding ImageCountText}"
+                                                 FontSize="12"
+                                                 Opacity="0.6"/>
+                                    </StackPanel>
+                                  </Border>
+                                  
+                                </Grid>
+                              </Border>
+                            </Button>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                      
+                    </StackPanel>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
