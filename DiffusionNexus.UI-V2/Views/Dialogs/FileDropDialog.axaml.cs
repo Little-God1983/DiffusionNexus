@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -18,6 +19,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private static readonly string[] DefaultImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
     private static readonly string[] DefaultVideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     private static readonly string[] DefaultTextExtensions = [".txt", ".caption"];
+    private static readonly string[] DefaultArchiveExtensions = [".zip"];
     private static readonly string[] DefaultMediaExtensions = [..DefaultImageExtensions, ..DefaultVideoExtensions];
     
     private string[] _allowedExtensions = [];
@@ -104,7 +106,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// </summary>
     public FileDropDialog ForMediaAndText()
     {
-        _allowedExtensions = [..DefaultMediaExtensions, ..DefaultTextExtensions];
+        _allowedExtensions = [..DefaultMediaExtensions, ..DefaultTextExtensions, ..DefaultArchiveExtensions];
         return this;
     }
 
@@ -193,7 +195,16 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         {
             if (item is IStorageFile file)
             {
-                AddFile(file.Path.LocalPath);
+                var filePath = file.Path.LocalPath;
+                if (IsZipFile(filePath))
+                {
+                    // Extract and add media files from ZIP
+                    AddFilesFromZip(filePath);
+                }
+                else
+                {
+                    AddFile(filePath);
+                }
             }
             else if (item is IStorageFolder folder)
             {
@@ -220,10 +231,22 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         {
             if (item is IStorageFile file)
             {
-                if (IsFileAllowed(file.Path.LocalPath))
+                var filePath = file.Path.LocalPath;
+                if (IsZipFile(filePath))
+                {
+                    // Analyze ZIP contents
+                    var (zipHasValid, zipHasInvalid) = AnalyzeFilesInZip(filePath);
+                    if (zipHasValid) hasValid = true;
+                    if (zipHasInvalid) hasInvalid = true;
+                }
+                else if (IsFileAllowed(filePath))
+                {
                     hasValid = true;
+                }
                 else
+                {
                     hasInvalid = true;
+                }
             }
             else if (item is IStorageFolder folder)
             {
@@ -280,6 +303,54 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
         return _allowedExtensions.Contains(ext);
+    }
+
+    /// <summary>
+    /// Checks if a file is a ZIP archive.
+    /// </summary>
+    private static bool IsZipFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return DefaultArchiveExtensions.Contains(ext);
+    }
+
+    /// <summary>
+    /// Analyzes a ZIP file to determine if it contains valid files based on allowed extensions.
+    /// </summary>
+    private (bool HasValid, bool HasInvalid) AnalyzeFilesInZip(string zipPath)
+    {
+        var hasValid = false;
+        var hasInvalid = false;
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(zipPath);
+            foreach (var entry in archive.Entries)
+            {
+                // Skip directories
+                if (string.IsNullOrEmpty(entry.Name))
+                    continue;
+
+                // Check if the file inside ZIP is allowed (excluding .zip itself)
+                var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                var allowedWithoutZip = _allowedExtensions.Where(e => !DefaultArchiveExtensions.Contains(e)).ToArray();
+                
+                if (allowedWithoutZip.Length == 0 || allowedWithoutZip.Contains(ext))
+                    hasValid = true;
+                else
+                    hasInvalid = true;
+
+                // Early exit if we've found both types
+                if (hasValid && hasInvalid) break;
+            }
+        }
+        catch
+        {
+            // If we can't read the ZIP, treat it as invalid
+            hasInvalid = true;
+        }
+
+        return (hasValid, hasInvalid);
     }
 
     #endregion
@@ -364,6 +435,70 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         foreach (var file in files)
         {
             AddFile(file);
+        }
+    }
+
+    /// <summary>
+    /// Extracts and adds files from a ZIP archive.
+    /// Only media files (not .zip files) are extracted.
+    /// </summary>
+    private void AddFilesFromZip(string zipPath)
+    {
+        try
+        {
+            // Create a temporary directory for extraction
+            var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ZipExtract_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(tempDir);
+
+            var extractedCount = 0;
+            var allowedWithoutZip = _allowedExtensions.Where(e => !DefaultArchiveExtensions.Contains(e)).ToArray();
+
+            using (var archive = ZipFile.OpenRead(zipPath))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    // Skip directories and empty entries
+                    if (string.IsNullOrEmpty(entry.Name))
+                        continue;
+
+                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                    
+                    // Check if this file type is allowed (excluding zip)
+                    if (allowedWithoutZip.Length > 0 && !allowedWithoutZip.Contains(ext))
+                        continue;
+
+                    // Extract to temp directory with flat structure (just filename)
+                    var destPath = Path.Combine(tempDir, entry.Name);
+                    
+                    // Handle duplicate filenames by adding a suffix
+                    var counter = 1;
+                    while (File.Exists(destPath))
+                    {
+                        var nameWithoutExt = Path.GetFileNameWithoutExtension(entry.Name);
+                        destPath = Path.Combine(tempDir, $"{nameWithoutExt}_{counter}{ext}");
+                        counter++;
+                    }
+
+                    entry.ExtractToFile(destPath);
+                    
+                    // Add the extracted file (AddFile will handle duplicate checking in SelectedFiles)
+                    if (SelectedFiles.All(f => !f.FilePath.Equals(destPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        SelectedFiles.Add(new SelectedFileItem(destPath));
+                        extractedCount++;
+                    }
+                }
+            }
+
+            // If no files were extracted, clean up the temp directory
+            if (extractedCount == 0 && Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+        catch
+        {
+            // Ignore extraction errors
         }
     }
 

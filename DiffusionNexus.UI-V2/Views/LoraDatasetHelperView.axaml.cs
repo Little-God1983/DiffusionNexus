@@ -6,6 +6,7 @@ using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
+using System.IO.Compression;
 
 namespace DiffusionNexus.UI.Views;
 
@@ -17,6 +18,7 @@ public partial class LoraDatasetHelperView : UserControl
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+    private static readonly string[] ArchiveExtensions = [".zip"];
 
     private ImageEditorControl? _imageEditorCanvas;
     private Border? _emptyDatasetDropZone;
@@ -287,9 +289,20 @@ public partial class LoraDatasetHelperView : UserControl
             {
                 var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
                 if (MediaExtensions.Contains(ext))
+                {
                     hasValid = true;
+                }
+                else if (IsZipFile(file.Path.LocalPath))
+                {
+                    // Analyze ZIP contents
+                    var (zipHasValid, zipHasInvalid) = AnalyzeMediaFilesInZip(file.Path.LocalPath);
+                    if (zipHasValid) hasValid = true;
+                    if (zipHasInvalid) hasInvalid = true;
+                }
                 else
+                {
                     hasInvalid = true;
+                }
             }
             else if (item is IStorageFolder folder)
             {
@@ -353,15 +366,24 @@ public partial class LoraDatasetHelperView : UserControl
         if (files is null) return;
 
         var mediaFiles = new List<string>();
+        var extractedFromZip = new List<string>();
 
         foreach (var item in files)
         {
             if (item is IStorageFile file)
             {
-                var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
+                var filePath = file.Path.LocalPath;
+                var ext = Path.GetExtension(filePath).ToLowerInvariant();
+                
                 if (MediaExtensions.Contains(ext))
                 {
-                    mediaFiles.Add(file.Path.LocalPath);
+                    mediaFiles.Add(filePath);
+                }
+                else if (IsZipFile(filePath))
+                {
+                    // Extract media files from ZIP
+                    var extracted = ExtractMediaFromZip(filePath);
+                    extractedFromZip.AddRange(extracted);
                 }
             }
             else if (item is IStorageFolder folder)
@@ -371,14 +393,40 @@ public partial class LoraDatasetHelperView : UserControl
             }
         }
 
+        // Combine directly dropped files with extracted files
+        mediaFiles.AddRange(extractedFromZip);
+
         if (mediaFiles.Count == 0)
         {
-            vm.StatusMessage = "No valid media files found in the dropped items.";
+            vm.StatusMessage = "No supported media files found in the dropped items. Supported formats: PNG, JPG, WebP, GIF, MP4, MOV, WebM, AVI, MKV.";
             return;
         }
 
         // Copy files to dataset
         await CopyFilesToDatasetAsync(vm, mediaFiles);
+
+        // Clean up extracted temp files after copying
+        foreach (var tempFile in extractedFromZip)
+        {
+            try
+            {
+                if (File.Exists(tempFile))
+                    File.Delete(tempFile);
+            }
+            catch { }
+        }
+
+        // Try to clean up temp directories
+        foreach (var tempFile in extractedFromZip)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(tempFile);
+                if (dir is not null && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir);
+            }
+            catch { }
+        }
     }
 
     private void AddMediaFromFolder(string folderPath, List<string> mediaFiles)
@@ -393,6 +441,109 @@ public partial class LoraDatasetHelperView : UserControl
                 mediaFiles.Add(file);
             }
         }
+    }
+
+    /// <summary>
+    /// Extracts media files from a ZIP archive to a temporary directory.
+    /// </summary>
+    /// <param name="zipPath">Path to the ZIP file.</param>
+    /// <returns>List of extracted media file paths, or empty list if no media files found.</returns>
+    private List<string> ExtractMediaFromZip(string zipPath)
+    {
+        var extractedFiles = new List<string>();
+        
+        try
+        {
+            // Create a temporary directory for extraction
+            var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ZipExtract_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(tempDir);
+
+            using (var archive = ZipFile.OpenRead(zipPath))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    // Skip directories and empty entries
+                    if (string.IsNullOrEmpty(entry.Name))
+                        continue;
+
+                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                    if (MediaExtensions.Contains(ext))
+                    {
+                        // Extract to temp directory with flat structure (just filename)
+                        var destPath = Path.Combine(tempDir, entry.Name);
+                        
+                        // Handle duplicate filenames by adding a suffix
+                        var counter = 1;
+                        while (File.Exists(destPath))
+                        {
+                            var nameWithoutExt = Path.GetFileNameWithoutExtension(entry.Name);
+                            destPath = Path.Combine(tempDir, $"{nameWithoutExt}_{counter}{ext}");
+                            counter++;
+                        }
+
+                        entry.ExtractToFile(destPath);
+                        extractedFiles.Add(destPath);
+                    }
+                }
+            }
+
+            // If no media files were found, clean up the temp directory
+            if (extractedFiles.Count == 0 && Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+        catch
+        {
+            // Ignore extraction errors
+        }
+
+        return extractedFiles;
+    }
+
+    /// <summary>
+    /// Checks if a file is a ZIP archive.
+    /// </summary>
+    private static bool IsZipFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return ArchiveExtensions.Contains(ext);
+    }
+
+    /// <summary>
+    /// Analyzes a ZIP file to determine if it contains valid media files.
+    /// </summary>
+    private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInZip(string zipPath)
+    {
+        var hasValid = false;
+        var hasInvalid = false;
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(zipPath);
+            foreach (var entry in archive.Entries)
+            {
+                // Skip directories
+                if (string.IsNullOrEmpty(entry.Name))
+                    continue;
+
+                var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                if (MediaExtensions.Contains(ext))
+                    hasValid = true;
+                else
+                    hasInvalid = true;
+
+                // Early exit if we've found both types
+                if (hasValid && hasInvalid) break;
+            }
+        }
+        catch
+        {
+            // If we can't read the ZIP, treat it as invalid
+            hasInvalid = true;
+        }
+
+        return (hasValid, hasInvalid);
     }
 
     private async Task CopyFilesToDatasetAsync(LoraDatasetHelperViewModel vm, List<string> mediaFiles)
