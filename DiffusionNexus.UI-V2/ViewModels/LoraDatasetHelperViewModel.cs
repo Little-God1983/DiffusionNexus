@@ -3,6 +3,7 @@ using System.IO.Compression;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 
@@ -29,6 +30,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _hasUnsavedChanges;
     private int _selectedTabIndex;
     private DatasetCategoryViewModel? _selectedCategory;
+    private DatasetType? _selectedType;
     private bool _flattenVersions;
     private bool _isFileDialogOpen;
 
@@ -129,6 +131,25 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     /// <summary>
+    /// Selected type for the active dataset.
+    /// </summary>
+    public DatasetType? SelectedType
+    {
+        get => _selectedType;
+        set
+        {
+            if (SetProperty(ref _selectedType, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.Type = value;
+                ActiveDataset.SaveMetadata();
+                StatusMessage = value is not null 
+                    ? $"Type set to '{value.Value.GetDisplayName()}'" 
+                    : "Type cleared";
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether to flatten version folders in the overview.
     /// When true: shows individual cards for each version (V1, V2, V3).
     /// When false: shows one card per dataset with version count badge.
@@ -202,6 +223,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Available dataset categories.
     /// </summary>
     public ObservableCollection<DatasetCategoryViewModel> AvailableCategories { get; } = [];
+
+    /// <summary>
+    /// Available dataset types (hardcoded: Image, Video, Instruction).
+    /// </summary>
+    public IReadOnlyList<DatasetType> AvailableTypes { get; } = DatasetTypeExtensions.GetAll();
 
     /// <summary>
     /// Available versions for the active dataset (for version dropdown).
@@ -485,6 +511,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _selectedCategory = AvailableCategories.FirstOrDefault(c => c.Id == dataset.CategoryId);
             OnPropertyChanged(nameof(SelectedCategory));
 
+            // Set selected type based on dataset metadata
+            _selectedType = dataset.Type;
+            OnPropertyChanged(nameof(SelectedType));
+
             IsViewingDataset = true;
             HasUnsavedChanges = false;
             
@@ -709,26 +739,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
         IsStorageConfigured = true;
 
-        // Ask for dataset name
-        var datasetName = await DialogService.ShowInputAsync(
-            "New Dataset",
-            "Enter a name for the new dataset:",
-            null);
+        // Show create dataset dialog with category and type selection
+        var result = await DialogService.ShowCreateDatasetDialogAsync(AvailableCategories);
 
-        if (string.IsNullOrWhiteSpace(datasetName))
+        if (!result.Confirmed || string.IsNullOrWhiteSpace(result.Name))
         {
             return;
         }
 
-        // Sanitize the folder name
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var sanitizedName = string.Concat(datasetName.Where(c => !invalidChars.Contains(c)));
-
-        if (string.IsNullOrWhiteSpace(sanitizedName))
-        {
-            StatusMessage = "Invalid dataset name. Please use valid characters.";
-            return;
-        }
+        var sanitizedName = result.Name;
 
         // Create the folder
         var datasetPath = Path.Combine(settings.DatasetStoragePath, sanitizedName);
@@ -757,7 +776,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 CurrentVersion = 1,
                 TotalVersions = 1,
                 ImageCount = 0,
-                VideoCount = 0
+                VideoCount = 0,
+                CategoryId = result.CategoryId,
+                CategoryName = result.CategoryName,
+                Type = result.Type
             };
             
             // Save metadata to establish versioned structure

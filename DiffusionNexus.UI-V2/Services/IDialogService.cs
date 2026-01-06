@@ -96,6 +96,13 @@ public interface IDialogService
     /// <param name="mediaFiles">All media files in the dataset.</param>
     /// <returns>Export result with selected options and files, or cancelled result.</returns>
     Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles);
+
+    /// <summary>
+    /// Shows the create dataset dialog with name, category, and type options.
+    /// </summary>
+    /// <param name="availableCategories">Categories to show in the dropdown.</param>
+    /// <returns>Create result with name, category, and type, or cancelled result.</returns>
+    Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories);
 }
 
 /// <summary>

@@ -30,7 +30,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Back to Overview Button (only visible when viewing a dataset) -->
               <Button Grid.Column="0"
@@ -114,8 +114,29 @@
                           PlaceholderText="Select category..."/>
               </StackPanel>
               
-              <!-- Flatten Versions Toggle (only in overview) -->
+              <!-- Type Dropdown (when viewing dataset) -->
               <StackPanel Grid.Column="4"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          IsVisible="{Binding IsViewingDataset}"
+                          Margin="8,0,0,0">
+                <TextBlock Text="Type:"
+                           VerticalAlignment="Center"
+                           Opacity="0.7"/>
+                <ComboBox ItemsSource="{Binding AvailableTypes}"
+                          SelectedItem="{Binding SelectedType, Mode=TwoWay}"
+                          MinWidth="100"
+                          PlaceholderText="Select type...">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </StackPanel>
+              
+              <!-- Flatten Versions Toggle (only in overview) -->
+              <StackPanel Grid.Column="5"
                           Orientation="Horizontal"
                           Spacing="8"
                           IsVisible="{Binding !IsViewingDataset}"
@@ -127,10 +148,10 @@
               </StackPanel>
               
               <!-- Spacer -->
-              <Border Grid.Column="5"/>
+              <Border Grid.Column="6"/>
               
               <!-- Open Folder Button (when viewing dataset) -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="7"
                       Content="📂 Open Folder"
                       Command="{Binding OpenContainingFolderCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -138,7 +159,7 @@
                       ToolTip.Tip="Open dataset folder in file explorer"/>
               
               <!-- Export Dataset Button (when viewing dataset) -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="8"
                       Content="📦 Export Dataset"
                       Command="{Binding ExportDatasetCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -146,14 +167,14 @@
                       ToolTip.Tip="Export dataset for training"/>
               
               <!-- Add Images Button (when viewing dataset) -->
-              <Button Grid.Column="8"
+              <Button Grid.Column="9"
                       Content="+ Add Files"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
               
               <!-- Increment Version Button (when viewing dataset with images) -->
-              <Button Grid.Column="9"
+              <Button Grid.Column="10"
                       Content="📋 New Version"
                       Command="{Binding IncrementVersionCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -162,7 +183,7 @@
                       ToolTip.Tip="Create a new version by copying all images and captions. Use for different captioning styles (e.g., SDXL vs Flux)."/>
               
               <!-- Save Captions Button (when viewing dataset with changes) -->
-              <Button Grid.Column="10"
+              <Button Grid.Column="11"
                       Content="Save Captions"
                       Command="{Binding SaveAllCaptionsCommand}"
                       IsVisible="{Binding HasUnsavedChanges}"
@@ -170,7 +191,7 @@
                       Background="#2D7D46"/>
               
               <!-- New Dataset Button (only in overview) -->
-              <Button Grid.Column="12"
+              <Button Grid.Column="13"
                       Content="+ New Dataset" 
                       Command="{Binding CreateDatasetCommand}"
                       IsVisible="{Binding !IsViewingDataset}"/>

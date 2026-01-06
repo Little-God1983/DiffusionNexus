@@ -135,4 +135,13 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? ExportDatasetResult.Cancelled();
     }
+
+    public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)
+    {
+        var dialog = new CreateDatasetDialog()
+            .WithCategories(availableCategories);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? CreateDatasetResult.Cancelled();
+    }
 }

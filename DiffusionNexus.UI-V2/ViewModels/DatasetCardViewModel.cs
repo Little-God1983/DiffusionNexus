@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -25,6 +26,7 @@ public class DatasetCardViewModel : ObservableObject
     private bool _isSelected;
     private int? _categoryId;
     private string? _categoryName;
+    private DatasetType? _type;
     private int _currentVersion = 1;
     private int _totalVersions = 1;
     private bool _isVersionedStructure;
@@ -177,6 +179,32 @@ public class DatasetCardViewModel : ObservableObject
         get => _categoryName;
         set => SetProperty(ref _categoryName, value);
     }
+
+    /// <summary>
+    /// The type of content in this dataset (Image, Video, Instruction).
+    /// </summary>
+    public DatasetType? Type
+    {
+        get => _type;
+        set
+        {
+            if (SetProperty(ref _type, value))
+            {
+                OnPropertyChanged(nameof(HasType));
+                OnPropertyChanged(nameof(TypeDisplayName));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether this dataset has a type assigned.
+    /// </summary>
+    public bool HasType => _type.HasValue;
+
+    /// <summary>
+    /// Display name for the dataset type.
+    /// </summary>
+    public string? TypeDisplayName => _type?.GetDisplayName();
 
     /// <summary>
     /// Current active version number.
@@ -458,6 +486,7 @@ public class DatasetCardViewModel : ObservableObject
             FolderPath = FolderPath,
             CategoryId = CategoryId,
             CategoryName = CategoryName,
+            Type = Type,
             IsVersionedStructure = true,
             CurrentVersion = version,
             TotalVersions = TotalVersions,
@@ -629,6 +658,7 @@ public class DatasetCardViewModel : ObservableObject
             if (metadata is not null)
             {
                 CategoryId = metadata.CategoryId;
+                Type = metadata.Type;
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
                 VersionDescriptions = metadata.VersionDescriptions ?? new();
@@ -665,6 +695,7 @@ public class DatasetCardViewModel : ObservableObject
             var metadata = new DatasetMetadata
             {
                 CategoryId = CategoryId,
+                Type = Type,
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
                 VersionDescriptions = VersionDescriptions
@@ -754,6 +785,11 @@ public class DatasetMetadata
     /// Optional description for this dataset.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// The type of content in this dataset (Image, Video, Instruction).
+    /// </summary>
+    public DatasetType? Type { get; set; }
 
     /// <summary>
     /// Current active version number (1-based). Default is 1.
