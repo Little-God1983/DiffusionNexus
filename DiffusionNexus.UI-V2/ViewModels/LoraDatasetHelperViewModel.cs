@@ -539,7 +539,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 var mediaVm = DatasetImageViewModel.FromFile(
                     mediaPath,
                     OnImageDeleteRequested,
-                    OnCaptionChanged);
+                    OnCaptionChanged,
+                    onRatingChanged: null,
+                    onSelectionChanged: OnSelectionChanged);
                 
                 // Generate thumbnail for video files if service is available
                 if (mediaVm.IsVideo && _videoThumbnailService is not null)
@@ -750,6 +752,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             }
         }
 
+        // Clear selection before leaving
+        ClearSelectionSilent();
+
         ActiveDataset = null;
         DatasetImages.Clear();
         IsViewingDataset = false;
@@ -874,6 +879,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private void OnCaptionChanged(DatasetImageViewModel image)
     {
         HasUnsavedChanges = DatasetImages.Any(i => i.HasUnsavedChanges);
+    }
+
+    private void OnSelectionChanged(DatasetImageViewModel image)
+    {
+        UpdateSelectionCount();
     }
 
     private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
@@ -1429,12 +1439,21 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     private void ClearSelection()
     {
+        ClearSelectionSilent();
+        StatusMessage = "Selection cleared";
+    }
+
+    /// <summary>
+    /// Clears all selections without showing a status message.
+    /// Used when navigating away or resetting state.
+    /// </summary>
+    private void ClearSelectionSilent()
+    {
         foreach (var image in DatasetImages)
         {
             image.IsSelected = false;
         }
-        UpdateSelectionCount();
-        StatusMessage = "Selection cleared";
+        SelectionCount = 0;
     }
 
     /// <summary>

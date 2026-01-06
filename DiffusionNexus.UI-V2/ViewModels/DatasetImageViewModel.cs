@@ -13,6 +13,7 @@ public class DatasetImageViewModel : ObservableObject
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
     private readonly Action<DatasetImageViewModel>? _onCaptionChanged;
     private readonly Action<DatasetImageViewModel>? _onRatingChanged;
+    private readonly Action<DatasetImageViewModel>? _onSelectionChanged;
     private string _originalCaption = string.Empty;
     
     private string _imagePath = string.Empty;
@@ -106,7 +107,13 @@ public class DatasetImageViewModel : ObservableObject
     public bool IsSelected
     {
         get => _isSelected;
-        set => SetProperty(ref _isSelected, value);
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                _onSelectionChanged?.Invoke(this);
+            }
+        }
     }
 
     /// <summary>
@@ -192,18 +199,20 @@ public class DatasetImageViewModel : ObservableObject
     /// </summary>
     public IRelayCommand ClearRatingCommand { get; }
 
-    public DatasetImageViewModel() : this(null, null, null)
+    public DatasetImageViewModel() : this(null, null, null, null)
     {
     }
 
     public DatasetImageViewModel(
         Action<DatasetImageViewModel>? onDeleteRequested, 
         Action<DatasetImageViewModel>? onCaptionChanged,
-        Action<DatasetImageViewModel>? onRatingChanged = null)
+        Action<DatasetImageViewModel>? onRatingChanged = null,
+        Action<DatasetImageViewModel>? onSelectionChanged = null)
     {
         _onDeleteRequested = onDeleteRequested;
         _onCaptionChanged = onCaptionChanged;
         _onRatingChanged = onRatingChanged;
+        _onSelectionChanged = onSelectionChanged;
         
         SaveCaptionCommand = new RelayCommand(SaveCaption);
         RevertCaptionCommand = new RelayCommand(RevertCaption);
@@ -220,9 +229,10 @@ public class DatasetImageViewModel : ObservableObject
         string mediaPath,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         Action<DatasetImageViewModel>? onCaptionChanged = null,
-        Action<DatasetImageViewModel>? onRatingChanged = null)
+        Action<DatasetImageViewModel>? onRatingChanged = null,
+        Action<DatasetImageViewModel>? onSelectionChanged = null)
     {
-        var vm = new DatasetImageViewModel(onDeleteRequested, onCaptionChanged, onRatingChanged)
+        var vm = new DatasetImageViewModel(onDeleteRequested, onCaptionChanged, onRatingChanged, onSelectionChanged)
         {
             ImagePath = mediaPath,
             _isVideo = IsVideoFile(mediaPath)
