@@ -540,7 +540,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:DatasetImageViewModel">
-                        <Border Width="280" 
+                        <Border Width="340" 
                                 Margin="8"
                                 Background="#2A2A2A"
                                 CornerRadius="8"
@@ -548,7 +548,7 @@
                                 BorderBrush="#444"
                                 BorderThickness="2"
                                 PointerPressed="OnImageCardPointerPressed">
-                          <Grid RowDefinitions="180,Auto,Auto,Auto">
+                          <Grid RowDefinitions="240,Auto,Auto,Auto">
                             
                             <!-- Selection overlay (absolute positioned, doesn't affect layout) -->
                             <Border Grid.RowSpan="4"
@@ -589,20 +589,20 @@
                                         Margin="8"
                                         IsVisible="{Binding IsVideo}">
                                   <TextBlock Text="🎬 Video"
-                                             FontSize="11"
+                                             FontSize="12"
                                              Foreground="White"/>
                                 </Border>
                                 
                                 <!-- Rating status indicator (top-right) -->
                                 <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
                                         CornerRadius="4"
-                                        Padding="6,3"
+                                        Padding="8,4"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
                                         Margin="8"
                                         IsVisible="{Binding !IsUnrated}">
                                   <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
-                                             FontSize="11"
+                                             FontSize="12"
                                              FontWeight="SemiBold"
                                              Foreground="White"/>
                                 </Border>
@@ -612,22 +612,24 @@
                             <!-- Action buttons toolbar (below image, above filename) -->
                             <Border Grid.Row="1" 
                                     Background="#1A1A1A"
-                                    Padding="6,4">
+                                    Padding="8,6">
                               <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
                                 <!-- Rating buttons (left) -->
                                 <Button Grid.Column="0"
                                         Content="▲"
                                         Command="{Binding MarkApprovedCommand}"
-                                        Padding="10,4"
+                                        Padding="12,6"
+                                        FontSize="14"
                                         Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                                         Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
                                         CornerRadius="4"
-                                        Margin="0,0,2,0"
+                                        Margin="0,0,4,0"
                                         ToolTip.Tip="Mark as production-ready"/>
                                 <Button Grid.Column="1"
                                         Content="▼"
                                         Command="{Binding MarkRejectedCommand}"
-                                        Padding="10,4"
+                                        Padding="12,6"
+                                        FontSize="14"
                                         Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
                                         Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
                                         CornerRadius="4"
@@ -641,15 +643,17 @@
                                         Content="🖼️"
                                         Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).SendToImageEditCommand}"
                                         CommandParameter="{Binding}"
-                                        Padding="10,4"
+                                        Padding="12,6"
+                                        FontSize="14"
                                         Background="#444"
                                         CornerRadius="4"
-                                        Margin="0,0,2,0"
+                                        Margin="0,0,4,0"
                                         ToolTip.Tip="Send to Image Edit"/>
                                 <Button Grid.Column="4"
                                         Content="🗑️"
                                         Command="{Binding DeleteCommand}"
-                                        Padding="10,4"
+                                        Padding="12,6"
+                                        FontSize="14"
                                         Background="#444"
                                         CornerRadius="4"
                                         ToolTip.Tip="Delete image"/>
@@ -658,40 +662,41 @@
                             
                             <!-- Filename -->
                             <Border Grid.Row="2" 
-                                    Padding="8,4"
+                                    Padding="10,6"
                                     Background="#222">
                               <TextBlock Text="{Binding FullFileName}"
-                                         FontSize="11"
-                                         Opacity="0.6"
+                                         FontSize="12"
+                                         Opacity="0.7"
                                          TextTrimming="CharacterEllipsis"/>
                             </Border>
                             
                             <!-- Caption Editor -->
-                            <Border Grid.Row="3" Padding="8">
+                            <Border Grid.Row="3" Padding="10">
                               <Grid RowDefinitions="*,Auto">
                                 <TextBox Grid.Row="0"
                                          Text="{Binding Caption, Mode=TwoWay}"
                                          Watermark="Enter caption..."
                                          TextWrapping="Wrap"
                                          AcceptsReturn="True"
-                                         MinHeight="60"
-                                         MaxHeight="100"/>
+                                         FontSize="13"
+                                         MinHeight="80"
+                                         MaxHeight="120"/>
                                 
                                 <!-- Unsaved indicator + Save button -->
                                 <StackPanel Grid.Row="1" 
                                             Orientation="Horizontal"
                                             HorizontalAlignment="Right"
-                                            Margin="0,4,0,0"
+                                            Margin="0,6,0,0"
                                             IsVisible="{Binding HasUnsavedChanges}">
                                   <TextBlock Text="Modified"
                                              Foreground="Orange"
-                                             FontSize="11"
+                                             FontSize="12"
                                              VerticalAlignment="Center"
                                              Margin="0,0,8,0"/>
                                   <Button Content="Save"
                                           Command="{Binding SaveCaptionCommand}"
-                                          FontSize="11"
-                                          Padding="8,2"/>
+                                          FontSize="12"
+                                          Padding="10,4"/>
                                 </StackPanel>
                               </Grid>
                             </Border>
