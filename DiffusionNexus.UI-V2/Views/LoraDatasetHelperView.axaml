@@ -30,7 +30,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Back to Overview Button (only visible when viewing a dataset) -->
               <Button Grid.Column="0"
@@ -47,8 +47,21 @@
                          VerticalAlignment="Center"
                          IsVisible="{Binding IsViewingDataset}"/>
               
+              <!-- Version Display (when viewing dataset with version info) -->
+              <Border Grid.Column="2"
+                      Background="#333"
+                      CornerRadius="4"
+                      Padding="8,4"
+                      Margin="8,0,0,0"
+                      IsVisible="{Binding IsViewingDataset}">
+                <TextBlock Text="{Binding ActiveDataset.VersionDisplayText}"
+                           FontSize="12"
+                           Foreground="#4CAF50"
+                           VerticalAlignment="Center"/>
+              </Border>
+              
               <!-- Category Dropdown (when viewing dataset) -->
-              <StackPanel Grid.Column="2" 
+              <StackPanel Grid.Column="3" 
                           Orientation="Horizontal" 
                           Spacing="8"
                           IsVisible="{Binding IsViewingDataset}"
@@ -63,11 +76,23 @@
                           PlaceholderText="Select category..."/>
               </StackPanel>
               
+              <!-- Flatten Versions Toggle (only in overview) -->
+              <StackPanel Grid.Column="4"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          IsVisible="{Binding !IsViewingDataset}"
+                          VerticalAlignment="Center">
+                <ToggleSwitch IsChecked="{Binding FlattenVersions, Mode=TwoWay}"
+                              OnContent="Flatten Versions"
+                              OffContent="Flatten Versions"
+                              ToolTip.Tip="Show individual cards for each version folder"/>
+              </StackPanel>
+              
               <!-- Spacer -->
-              <Border Grid.Column="4"/>
+              <Border Grid.Column="5"/>
               
               <!-- Open Folder Button (when viewing dataset) -->
-              <Button Grid.Column="5"
+              <Button Grid.Column="6"
                       Content="📂 Open Folder"
                       Command="{Binding OpenContainingFolderCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -75,7 +100,7 @@
                       ToolTip.Tip="Open dataset folder in file explorer"/>
               
               <!-- Export Dataset Button (when viewing dataset) -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="7"
                       Content="📦 Export Dataset"
                       Command="{Binding ExportDatasetCommand}"
                       IsVisible="{Binding IsViewingDataset}"
@@ -83,14 +108,23 @@
                       ToolTip.Tip="Export dataset for training"/>
               
               <!-- Add Images Button (when viewing dataset) -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="8"
                       Content="+ Add Images"
                       Command="{Binding AddImagesCommand}"
                       IsVisible="{Binding IsViewingDataset}"
                       Margin="0,0,8,0"/>
               
+              <!-- Increment Version Button (when viewing dataset with images) -->
+              <Button Grid.Column="9"
+                      Content="📋 New Version"
+                      Command="{Binding IncrementVersionCommand}"
+                      IsVisible="{Binding IsViewingDataset}"
+                      IsEnabled="{Binding ActiveDataset.CanIncrementVersion}"
+                      Margin="0,0,8,0"
+                      ToolTip.Tip="Create a new version by copying all images and captions. Use for different captioning styles (e.g., SDXL vs Flux)."/>
+              
               <!-- Save Captions Button (when viewing dataset with changes) -->
-              <Button Grid.Column="8"
+              <Button Grid.Column="10"
                       Content="Save Captions"
                       Command="{Binding SaveAllCaptionsCommand}"
                       IsVisible="{Binding HasUnsavedChanges}"
@@ -98,7 +132,7 @@
                       Background="#2D7D46"/>
               
               <!-- New Dataset Button (only in overview) -->
-              <Button Grid.Column="9"
+              <Button Grid.Column="12"
                       Content="+ New Dataset" 
                       Command="{Binding CreateDatasetCommand}"
                       IsVisible="{Binding !IsViewingDataset}"/>
@@ -225,6 +259,20 @@
                                       <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
                                              Stretch="UniformToFill"
                                              IsVisible="{Binding HasThumbnail}"/>
+                                      
+                                      <!-- Version Badge (top-left) -->
+                                      <Border Background="#4CAF50"
+                                              CornerRadius="4"
+                                              Padding="6,3"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Margin="8"
+                                              IsVisible="{Binding ShowVersionBadge}">
+                                        <TextBlock Text="{Binding VersionBadgeText}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White"/>
+                                      </Border>
                                       
                                       <!-- Delete button overlay -->
                                       <Button Content="🗑️"

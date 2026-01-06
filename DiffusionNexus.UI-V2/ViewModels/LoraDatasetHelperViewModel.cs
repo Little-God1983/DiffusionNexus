@@ -24,6 +24,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _hasUnsavedChanges;
     private int _selectedTabIndex;
     private DatasetCategoryViewModel? _selectedCategory;
+    private bool _flattenVersions;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -115,6 +116,24 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
+    /// <summary>
+    /// Whether to flatten version folders in the overview.
+    /// When true: shows individual cards for each version (V1, V2, V3).
+    /// When false: shows one card per dataset with version count badge.
+    /// </summary>
+    public bool FlattenVersions
+    {
+        get => _flattenVersions;
+        set
+        {
+            if (SetProperty(ref _flattenVersions, value))
+            {
+                // Rebuild grouped datasets with new view mode
+                _ = LoadDatasetsAsync();
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -150,6 +169,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IAsyncRelayCommand GoToOverviewCommand { get; }
     public IAsyncRelayCommand CreateDatasetCommand { get; }
     public IAsyncRelayCommand AddImagesCommand { get; }
+    public IAsyncRelayCommand IncrementVersionCommand { get; }
     public IRelayCommand SaveAllCaptionsCommand { get; }
     public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
     public IRelayCommand OpenContainingFolderCommand { get; }
@@ -171,6 +191,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         GoToOverviewCommand = new AsyncRelayCommand(GoToOverviewAsync);
         CreateDatasetCommand = new AsyncRelayCommand(CreateDatasetAsync);
         AddImagesCommand = new AsyncRelayCommand(AddImagesAsync);
+        IncrementVersionCommand = new AsyncRelayCommand(IncrementVersionAsync);
         SaveAllCaptionsCommand = new RelayCommand(SaveAllCaptions);
         DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
@@ -279,9 +300,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             foreach (var category in AvailableCategories)
             {
                 var group = DatasetGroupViewModel.FromCategory(category, sortOrder++);
-                foreach (var dataset in Datasets.Where(d => d.CategoryId == category.Id))
+                var categoryDatasets = Datasets.Where(d => d.CategoryId == category.Id);
+                
+                foreach (var dataset in categoryDatasets)
                 {
-                    group.Datasets.Add(dataset);
+                    AddDatasetCardsToGroup(group, dataset);
                 }
                 
                 // Only add groups that have datasets
@@ -298,7 +321,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 var uncategorized = DatasetGroupViewModel.CreateUncategorized(sortOrder);
                 foreach (var dataset in uncategorizedDatasets)
                 {
-                    uncategorized.Datasets.Add(dataset);
+                    AddDatasetCardsToGroup(uncategorized, dataset);
                 }
                 GroupedDatasets.Add(uncategorized);
             }
@@ -315,6 +338,27 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
+    /// <summary>
+    /// Adds dataset cards to a group, handling flattened view mode.
+    /// </summary>
+    private void AddDatasetCardsToGroup(DatasetGroupViewModel group, DatasetCardViewModel dataset)
+    {
+        if (_flattenVersions && dataset.IsVersionedStructure && dataset.TotalVersions > 1)
+        {
+            // Flattened view: add one card per version
+            foreach (var version in dataset.GetAllVersionNumbers())
+            {
+                var versionCard = dataset.CreateVersionCard(version);
+                group.Datasets.Add(versionCard);
+            }
+        }
+        else
+        {
+            // Collapsed view: add single card (shows version count badge if multiple versions)
+            group.Datasets.Add(dataset);
+        }
+    }
+
     private async Task OpenDatasetAsync(DatasetCardViewModel? dataset)
     {
         if (dataset is null) return;
@@ -325,13 +369,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             ActiveDataset = dataset;
             DatasetImages.Clear();
 
-            if (!Directory.Exists(dataset.FolderPath))
+            // Use the current version folder path (versioned or legacy)
+            var imageFolderPath = dataset.CurrentVersionFolderPath;
+            if (!Directory.Exists(imageFolderPath))
             {
                 StatusMessage = "Dataset folder no longer exists.";
                 return;
             }
 
-            var imageFiles = Directory.EnumerateFiles(dataset.FolderPath)
+            var imageFiles = Directory.EnumerateFiles(imageFolderPath)
                 .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .OrderBy(f => f)
                 .ToList();
@@ -351,7 +397,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
             IsViewingDataset = true;
             HasUnsavedChanges = false;
-            StatusMessage = $"Loaded {DatasetImages.Count} images";
+            StatusMessage = dataset.HasMultipleVersions 
+                ? $"Loaded {DatasetImages.Count} images (Version {dataset.CurrentVersion} of {dataset.TotalVersions})"
+                : $"Loaded {DatasetImages.Count} images";
         }
         catch (Exception ex)
         {
@@ -468,10 +516,16 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             var copied = 0;
             var skipped = 0;
 
+            // Add to the current version folder
+            var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
+            
+            // Ensure the folder exists (for new versioned datasets)
+            Directory.CreateDirectory(destFolderPath);
+
             foreach (var sourceFile in files)
             {
                 var fileName = Path.GetFileName(sourceFile);
-                var destPath = Path.Combine(ActiveDataset.FolderPath, fileName);
+                var destPath = Path.Combine(destFolderPath, fileName);
 
                 if (!File.Exists(destPath))
                 {
@@ -536,9 +590,127 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
-    #endregion
+    /// <summary>
+    /// Increments the dataset version by copying all images and captions to a new version folder.
+    /// This allows different captioning styles for different training approaches (e.g., SDXL vs Flux).
+    /// </summary>
+    private async Task IncrementVersionAsync()
+    {
+        if (ActiveDataset is null || DialogService is null) return;
 
-    #region Private Methods
+        // Check if we have images to copy
+        if (ActiveDataset.ImageCount == 0)
+        {
+            StatusMessage = "Cannot create new version: No images in current version.";
+            return;
+        }
+
+        // Confirm with user
+        var nextVersion = ActiveDataset.GetNextVersionNumber();
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Create New Version",
+            $"This will create Version {nextVersion} by copying all images and captions from the current version.\n\n" +
+            $"Use this when you want different captions for different training approaches (e.g., SDXL vs Flux).\n\n" +
+            $"Continue?");
+
+        if (!confirm) return;
+
+        IsLoading = true;
+        try
+        {
+            var sourcePath = ActiveDataset.CurrentVersionFolderPath;
+            var destPath = ActiveDataset.GetVersionFolderPath(nextVersion);
+
+            // Handle migration from legacy (non-versioned) to versioned structure
+            if (!ActiveDataset.IsVersionedStructure)
+            {
+                // First, move existing files to V1 folder
+                await MigrateLegacyToVersionedAsync(ActiveDataset);
+                sourcePath = ActiveDataset.GetVersionFolderPath(1);
+            }
+
+            // Create the new version folder
+            Directory.CreateDirectory(destPath);
+
+            // Copy all files (images and captions)
+            var files = Directory.EnumerateFiles(sourcePath)
+                .Where(f => !Path.GetFileName(f).StartsWith(".")) // Skip hidden files
+                .ToList();
+
+            var copied = 0;
+            foreach (var sourceFile in files)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destFile = Path.Combine(destPath, fileName);
+                File.Copy(sourceFile, destFile, overwrite: false);
+                copied++;
+            }
+
+            // Update metadata
+            ActiveDataset.CurrentVersion = nextVersion;
+            ActiveDataset.IsVersionedStructure = true;
+            ActiveDataset.SaveMetadata();
+
+            // Refresh the dataset to show new version
+            ActiveDataset.RefreshImageInfo();
+            
+            // Reload images for the new version
+            await OpenDatasetAsync(ActiveDataset);
+
+            StatusMessage = $"Created Version {nextVersion} with {copied} files copied.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error creating new version: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Migrates a legacy (flat) dataset structure to the versioned structure.
+    /// Moves all images and captions from root folder to V1 subfolder.
+    /// </summary>
+    private async Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
+    {
+        var rootPath = dataset.FolderPath;
+        var v1Path = dataset.GetVersionFolderPath(1);
+
+        // Create V1 folder
+        Directory.CreateDirectory(v1Path);
+
+        // Move all image and text files to V1
+        var filesToMove = Directory.EnumerateFiles(rootPath)
+            .Where(f =>
+            {
+                var ext = Path.GetExtension(f).ToLowerInvariant();
+                var fileName = Path.GetFileName(f);
+                
+                // Skip .dataset folder files and hidden files
+                if (fileName.StartsWith(".")) return false;
+                
+                // Include images and text files
+                return ImageExtensions.Contains(ext) || ext == ".txt";
+            })
+            .ToList();
+
+        foreach (var sourceFile in filesToMove)
+        {
+            var fileName = Path.GetFileName(sourceFile);
+            var destFile = Path.Combine(v1Path, fileName);
+            File.Move(sourceFile, destFile);
+        }
+
+        // Update dataset state
+        dataset.IsVersionedStructure = true;
+        dataset.CurrentVersion = 1;
+        dataset.TotalVersions = 1;
+        dataset.SaveMetadata();
+
+        await Task.CompletedTask;
+    }
 
     private async void OnImageDeleteRequested(DatasetImageViewModel image)
     {
@@ -636,11 +808,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         if (ActiveDataset is not null)
         {
-            // Update the dataset card with fresh image count
-            ActiveDataset.ImageCount = Directory.Exists(ActiveDataset.FolderPath)
-                ? Directory.EnumerateFiles(ActiveDataset.FolderPath)
-                    .Count(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                : 0;
+            // Refresh the dataset card's image info from current version folder
+            ActiveDataset.RefreshImageInfo();
 
             // Reload images if viewing the dataset
             if (IsViewingDataset)
