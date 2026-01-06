@@ -512,10 +512,19 @@
                                 Background="#2A2A2A"
                                 CornerRadius="8"
                                 ClipToBounds="True"
-                                BorderBrush="{Binding IsSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionBorder}}"
-                                BorderThickness="{Binding IsSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionThickness}}"
+                                BorderBrush="#444"
+                                BorderThickness="2"
                                 PointerPressed="OnImageCardPointerPressed">
                           <Grid RowDefinitions="200,Auto,Auto">
+                            
+                            <!-- Selection overlay (absolute positioned, doesn't affect layout) -->
+                            <Border Grid.RowSpan="3"
+                                    CornerRadius="6"
+                                    BorderBrush="#2196F3"
+                                    BorderThickness="3"
+                                    Margin="-1"
+                                    IsVisible="{Binding IsSelected}"
+                                    IsHitTestVisible="False"/>
                             
                             <!-- Image with action buttons -->
                             <Border Grid.Row="0" 
