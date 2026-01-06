@@ -733,10 +733,54 @@
                     Padding="16,12"
                     BorderBrush="#333"
                     BorderThickness="0,0,0,1">
-              <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+              <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                
+                <!-- Dataset Selector -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="Dataset:"
+                             VerticalAlignment="Center"
+                             Opacity="0.7"/>
+                  <AutoCompleteBox ItemsSource="{Binding Datasets}"
+                                   SelectedItem="{Binding SelectedEditorDataset, Mode=TwoWay}"
+                                   ValueMemberBinding="{Binding Name}"
+                                   FilterMode="Contains"
+                                   MinWidth="180"
+                                   MaxWidth="250"
+                                   Watermark="Search datasets..."
+                                   ToolTip.Tip="Search and select a dataset">
+                    <AutoCompleteBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                        <TextBlock Text="{Binding Name}"/>
+                      </DataTemplate>
+                    </AutoCompleteBox.ItemTemplate>
+                  </AutoCompleteBox>
+                </StackPanel>
+                
+                <!-- Version Selector -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center"
+                            IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  <TextBlock Text="Version:"
+                             VerticalAlignment="Center"
+                             Opacity="0.7"/>
+                  <ComboBox ItemsSource="{Binding EditorVersionItems}"
+                            SelectedItem="{Binding SelectedEditorVersion, Mode=TwoWay}"
+                            MinWidth="120"
+                            ToolTip.Tip="Select version to browse images">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:EditorVersionItem">
+                        <TextBlock Text="{Binding DisplayText}"
+                                   Foreground="#4CAF50"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                
+                <!-- Separator -->
+                <Border Grid.Column="2" Width="1" Background="#444" Margin="16,4"
+                        IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                 
                 <!-- Image Info -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="16">
                   <TextBlock Text="{Binding ImageEditor.ImageFileName, FallbackValue='No image loaded'}"
                              FontSize="16"
                              FontWeight="SemiBold"
@@ -750,10 +794,10 @@
                 </StackPanel>
                 
                 <!-- Tool Separator -->
-                <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="4" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Tools -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <!-- Crop Tool Button -->
                   <ToggleButton Content="✂️ Crop"
                                 IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}"
@@ -762,10 +806,10 @@
                 </StackPanel>
                 
                 <!-- Spacer -->
-                <Border Grid.Column="3"/>
+                <Border Grid.Column="6"/>
                 
                 <!-- Crop Actions (visible when crop tool is active) -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+                <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
                   <Button Content="✓ Apply Crop"
                           Command="{Binding ImageEditor.ApplyCropCommand}"
                           Background="#2D7D46"
@@ -776,10 +820,10 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="5" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="8" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Save Buttons -->
-                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <Button Content="💾 Save As New"
                           Command="{Binding ImageEditor.SaveAsNewCommand}"
                           Background="#2D7D46"
@@ -790,17 +834,17 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Reset Button -->
-                <Button Grid.Column="8"
+                <Button Grid.Column="11"
                         Content="↺ Reset"
                         Command="{Binding ImageEditor.ResetImageCommand}"
                         Margin="0,0,8,0"
                         ToolTip.Tip="Reset to original image"/>
                 
                 <!-- Clear Button -->
-                <Button Grid.Column="9"
+                <Button Grid.Column="12"
                         Content="✕ Clear"
                         Command="{Binding ImageEditor.ClearImageCommand}"
                         ToolTip.Tip="Clear the image"/>

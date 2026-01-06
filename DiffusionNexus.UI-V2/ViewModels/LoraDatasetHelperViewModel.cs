@@ -35,6 +35,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _isFileDialogOpen;
     private int _selectionCount;
     private DatasetImageViewModel? _lastClickedImage;
+    
+    // Image Edit tab dataset/version selection
+    private DatasetCardViewModel? _selectedEditorDataset;
+    private EditorVersionItem? _selectedEditorVersion;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -227,6 +231,38 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public string SelectionText => _selectionCount == 1 ? "1 selected" : $"{_selectionCount} selected";
 
+    /// <summary>
+    /// Selected dataset in the Image Edit tab.
+    /// Changing this loads the available versions for that dataset.
+    /// </summary>
+    public DatasetCardViewModel? SelectedEditorDataset
+    {
+        get => _selectedEditorDataset;
+        set
+        {
+            if (SetProperty(ref _selectedEditorDataset, value))
+            {
+                _ = LoadEditorDatasetVersionsAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selected version in the Image Edit tab.
+    /// Changing this loads the images for that version.
+    /// </summary>
+    public EditorVersionItem? SelectedEditorVersion
+    {
+        get => _selectedEditorVersion;
+        set
+        {
+            if (SetProperty(ref _selectedEditorVersion, value))
+            {
+                _ = LoadEditorDatasetImagesAsync();
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -261,6 +297,17 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Available versions for the active dataset (for version dropdown).
     /// </summary>
     public ObservableCollection<int> AvailableVersions { get; } = [];
+
+    /// <summary>
+    /// Version items for the Image Edit tab version dropdown.
+    /// Format: "V1 | 45 Images"
+    /// </summary>
+    public ObservableCollection<EditorVersionItem> EditorVersionItems { get; } = [];
+
+    /// <summary>
+    /// Images available in the Image Edit tab for the selected dataset/version.
+    /// </summary>
+    public ObservableCollection<DatasetImageViewModel> EditorDatasetImages { get; } = [];
 
     #endregion
 
@@ -1700,6 +1747,104 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private void UpdateSelectionCount()
     {
         SelectionCount = DatasetImages.Count(i => i.IsSelected);
+    }
+
+    #endregion
+
+    #region Image Edit Tab Dataset Navigation
+
+    /// <summary>
+    /// Loads the available versions for the selected dataset in the Image Edit tab.
+    /// </summary>
+    private async Task LoadEditorDatasetVersionsAsync()
+    {
+        EditorVersionItems.Clear();
+        EditorDatasetImages.Clear();
+        _selectedEditorVersion = null;
+        OnPropertyChanged(nameof(SelectedEditorVersion));
+
+        if (_selectedEditorDataset is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
+            
+            foreach (var version in versionNumbers)
+            {
+                var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
+                var imageCount = 0;
+                
+                if (Directory.Exists(versionPath))
+                {
+                    imageCount = Directory.EnumerateFiles(versionPath)
+                        .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+                }
+                
+                EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
+            }
+
+            // Auto-select the first version if available
+            if (EditorVersionItems.Count > 0)
+            {
+                SelectedEditorVersion = EditorVersionItems[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading versions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Loads the images for the selected version in the Image Edit tab.
+    /// </summary>
+    private async Task LoadEditorDatasetImagesAsync()
+    {
+        EditorDatasetImages.Clear();
+
+        if (_selectedEditorDataset is null || _selectedEditorVersion is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var versionPath = _selectedEditorDataset.GetVersionFolderPath(_selectedEditorVersion.Version);
+            
+            if (!Directory.Exists(versionPath))
+            {
+                return;
+            }
+
+            // Load only image files (not videos) for the image editor
+            var imageFiles = Directory.EnumerateFiles(versionPath)
+                .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var imagePath in imageFiles)
+            {
+                var imageVm = DatasetImageViewModel.FromFile(
+                    imagePath,
+                    onDeleteRequested: null,
+                    onCaptionChanged: null,
+                    onRatingChanged: null,
+                    onSelectionChanged: null);
+                
+                EditorDatasetImages.Add(imageVm);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading images: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
     }
 
     #endregion
