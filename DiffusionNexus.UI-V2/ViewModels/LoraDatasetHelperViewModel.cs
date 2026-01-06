@@ -791,6 +791,20 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             Directory.Delete(dataset.FolderPath, recursive: true);
             Datasets.Remove(dataset);
+            
+            // Also remove from grouped datasets
+            foreach (var group in GroupedDatasets)
+            {
+                group.Datasets.Remove(dataset);
+            }
+            
+            // Remove any empty groups
+            var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+            foreach (var emptyGroup in emptyGroups)
+            {
+                GroupedDatasets.Remove(emptyGroup);
+            }
+            
             StatusMessage = $"Deleted dataset '{dataset.Name}'";
         }
         catch (Exception ex)
