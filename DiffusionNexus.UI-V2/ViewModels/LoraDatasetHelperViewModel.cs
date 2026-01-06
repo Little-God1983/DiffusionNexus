@@ -671,7 +671,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Show 3-option dialog: Cancel, Copy from existing, Start fresh
         var selectedOption = await DialogService.ShowOptionsAsync(
             "Create New Version",
-            $"Create Version {nextVersion} from Version {currentVersion}.\n\n" +
+            $"Create V{nextVersion} branching from V{currentVersion}.\n\n" +
             $"Choose how to initialize the new version:",
             "Cancel",
             "Start Fresh (Empty)",
@@ -729,6 +729,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 }
             }
 
+            // Record which version this was branched from
+            ActiveDataset.RecordBranch(nextVersion, currentVersion);
+
             // Update metadata
             ActiveDataset.CurrentVersion = nextVersion;
             ActiveDataset.IsVersionedStructure = true;
@@ -741,8 +744,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             await OpenDatasetAsync(ActiveDataset);
 
             StatusMessage = copyFiles 
-                ? $"Created V{nextVersion} with {copied} files copied from V{currentVersion}."
-                : $"Created V{nextVersion} (empty - ready to add images).";
+                ? $"Created V{nextVersion} (branched from V{currentVersion}) with {copied} files copied."
+                : $"Created V{nextVersion} (branched from V{currentVersion}, empty - ready to add images).";
         }
         catch (Exception ex)
         {
@@ -844,14 +847,25 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     private void OpenContainingFolder()
     {
-        if (ActiveDataset is null || !Directory.Exists(ActiveDataset.FolderPath)) return;
+        if (ActiveDataset is null) return;
+
+        // Open the current version folder (not the base folder)
+        var folderPath = ActiveDataset.CurrentVersionFolderPath;
+        
+        // Fall back to base folder if version folder doesn't exist
+        if (!Directory.Exists(folderPath))
+        {
+            folderPath = ActiveDataset.FolderPath;
+        }
+
+        if (!Directory.Exists(folderPath)) return;
 
         try
         {
             // Open folder in file explorer
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = ActiveDataset.FolderPath,
+                FileName = folderPath,
                 UseShellExecute = true
             });
         }

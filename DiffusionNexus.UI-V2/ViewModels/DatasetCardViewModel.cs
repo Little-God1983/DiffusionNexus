@@ -25,6 +25,7 @@ public class DatasetCardViewModel : ObservableObject
     private int _totalVersions = 1;
     private bool _isVersionedStructure;
     private int? _displayVersion;
+    private Dictionary<int, int> _versionBranchedFrom = new();
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -169,6 +170,15 @@ public class DatasetCardViewModel : ObservableObject
                 OnPropertyChanged(nameof(ShowVersionBadge));
             }
         }
+    }
+
+    /// <summary>
+    /// Tracks which version each version was branched from.
+    /// </summary>
+    public Dictionary<int, int> VersionBranchedFrom
+    {
+        get => _versionBranchedFrom;
+        set => SetProperty(ref _versionBranchedFrom, value);
     }
 
     /// <summary>
@@ -421,6 +431,7 @@ public class DatasetCardViewModel : ObservableObject
             {
                 CategoryId = metadata.CategoryId;
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
+                VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
             }
         }
         catch
@@ -443,7 +454,8 @@ public class DatasetCardViewModel : ObservableObject
             var metadata = new DatasetMetadata
             {
                 CategoryId = CategoryId,
-                CurrentVersion = CurrentVersion
+                CurrentVersion = CurrentVersion,
+                VersionBranchedFrom = VersionBranchedFrom
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -461,6 +473,26 @@ public class DatasetCardViewModel : ObservableObject
         {
             // Ignore errors writing metadata
         }
+    }
+
+    /// <summary>
+    /// Records that a version was branched from another version.
+    /// </summary>
+    /// <param name="newVersion">The new version number.</param>
+    /// <param name="branchedFromVersion">The version it was branched from.</param>
+    public void RecordBranch(int newVersion, int branchedFromVersion)
+    {
+        VersionBranchedFrom[newVersion] = branchedFromVersion;
+    }
+
+    /// <summary>
+    /// Gets the version that a specific version was branched from.
+    /// </summary>
+    /// <param name="version">The version to check.</param>
+    /// <returns>The parent version, or null if not tracked (V1 or legacy).</returns>
+    public int? GetBranchedFrom(int version)
+    {
+        return VersionBranchedFrom.TryGetValue(version, out var parent) ? parent : null;
     }
 
     /// <summary>
@@ -516,4 +548,11 @@ public class DatasetMetadata
     /// Key is version number, value is optional description (e.g., "SDXL captions", "Flux NL captions").
     /// </summary>
     public Dictionary<int, string?> VersionDescriptions { get; set; } = new();
+
+    /// <summary>
+    /// Tracks which version each version was branched from.
+    /// Key is version number, value is the parent version number it was branched from.
+    /// V1 has no entry (it's the original).
+    /// </summary>
+    public Dictionary<int, int> VersionBranchedFrom { get; set; } = new();
 }
