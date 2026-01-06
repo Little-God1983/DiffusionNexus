@@ -265,6 +265,107 @@ public class ImageEditorCore : IDisposable
         return Crop(cropRect);
     }
 
+    /// <summary>
+    /// Saves the current working image to a file.
+    /// </summary>
+    /// <param name="filePath">The file path to save to.</param>
+    /// <param name="format">The image format (default: PNG).</param>
+    /// <param name="quality">Quality for lossy formats (0-100).</param>
+    /// <returns>True if saved successfully.</returns>
+    public bool SaveImage(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
+    {
+        if (_workingBitmap is null || string.IsNullOrWhiteSpace(filePath))
+            return false;
+
+        try
+        {
+            using var image = SKImage.FromBitmap(_workingBitmap);
+            using var data = image.Encode(format, quality);
+            
+            if (data is null)
+                return false;
+
+            using var stream = File.OpenWrite(filePath);
+            data.SaveTo(stream);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Saves the current working image, overwriting the original file.
+    /// </summary>
+    /// <returns>True if saved successfully.</returns>
+    public bool SaveOverwrite()
+    {
+        if (string.IsNullOrWhiteSpace(CurrentImagePath))
+            return false;
+
+        var format = GetFormatFromExtension(CurrentImagePath);
+        return SaveImage(CurrentImagePath, format);
+    }
+
+    /// <summary>
+    /// Saves the current working image as a new file with auto-generated name.
+    /// </summary>
+    /// <returns>The new file path if saved successfully, null otherwise.</returns>
+    public string? SaveAsNew()
+    {
+        if (_workingBitmap is null || string.IsNullOrWhiteSpace(CurrentImagePath))
+            return null;
+
+        var directory = Path.GetDirectoryName(CurrentImagePath);
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var extension = Path.GetExtension(CurrentImagePath);
+
+        if (string.IsNullOrEmpty(directory))
+            return null;
+
+        // Generate unique filename with suffix
+        var newPath = GenerateUniqueFilePath(directory, fileName, extension);
+        var format = GetFormatFromExtension(newPath);
+
+        if (SaveImage(newPath, format))
+        {
+            return newPath;
+        }
+
+        return null;
+    }
+
+    private static string GenerateUniqueFilePath(string directory, string baseName, string extension)
+    {
+        var counter = 1;
+        string newPath;
+
+        do
+        {
+            var suffix = $"_edited_{counter:D3}";
+            newPath = Path.Combine(directory, $"{baseName}{suffix}{extension}");
+            counter++;
+        }
+        while (File.Exists(newPath) && counter < 1000);
+
+        return newPath;
+    }
+
+    private static SKEncodedImageFormat GetFormatFromExtension(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
+            ".png" => SKEncodedImageFormat.Png,
+            ".webp" => SKEncodedImageFormat.Webp,
+            ".bmp" => SKEncodedImageFormat.Bmp,
+            ".gif" => SKEncodedImageFormat.Gif,
+            _ => SKEncodedImageFormat.Png
+        };
+    }
+
     protected virtual void OnImageChanged()
     {
         ImageChanged?.Invoke(this, EventArgs.Empty);

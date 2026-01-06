@@ -80,12 +80,7 @@ public class CropTool
     {
         _imageRect = imageRect;
         
-        // Initialize crop to full image if not set
-        if (!_hasCropRegion && _isActive)
-        {
-            _cropRect = imageRect;
-            _hasCropRegion = true;
-        }
+        // Don't auto-initialize crop region - let user drag to create it
     }
 
     /// <summary>

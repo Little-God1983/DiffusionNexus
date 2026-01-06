@@ -59,17 +59,25 @@ public class DialogService : IDialogService
 
     public async Task ShowMessageAsync(string title, string message)
     {
-        // For now, using a simple approach - can be enhanced with custom dialog windows
-        await Task.CompletedTask;
-        // TODO: Implement custom message dialog
+        var dialog = new ConfirmDialog
+        {
+            Message = message
+        };
+        dialog.Title = title;
+
+        await dialog.ShowDialog(_window);
     }
 
     public async Task<bool> ShowConfirmAsync(string title, string message)
     {
-        // For now, using a simple approach - can be enhanced with custom dialog windows
-        await Task.CompletedTask;
-        // TODO: Implement custom confirm dialog
-        return true;
+        var dialog = new ConfirmDialog
+        {
+            Message = message
+        };
+        dialog.Title = title;
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result;
     }
 
     public async Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null)

@@ -521,4 +521,25 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Gets the Image Editor ViewModel.
     /// </summary>
     public ImageEditorViewModel ImageEditor { get; } = new();
+
+    /// <summary>
+    /// Refreshes the active dataset to reflect any file changes.
+    /// </summary>
+    public async Task RefreshActiveDatasetAsync()
+    {
+        if (ActiveDataset is not null)
+        {
+            // Update the dataset card with fresh image count
+            ActiveDataset.ImageCount = Directory.Exists(ActiveDataset.FolderPath)
+                ? Directory.EnumerateFiles(ActiveDataset.FolderPath)
+                    .Count(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                : 0;
+
+            // Reload images if viewing the dataset
+            if (IsViewingDataset)
+            {
+                await OpenDatasetAsync(ActiveDataset);
+            }
+        }
+    }
 }

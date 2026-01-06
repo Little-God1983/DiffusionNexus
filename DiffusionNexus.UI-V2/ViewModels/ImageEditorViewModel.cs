@@ -28,8 +28,7 @@ public partial class ImageEditorViewModel : ObservableObject
             {
                 HasImage = !string.IsNullOrEmpty(value);
                 ImageFileName = HasImage ? Path.GetFileName(value) : null;
-                ClearImageCommand.NotifyCanExecuteChanged();
-                ResetImageCommand.NotifyCanExecuteChanged();
+                NotifyCommandsCanExecuteChanged();
             }
         }
     }
@@ -49,7 +48,13 @@ public partial class ImageEditorViewModel : ObservableObject
     public bool HasImage
     {
         get => _hasImage;
-        private set => SetProperty(ref _hasImage, value);
+        private set
+        {
+            if (SetProperty(ref _hasImage, value))
+            {
+                NotifyCommandsCanExecuteChanged();
+            }
+        }
     }
 
     /// <summary>
@@ -136,6 +141,16 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand CancelCropCommand { get; }
 
     /// <summary>
+    /// Command to save as a new file.
+    /// </summary>
+    public IRelayCommand SaveAsNewCommand { get; }
+
+    /// <summary>
+    /// Command to save overwriting the original file.
+    /// </summary>
+    public IAsyncRelayCommand SaveOverwriteCommand { get; }
+
+    /// <summary>
     /// Event raised when image should be cleared in the control.
     /// </summary>
     public event EventHandler? ClearRequested;
@@ -165,6 +180,21 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler? CancelCropRequested;
 
+    /// <summary>
+    /// Event raised when save as new is requested.
+    /// </summary>
+    public event EventHandler? SaveAsNewRequested;
+
+    /// <summary>
+    /// Event raised when save overwrite is requested. Returns true to proceed.
+    /// </summary>
+    public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
+
+    /// <summary>
+    /// Event raised when save overwrite should be executed.
+    /// </summary>
+    public event EventHandler? SaveOverwriteRequested;
+
     public ImageEditorViewModel()
     {
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
@@ -172,6 +202,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
+        SaveAsNewCommand = new RelayCommand(ExecuteSaveAsNew, () => HasImage);
+        SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
     }
 
     /// <summary>
@@ -206,6 +238,22 @@ public partial class ImageEditorViewModel : ObservableObject
         IsCropToolActive = false;
         StatusMessage = "Crop applied successfully.";
         // Update dimensions will be called by the control's ImageChanged event
+    }
+
+    /// <summary>
+    /// Called when save as new completes successfully.
+    /// </summary>
+    public void OnSaveAsNewCompleted(string newPath)
+    {
+        StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
+    }
+
+    /// <summary>
+    /// Called when save overwrite completes successfully.
+    /// </summary>
+    public void OnSaveOverwriteCompleted()
+    {
+        StatusMessage = $"Saved: {ImageFileName}";
     }
 
     private void ExecuteToggleCropTool()
@@ -248,5 +296,39 @@ public partial class ImageEditorViewModel : ObservableObject
         IsCropToolActive = false;
         StatusMessage = "Image reset to original.";
         ResetRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteSaveAsNew()
+    {
+        SaveAsNewRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task ExecuteSaveOverwriteAsync()
+    {
+        // Request confirmation
+        if (SaveOverwriteConfirmRequested is not null)
+        {
+            var confirmed = await SaveOverwriteConfirmRequested.Invoke();
+            if (!confirmed)
+            {
+                StatusMessage = "Save cancelled.";
+                return;
+            }
+        }
+
+        SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Notifies all commands that depend on HasImage to re-evaluate CanExecute.
+    /// </summary>
+    private void NotifyCommandsCanExecuteChanged()
+    {
+        ClearImageCommand.NotifyCanExecuteChanged();
+        ResetImageCommand.NotifyCanExecuteChanged();
+        ToggleCropToolCommand.NotifyCanExecuteChanged();
+        ApplyCropCommand.NotifyCanExecuteChanged();
+        SaveAsNewCommand.NotifyCanExecuteChanged();
+        SaveOverwriteCommand.NotifyCanExecuteChanged();
     }
 }

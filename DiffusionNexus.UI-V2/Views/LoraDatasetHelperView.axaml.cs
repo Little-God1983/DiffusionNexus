@@ -98,5 +98,44 @@ public partial class LoraDatasetHelperView : UserControl
             _imageEditorCanvas.EditorCore.CropTool.ClearCropRegion();
             _imageEditorCanvas.DeactivateCropTool();
         };
+
+        // Handle save requests
+        vm.ImageEditor.SaveAsNewRequested += async (_, _) =>
+        {
+            var newPath = _imageEditorCanvas.EditorCore.SaveAsNew();
+            if (newPath is not null)
+            {
+                vm.ImageEditor.OnSaveAsNewCompleted(newPath);
+                await vm.RefreshActiveDatasetAsync();
+            }
+            else
+            {
+                vm.ImageEditor.StatusMessage = "Failed to save image.";
+            }
+        };
+
+        vm.ImageEditor.SaveOverwriteConfirmRequested += async () =>
+        {
+            if (vm.DialogService is not null)
+            {
+                return await vm.DialogService.ShowConfirmAsync(
+                    "Overwrite Image",
+                    "Do you really want to overwrite your original image? This cannot be undone.");
+            }
+            return false;
+        };
+
+        vm.ImageEditor.SaveOverwriteRequested += async (_, _) =>
+        {
+            if (_imageEditorCanvas.EditorCore.SaveOverwrite())
+            {
+                vm.ImageEditor.OnSaveOverwriteCompleted();
+                await vm.RefreshActiveDatasetAsync();
+            }
+            else
+            {
+                vm.ImageEditor.StatusMessage = "Failed to save image.";
+            }
+        };
     }
 }

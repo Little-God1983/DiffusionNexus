@@ -328,7 +328,7 @@
                   Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
               
               <!-- Image Info -->
               <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
@@ -373,15 +373,29 @@
               <!-- Separator -->
               <Border Grid.Column="5" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
               
+              <!-- Save Buttons -->
+              <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <Button Content="💾 Save As New"
+                        Command="{Binding ImageEditor.SaveAsNewCommand}"
+                        Background="#2D7D46"
+                        ToolTip.Tip="Save as a new file"/>
+                <Button Content="💾 Save"
+                        Command="{Binding ImageEditor.SaveOverwriteCommand}"
+                        ToolTip.Tip="Overwrite original file"/>
+              </StackPanel>
+              
+              <!-- Separator -->
+              <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+              
               <!-- Reset Button -->
-              <Button Grid.Column="6"
+              <Button Grid.Column="8"
                       Content="↺ Reset"
                       Command="{Binding ImageEditor.ResetImageCommand}"
                       Margin="0,0,8,0"
                       ToolTip.Tip="Reset to original image"/>
               
               <!-- Clear Button -->
-              <Button Grid.Column="7"
+              <Button Grid.Column="9"
                       Content="✕ Clear"
                       Command="{Binding ImageEditor.ClearImageCommand}"
                       ToolTip.Tip="Clear the image"/>
