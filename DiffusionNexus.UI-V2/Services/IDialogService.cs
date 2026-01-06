@@ -1,5 +1,7 @@
 namespace DiffusionNexus.UI.Services;
 
+using DiffusionNexus.UI.ViewModels;
+
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
 /// Inject this interface to enable testable UI dialogs.
@@ -86,6 +88,14 @@ public interface IDialogService
     /// <param name="options">Array of option labels to display as buttons.</param>
     /// <returns>The index of the selected option (0-based), or -1 if cancelled.</returns>
     Task<int> ShowOptionsAsync(string title, string message, params string[] options);
+
+    /// <summary>
+    /// Shows the export dataset dialog with options and preview counts.
+    /// </summary>
+    /// <param name="datasetName">Name of the dataset being exported.</param>
+    /// <param name="mediaFiles">All media files in the dataset.</param>
+    /// <returns>Export result with selected options and files, or cancelled result.</returns>
+    Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles);
 }
 
 /// <summary>

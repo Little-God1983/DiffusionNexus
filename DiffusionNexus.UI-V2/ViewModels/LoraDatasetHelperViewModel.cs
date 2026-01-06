@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO.Compression;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -222,7 +223,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
-    public IRelayCommand ExportDatasetCommand { get; }
+    public IAsyncRelayCommand ExportDatasetCommand { get; }
 
     #endregion
 
@@ -248,7 +249,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
-        ExportDatasetCommand = new RelayCommand(ExportDataset);
+        ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
     }
 
     /// <summary>
@@ -1166,13 +1167,145 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         StatusMessage = $"Editing: {image.FullFileName}";
     }
 
-    private void ExportDataset()
+    private async Task ExportDatasetAsync()
     {
-        // TODO: Implement dataset export functionality
-        // - Export as zip with images and captions
-        // - Export in kohya_ss format
-        // - Export in other training formats
-        StatusMessage = "Export Dataset: Not yet implemented";
+        if (DialogService is null || ActiveDataset is null)
+        {
+            StatusMessage = "No dataset selected for export.";
+            return;
+        }
+
+        if (DatasetImages.Count == 0)
+        {
+            StatusMessage = "No files in dataset to export.";
+            return;
+        }
+
+        // Show export configuration dialog
+        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages);
+        
+        if (!result.Confirmed || result.FilesToExport.Count == 0)
+        {
+            return;
+        }
+
+        // Ask for destination
+        string? destinationPath;
+        if (result.ExportType == ExportType.Zip)
+        {
+            // Format: DatasetName_V1-2025-01-06.zip
+            var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
+            var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
+            
+            destinationPath = await DialogService.ShowSaveFileDialogAsync(
+                "Export Dataset as ZIP",
+                defaultFileName,
+                "*.zip");
+        }
+        else
+        {
+            destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
+        }
+
+        if (string.IsNullOrEmpty(destinationPath))
+        {
+            return;
+        }
+
+        IsLoading = true;
+        try
+        {
+            var exportedCount = 0;
+
+            if (result.ExportType == ExportType.Zip)
+            {
+                exportedCount = await ExportAsZipAsync(result.FilesToExport, destinationPath);
+            }
+            else
+            {
+                exportedCount = await ExportAsSingleFilesAsync(result.FilesToExport, destinationPath);
+            }
+
+            StatusMessage = $"Exported {exportedCount} files successfully.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Exports files as individual files with their caption .txt files.
+    /// </summary>
+    private async Task<int> ExportAsSingleFilesAsync(List<DatasetImageViewModel> files, string destinationFolder)
+    {
+        var exportedCount = 0;
+
+        // Create destination folder if it doesn't exist
+        Directory.CreateDirectory(destinationFolder);
+
+        foreach (var mediaFile in files)
+        {
+            // Copy media file
+            if (File.Exists(mediaFile.ImagePath))
+            {
+                var destMediaPath = Path.Combine(destinationFolder, mediaFile.FullFileName);
+                File.Copy(mediaFile.ImagePath, destMediaPath, overwrite: true);
+                exportedCount++;
+            }
+
+            // Copy caption file if it exists
+            if (File.Exists(mediaFile.CaptionFilePath))
+            {
+                var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
+                var destCaptionPath = Path.Combine(destinationFolder, captionFileName);
+                File.Copy(mediaFile.CaptionFilePath, destCaptionPath, overwrite: true);
+            }
+        }
+
+        await Task.CompletedTask;
+        return exportedCount;
+    }
+
+    /// <summary>
+    /// Exports files as a ZIP archive with their caption .txt files.
+    /// </summary>
+    private async Task<int> ExportAsZipAsync(List<DatasetImageViewModel> files, string zipPath)
+    {
+        var exportedCount = 0;
+
+        // Delete existing file if present
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
+
+        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            foreach (var mediaFile in files)
+            {
+                // Add media file
+                if (File.Exists(mediaFile.ImagePath))
+                {
+                    archive.CreateEntryFromFile(mediaFile.ImagePath, mediaFile.FullFileName);
+                    exportedCount++;
+                }
+
+                // Add caption file if it exists
+                if (File.Exists(mediaFile.CaptionFilePath))
+                {
+                    var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
+                    archive.CreateEntryFromFile(mediaFile.CaptionFilePath, captionFileName);
+                }
+            }
+        }
+
+        await Task.CompletedTask;
+        return exportedCount;
     }
 
     #endregion

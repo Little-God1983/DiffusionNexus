@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 
 namespace DiffusionNexus.UI.Services;
@@ -124,5 +125,14 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.SelectedIndex;
+    }
+
+    public async Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles)
+    {
+        var dialog = new ExportDatasetDialog()
+            .WithDataset(datasetName, mediaFiles);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? ExportDatasetResult.Cancelled();
     }
 }
