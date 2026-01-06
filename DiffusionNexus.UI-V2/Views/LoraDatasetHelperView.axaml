@@ -40,12 +40,27 @@
                       Margin="0,0,16,0"/>
               
               <!-- Dataset Title (when viewing) -->
-              <TextBlock Grid.Column="1"
-                         Text="{Binding ActiveDataset.Name, StringFormat='Dataset: {0}'}"
-                         FontSize="18"
-                         FontWeight="SemiBold"
-                         VerticalAlignment="Center"
-                         IsVisible="{Binding IsViewingDataset}"/>
+              <StackPanel Grid.Column="1"
+                          Orientation="Vertical"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding IsViewingDataset}">
+                <TextBlock Text="{Binding ActiveDataset.Name, StringFormat='Dataset: {0}'}"
+                           FontSize="18"
+                           FontWeight="SemiBold"/>
+                <!-- Editable Description for current version -->
+                <TextBox x:Name="DescriptionTextBox"
+                         Text="{Binding ActiveDataset.Description, Mode=TwoWay}"
+                         Watermark="Add description for this version..."
+                         FontSize="12"
+                         MinWidth="250"
+                         MaxWidth="400"
+                         Margin="0,4,0,0"
+                         Padding="4,2"
+                         Background="#333"
+                         BorderBrush="#444"
+                         BorderThickness="1"
+                         CornerRadius="4"/>
+              </StackPanel>
               
               <!-- Version Dropdown (when viewing dataset with multiple versions) -->
               <StackPanel Grid.Column="2"
@@ -319,6 +334,14 @@
                                                  FontSize="14"
                                                  TextTrimming="CharacterEllipsis"
                                                  MaxLines="1"/>
+                                      <!-- Description (if available) -->
+                                      <TextBlock Text="{Binding Description}"
+                                                 FontSize="11"
+                                                 Opacity="0.7"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 MaxLines="1"
+                                                 IsVisible="{Binding HasDescription}"
+                                                 Margin="0,2,0,0"/>
                                       <TextBlock Text="{Binding ImageCountText}"
                                                  FontSize="12"
                                                  Opacity="0.6"/>
@@ -643,7 +666,8 @@
                     Background="#1E1E1E"
                     Padding="8,4"
                     BorderBrush="#333"
-                    BorderThickness="0,1,0,0">
+                    BorderThickness="0,1,0,0"
+                    IsVisible="{Binding ImageEditor.HasImage}">
               <Grid ColumnDefinitions="*,Auto">
                 <!-- Status Message -->
                 <TextBlock Grid.Column="0"

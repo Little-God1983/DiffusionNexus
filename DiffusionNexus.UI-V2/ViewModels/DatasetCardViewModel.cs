@@ -18,6 +18,7 @@ public class DatasetCardViewModel : ObservableObject
     
     private string _name = string.Empty;
     private string _folderPath = string.Empty;
+    private string? _currentVersionDescription;
     private int _imageCount;
     private int _videoCount;
     private string? _thumbnailPath;
@@ -29,6 +30,7 @@ public class DatasetCardViewModel : ObservableObject
     private bool _isVersionedStructure;
     private int? _displayVersion;
     private Dictionary<int, int> _versionBranchedFrom = new();
+    private Dictionary<int, string?> _versionDescriptions = new();
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -46,6 +48,38 @@ public class DatasetCardViewModel : ObservableObject
     {
         get => _folderPath;
         set => SetProperty(ref _folderPath, value);
+    }
+
+    /// <summary>
+    /// Description for the current version.
+    /// Getting/setting this property updates the description for the current version.
+    /// </summary>
+    public string? Description
+    {
+        get => _currentVersionDescription;
+        set
+        {
+            if (SetProperty(ref _currentVersionDescription, value))
+            {
+                // Also update the version descriptions dictionary
+                _versionDescriptions[_currentVersion] = value;
+                OnPropertyChanged(nameof(HasDescription));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the current version has a description.
+    /// </summary>
+    public bool HasDescription => !string.IsNullOrWhiteSpace(_currentVersionDescription);
+
+    /// <summary>
+    /// Dictionary of descriptions for each version.
+    /// </summary>
+    public Dictionary<int, string?> VersionDescriptions
+    {
+        get => _versionDescriptions;
+        set => SetProperty(ref _versionDescriptions, value);
     }
 
     /// <summary>
@@ -157,6 +191,11 @@ public class DatasetCardViewModel : ObservableObject
                 OnPropertyChanged(nameof(VersionDisplayText));
                 OnPropertyChanged(nameof(CurrentVersionFolderPath));
                 OnPropertyChanged(nameof(VersionBadgeText));
+                
+                // Update the current version description
+                _currentVersionDescription = _versionDescriptions.GetValueOrDefault(value);
+                OnPropertyChanged(nameof(Description));
+                OnPropertyChanged(nameof(HasDescription));
             }
         }
     }
@@ -400,8 +439,12 @@ public class DatasetCardViewModel : ObservableObject
             IsVersionedStructure = true,
             CurrentVersion = version,
             TotalVersions = TotalVersions,
-            DisplayVersion = version
+            DisplayVersion = version,
+            VersionDescriptions = VersionDescriptions
         };
+        
+        // Set the version-specific description
+        card._currentVersionDescription = VersionDescriptions.GetValueOrDefault(version);
 
         // Load media files from this specific version folder
         if (Directory.Exists(versionPath))
@@ -563,6 +606,18 @@ public class DatasetCardViewModel : ObservableObject
                 CategoryId = metadata.CategoryId;
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
+                VersionDescriptions = metadata.VersionDescriptions ?? new();
+                
+                // Migrate old single Description to V1 if present and no version descriptions exist
+                if (!string.IsNullOrWhiteSpace(metadata.Description) && VersionDescriptions.Count == 0)
+                {
+                    VersionDescriptions[1] = metadata.Description;
+                }
+                
+                // Set the current version's description
+                _currentVersionDescription = VersionDescriptions.GetValueOrDefault(CurrentVersion);
+                OnPropertyChanged(nameof(Description));
+                OnPropertyChanged(nameof(HasDescription));
             }
         }
         catch
@@ -586,7 +641,8 @@ public class DatasetCardViewModel : ObservableObject
             {
                 CategoryId = CategoryId,
                 CurrentVersion = CurrentVersion,
-                VersionBranchedFrom = VersionBranchedFrom
+                VersionBranchedFrom = VersionBranchedFrom,
+                VersionDescriptions = VersionDescriptions
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -668,6 +724,11 @@ public class DatasetMetadata
     /// Category ID for this dataset.
     /// </summary>
     public int? CategoryId { get; set; }
+
+    /// <summary>
+    /// Optional description for this dataset.
+    /// </summary>
+    public string? Description { get; set; }
 
     /// <summary>
     /// Current active version number (1-based). Default is 1.

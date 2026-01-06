@@ -20,6 +20,7 @@ public partial class LoraDatasetHelperView : UserControl
 
     private ImageEditorControl? _imageEditorCanvas;
     private Border? _emptyDatasetDropZone;
+    private TextBox? _descriptionTextBox;
     private bool _isInitialized;
 
     public LoraDatasetHelperView()
@@ -33,6 +34,7 @@ public partial class LoraDatasetHelperView : UserControl
         AvaloniaXamlLoader.Load(this);
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
         _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
+        _descriptionTextBox = this.FindControl<TextBox>("DescriptionTextBox");
 
         // Set up drag-drop handlers for empty dataset drop zone
         if (_emptyDatasetDropZone is not null)
@@ -40,6 +42,21 @@ public partial class LoraDatasetHelperView : UserControl
             _emptyDatasetDropZone.AddHandler(DragDrop.DropEvent, OnEmptyDatasetDrop);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragEnterEvent, OnEmptyDatasetDragEnter);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragLeaveEvent, OnEmptyDatasetDragLeave);
+        }
+        
+        // Set up auto-save for description TextBox
+        if (_descriptionTextBox is not null)
+        {
+            _descriptionTextBox.LostFocus += OnDescriptionLostFocus;
+        }
+    }
+
+    private void OnDescriptionLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        // Auto-save description when TextBox loses focus
+        if (DataContext is LoraDatasetHelperViewModel vm && vm.ActiveDataset is not null)
+        {
+            vm.ActiveDataset.SaveMetadata();
         }
     }
 
