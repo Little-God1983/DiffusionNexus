@@ -3,6 +3,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess;
 
+/// <summary>
+/// Factory for creating legacy DiffusionNexusDbContext instances.
+/// Database: diffusion_nexus.db
+/// </summary>
+/// <remarks>
+/// This factory is used by DiffusionNexus.UI (V1) and related services.
+/// For new development, use <see cref="DiffusionNexusCoreDbContext"/> instead.
+/// </remarks>
+[Obsolete("Use DiffusionNexusCoreDbContext and AddDiffusionNexusCoreDatabase for new development.")]
 public static class DbContextFactory
 {
     public static DiffusionNexusDbContext CreateDbContext(string? databasePath = null)

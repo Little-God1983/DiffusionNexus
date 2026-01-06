@@ -3,6 +3,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Data;
 
+/// <summary>
+/// Legacy DbContext for the original DiffusionNexus database.
+/// Database: diffusion_nexus.db
+/// </summary>
+/// <remarks>
+/// This context is used by DiffusionNexus.UI (V1) and related services.
+/// For new development, use <see cref="DiffusionNexusCoreDbContext"/> instead.
+/// </remarks>
+[Obsolete("Use DiffusionNexusCoreDbContext for new development. This context is maintained for legacy UI compatibility.")]
 public class DiffusionNexusDbContext : DbContext
 {
     public DiffusionNexusDbContext(DbContextOptions<DiffusionNexusDbContext> options)
