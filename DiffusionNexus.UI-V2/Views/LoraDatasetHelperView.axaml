@@ -38,13 +38,7 @@
 
       <!-- Auto Scale/Crop Tab -->
       <TabItem Header="Auto Scale/Crop">
-        <Grid>
-          <TextBlock Text="Auto Scale/Crop"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
-        </Grid>
+        <views:AutoScaleCropView DataContext="{Binding AutoScaleCrop}"/>
       </TabItem>
 
     </TabControl>
