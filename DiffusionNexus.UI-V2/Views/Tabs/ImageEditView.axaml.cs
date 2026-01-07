@@ -33,11 +33,8 @@ public partial class ImageEditView : UserControl
         if (_isInitialized) return;
         _isInitialized = true;
 
-        // Inject DialogService into the ViewModel
-        if (VisualRoot is Window window && DataContext is IDialogServiceAware aware)
-        {
-            aware.DialogService = new DialogService(window);
-        }
+        // Note: DialogService is injected by the parent LoraDatasetHelperView
+        // and forwarded via OnDialogServiceSet()
 
         // Wire up image editor events
         if (DataContext is ImageEditTabViewModel vm)

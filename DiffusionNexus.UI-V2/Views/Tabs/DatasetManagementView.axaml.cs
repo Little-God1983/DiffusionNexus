@@ -71,17 +71,11 @@ public partial class DatasetManagementView : UserControl
         if (_isInitialized) return;
         _isInitialized = true;
 
-        // Inject DialogService into the ViewModel
-        if (VisualRoot is Window window && DataContext is IDialogServiceAware aware)
-        {
-            aware.DialogService = new DialogService(window);
-        }
-
-        // Load datasets on first attach
-        if (DataContext is DatasetManagementViewModel vm)
-        {
-            vm.CheckStorageConfigurationCommand.Execute(null);
-        }
+        // Note: DialogService is injected by the parent LoraDatasetHelperView
+        // and forwarded via OnDialogServiceSet()
+        
+        // Note: CheckStorageConfigurationCommand is called by the parent shell
+        // after DialogService is set up
     }
 
     private void OnEmptyDatasetDragEnter(object? sender, DragEventArgs e)
