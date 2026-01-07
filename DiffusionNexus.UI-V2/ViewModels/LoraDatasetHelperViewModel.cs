@@ -1128,7 +1128,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             "Cancel",
             "Start Fresh (Empty)",
             $"Copy from V{currentVersion}");
-
+        
         // 0 = Cancel, 1 = Start Fresh, 2 = Copy
         if (selectedOption == 0 || selectedOption == -1)
         {
@@ -1359,6 +1359,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                         editorImage.IsEditorSelected = true;
                         _selectedEditorImage = editorImage;
                         OnPropertyChanged(nameof(SelectedEditorImage));
+                        
+                        // Set the selected dataset image on the ImageEditor for rating support
+                        ImageEditor.SelectedDatasetImage = editorImage;
                     }
                 }
             }
@@ -1366,6 +1369,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
         // Load the image into the editor
         ImageEditor.LoadImage(image.ImagePath);
+        
+        // If we didn't find the image in the editor list, still set it for rating support
+        if (ImageEditor.SelectedDatasetImage is null)
+        {
+            ImageEditor.SelectedDatasetImage = image;
+        }
         
         // Switch to Image Edit tab
         SelectedTabIndex = 1;
@@ -1978,6 +1987,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         _selectedEditorImage = image;
         OnPropertyChanged(nameof(SelectedEditorImage));
 
+        // Set the selected dataset image on the ImageEditor for rating support
+        ImageEditor.SelectedDatasetImage = image;
+        
         ImageEditor.LoadImage(image.ImagePath);
         StatusMessage = $"Editing: {image.FullFileName}";
     }

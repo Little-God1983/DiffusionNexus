@@ -19,6 +19,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private bool _isFitMode = true;
     private int _imageDpi = 72;
     private long _fileSizeBytes;
+    private DatasetImageViewModel? _selectedDatasetImage;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -69,6 +70,50 @@ public partial class ImageEditorViewModel : ObservableObject
         get => _statusMessage;
         set => SetProperty(ref _statusMessage, value);
     }
+
+    /// <summary>
+    /// The currently selected DatasetImageViewModel being edited.
+    /// Used to access rating and other metadata.
+    /// </summary>
+    public DatasetImageViewModel? SelectedDatasetImage
+    {
+        get => _selectedDatasetImage;
+        set
+        {
+            if (SetProperty(ref _selectedDatasetImage, value))
+            {
+                OnPropertyChanged(nameof(IsApproved));
+                OnPropertyChanged(nameof(IsRejected));
+                OnPropertyChanged(nameof(IsUnrated));
+                OnPropertyChanged(nameof(HasRating));
+                NotifyRatingCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    #region Rating Properties
+
+    /// <summary>
+    /// Whether the current image is marked as approved/production-ready.
+    /// </summary>
+    public bool IsApproved => _selectedDatasetImage?.IsApproved ?? false;
+
+    /// <summary>
+    /// Whether the current image is marked as rejected/failed.
+    /// </summary>
+    public bool IsRejected => _selectedDatasetImage?.IsRejected ?? false;
+
+    /// <summary>
+    /// Whether the current image has not been rated yet.
+    /// </summary>
+    public bool IsUnrated => _selectedDatasetImage?.IsUnrated ?? true;
+
+    /// <summary>
+    /// Whether the current image has any rating (approved or rejected).
+    /// </summary>
+    public bool HasRating => !IsUnrated;
+
+    #endregion
 
     /// <summary>
     /// Current image width in pixels.
@@ -201,6 +246,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ? $"Size: {ImageWidth} × {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
+    #region Commands
+
     /// <summary>
     /// Command to clear the current image.
     /// </summary>
@@ -255,6 +302,25 @@ public partial class ImageEditorViewModel : ObservableObject
     /// Command to zoom to 100%.
     /// </summary>
     public IRelayCommand ZoomToActualCommand { get; }
+
+    /// <summary>
+    /// Command to mark the image as approved (production-ready).
+    /// </summary>
+    public IRelayCommand MarkApprovedCommand { get; }
+
+    /// <summary>
+    /// Command to mark the image as rejected (failed).
+    /// </summary>
+    public IRelayCommand MarkRejectedCommand { get; }
+
+    /// <summary>
+    /// Command to clear the rating (set to unrated).
+    /// </summary>
+    public IRelayCommand ClearRatingCommand { get; }
+
+    #endregion
+
+    #region Events
 
     /// <summary>
     /// Event raised when image should be cleared in the control.
@@ -327,6 +393,8 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler<string>? ImageSaved;
 
+    #endregion
+
     public ImageEditorViewModel()
     {
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
@@ -340,6 +408,11 @@ public partial class ImageEditorViewModel : ObservableObject
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
         ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
         ZoomToActualCommand = new RelayCommand(ExecuteZoomToActual, () => HasImage);
+        
+        // Rating commands
+        MarkApprovedCommand = new RelayCommand(ExecuteMarkApproved, () => HasImage && _selectedDatasetImage is not null);
+        MarkRejectedCommand = new RelayCommand(ExecuteMarkRejected, () => HasImage && _selectedDatasetImage is not null);
+        ClearRatingCommand = new RelayCommand(ExecuteClearRating, () => HasImage && _selectedDatasetImage is not null && !IsUnrated);
     }
 
     /// <summary>
@@ -474,6 +547,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteClearImage()
     {
         CurrentImagePath = null;
+        SelectedDatasetImage = null;
         ImageWidth = 0;
         ImageHeight = 0;
         IsCropToolActive = false;
@@ -529,6 +603,64 @@ public partial class ImageEditorViewModel : ObservableObject
         ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    #region Rating Command Implementations
+
+    private void ExecuteMarkApproved()
+    {
+        if (_selectedDatasetImage is null) return;
+
+        // Toggle: if already approved, clear it
+        _selectedDatasetImage.RatingStatus = _selectedDatasetImage.IsApproved
+            ? ImageRatingStatus.Unrated
+            : ImageRatingStatus.Approved;
+        _selectedDatasetImage.SaveRating();
+
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(HasRating));
+        NotifyRatingCommandsCanExecuteChanged();
+
+        StatusMessage = _selectedDatasetImage.IsApproved ? "Marked as Ready" : "Rating cleared";
+    }
+
+    private void ExecuteMarkRejected()
+    {
+        if (_selectedDatasetImage is null) return;
+
+        // Toggle: if already rejected, clear it
+        _selectedDatasetImage.RatingStatus = _selectedDatasetImage.IsRejected
+            ? ImageRatingStatus.Unrated
+            : ImageRatingStatus.Rejected;
+        _selectedDatasetImage.SaveRating();
+
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(HasRating));
+        NotifyRatingCommandsCanExecuteChanged();
+
+        StatusMessage = _selectedDatasetImage.IsRejected ? "Marked as Failed" : "Rating cleared";
+    }
+
+    private void ExecuteClearRating()
+    {
+        if (_selectedDatasetImage is null) return;
+
+        _selectedDatasetImage.RatingStatus = ImageRatingStatus.Unrated;
+        _selectedDatasetImage.SaveRating();
+
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(HasRating));
+        NotifyRatingCommandsCanExecuteChanged();
+
+        StatusMessage = "Rating cleared";
+    }
+
+    #endregion
+
     /// <summary>
     /// Notifies all commands that depend on HasImage to re-evaluate CanExecute.
     /// </summary>
@@ -544,5 +676,16 @@ public partial class ImageEditorViewModel : ObservableObject
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
         ZoomToActualCommand.NotifyCanExecuteChanged();
+        NotifyRatingCommandsCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Notifies rating commands to re-evaluate CanExecute.
+    /// </summary>
+    private void NotifyRatingCommandsCanExecuteChanged()
+    {
+        MarkApprovedCommand.NotifyCanExecuteChanged();
+        MarkRejectedCommand.NotifyCanExecuteChanged();
+        ClearRatingCommand.NotifyCanExecuteChanged();
     }
 }

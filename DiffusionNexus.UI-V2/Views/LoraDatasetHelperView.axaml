@@ -793,7 +793,7 @@
                     Padding="16,12"
                     BorderBrush="#333"
                     BorderThickness="0,0,0,1">
-              <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+              <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                 
                 <!-- Dataset Selector -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -855,8 +855,45 @@
                 <!-- Tool Separator -->
                 <Border Grid.Column="4" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
-                <!-- Tools -->
+                <!-- Rating Buttons (similar to Dataset Management) -->
                 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                  <Button Content="▲"
+                          Command="{Binding ImageEditor.MarkApprovedCommand}"
+                          Padding="12,6"
+                          FontSize="14"
+                          Background="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                          Foreground="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                          CornerRadius="4"
+                          ToolTip.Tip="Mark as production-ready (toggle)"/>
+                  <Button Content="▼"
+                          Command="{Binding ImageEditor.MarkRejectedCommand}"
+                          Padding="12,6"
+                          FontSize="14"
+                          Background="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                          Foreground="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                          CornerRadius="4"
+                          ToolTip.Tip="Mark as failed/rejected (toggle)"/>
+                </StackPanel>
+                
+                <!-- Rating status indicator -->
+                <Border Grid.Column="6"
+                        Background="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
+                        CornerRadius="4"
+                        Padding="8,4"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding ImageEditor.HasRating}">
+                  <TextBlock Text="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             Foreground="White"/>
+                </Border>
+                
+                <!-- Separator before tools -->
+                <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                
+                <!-- Tools -->
+                <StackPanel Grid.Column="8" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <!-- Crop Tool Button -->
                   <ToggleButton Content="✂️ Crop"
                                 IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}"
@@ -865,10 +902,10 @@
                 </StackPanel>
                 
                 <!-- Spacer -->
-                <Border Grid.Column="6"/>
+                <Border Grid.Column="9"/>
                 
                 <!-- Crop Actions (visible when crop tool is active) -->
-                <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+                <StackPanel Grid.Column="10" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
                   <Button Content="✓ Apply Crop"
                           Command="{Binding ImageEditor.ApplyCropCommand}"
                           Background="#2D7D46"
@@ -879,10 +916,10 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="8" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="11" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Save Buttons -->
-                <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <StackPanel Grid.Column="12" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <Button Content="💾 Save As New"
                           Command="{Binding ImageEditor.SaveAsNewCommand}"
                           Background="#2D7D46"
@@ -893,17 +930,17 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="13" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Reset Button -->
-                <Button Grid.Column="11"
+                <Button Grid.Column="14"
                         Content="↺ Reset"
                         Command="{Binding ImageEditor.ResetImageCommand}"
                         Margin="0,0,8,0"
                         ToolTip.Tip="Reset to original image"/>
                 
                 <!-- Clear Button -->
-                <Button Grid.Column="12"
+                <Button Grid.Column="15"
                         Content="✕ Clear"
                         Command="{Binding ImageEditor.ClearImageCommand}"
                         ToolTip.Tip="Clear the image"/>
