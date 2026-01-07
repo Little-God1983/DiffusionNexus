@@ -490,9 +490,9 @@ public partial class DatasetManagementView : UserControl
     }
 
     /// <summary>
-    /// Handles single-click on an image to open the full-screen viewer.
+    /// Handles double-tap on an image to open the full-screen viewer.
     /// </summary>
-    private void OnImageTapped(object? sender, TappedEventArgs e)
+    private void OnImageDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (sender is not Border border) return;
 

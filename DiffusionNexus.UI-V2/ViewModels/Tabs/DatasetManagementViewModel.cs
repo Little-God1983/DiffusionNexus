@@ -150,7 +150,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     /// <summary>
     /// Text describing the current selection.
-    /// </summary>
+    /// </summary]
     public string SelectionText => SelectionCount == 1 ? "1 selected" : $"{SelectionCount} selected";
 
     /// <summary>
@@ -261,6 +261,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand SaveAllCaptionsCommand { get; }
     public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
     public IRelayCommand OpenContainingFolderCommand { get; }
+    public IAsyncRelayCommand OpenViewerCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
@@ -312,6 +313,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         SaveAllCaptionsCommand = new RelayCommand(SaveAllCaptions);
         DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
+        OpenViewerCommand = new AsyncRelayCommand(OpenViewerAsync, () => !HasNoImages);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
@@ -886,6 +888,27 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         var index = DatasetImages.IndexOf(image);
         if (index < 0) return;
+
+        await OpenImageViewerAtIndexAsync(index);
+    }
+
+    /// <summary>
+    /// Opens the image viewer starting at the first image.
+    /// </summary>
+    private async Task OpenViewerAsync()
+    {
+        if (DialogService is null || DatasetImages.Count == 0) return;
+
+        await OpenImageViewerAtIndexAsync(0);
+    }
+
+    /// <summary>
+    /// Opens the image viewer at the specified index.
+    /// </summary>
+    private async Task OpenImageViewerAtIndexAsync(int index)
+    {
+        if (DialogService is null) return;
+        if (index < 0 || index >= DatasetImages.Count) return;
 
         // Pass the event aggregator to enable cross-component state synchronization
         await DialogService.ShowImageViewerDialogAsync(
