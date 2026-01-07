@@ -109,7 +109,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Create tab ViewModels
         DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, videoThumbnailService);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state);
-        AutoScaleCrop = new AutoScaleCropTabViewModel();
+        AutoScaleCrop = new AutoScaleCropTabViewModel(state);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;

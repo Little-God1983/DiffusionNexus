@@ -37,7 +37,8 @@ public record CropOperationResult(
     TimeSpan Duration);
 
 /// <summary>
-/// Service for cropping images to standard aspect ratio buckets for LoRA training.
+/// Service for adjusting images to standard aspect ratio buckets for LoRA training.
+/// Supports both cropping (removing pixels) and padding (adding canvas).
 /// </summary>
 public interface IImageCropperService
 {
@@ -49,23 +50,27 @@ public interface IImageCropperService
     FolderScanResult ScanFolder(string folderPath);
 
     /// <summary>
-    /// Processes all images in the source folder, cropping them to the nearest standard bucket.
-    /// Images are first cropped to aspect ratio, then optionally downscaled.
+    /// Processes all images in the source folder, adjusting them to the nearest standard bucket.
+    /// Images are first cropped or padded to aspect ratio, then optionally downscaled.
     /// </summary>
     /// <param name="sourceFolderPath">Source folder containing images.</param>
     /// <param name="targetFolderPath">Optional target folder. If null, images are overwritten in place.</param>
     /// <param name="allowedBuckets">Optional array of allowed buckets. If null or empty, all buckets are used.</param>
     /// <param name="maxLongestSide">Optional maximum size for the longest side. If null, no scaling is performed.</param>
-    /// <param name="skipUnchanged">If true, files that don't need cropping or scaling are skipped (not copied/overwritten).</param>
+    /// <param name="skipUnchanged">If true, files that don't need adjustment are skipped (not copied/overwritten).</param>
+    /// <param name="fitMode">How to fit images to buckets: Crop (remove pixels) or Pad (add canvas).</param>
+    /// <param name="paddingOptions">Options for padding when using Pad mode. Ignored for Crop mode.</param>
     /// <param name="progress">Optional progress callback.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Result of the cropping operation.</returns>
+    /// <returns>Result of the operation.</returns>
     Task<CropOperationResult> ProcessImagesAsync(
         string sourceFolderPath,
         string? targetFolderPath,
         IEnumerable<BucketDefinition>? allowedBuckets = null,
         int? maxLongestSide = null,
         bool skipUnchanged = false,
+        FitMode fitMode = FitMode.Crop,
+        PaddingOptions? paddingOptions = null,
         IProgress<CropProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }

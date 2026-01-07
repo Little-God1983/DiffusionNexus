@@ -1,6 +1,69 @@
 namespace DiffusionNexus.Domain.Autocropper;
 
 /// <summary>
+/// Specifies how images should be adjusted to fit aspect ratio buckets.
+/// </summary>
+public enum FitMode
+{
+    /// <summary>
+    /// Crop the image to fit the target aspect ratio (removes pixels).
+    /// </summary>
+    Crop,
+
+    /// <summary>
+    /// Pad the image to fit the target aspect ratio (adds canvas).
+    /// </summary>
+    Pad
+}
+
+/// <summary>
+/// Specifies how to fill the padding area when using Pad mode.
+/// </summary>
+public enum PaddingFillMode
+{
+    /// <summary>
+    /// Fill with a solid color (default: black).
+    /// </summary>
+    SolidColor,
+
+    /// <summary>
+    /// Fill with white.
+    /// </summary>
+    White,
+
+    /// <summary>
+    /// Fill with a blurred/stretched version of the image edges.
+    /// </summary>
+    BlurFill,
+
+    /// <summary>
+    /// Mirror/reflect the image edges.
+    /// </summary>
+    Mirror
+}
+
+/// <summary>
+/// Options for padding when using Pad fit mode.
+/// </summary>
+public class PaddingOptions
+{
+    /// <summary>
+    /// How to fill the padding area.
+    /// </summary>
+    public PaddingFillMode FillMode { get; set; } = PaddingFillMode.SolidColor;
+
+    /// <summary>
+    /// The color to use for SolidColor fill mode (ARGB hex string, e.g., "#FF000000" for black).
+    /// </summary>
+    public string FillColor { get; set; } = "#FF000000";
+
+    /// <summary>
+    /// Blur radius for BlurFill mode (higher = more blur).
+    /// </summary>
+    public float BlurRadius { get; set; } = 50f;
+}
+
+/// <summary>
 /// Configuration for the autocropper feature containing bucket and resolution definitions.
 /// </summary>
 public class AutocropperConfiguration

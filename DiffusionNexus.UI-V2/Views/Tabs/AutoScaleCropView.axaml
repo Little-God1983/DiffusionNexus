@@ -1,11 +1,17 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:vms="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
              x:Class="DiffusionNexus.UI.Views.Tabs.AutoScaleCropView"
              x:DataType="vm:AutoScaleCropTabViewModel">
+
+    <UserControl.Resources>
+        <converters:BoolToAccentBrushConverter x:Key="BoolToAccentBrushConverter"/>
+    </UserControl.Resources>
 
     <UserControl.Styles>
         <Style Selector="Border.Card">
@@ -63,6 +69,167 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
 
+            <!-- Source Selection Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Image Source" Classes="Header" Margin="0"/>
+
+                    <!-- Dataset Selection -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Select Dataset" FontWeight="SemiBold"/>
+                        <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="8">
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding Datasets}"
+                                      SelectedItem="{Binding SelectedDataset}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      PlaceholderText="Select a dataset..."
+                                      HorizontalAlignment="Stretch">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vms:DatasetCardViewModel">
+                                        <TextBlock Text="{Binding Name}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding VersionItems}"
+                                      SelectedItem="{Binding SelectedVersion}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                      MinWidth="140">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vms:EditorVersionItem">
+                                        <TextBlock Text="{Binding DisplayText}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button Grid.Column="3"
+                                    Content="Clear"
+                                    Command="{Binding ClearDatasetSelectionCommand}"
+                                    IsEnabled="{Binding !IsProcessing}"
+                                    IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- OR Separator -->
+                    <Grid ColumnDefinitions="*,Auto,*" Margin="0,8">
+                        <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
+                        <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
+                        <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
+                    </Grid>
+
+                    <!-- Source Folder Selection -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Source Folder" FontWeight="SemiBold"/>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding SourceFolder}"
+                                     Watermark="Select a folder containing images..."
+                                     IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="1"
+                                    x:Name="BrowseSourceButton"
+                                    Content="Browse..."
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Image Count Display -->
+                    <TextBlock Classes="SubText" Margin="0,8,0,0">
+                        <TextBlock.Text>
+                            <MultiBinding StringFormat="Found {0} images in {1} files">
+                                <Binding Path="ImageFiles"/>
+                                <Binding Path="TotalFiles"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Fit Mode Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Fit Mode" Classes="Header" Margin="0"/>
+                    
+                    <!-- Crop vs Pad Toggle - Side by Side -->
+                    <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,8">
+                        <Border Grid.Column="0"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                CornerRadius="8"
+                                Padding="16"
+                                BorderThickness="2"
+                                BorderBrush="{Binding !UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
+                            <RadioButton GroupName="FitMode"
+                                         IsChecked="{Binding !UsePadding}"
+                                         IsEnabled="{Binding !IsProcessing}">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="✂️" FontSize="20"/>
+                                        <TextBlock Text="Crop" FontSize="16" FontWeight="Bold"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Remove pixels to fit aspect ratio. May cut off parts of the image." 
+                                               Classes="SubText" 
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </Border>
+                        
+                        <Border Grid.Column="2"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                CornerRadius="8"
+                                Padding="16"
+                                BorderThickness="2"
+                                BorderBrush="{Binding UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
+                            <RadioButton GroupName="FitMode"
+                                         IsChecked="{Binding UsePadding}"
+                                         IsEnabled="{Binding !IsProcessing}">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="🖼️" FontSize="20"/>
+                                        <TextBlock Text="Pad (Letterbox)" FontSize="16" FontWeight="Bold"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Add canvas to preserve entire image. Nothing is lost." 
+                                               Classes="SubText" 
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </Border>
+                    </Grid>
+
+                    <!-- Padding Fill Options (only visible when Pad is selected) -->
+                    <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                            CornerRadius="6"
+                            Padding="12"
+                            IsVisible="{Binding IsPadMode}">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <StackPanel Grid.Column="0" Spacing="8">
+                                <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
+                                <ComboBox ItemsSource="{Binding PaddingFillOptions}"
+                                          SelectedItem="{Binding SelectedPaddingFill}"
+                                          IsEnabled="{Binding !IsProcessing}"
+                                          MinWidth="160">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate DataType="vm:PaddingFillOption">
+                                            <TextBlock Text="{Binding DisplayName}"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" 
+                                       Classes="SubText" 
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Text>
+                                    <Binding Path="SelectedPaddingFill.Mode">
+                                        <Binding.Converter>
+                                            <vm:PaddingFillDescriptionConverter/>
+                                        </Binding.Converter>
+                                    </Binding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Bucket Selection Card -->
             <Border Classes="Card">
                 <StackPanel Spacing="12">
@@ -71,9 +238,15 @@
                             <TextBlock Text="Aspect Ratio Buckets"
                                        Classes="Header"
                                        Margin="0"/>
-                            <TextBlock Text="Images will be cropped to the nearest bucket."
-                                       Classes="SubText"
-                                       Margin="0,4,0,0"/>
+                            <TextBlock Classes="SubText" Margin="0,4,0,0">
+                                <TextBlock.Text>
+                                    <Binding Path="UsePadding">
+                                        <Binding.Converter>
+                                            <vm:BucketDescriptionConverter/>
+                                        </Binding.Converter>
+                                    </Binding>
+                                </TextBlock.Text>
+                            </TextBlock>
                         </StackPanel>
                         <Button Grid.Column="1"
                                 Content="Select All"
@@ -135,59 +308,87 @@
                                    VerticalAlignment="Center"
                                    Opacity="0.7"/>
                     </Grid>
-                    <TextBlock Text="Images will be cropped first, then scaled down by longest side"
-                               Classes="SubText"/>
-                </StackPanel>
-            </Border>
-
-            <!-- Source Folder Card -->
-            <Border Classes="Card">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Source Folder" Classes="Header"/>
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                        <TextBox Grid.Column="0"
-                                 Text="{Binding SourceFolder}"
-                                 Watermark="Select a folder containing images..."
-                                 IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="1"
-                                x:Name="BrowseSourceButton"
-                                Content="Browse..."
-                                IsEnabled="{Binding !IsProcessing}"/>
-                    </Grid>
                     <TextBlock Classes="SubText">
                         <TextBlock.Text>
-                            <MultiBinding StringFormat="Found {0} images in {1} files">
-                                <Binding Path="ImageFiles"/>
-                                <Binding Path="TotalFiles"/>
-                            </MultiBinding>
+                            <Binding Path="UsePadding">
+                                <Binding.Converter>
+                                    <vm:ScaleDescriptionConverter/>
+                                </Binding.Converter>
+                            </Binding>
                         </TextBlock.Text>
                     </TextBlock>
                 </StackPanel>
             </Border>
 
-            <!-- Target Folder Card -->
+            <!-- Target Destination Card -->
             <Border Classes="Card">
-                <StackPanel Spacing="12">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="Target Folder" Classes="Header" Margin="0"/>
-                        <TextBlock Text="(Optional - leave empty to overwrite originals)"
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Target Destination" Classes="Header" Margin="0"/>
+
+                    <!-- Increment Version Option (only when dataset is selected) -->
+                    <StackPanel Spacing="8" IsVisible="{Binding CanIncrementVersion}">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <CheckBox Content="{Binding IncrementVersionDisplayText}"
+                                      IsChecked="{Binding UseIncrementVersion}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      FontWeight="SemiBold"/>
+                            <TextBlock Text="(Recommended - tracked by DiffusionNexus)"
+                                       Classes="SubText"
+                                       VerticalAlignment="Center"
+                                       Foreground="#4ade80"/>
+                        </StackPanel>
+                        <TextBlock Text="Creates a new version in the selected dataset with the processed images."
                                    Classes="SubText"
-                                   VerticalAlignment="Center"/>
+                                   Margin="28,0,0,0"/>
                     </StackPanel>
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <TextBox Grid.Column="0"
-                                 Text="{Binding TargetFolder}"
-                                 Watermark="Same as source folder"
-                                 IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="1"
-                                x:Name="BrowseTargetButton"
-                                Content="Browse..."
-                                IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="2"
-                                Content="Clear"
-                                Command="{Binding ClearTargetFolderCommand}"
-                                IsEnabled="{Binding !IsProcessing}"/>
+
+                    <!-- OR Separator (only when dataset is selected) -->
+                    <Grid ColumnDefinitions="*,Auto,*" Margin="0,8" IsVisible="{Binding CanIncrementVersion}">
+                        <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
+                        <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
+                        <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
                     </Grid>
+
+                    <!-- Target Folder Selection -->
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Target Folder" FontWeight="SemiBold"/>
+                            <TextBlock Text="(Optional - leave empty to overwrite originals)"
+                                       Classes="SubText"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding TargetFolder}"
+                                     Watermark="Same as source folder"
+                                     IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="1"
+                                    x:Name="BrowseTargetButton"
+                                    Content="Browse..."
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="2"
+                                    Content="Clear"
+                                    Command="{Binding ClearTargetFolderCommand}"
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                        </Grid>
+
+                        <!-- Warning for external folder -->
+                        <Border Background="#443322"
+                                CornerRadius="6"
+                                Padding="12"
+                                Margin="0,8,0,0"
+                                IsVisible="{Binding TargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="⚠️ External Folder"
+                                           FontWeight="SemiBold"
+                                           Foreground="#fbbf24"/>
+                                <TextBlock Text="Files saved to this folder will not be tracked by DiffusionNexus. Consider using 'Create New Version' if working with a dataset."
+                                           TextWrapping="Wrap"
+                                           Opacity="0.9"
+                                           FontSize="12"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
 
                     <!-- Overwrite Confirmation -->
                     <Border Background="#442222"
@@ -195,7 +396,7 @@
                             Padding="12"
                             IsVisible="{Binding IsOverwriteMode}">
                         <StackPanel Spacing="8">
-                            <TextBlock Text="?? Warning: Overwrite Mode"
+                            <TextBlock Text="⚠️ Warning: Overwrite Mode"
                                        FontWeight="SemiBold"
                                        Foreground="#ff6666"/>
                             <TextBlock Text="Images will be overwritten in place. This cannot be undone!"
@@ -253,7 +454,7 @@
                         Spacing="16"
                         Margin="0,16">
                 <Button Classes="primary-btn"
-                        Content="?? Start Processing"
+                        Content="🚀 Start Processing"
                         Command="{Binding StartCommand}"
                         IsVisible="{Binding !IsProcessing}"/>
                 <Button Content="Cancel"
