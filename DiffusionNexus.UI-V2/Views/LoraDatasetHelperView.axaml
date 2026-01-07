@@ -771,8 +771,8 @@
                                 Background="#2A2A2A"
                                 CornerRadius="4"
                                 ClipToBounds="True"
-                                BorderBrush="#444"
-                                BorderThickness="2">
+                                BorderBrush="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionBorder}}"
+                                BorderThickness="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionThickness}}">
                           <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
                                  Stretch="UniformToFill"/>
                         </Border>

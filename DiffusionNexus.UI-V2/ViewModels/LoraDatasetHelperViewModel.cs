@@ -1911,6 +1911,17 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             return;
         }
 
+        // Clear previous editor selection
+        foreach (var img in EditorDatasetImages)
+        {
+            img.IsEditorSelected = false;
+        }
+
+        // Mark this image as selected in the editor
+        image.IsEditorSelected = true;
+        _selectedEditorImage = image;
+        OnPropertyChanged(nameof(SelectedEditorImage));
+
         ImageEditor.LoadImage(image.ImagePath);
         StatusMessage = $"Editing: {image.FullFileName}";
     }
