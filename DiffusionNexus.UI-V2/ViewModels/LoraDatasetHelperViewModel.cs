@@ -1303,7 +1303,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
-    private void SendToImageEdit(DatasetImageViewModel? image)
+    private async void SendToImageEdit(DatasetImageViewModel? image)
     {
         if (image is null) return;
 
@@ -1314,8 +1314,62 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             return;
         }
 
+        // Determine which dataset and version this image belongs to
+        if (ActiveDataset is not null)
+        {
+            // Find the matching dataset in the Datasets collection (for the editor dropdown)
+            var editorDataset = Datasets.FirstOrDefault(d => 
+                string.Equals(d.FolderPath, ActiveDataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+            
+            if (editorDataset is not null)
+            {
+                // Set the dataset (this will trigger version loading)
+                _selectedEditorDataset = editorDataset;
+                OnPropertyChanged(nameof(SelectedEditorDataset));
+                
+                // Wait for version items to be loaded
+                await LoadEditorDatasetVersionsAsync();
+                
+                // Find and select the matching version
+                var currentVersion = ActiveDataset.CurrentVersion;
+                var versionItem = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersion);
+                
+                if (versionItem is not null)
+                {
+                    // Set the version (this will trigger image loading)
+                    _selectedEditorVersion = versionItem;
+                    OnPropertyChanged(nameof(SelectedEditorVersion));
+                    
+                    // Wait for images to be loaded
+                    await LoadEditorDatasetImagesAsync();
+                    
+                    // Find and select the image in the thumbnail list
+                    var editorImage = EditorDatasetImages.FirstOrDefault(img => 
+                        string.Equals(img.ImagePath, image.ImagePath, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (editorImage is not null)
+                    {
+                        // Clear previous editor selection
+                        foreach (var img in EditorDatasetImages)
+                        {
+                            img.IsEditorSelected = false;
+                        }
+                        
+                        // Mark this image as selected (shows blue outline)
+                        editorImage.IsEditorSelected = true;
+                        _selectedEditorImage = editorImage;
+                        OnPropertyChanged(nameof(SelectedEditorImage));
+                    }
+                }
+            }
+        }
+
+        // Load the image into the editor
         ImageEditor.LoadImage(image.ImagePath);
-        SelectedTabIndex = 1; // Switch to Image Edit tab
+        
+        // Switch to Image Edit tab
+        SelectedTabIndex = 1;
+        
         StatusMessage = $"Editing: {image.FullFileName}";
     }
 
@@ -1332,7 +1386,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         await DialogService.ShowImageViewerDialogAsync(
             DatasetImages,
             index,
-            onSendToImageEditor: SendToImageEdit,
+            onSendToImageEditor: img => SendToImageEdit(img),
             onDeleteRequested: OnImageDeleteRequested);
     }
 
