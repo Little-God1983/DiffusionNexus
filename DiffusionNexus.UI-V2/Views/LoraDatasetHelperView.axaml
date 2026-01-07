@@ -817,7 +817,7 @@
                 
                 <!-- Version Selector -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center"
-                            IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            IsEnabled="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
                   <TextBlock Text="Version:"
                              VerticalAlignment="Center"
                              Opacity="0.7"/>
