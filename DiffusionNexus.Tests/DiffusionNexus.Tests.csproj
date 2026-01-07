@@ -30,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
+    <ProjectReference Include="..\DiffusionNexus.UI-V2\DiffusionNexus.UI-V2.csproj" />
   </ItemGroup>
 
   <ItemGroup>
