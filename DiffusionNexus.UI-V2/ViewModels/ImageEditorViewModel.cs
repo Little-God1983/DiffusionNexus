@@ -245,6 +245,11 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand MarkApprovedCommand { get; }
     public IRelayCommand MarkRejectedCommand { get; }
     public IRelayCommand ClearRatingCommand { get; }
+    public IRelayCommand RotateLeftCommand { get; }
+    public IRelayCommand RotateRightCommand { get; }
+    public IRelayCommand Rotate180Command { get; }
+    public IRelayCommand FlipHorizontalCommand { get; }
+    public IRelayCommand FlipVerticalCommand { get; }
 
     #endregion
 
@@ -263,6 +268,11 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
     public event EventHandler? ZoomToActualRequested;
+    public event EventHandler? RotateLeftRequested;
+    public event EventHandler? RotateRightRequested;
+    public event EventHandler? Rotate180Requested;
+    public event EventHandler? FlipHorizontalRequested;
+    public event EventHandler? FlipVerticalRequested;
 
     /// <summary>
     /// Event raised when an image save completes successfully.
@@ -295,6 +305,13 @@ public partial class ImageEditorViewModel : ObservableObject
         MarkApprovedCommand = new RelayCommand(ExecuteMarkApproved, () => HasImage && _selectedDatasetImage is not null);
         MarkRejectedCommand = new RelayCommand(ExecuteMarkRejected, () => HasImage && _selectedDatasetImage is not null);
         ClearRatingCommand = new RelayCommand(ExecuteClearRating, () => HasImage && _selectedDatasetImage is not null && !IsUnrated);
+
+        // Transform commands
+        RotateLeftCommand = new RelayCommand(ExecuteRotateLeft, () => HasImage);
+        RotateRightCommand = new RelayCommand(ExecuteRotateRight, () => HasImage);
+        Rotate180Command = new RelayCommand(ExecuteRotate180, () => HasImage);
+        FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
+        FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
     }
 
     /// <summary>Loads an image by path.</summary>
@@ -447,6 +464,40 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
 
+    #region Transform Command Implementations
+
+    private void ExecuteRotateLeft()
+    {
+        RotateLeftRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 90° left";
+    }
+
+    private void ExecuteRotateRight()
+    {
+        RotateRightRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 90° right";
+    }
+
+    private void ExecuteRotate180()
+    {
+        Rotate180Requested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 180°";
+    }
+
+    private void ExecuteFlipHorizontal()
+    {
+        FlipHorizontalRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Flipped horizontally";
+    }
+
+    private void ExecuteFlipVertical()
+    {
+        FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Flipped vertically";
+    }
+
+    #endregion
+
     #region Rating Command Implementations
 
     private void ExecuteMarkApproved()
@@ -542,6 +593,11 @@ public partial class ImageEditorViewModel : ObservableObject
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
         ZoomToActualCommand.NotifyCanExecuteChanged();
+        RotateLeftCommand.NotifyCanExecuteChanged();
+        RotateRightCommand.NotifyCanExecuteChanged();
+        Rotate180Command.NotifyCanExecuteChanged();
+        FlipHorizontalCommand.NotifyCanExecuteChanged();
+        FlipVerticalCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 

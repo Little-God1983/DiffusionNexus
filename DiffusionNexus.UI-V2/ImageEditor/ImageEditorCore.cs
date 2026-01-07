@@ -563,6 +563,156 @@ public class ImageEditorCore : IDisposable
         _panY += deltaY;
     }
 
+    /// <summary>
+    /// Rotates the image 90 degrees clockwise.
+    /// </summary>
+    /// <returns>True if rotation was successful.</returns>
+    public bool RotateRight()
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Height, _workingBitmap.Width);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(rotated.Width, 0);
+                canvas.RotateDegrees(90);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Rotates the image 90 degrees counter-clockwise.
+    /// </summary>
+    /// <returns>True if rotation was successful.</returns>
+    public bool RotateLeft()
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Height, _workingBitmap.Width);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(0, rotated.Height);
+                canvas.RotateDegrees(-90);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Rotates the image 180 degrees.
+    /// </summary>
+    /// <returns>True if rotation was successful.</returns>
+    public bool Rotate180()
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(rotated.Width, rotated.Height);
+                canvas.RotateDegrees(180);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Flips the image horizontally (mirror).
+    /// </summary>
+    /// <returns>True if flip was successful.</returns>
+    public bool FlipHorizontal()
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        try
+        {
+            var flipped = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(flipped))
+            {
+                canvas.Translate(flipped.Width, 0);
+                canvas.Scale(-1, 1);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+
+            _workingBitmap.Dispose();
+            _workingBitmap = flipped;
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Flips the image vertically.
+    /// </summary>
+    /// <returns>True if flip was successful.</returns>
+    public bool FlipVertical()
+    {
+        if (_workingBitmap is null)
+            return false;
+
+        try
+        {
+            var flipped = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(flipped))
+            {
+                canvas.Translate(0, flipped.Height);
+                canvas.Scale(1, -1);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+
+            _workingBitmap.Dispose();
+            _workingBitmap = flipped;
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     protected virtual void OnZoomChanged()
     {
         ZoomChanged?.Invoke(this, EventArgs.Empty);

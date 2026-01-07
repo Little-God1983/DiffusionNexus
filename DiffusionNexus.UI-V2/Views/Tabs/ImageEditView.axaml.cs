@@ -157,6 +157,32 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.ZoomToActual();
         };
 
+        // Handle transform requests
+        imageEditor.RotateLeftRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.RotateLeft();
+        };
+
+        imageEditor.RotateRightRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.RotateRight();
+        };
+
+        imageEditor.Rotate180Requested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.Rotate180();
+        };
+
+        imageEditor.FlipHorizontalRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.FlipHorizontal();
+        };
+
+        imageEditor.FlipVerticalRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.FlipVertical();
+        };
+
         // Handle save requests
         imageEditor.SaveAsNewRequested += (_, _) =>
         {

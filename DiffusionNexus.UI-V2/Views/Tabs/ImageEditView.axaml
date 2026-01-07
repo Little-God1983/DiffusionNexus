@@ -50,7 +50,7 @@
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
       <!-- Toolbar -->
       <Border Grid.Row="0" Background="#1E1E1E" Padding="16,8" BorderBrush="#333" BorderThickness="0,0,0,1">
-        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
           <!-- Dataset and Version stacked vertically -->
           <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -97,20 +97,29 @@
           <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
             <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"/>
           </StackPanel>
-          <Border Grid.Column="6"/>
-          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+          <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <!-- Transform buttons -->
+          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+            <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90°" FontSize="12" FontWeight="Bold"/>
+            <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90°" FontSize="12" FontWeight="Bold"/>
+            <Button Content="180" Command="{Binding ImageEditor.Rotate180Command}" Padding="8,6" ToolTip.Tip="Rotate 180°" FontSize="11"/>
+            <Button Content="H" Command="{Binding ImageEditor.FlipHorizontalCommand}" Padding="10,6" ToolTip.Tip="Flip Horizontal" FontSize="12" FontWeight="Bold"/>
+            <Button Content="V" Command="{Binding ImageEditor.FlipVerticalCommand}" Padding="10,6" ToolTip.Tip="Flip Vertical" FontSize="12" FontWeight="Bold"/>
+          </StackPanel>
+          <Border Grid.Column="8"/>
+          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
             <Button Content="Apply" Command="{Binding ImageEditor.ApplyCropCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Cancel" Command="{Binding ImageEditor.CancelCropCommand}" Padding="12,6"/>
           </StackPanel>
-          <Border Grid.Column="8" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
           <!-- Save buttons - text labels instead of emoji -->
-          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+          <StackPanel Grid.Column="11" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
             <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
           </StackPanel>
-          <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
-          <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"/>
-          <Button Grid.Column="12" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"/>
+          <Border Grid.Column="12" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <Button Grid.Column="13" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"/>
+          <Button Grid.Column="14" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"/>
         </Grid>
       </Border>
       
