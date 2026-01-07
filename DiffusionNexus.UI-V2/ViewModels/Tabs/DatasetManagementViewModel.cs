@@ -1,0 +1,1540 @@
+using System.Collections.ObjectModel;
+using System.IO.Compression;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
+
+namespace DiffusionNexus.UI.ViewModels.Tabs;
+
+/// <summary>
+/// ViewModel for the Dataset Management tab in the LoRA Dataset Helper.
+/// Handles dataset listing, creation, deletion, image management, and selection operations.
+/// 
+/// <para>
+/// <b>Responsibilities:</b>
+/// <list type="bullet">
+/// <item>Loading and displaying datasets</item>
+/// <item>Creating and deleting datasets</item>
+/// <item>Opening datasets and displaying images</item>
+/// <item>Managing image selection and bulk operations</item>
+/// <item>Category and type assignment</item>
+/// <item>Version management</item>
+/// </list>
+/// </para>
+/// 
+/// <para>
+/// <b>Event Integration:</b>
+/// This ViewModel publishes events via <see cref="IDatasetEventAggregator"/> when:
+/// <list type="bullet">
+/// <item>Datasets are created, deleted, or modified</item>
+/// <item>Images are added, deleted, or have their ratings changed</item>
+/// <item>Navigation to Image Editor is requested</item>
+/// </list>
+/// </para>
+/// </summary>
+public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware
+{
+    private readonly IAppSettingsService _settingsService;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
+    private readonly IDatasetEventAggregator _eventAggregator;
+    private readonly IDatasetState _state;
+
+    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+
+    private DatasetCategoryViewModel? _selectedCategory;
+    private DatasetType? _selectedType;
+
+    /// <summary>
+    /// Gets or sets the dialog service for showing dialogs.
+    /// </summary>
+    public IDialogService? DialogService { get; set; }
+
+    #region Observable Properties (Delegated to State)
+
+    /// <summary>
+    /// Indicates whether the dataset storage path is configured.
+    /// </summary>
+    public bool IsStorageConfigured => _state.IsStorageConfigured;
+
+    /// <summary>
+    /// Whether we are currently viewing a dataset's contents (vs overview).
+    /// </summary>
+    public bool IsViewingDataset => _state.IsViewingDataset;
+
+    /// <summary>
+    /// The currently selected/active dataset.
+    /// </summary>
+    public DatasetCardViewModel? ActiveDataset => _state.ActiveDataset;
+
+    /// <summary>
+    /// Whether images are currently loading.
+    /// </summary>
+    public bool IsLoading
+    {
+        get => _state.IsLoading;
+        set => _state.IsLoading = value;
+    }
+
+    /// <summary>
+    /// Whether there are unsaved caption changes.
+    /// </summary>
+    public bool HasUnsavedChanges
+    {
+        get => _state.HasUnsavedChanges;
+        set => _state.HasUnsavedChanges = value;
+    }
+
+    /// <summary>
+    /// Whether to flatten version folders in the overview.
+    /// </summary>
+    public bool FlattenVersions
+    {
+        get => _state.FlattenVersions;
+        set
+        {
+            if (_state.FlattenVersions != value)
+            {
+                _state.FlattenVersions = value;
+                OnPropertyChanged();
+                _ = LoadDatasetsAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Indicates whether a file dialog is currently open.
+    /// </summary>
+    public bool IsFileDialogOpen
+    {
+        get => _state.IsFileDialogOpen;
+        set => _state.IsFileDialogOpen = value;
+    }
+
+    /// <summary>
+    /// Currently selected version number for the active dataset.
+    /// </summary>
+    public int SelectedVersion
+    {
+        get => ActiveDataset?.CurrentVersion ?? 1;
+        set
+        {
+            if (ActiveDataset is not null && ActiveDataset.CurrentVersion != value)
+            {
+                _ = SwitchVersionAsync(value);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the active dataset has no media files.
+    /// </summary>
+    public bool HasNoImages => _state.HasNoImages;
+
+    /// <summary>
+    /// Number of currently selected images.
+    /// </summary>
+    public int SelectionCount => _state.SelectionCount;
+
+    /// <summary>
+    /// Whether any images are currently selected.
+    /// </summary>
+    public bool HasSelection => _state.HasSelection;
+
+    /// <summary>
+    /// Text describing the current selection.
+    /// </summary>
+    public string SelectionText => SelectionCount == 1 ? "1 selected" : $"{SelectionCount} selected";
+
+    /// <summary>
+    /// Selected category for the active dataset.
+    /// </summary>
+    public DatasetCategoryViewModel? SelectedCategory
+    {
+        get => _selectedCategory;
+        set
+        {
+            if (SetProperty(ref _selectedCategory, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.CategoryId = value?.Id;
+                ActiveDataset.CategoryName = value?.Name;
+                ActiveDataset.SaveMetadata();
+                _state.StatusMessage = value is not null
+                    ? $"Category set to '{value.Name}'"
+                    : "Category cleared";
+
+                _eventAggregator.PublishDatasetMetadataChanged(new DatasetMetadataChangedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ChangeType = DatasetMetadataChangeType.Category
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selected type for the active dataset.
+    /// </summary>
+    public DatasetType? SelectedType
+    {
+        get => _selectedType;
+        set
+        {
+            if (SetProperty(ref _selectedType, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.Type = value;
+                ActiveDataset.SaveMetadata();
+                _state.StatusMessage = value is not null
+                    ? $"Type set to '{value.Value.GetDisplayName()}'"
+                    : "Type cleared";
+
+                _eventAggregator.PublishDatasetMetadataChanged(new DatasetMetadataChangedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ChangeType = DatasetMetadataChangeType.Type
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Status message to display to the user.
+    /// </summary>
+    public string? StatusMessage
+    {
+        get => _state.StatusMessage;
+        set => _state.StatusMessage = value;
+    }
+
+    #endregion
+
+    #region Collections (Delegated to State)
+
+    /// <summary>
+    /// Collection of dataset cards.
+    /// </summary>
+    public ObservableCollection<DatasetCardViewModel> Datasets => _state.Datasets;
+
+    /// <summary>
+    /// Collection of datasets grouped by category.
+    /// </summary>
+    public ObservableCollection<DatasetGroupViewModel> GroupedDatasets => _state.GroupedDatasets;
+
+    /// <summary>
+    /// Collection of images in the active dataset.
+    /// </summary>
+    public ObservableCollection<DatasetImageViewModel> DatasetImages => _state.DatasetImages;
+
+    /// <summary>
+    /// Available dataset categories.
+    /// </summary>
+    public ObservableCollection<DatasetCategoryViewModel> AvailableCategories => _state.AvailableCategories;
+
+    /// <summary>
+    /// Available dataset types.
+    /// </summary>
+    public IReadOnlyList<DatasetType> AvailableTypes { get; } = DatasetTypeExtensions.GetAll();
+
+    /// <summary>
+    /// Available versions for the active dataset.
+    /// </summary>
+    public ObservableCollection<int> AvailableVersions => _state.AvailableVersions;
+
+    #endregion
+
+    #region Commands
+
+    public IAsyncRelayCommand CheckStorageConfigurationCommand { get; }
+    public IAsyncRelayCommand LoadDatasetsCommand { get; }
+    public IAsyncRelayCommand<DatasetCardViewModel?> OpenDatasetCommand { get; }
+    public IAsyncRelayCommand GoToOverviewCommand { get; }
+    public IAsyncRelayCommand CreateDatasetCommand { get; }
+    public IAsyncRelayCommand AddImagesCommand { get; }
+    public IAsyncRelayCommand IncrementVersionCommand { get; }
+    public IRelayCommand SaveAllCaptionsCommand { get; }
+    public IAsyncRelayCommand<DatasetCardViewModel?> DeleteDatasetCommand { get; }
+    public IRelayCommand OpenContainingFolderCommand { get; }
+    public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
+    public IAsyncRelayCommand ExportDatasetCommand { get; }
+    public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
+
+    // Selection commands
+    public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
+    public IRelayCommand SelectAllCommand { get; }
+    public IRelayCommand ClearSelectionCommand { get; }
+    public IRelayCommand SelectApprovedCommand { get; }
+    public IRelayCommand SelectRejectedCommand { get; }
+    public IRelayCommand ApproveSelectedCommand { get; }
+    public IRelayCommand RejectSelectedCommand { get; }
+    public IRelayCommand ClearRatingSelectedCommand { get; }
+    public IAsyncRelayCommand DeleteSelectedCommand { get; }
+
+    #endregion
+
+    #region Constructors
+
+    /// <summary>
+    /// Creates a new instance of DatasetManagementViewModel.
+    /// </summary>
+    public DatasetManagementViewModel(
+        IAppSettingsService settingsService,
+        IDatasetEventAggregator eventAggregator,
+        IDatasetState state,
+        IVideoThumbnailService? videoThumbnailService = null)
+    {
+        _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        _videoThumbnailService = videoThumbnailService;
+
+        // Subscribe to state changes
+        _state.StateChanged += OnStateChanged;
+
+        // Subscribe to events from other components
+        _eventAggregator.ImageSaved += OnImageSaved;
+        _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
+
+        // Initialize commands
+        CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
+        LoadDatasetsCommand = new AsyncRelayCommand(LoadDatasetsAsync);
+        OpenDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(OpenDatasetAsync);
+        GoToOverviewCommand = new AsyncRelayCommand(GoToOverviewAsync);
+        CreateDatasetCommand = new AsyncRelayCommand(CreateDatasetAsync);
+        AddImagesCommand = new AsyncRelayCommand(AddImagesAsync);
+        IncrementVersionCommand = new AsyncRelayCommand(IncrementVersionAsync);
+        SaveAllCaptionsCommand = new RelayCommand(SaveAllCaptions);
+        DeleteDatasetCommand = new AsyncRelayCommand<DatasetCardViewModel?>(DeleteDatasetAsync);
+        OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
+        SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
+        ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
+        OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
+
+        // Selection commands
+        ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
+        SelectAllCommand = new RelayCommand(SelectAll);
+        ClearSelectionCommand = new RelayCommand(ClearSelection);
+        ApproveSelectedCommand = new RelayCommand(ApproveSelected);
+        RejectSelectedCommand = new RelayCommand(RejectSelected);
+        ClearRatingSelectedCommand = new RelayCommand(ClearRatingSelected);
+        SelectApprovedCommand = new RelayCommand(SelectApproved);
+        SelectRejectedCommand = new RelayCommand(SelectRejected);
+        DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
+    }
+
+    /// <summary>
+    /// Design-time constructor.
+    /// </summary>
+    public DatasetManagementViewModel() : this(null!, null!, null!, null)
+    {
+    }
+
+    #endregion
+
+    #region Event Handlers
+
+    private void OnStateChanged(object? sender, DatasetStateChangedEventArgs e)
+    {
+        // Forward property changes to UI
+        switch (e.PropertyName)
+        {
+            case nameof(IDatasetState.IsStorageConfigured):
+                OnPropertyChanged(nameof(IsStorageConfigured));
+                break;
+            case nameof(IDatasetState.IsViewingDataset):
+                OnPropertyChanged(nameof(IsViewingDataset));
+                OnPropertyChanged(nameof(HasNoImages));
+                break;
+            case nameof(IDatasetState.ActiveDataset):
+                OnPropertyChanged(nameof(ActiveDataset));
+                OnPropertyChanged(nameof(SelectedVersion));
+                break;
+            case nameof(IDatasetState.IsLoading):
+                OnPropertyChanged(nameof(IsLoading));
+                break;
+            case nameof(IDatasetState.HasUnsavedChanges):
+                OnPropertyChanged(nameof(HasUnsavedChanges));
+                break;
+            case nameof(IDatasetState.StatusMessage):
+                OnPropertyChanged(nameof(StatusMessage));
+                break;
+            case nameof(IDatasetState.SelectionCount):
+                OnPropertyChanged(nameof(SelectionCount));
+                OnPropertyChanged(nameof(HasSelection));
+                OnPropertyChanged(nameof(SelectionText));
+                break;
+            case nameof(IDatasetState.HasNoImages):
+                OnPropertyChanged(nameof(HasNoImages));
+                break;
+        }
+    }
+
+    private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
+    {
+        // Refresh the current dataset if we're viewing it
+        if (ActiveDataset is not null && IsViewingDataset)
+        {
+            ActiveDataset.RefreshImageInfo();
+            await RefreshActiveDatasetAsync();
+        }
+    }
+
+    private void OnImageRatingChanged(object? sender, ImageRatingChangedEventArgs e)
+    {
+        // Rating changes are already reflected in the DatasetImageViewModel
+        // No additional action needed here
+    }
+
+    #endregion
+
+    #region Command Implementations
+
+    private async Task CheckStorageConfigurationAsync()
+    {
+        if (_settingsService is null) return;
+
+        var settings = await _settingsService.GetSettingsAsync();
+        var isConfigured = !string.IsNullOrWhiteSpace(settings.DatasetStoragePath)
+                           && Directory.Exists(settings.DatasetStoragePath);
+        _state.SetStorageConfigured(isConfigured);
+
+        // Load categories
+        await LoadCategoriesAsync(settings);
+
+        if (isConfigured)
+        {
+            await LoadDatasetsAsync();
+        }
+    }
+
+    private async Task LoadCategoriesAsync(AppSettings? settings = null)
+    {
+        if (_settingsService is null) return;
+
+        settings ??= await _settingsService.GetSettingsAsync();
+
+        AvailableCategories.Clear();
+        foreach (var category in settings.DatasetCategories.OrderBy(c => c.Order))
+        {
+            AvailableCategories.Add(new DatasetCategoryViewModel
+            {
+                Id = category.Id,
+                Name = category.Name,
+                Description = category.Description,
+                IsDefault = category.IsDefault
+            });
+        }
+    }
+
+    private async Task LoadDatasetsAsync()
+    {
+        if (_settingsService is null) return;
+
+        IsLoading = true;
+        try
+        {
+            var settings = await _settingsService.GetSettingsAsync();
+            if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+            {
+                _state.SetStorageConfigured(false);
+                return;
+            }
+
+            _state.SetStorageConfigured(true);
+            Datasets.Clear();
+            GroupedDatasets.Clear();
+
+            var folders = Directory.GetDirectories(settings.DatasetStoragePath);
+            foreach (var folder in folders.OrderBy(f => Path.GetFileName(f)))
+            {
+                var card = DatasetCardViewModel.FromFolder(folder);
+                Datasets.Add(card);
+            }
+
+            // Build category groups
+            var sortOrder = 0;
+            foreach (var category in AvailableCategories)
+            {
+                var group = DatasetGroupViewModel.FromCategory(category, sortOrder++);
+                var categoryDatasets = Datasets.Where(d => d.CategoryId == category.Id);
+
+                foreach (var dataset in categoryDatasets)
+                {
+                    AddDatasetCardsToGroup(group, dataset);
+                }
+
+                if (group.HasDatasets)
+                {
+                    GroupedDatasets.Add(group);
+                }
+            }
+
+            // Add uncategorized datasets
+            var uncategorizedDatasets = Datasets.Where(d => d.CategoryId is null).ToList();
+            if (uncategorizedDatasets.Count > 0)
+            {
+                var uncategorized = DatasetGroupViewModel.CreateUncategorized(sortOrder);
+                foreach (var dataset in uncategorizedDatasets)
+                {
+                    AddDatasetCardsToGroup(uncategorized, dataset);
+                }
+                GroupedDatasets.Add(uncategorized);
+            }
+
+            StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading datasets: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void AddDatasetCardsToGroup(DatasetGroupViewModel group, DatasetCardViewModel dataset)
+    {
+        if (FlattenVersions && dataset.IsVersionedStructure && dataset.TotalVersions > 1)
+        {
+            foreach (var version in dataset.GetAllVersionNumbers())
+            {
+                var versionCard = dataset.CreateVersionCard(version);
+                group.Datasets.Add(versionCard);
+            }
+        }
+        else
+        {
+            group.Datasets.Add(dataset);
+        }
+    }
+
+    private async Task OpenDatasetAsync(DatasetCardViewModel? dataset)
+    {
+        if (dataset is null) return;
+
+        IsLoading = true;
+        try
+        {
+            _state.SetActiveDataset(dataset);
+            DatasetImages.Clear();
+
+            // Populate available versions
+            AvailableVersions.Clear();
+            if (dataset.IsVersionedStructure)
+            {
+                foreach (var version in dataset.GetAllVersionNumbers())
+                {
+                    AvailableVersions.Add(version);
+                }
+            }
+            else
+            {
+                AvailableVersions.Add(1);
+            }
+            OnPropertyChanged(nameof(SelectedVersion));
+
+            var mediaFolderPath = dataset.CurrentVersionFolderPath;
+            if (!Directory.Exists(mediaFolderPath))
+            {
+                StatusMessage = "Dataset folder no longer exists.";
+                return;
+            }
+
+            // Load media files
+            var allFiles = Directory.EnumerateFiles(mediaFolderPath).ToList();
+            var mediaFiles = allFiles
+                .Where(f =>
+                {
+                    var ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (!MediaExtensions.Contains(ext)) return false;
+                    if (DatasetCardViewModel.IsVideoThumbnailFile(f)) return false;
+                    return true;
+                })
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var mediaPath in mediaFiles)
+            {
+                var mediaVm = DatasetImageViewModel.FromFile(mediaPath, _eventAggregator);
+
+                if (mediaVm.IsVideo && _videoThumbnailService is not null)
+                {
+                    await GenerateVideoThumbnailAsync(mediaVm);
+                }
+
+                DatasetImages.Add(mediaVm);
+            }
+
+            // Set selected category and type
+            _selectedCategory = AvailableCategories.FirstOrDefault(c => c.Id == dataset.CategoryId);
+            OnPropertyChanged(nameof(SelectedCategory));
+
+            _selectedType = dataset.Type;
+            OnPropertyChanged(nameof(SelectedType));
+
+            HasUnsavedChanges = false;
+
+            var imageCount = DatasetImages.Count(m => m.IsImage);
+            var videoCount = DatasetImages.Count(m => m.IsVideo);
+
+            if (dataset.HasMultipleVersions)
+            {
+                StatusMessage = videoCount > 0
+                    ? $"Loaded {imageCount} images, {videoCount} videos (Version {dataset.CurrentVersion} of {dataset.TotalVersions})"
+                    : $"Loaded {imageCount} images (Version {dataset.CurrentVersion} of {dataset.TotalVersions})";
+            }
+            else
+            {
+                StatusMessage = videoCount > 0
+                    ? $"Loaded {imageCount} images, {videoCount} videos"
+                    : $"Loaded {imageCount} images";
+            }
+
+            // Publish event
+            _eventAggregator.PublishDatasetImagesLoaded(new DatasetImagesLoadedEventArgs
+            {
+                Dataset = dataset,
+                Images = DatasetImages.ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading dataset: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task GenerateVideoThumbnailAsync(DatasetImageViewModel mediaVm)
+    {
+        if (_videoThumbnailService is null || !mediaVm.IsVideo) return;
+
+        try
+        {
+            var result = await _videoThumbnailService.GenerateThumbnailAsync(mediaVm.ImagePath);
+            if (result.Success && result.ThumbnailPath is not null)
+            {
+                mediaVm.ThumbnailPath = result.ThumbnailPath;
+            }
+        }
+        catch
+        {
+            // Ignore thumbnail generation errors
+        }
+    }
+
+    private async Task GoToOverviewAsync()
+    {
+        if (HasUnsavedChanges && DialogService is not null)
+        {
+            var save = await DialogService.ShowConfirmAsync(
+                "Unsaved Changes",
+                "You have unsaved caption changes. Save them before leaving?");
+
+            if (save)
+            {
+                SaveAllCaptions();
+            }
+        }
+
+        _state.ClearSelectionSilent();
+        _state.SetActiveDataset(null);
+        DatasetImages.Clear();
+        HasUnsavedChanges = false;
+
+        await LoadDatasetsAsync();
+    }
+
+    private async Task CreateDatasetAsync()
+    {
+        if (DialogService is null || _settingsService is null) return;
+
+        var settings = await _settingsService.GetSettingsAsync();
+
+        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
+        {
+            StatusMessage = "Please configure the Dataset Storage Path in Settings first.";
+            _state.SetStorageConfigured(false);
+            return;
+        }
+
+        if (!Directory.Exists(settings.DatasetStoragePath))
+        {
+            StatusMessage = "The configured Dataset Storage Path does not exist. Please update it in Settings.";
+            _state.SetStorageConfigured(false);
+            return;
+        }
+
+        _state.SetStorageConfigured(true);
+
+        var result = await DialogService.ShowCreateDatasetDialogAsync(AvailableCategories);
+        if (!result.Confirmed || string.IsNullOrWhiteSpace(result.Name)) return;
+
+        var sanitizedName = result.Name;
+        var datasetPath = Path.Combine(settings.DatasetStoragePath, sanitizedName);
+
+        if (Directory.Exists(datasetPath))
+        {
+            StatusMessage = $"A dataset named '{sanitizedName}' already exists.";
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(datasetPath);
+            var v1Path = Path.Combine(datasetPath, "V1");
+            Directory.CreateDirectory(v1Path);
+
+            var newDataset = new DatasetCardViewModel
+            {
+                Name = sanitizedName,
+                FolderPath = datasetPath,
+                IsVersionedStructure = true,
+                CurrentVersion = 1,
+                TotalVersions = 1,
+                ImageCount = 0,
+                VideoCount = 0,
+                CategoryId = result.CategoryId,
+                CategoryName = result.CategoryName,
+                Type = result.Type
+            };
+
+            newDataset.SaveMetadata();
+            Datasets.Add(newDataset);
+
+            StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
+
+            _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
+            {
+                Dataset = newDataset
+            });
+
+            await OpenDatasetAsync(newDataset);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to create dataset: {ex.Message}";
+        }
+    }
+
+    private async Task AddImagesAsync()
+    {
+        if (DialogService is null || ActiveDataset is null) return;
+
+        IsFileDialogOpen = true;
+
+        try
+        {
+            var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
+            if (files is null || files.Count == 0) return;
+
+            IsLoading = true;
+            try
+            {
+                var copied = 0;
+                var skipped = 0;
+                var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
+                Directory.CreateDirectory(destFolderPath);
+
+                var addedImages = new List<DatasetImageViewModel>();
+
+                foreach (var sourceFile in files)
+                {
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destPath = Path.Combine(destFolderPath, fileName);
+
+                    if (!File.Exists(destPath))
+                    {
+                        File.Copy(sourceFile, destPath);
+                        copied++;
+
+                        if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                        {
+                            await _videoThumbnailService.GenerateThumbnailAsync(destPath);
+                        }
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
+                }
+
+                StatusMessage = skipped > 0
+                    ? $"Added {copied} files, skipped {skipped} duplicates"
+                    : $"Added {copied} files to dataset";
+
+                await OpenDatasetAsync(ActiveDataset);
+
+                if (addedImages.Count > 0)
+                {
+                    _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
+                    {
+                        Dataset = ActiveDataset,
+                        AddedImages = addedImages
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error adding files: {ex.Message}";
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+        finally
+        {
+            IsFileDialogOpen = false;
+        }
+    }
+
+    private void SaveAllCaptions()
+    {
+        var saved = 0;
+        foreach (var image in DatasetImages.Where(i => i.HasUnsavedChanges))
+        {
+            image.SaveCaptionCommand.Execute(null);
+            saved++;
+        }
+
+        HasUnsavedChanges = false;
+        StatusMessage = saved > 0 ? $"Saved {saved} captions" : "No changes to save";
+    }
+
+    private async Task SwitchVersionAsync(int version)
+    {
+        if (ActiveDataset is null) return;
+
+        if (HasUnsavedChanges && DialogService is not null)
+        {
+            var save = await DialogService.ShowConfirmAsync(
+                "Unsaved Changes",
+                "You have unsaved caption changes. Save them before switching versions?");
+
+            if (save) SaveAllCaptions();
+        }
+
+        ActiveDataset.CurrentVersion = version;
+        ActiveDataset.SaveMetadata();
+        ActiveDataset.RefreshImageInfo();
+
+        await OpenDatasetAsync(ActiveDataset);
+        StatusMessage = $"Switched to Version {version}";
+    }
+
+    private void OpenContainingFolder()
+    {
+        if (ActiveDataset is null) return;
+
+        var folderPath = ActiveDataset.CurrentVersionFolderPath;
+        if (!Directory.Exists(folderPath))
+        {
+            folderPath = ActiveDataset.FolderPath;
+        }
+
+        if (!Directory.Exists(folderPath)) return;
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = folderPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening folder: {ex.Message}";
+        }
+    }
+
+    private void SendToImageEdit(DatasetImageViewModel? image)
+    {
+        if (image is null || ActiveDataset is null) return;
+
+        if (image.IsVideo)
+        {
+            StatusMessage = "Video editing is not supported. Use an external video editor.";
+            return;
+        }
+
+        // Publish navigation event
+        _eventAggregator.PublishNavigateToImageEditor(new NavigateToImageEditorEventArgs
+        {
+            Image = image,
+            Dataset = ActiveDataset
+        });
+
+        StatusMessage = $"Sent to Image Edit: {image.FullFileName}";
+    }
+
+    private async Task OpenImageViewerAsync(DatasetImageViewModel? image)
+    {
+        if (DialogService is null || image is null) return;
+
+        var index = DatasetImages.IndexOf(image);
+        if (index < 0) return;
+
+        // Pass the event aggregator to enable cross-component state synchronization
+        await DialogService.ShowImageViewerDialogAsync(
+            DatasetImages,
+            index,
+            eventAggregator: _eventAggregator,
+            onSendToImageEditor: img => SendToImageEdit(img),
+            onDeleteRequested: OnImageDeleteRequested);
+    }
+
+    private async void OnImageDeleteRequested(DatasetImageViewModel image)
+    {
+        if (DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Media",
+            $"Delete '{image.FullFileName}' and its caption?");
+
+        if (!confirm) return;
+
+        try
+        {
+            if (File.Exists(image.ImagePath))
+            {
+                File.Delete(image.ImagePath);
+            }
+
+            if (File.Exists(image.CaptionFilePath))
+            {
+                File.Delete(image.CaptionFilePath);
+            }
+
+            if (image.IsVideo)
+            {
+                var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
+                if (File.Exists(thumbnailPath))
+                {
+                    File.Delete(thumbnailPath);
+                }
+            }
+
+            DatasetImages.Remove(image);
+
+            if (ActiveDataset is not null)
+            {
+                ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+
+                _eventAggregator.PublishImageDeleted(new ImageDeletedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ImagePath = image.ImagePath
+                });
+            }
+
+            StatusMessage = $"Deleted '{image.FullFileName}'";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting media: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
+    {
+        if (dataset is null || DialogService is null) return;
+
+        if (dataset.IsVersionCard && dataset.DisplayVersion.HasValue)
+        {
+            await DeleteVersionAsync(dataset, dataset.DisplayVersion.Value);
+        }
+        else
+        {
+            var confirm = await DialogService.ShowConfirmAsync(
+                "Delete Dataset",
+                $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in ALL versions of this dataset.");
+
+            if (!confirm) return;
+
+            try
+            {
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                Datasets.Remove(dataset);
+
+                foreach (var group in GroupedDatasets)
+                {
+                    group.Datasets.Remove(dataset);
+                }
+
+                var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+                foreach (var emptyGroup in emptyGroups)
+                {
+                    GroupedDatasets.Remove(emptyGroup);
+                }
+
+                _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+                {
+                    Dataset = dataset
+                });
+
+                StatusMessage = $"Deleted dataset '{dataset.Name}'";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error deleting dataset: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task DeleteVersionAsync(DatasetCardViewModel dataset, int version)
+    {
+        if (DialogService is null) return;
+
+        var versionPath = dataset.GetVersionFolderPath(version);
+        var allVersions = dataset.GetAllVersionNumbers();
+        var isLastVersion = allVersions.Count == 1;
+
+        var confirmMessage = isLastVersion
+            ? $"Are you sure you want to delete V{version} of '{dataset.Name}'?\n\nThis is the only version - the entire dataset will be removed."
+            : $"Are you sure you want to delete V{version} of '{dataset.Name}'?\n\nThis will permanently delete all images and captions in this version.";
+
+        var confirm = await DialogService.ShowConfirmAsync("Delete Version", confirmMessage);
+        if (!confirm) return;
+
+        try
+        {
+            if (isLastVersion)
+            {
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+                if (parentDataset is not null)
+                {
+                    Datasets.Remove(parentDataset);
+                }
+            }
+            else
+            {
+                if (Directory.Exists(versionPath))
+                {
+                    Directory.Delete(versionPath, recursive: true);
+                }
+
+                dataset.VersionBranchedFrom.Remove(version);
+                dataset.VersionDescriptions.Remove(version);
+
+                var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+                if (parentDataset is not null)
+                {
+                    parentDataset.VersionBranchedFrom.Remove(version);
+                    parentDataset.VersionDescriptions.Remove(version);
+
+                    if (parentDataset.CurrentVersion == version)
+                    {
+                        var remainingVersions = parentDataset.GetAllVersionNumbers();
+                        parentDataset.CurrentVersion = remainingVersions.FirstOrDefault(v => v != version);
+                        if (parentDataset.CurrentVersion == 0)
+                        {
+                            parentDataset.CurrentVersion = remainingVersions.First();
+                        }
+                    }
+
+                    parentDataset.RefreshImageInfo();
+                    parentDataset.SaveMetadata();
+                }
+            }
+
+            foreach (var group in GroupedDatasets)
+            {
+                group.Datasets.Remove(dataset);
+            }
+
+            var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+            foreach (var emptyGroup in emptyGroups)
+            {
+                GroupedDatasets.Remove(emptyGroup);
+            }
+
+            _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+            {
+                Dataset = dataset,
+                DeletedVersion = version
+            });
+
+            StatusMessage = isLastVersion
+                ? $"Deleted dataset '{dataset.Name}'"
+                : $"Deleted V{version} of '{dataset.Name}'";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting version: {ex.Message}";
+        }
+    }
+
+    private async Task IncrementVersionAsync()
+    {
+        if (ActiveDataset is null || DialogService is null) return;
+
+        var currentVersion = ActiveDataset.CurrentVersion;
+        var nextVersion = ActiveDataset.GetNextVersionNumber();
+
+        var selectedOption = await DialogService.ShowOptionsAsync(
+            "Create New Version",
+            $"Create V{nextVersion} branching from V{currentVersion}.\n\nChoose how to initialize the new version:",
+            "Cancel",
+            "Start Fresh (Empty)",
+            $"Copy from V{currentVersion}");
+
+        if (selectedOption == 0 || selectedOption == -1) return;
+
+        var copyFiles = selectedOption == 2;
+
+        if (copyFiles && ActiveDataset.ImageCount == 0)
+        {
+            await DialogService.ShowMessageAsync(
+                "No Images",
+                "There are no images in the current version to copy. Creating an empty version instead.");
+            copyFiles = false;
+        }
+
+        IsLoading = true;
+        try
+        {
+            var destPath = ActiveDataset.GetVersionFolderPath(nextVersion);
+
+            if (!ActiveDataset.IsVersionedStructure && ActiveDataset.ImageCount > 0)
+            {
+                await MigrateLegacyToVersionedAsync(ActiveDataset);
+            }
+
+            Directory.CreateDirectory(destPath);
+
+            var copied = 0;
+            if (copyFiles)
+            {
+                var sourcePath = ActiveDataset.GetVersionFolderPath(currentVersion);
+                var files = Directory.EnumerateFiles(sourcePath)
+                    .Where(f => !Path.GetFileName(f).StartsWith("."))
+                    .ToList();
+
+                foreach (var sourceFile in files)
+                {
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destFile = Path.Combine(destPath, fileName);
+                    File.Copy(sourceFile, destFile, overwrite: false);
+                    copied++;
+                }
+            }
+
+            ActiveDataset.RecordBranch(nextVersion, currentVersion);
+            ActiveDataset.CurrentVersion = nextVersion;
+            ActiveDataset.IsVersionedStructure = true;
+            ActiveDataset.SaveMetadata();
+            ActiveDataset.RefreshImageInfo();
+
+            _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
+            {
+                Dataset = ActiveDataset,
+                NewVersion = nextVersion,
+                BranchedFromVersion = currentVersion
+            });
+
+            await OpenDatasetAsync(ActiveDataset);
+
+            StatusMessage = copyFiles
+                ? $"Created V{nextVersion} (branched from V{currentVersion}) with {copied} files copied."
+                : $"Created V{nextVersion} (branched from V{currentVersion}, empty - ready to add images).";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error creating new version: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
+    {
+        var rootPath = dataset.FolderPath;
+        var v1Path = dataset.GetVersionFolderPath(1);
+
+        Directory.CreateDirectory(v1Path);
+
+        var filesToMove = Directory.EnumerateFiles(rootPath)
+            .Where(f =>
+            {
+                var ext = Path.GetExtension(f).ToLowerInvariant();
+                var fileName = Path.GetFileName(f);
+                if (fileName.StartsWith(".")) return false;
+                return MediaExtensions.Contains(ext) || ext == ".txt";
+            })
+            .ToList();
+
+        foreach (var sourceFile in filesToMove)
+        {
+            var fileName = Path.GetFileName(sourceFile);
+            var destFile = Path.Combine(v1Path, fileName);
+            File.Move(sourceFile, destFile);
+        }
+
+        dataset.IsVersionedStructure = true;
+        dataset.CurrentVersion = 1;
+        dataset.TotalVersions = 1;
+        dataset.SaveMetadata();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ExportDatasetAsync()
+    {
+        if (DialogService is null || ActiveDataset is null)
+        {
+            StatusMessage = "No dataset selected for export.";
+            return;
+        }
+
+        if (DatasetImages.Count == 0)
+        {
+            StatusMessage = "No files in dataset to export.";
+            return;
+        }
+
+        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages);
+        if (!result.Confirmed || result.FilesToExport.Count == 0) return;
+
+        string? destinationPath;
+        if (result.ExportType == ExportType.Zip)
+        {
+            var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
+            var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
+            destinationPath = await DialogService.ShowSaveFileDialogAsync("Export Dataset as ZIP", defaultFileName, "*.zip");
+        }
+        else
+        {
+            destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
+        }
+
+        if (string.IsNullOrEmpty(destinationPath)) return;
+
+        IsLoading = true;
+        try
+        {
+            var exportedCount = result.ExportType == ExportType.Zip
+                ? await ExportAsZipAsync(result.FilesToExport, destinationPath)
+                : await ExportAsSingleFilesAsync(result.FilesToExport, destinationPath);
+
+            StatusMessage = $"Exported {exportedCount} files successfully.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task<int> ExportAsSingleFilesAsync(List<DatasetImageViewModel> files, string destinationFolder)
+    {
+        var exportedCount = 0;
+        Directory.CreateDirectory(destinationFolder);
+
+        foreach (var mediaFile in files)
+        {
+            if (File.Exists(mediaFile.ImagePath))
+            {
+                var destMediaPath = Path.Combine(destinationFolder, mediaFile.FullFileName);
+                File.Copy(mediaFile.ImagePath, destMediaPath, overwrite: true);
+                exportedCount++;
+            }
+
+            if (File.Exists(mediaFile.CaptionFilePath))
+            {
+                var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
+                var destCaptionPath = Path.Combine(destinationFolder, captionFileName);
+                File.Copy(mediaFile.CaptionFilePath, destCaptionPath, overwrite: true);
+            }
+        }
+
+        await Task.CompletedTask;
+        return exportedCount;
+    }
+
+    private async Task<int> ExportAsZipAsync(List<DatasetImageViewModel> files, string zipPath)
+    {
+        var exportedCount = 0;
+
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
+
+        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            foreach (var mediaFile in files)
+            {
+                if (File.Exists(mediaFile.ImagePath))
+                {
+                    archive.CreateEntryFromFile(mediaFile.ImagePath, mediaFile.FullFileName);
+                    exportedCount++;
+                }
+
+                if (File.Exists(mediaFile.CaptionFilePath))
+                {
+                    var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
+                    archive.CreateEntryFromFile(mediaFile.CaptionFilePath, captionFileName);
+                }
+            }
+        }
+
+        await Task.CompletedTask;
+        return exportedCount;
+    }
+
+    #endregion
+
+    #region Selection Methods
+
+    private void ToggleSelection(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+        image.IsSelected = !image.IsSelected;
+        _state.LastClickedImage = image;
+        _state.UpdateSelectionCount();
+    }
+
+    /// <summary>
+    /// Handles selection with modifier keys (Shift for range, Ctrl for toggle).
+    /// </summary>
+    public void SelectWithModifiers(DatasetImageViewModel? image, bool isShiftPressed, bool isCtrlPressed)
+    {
+        if (image is null) return;
+
+        if (isShiftPressed && _state.LastClickedImage is not null)
+        {
+            SelectRange(_state.LastClickedImage, image);
+        }
+        else if (isCtrlPressed)
+        {
+            image.IsSelected = !image.IsSelected;
+            _state.LastClickedImage = image;
+        }
+        else
+        {
+            _state.ClearSelectionSilent();
+            image.IsSelected = true;
+            _state.LastClickedImage = image;
+        }
+
+        _state.UpdateSelectionCount();
+    }
+
+    private void SelectRange(DatasetImageViewModel from, DatasetImageViewModel to)
+    {
+        var fromIndex = DatasetImages.IndexOf(from);
+        var toIndex = DatasetImages.IndexOf(to);
+
+        if (fromIndex == -1 || toIndex == -1) return;
+
+        var startIndex = Math.Min(fromIndex, toIndex);
+        var endIndex = Math.Max(fromIndex, toIndex);
+
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            DatasetImages[i].IsSelected = true;
+        }
+
+        _state.LastClickedImage = to;
+    }
+
+    private void SelectAll()
+    {
+        foreach (var image in DatasetImages)
+        {
+            image.IsSelected = true;
+        }
+        _state.UpdateSelectionCount();
+        StatusMessage = $"Selected all {SelectionCount} items";
+    }
+
+    private void ClearSelection()
+    {
+        _state.ClearSelectionSilent();
+        StatusMessage = "Selection cleared";
+    }
+
+    private void ApproveSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            var previousRating = image.RatingStatus;
+            image.RatingStatus = ImageRatingStatus.Approved;
+            image.SaveRating();
+
+            _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+            {
+                Image = image,
+                NewRating = ImageRatingStatus.Approved,
+                PreviousRating = previousRating
+            });
+        }
+        StatusMessage = $"Marked {selected.Count} items as production-ready";
+    }
+
+    private void RejectSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            var previousRating = image.RatingStatus;
+            image.RatingStatus = ImageRatingStatus.Rejected;
+            image.SaveRating();
+
+            _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+            {
+                Image = image,
+                NewRating = ImageRatingStatus.Rejected,
+                PreviousRating = previousRating
+            });
+        }
+        StatusMessage = $"Marked {selected.Count} items as failed";
+    }
+
+    private void ClearRatingSelected()
+    {
+        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        foreach (var image in selected)
+        {
+            var previousRating = image.RatingStatus;
+            image.RatingStatus = ImageRatingStatus.Unrated;
+            image.SaveRating();
+
+            _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+            {
+                Image = image,
+                NewRating = ImageRatingStatus.Unrated,
+                PreviousRating = previousRating
+            });
+        }
+        StatusMessage = $"Cleared rating for {selected.Count} items";
+    }
+
+    private void SelectApproved()
+    {
+        _state.ClearSelectionSilent();
+        foreach (var image in DatasetImages.Where(i => i.RatingStatus == ImageRatingStatus.Approved))
+        {
+            image.IsSelected = true;
+        }
+        _state.UpdateSelectionCount();
+        StatusMessage = $"Selected {SelectionCount} approved items";
+    }
+
+    private void SelectRejected()
+    {
+        _state.ClearSelectionSilent();
+        foreach (var image in DatasetImages.Where(i => i.RatingStatus == ImageRatingStatus.Rejected))
+        {
+            image.IsSelected = true;
+        }
+        _state.UpdateSelectionCount();
+        StatusMessage = $"Selected {SelectionCount} rejected items";
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (DialogService is null) return;
+
+        var selectedImages = DatasetImages.Where(i => i.IsSelected).ToList();
+        if (selectedImages.Count == 0) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Selected Media",
+            $"Are you sure you want to delete {selectedImages.Count} selected media items?");
+
+        if (!confirm) return;
+
+        try
+        {
+            foreach (var image in selectedImages)
+            {
+                if (File.Exists(image.ImagePath))
+                {
+                    File.Delete(image.ImagePath);
+                }
+
+                if (File.Exists(image.CaptionFilePath))
+                {
+                    File.Delete(image.CaptionFilePath);
+                }
+
+                if (image.IsVideo)
+                {
+                    var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
+                    if (File.Exists(thumbnailPath))
+                    {
+                        File.Delete(thumbnailPath);
+                    }
+                }
+
+                DatasetImages.Remove(image);
+
+                if (ActiveDataset is not null)
+                {
+                    _eventAggregator.PublishImageDeleted(new ImageDeletedEventArgs
+                    {
+                        Dataset = ActiveDataset,
+                        ImagePath = image.ImagePath
+                    });
+                }
+            }
+
+            if (ActiveDataset is not null)
+            {
+                ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+            }
+
+            _state.UpdateSelectionCount();
+            StatusMessage = $"Deleted {selectedImages.Count} items";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting selected media: {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region Public Methods
+
+    /// <summary>
+    /// Refreshes the active dataset.
+    /// </summary>
+    public async Task RefreshActiveDatasetAsync()
+    {
+        if (ActiveDataset is not null)
+        {
+            ActiveDataset.RefreshImageInfo();
+            if (IsViewingDataset)
+            {
+                await OpenDatasetAsync(ActiveDataset);
+            }
+        }
+    }
+
+    #endregion
+}

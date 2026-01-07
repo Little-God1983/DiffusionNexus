@@ -3,19 +3,20 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
 using System.IO.Compression;
 
-namespace DiffusionNexus.UI.Views;
+namespace DiffusionNexus.UI.Views.Tabs;
 
 /// <summary>
-/// View for the LoRA Dataset Helper module.
+/// View for the Dataset Management tab in the LoRA Dataset Helper.
+/// Handles drag-drop operations, keyboard shortcuts, and pointer events for image selection.
 /// </summary>
-public partial class LoraDatasetHelperView : UserControl
+public partial class DatasetManagementView : UserControl
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
@@ -24,35 +25,31 @@ public partial class LoraDatasetHelperView : UserControl
     private static readonly string[] AllowedExtensions = [..MediaExtensions, ..TextExtensions];
     private static readonly string[] ArchiveExtensions = [".zip"];
 
-    private ImageEditorControl? _imageEditorCanvas;
     private Border? _emptyDatasetDropZone;
     private TextBox? _descriptionTextBox;
     private bool _isInitialized;
 
-    public LoraDatasetHelperView()
+    public DatasetManagementView()
     {
         InitializeComponent();
         AttachedToVisualTree += OnAttachedToVisualTree;
-        
-        // Add keyboard handler for selection shortcuts
         KeyDown += OnKeyDown;
     }
 
     private void InitializeComponent()
     {
         AvaloniaXamlLoader.Load(this);
-        _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
         _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
         _descriptionTextBox = this.FindControl<TextBox>("DescriptionTextBox");
 
-        // Set up drag-drop handlers for empty dataset drop zone
+        // Set up drag-drop handlers
         if (_emptyDatasetDropZone is not null)
         {
             _emptyDatasetDropZone.AddHandler(DragDrop.DropEvent, OnEmptyDatasetDrop);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragEnterEvent, OnEmptyDatasetDragEnter);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragLeaveEvent, OnEmptyDatasetDragLeave);
         }
-        
+
         // Set up auto-save for description TextBox
         if (_descriptionTextBox is not null)
         {
@@ -60,12 +57,12 @@ public partial class LoraDatasetHelperView : UserControl
         }
     }
 
-    private void OnDescriptionLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnDescriptionLostFocus(object? sender, RoutedEventArgs e)
     {
         // Auto-save description when TextBox loses focus
-        if (DataContext is LoraDatasetHelperViewModel vm && vm.DatasetManagement.ActiveDataset is not null)
+        if (DataContext is DatasetManagementViewModel vm && vm.ActiveDataset is not null)
         {
-            vm.DatasetManagement.ActiveDataset.SaveMetadata();
+            vm.ActiveDataset.SaveMetadata();
         }
     }
 
@@ -78,230 +75,42 @@ public partial class LoraDatasetHelperView : UserControl
         if (VisualRoot is Window window && DataContext is IDialogServiceAware aware)
         {
             aware.DialogService = new DialogService(window);
-            
-            // Forward DialogService to child ViewModels
-            if (DataContext is LoraDatasetHelperViewModel vm)
-            {
-                vm.OnDialogServiceSet();
-            }
         }
 
         // Load datasets on first attach
-        if (DataContext is LoraDatasetHelperViewModel mainVm)
+        if (DataContext is DatasetManagementViewModel vm)
         {
-            mainVm.DatasetManagement.CheckStorageConfigurationCommand.Execute(null);
-
-            // Wire up image editor events - try now, or defer if control not ready
-            TryWireUpImageEditorEvents(mainVm);
-        }
-    }
-
-    /// <summary>
-    /// Attempts to wire up image editor events. If the control isn't found yet,
-    /// this will be retried when the control becomes available.
-    /// </summary>
-    private void TryWireUpImageEditorEvents(LoraDatasetHelperViewModel vm)
-    {
-        // Try to find the control if not already found
-        _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
-        
-        if (_imageEditorCanvas is not null)
-        {
-            WireUpImageEditorEvents(vm);
-        }
-        else
-        {
-            // Control not ready yet - subscribe to layout updated to try again
-            LayoutUpdated += OnLayoutUpdatedForEditorInit;
-        }
-    }
-
-    private void OnLayoutUpdatedForEditorInit(object? sender, EventArgs e)
-    {
-        _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
-        
-        if (_imageEditorCanvas is not null && DataContext is LoraDatasetHelperViewModel vm)
-        {
-            LayoutUpdated -= OnLayoutUpdatedForEditorInit;
-            WireUpImageEditorEvents(vm);
-        }
-    }
-
-    private void WireUpImageEditorEvents(LoraDatasetHelperViewModel vm)
-    {
-        if (_imageEditorCanvas is null) return;
-
-        var imageEditor = vm.ImageEdit.ImageEditor;
-
-        // Update dimensions and file info when image changes
-        _imageEditorCanvas.ImageChanged += (_, _) =>
-        {
-            imageEditor.UpdateDimensions(
-                _imageEditorCanvas.ImageWidth,
-                _imageEditorCanvas.ImageHeight);
-            imageEditor.UpdateFileInfo(
-                _imageEditorCanvas.ImageDpi,
-                _imageEditorCanvas.FileSizeBytes);
-        };
-
-        // Update zoom info when zoom changes
-        _imageEditorCanvas.ZoomChanged += (_, _) =>
-        {
-            imageEditor.UpdateZoomInfo(
-                _imageEditorCanvas.ZoomPercentage,
-                _imageEditorCanvas.IsFitMode);
-        };
-
-        // Handle crop applied
-        _imageEditorCanvas.CropApplied += (_, _) =>
-        {
-            imageEditor.OnCropApplied();
-        };
-
-        // Handle clear/reset requests from ViewModel
-        imageEditor.ClearRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ClearImage();
-        };
-
-        imageEditor.ResetRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ResetToOriginal();
-        };
-
-        // Handle crop tool activation/deactivation
-        imageEditor.CropToolActivated += (_, _) =>
-        {
-            _imageEditorCanvas.ActivateCropTool();
-        };
-
-        imageEditor.CropToolDeactivated += (_, _) =>
-        {
-            _imageEditorCanvas.DeactivateCropTool();
-        };
-
-        // Handle crop apply/cancel requests
-        imageEditor.ApplyCropRequested += (_, _) =>
-        {
-            if (_imageEditorCanvas.ApplyCrop())
-            {
-                imageEditor.OnCropApplied();
-            }
-        };
-
-        imageEditor.CancelCropRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.CropTool.ClearCropRegion();
-            _imageEditorCanvas.DeactivateCropTool();
-        };
-
-        // Handle zoom requests
-        imageEditor.ZoomInRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomIn();
-        };
-
-        imageEditor.ZoomOutRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomOut();
-        };
-
-        imageEditor.ZoomToFitRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomToFit();
-        };
-
-        imageEditor.ZoomToActualRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomToActual();
-        };
-
-        // Handle save requests
-        imageEditor.SaveAsNewRequested += async (_, _) =>
-        {
-            var newPath = _imageEditorCanvas.EditorCore.SaveAsNew();
-            if (newPath is not null)
-            {
-                imageEditor.OnSaveAsNewCompleted(newPath);
-                await vm.DatasetManagement.RefreshActiveDatasetAsync();
-            }
-            else
-            {
-                imageEditor.StatusMessage = "Failed to save image.";
-            }
-        };
-
-        imageEditor.SaveOverwriteConfirmRequested += async () =>
-        {
-            if (vm.DialogService is not null)
-            {
-                return await vm.DialogService.ShowConfirmAsync(
-                    "Overwrite Image",
-                    "Do you really want to overwrite your original image? This cannot be undone.");
-            }
-            return false;
-        };
-
-        imageEditor.SaveOverwriteRequested += async (_, _) =>
-        {
-            if (_imageEditorCanvas.EditorCore.SaveOverwrite())
-            {
-                imageEditor.OnSaveOverwriteCompleted();
-                await vm.DatasetManagement.RefreshActiveDatasetAsync();
-            }
-            else
-            {
-                imageEditor.StatusMessage = "Failed to save image.";
-            }
-        };
-
-        // Wire up zoom slider
-        var zoomSlider = this.FindControl<Slider>("ZoomSlider");
-        if (zoomSlider is not null)
-        {
-            zoomSlider.PropertyChanged += (_, args) =>
-            {
-                if (args.Property.Name == nameof(Slider.Value))
-                {
-                    var percentage = (int)zoomSlider.Value;
-                    _imageEditorCanvas.SetZoom(percentage / 100f);
-                }
-            };
+            vm.CheckStorageConfigurationCommand.Execute(null);
         }
     }
 
     private void OnEmptyDatasetDragEnter(object? sender, DragEventArgs e)
     {
-        // Don't accept drops while file dialog is open
-        if (DataContext is LoraDatasetHelperViewModel vm && vm.DatasetManagement.IsFileDialogOpen)
+        if (DataContext is DatasetManagementViewModel vm && vm.IsFileDialogOpen)
         {
             e.DragEffects = DragDropEffects.None;
             return;
         }
-        
+
         if (_emptyDatasetDropZone is null) return;
 
-        // Analyze the dragged files
         var (hasValidFiles, hasInvalidFiles) = AnalyzeMediaFilesInDrag(e);
-        
+
         if (hasValidFiles && hasInvalidFiles)
         {
-            // Dark yellow/orange border for mixed files (some valid, some invalid)
-            _emptyDatasetDropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#DAA520")); // Goldenrod
+            _emptyDatasetDropZone.BorderBrush = new SolidColorBrush(Color.Parse("#DAA520"));
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
             e.DragEffects = DragDropEffects.Copy;
         }
         else if (hasValidFiles)
         {
-            // Green border for all valid files
-            _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.LimeGreen;
+            _emptyDatasetDropZone.BorderBrush = Brushes.LimeGreen;
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
             e.DragEffects = DragDropEffects.Copy;
         }
         else
         {
-            // Red border for all invalid/unsupported files
-            _emptyDatasetDropZone.BorderBrush = Avalonia.Media.Brushes.Red;
+            _emptyDatasetDropZone.BorderBrush = Brushes.Red;
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
             e.DragEffects = DragDropEffects.None;
         }
@@ -311,16 +120,11 @@ public partial class LoraDatasetHelperView : UserControl
     {
         if (_emptyDatasetDropZone is not null)
         {
-            // Reset to default border
-            _emptyDatasetDropZone.BorderBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#444"));
+            _emptyDatasetDropZone.BorderBrush = new SolidColorBrush(Color.Parse("#444"));
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
         }
     }
 
-    /// <summary>
-    /// Analyzes the drag event to determine if it contains valid media files, invalid files, or both.
-    /// </summary>
-    /// <returns>A tuple of (hasValidFiles, hasInvalidFiles)</returns>
     private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInDrag(DragEventArgs e)
     {
         var files = e.Data.GetFiles();
@@ -340,7 +144,6 @@ public partial class LoraDatasetHelperView : UserControl
                 }
                 else if (IsZipFile(file.Path.LocalPath))
                 {
-                    // Analyze ZIP contents
                     var (zipHasValid, zipHasInvalid) = AnalyzeMediaFilesInZip(file.Path.LocalPath);
                     if (zipHasValid) hasValid = true;
                     if (zipHasInvalid) hasInvalid = true;
@@ -357,16 +160,12 @@ public partial class LoraDatasetHelperView : UserControl
                 if (folderHasInvalid) hasInvalid = true;
             }
 
-            // Early exit if we've found both types
             if (hasValid && hasInvalid) break;
         }
 
         return (hasValid, hasInvalid);
     }
 
-    /// <summary>
-    /// Analyzes a folder to determine if it contains valid media files, invalid files, or both.
-    /// </summary>
     private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInFolder(string folderPath)
     {
         if (!Directory.Exists(folderPath)) return (false, false);
@@ -384,29 +183,22 @@ public partial class LoraDatasetHelperView : UserControl
                 else
                     hasInvalid = true;
 
-                // Early exit if we've found both types
                 if (hasValid && hasInvalid) break;
             }
         }
-        catch
-        {
-            // Ignore access errors
-        }
+        catch { }
 
         return (hasValid, hasInvalid);
     }
 
     private async void OnEmptyDatasetDrop(object? sender, DragEventArgs e)
     {
-        // Reset border style
         OnEmptyDatasetDragLeave(sender, e);
 
-        if (DataContext is not LoraDatasetHelperViewModel vm || vm.DatasetManagement.ActiveDataset is null)
+        if (DataContext is not DatasetManagementViewModel vm || vm.ActiveDataset is null)
             return;
 
-        // Don't accept drops while file dialog is open
-        if (vm.DatasetManagement.IsFileDialogOpen)
-            return;
+        if (vm.IsFileDialogOpen) return;
 
         var files = e.Data.GetFiles();
         if (files is null) return;
@@ -420,49 +212,38 @@ public partial class LoraDatasetHelperView : UserControl
             {
                 var filePath = file.Path.LocalPath;
                 var ext = Path.GetExtension(filePath).ToLowerInvariant();
-                
+
                 if (MediaExtensions.Contains(ext))
                 {
                     mediaFiles.Add(filePath);
                 }
                 else if (IsZipFile(filePath))
                 {
-                    // Extract media files from ZIP
                     var extracted = ExtractMediaFromZip(filePath);
                     extractedFromZip.AddRange(extracted);
                 }
             }
             else if (item is IStorageFolder folder)
             {
-                // Add media files from folder
                 AddMediaFromFolder(folder.Path.LocalPath, mediaFiles);
             }
         }
 
-        // Combine directly dropped files with extracted files
         mediaFiles.AddRange(extractedFromZip);
 
         if (mediaFiles.Count == 0)
         {
-            vm.DatasetManagement.StatusMessage = "No supported media files found in the dropped items. Supported formats: PNG, JPG, WebP, GIF, MP4, MOV, WebM, AVI, MKV.";
+            vm.StatusMessage = "No supported media files found in the dropped items.";
             return;
         }
 
-        // Copy files to dataset
-        await CopyFilesToDatasetAsync(vm.DatasetManagement, mediaFiles);
+        await CopyFilesToDatasetAsync(vm, mediaFiles);
 
-        // Clean up extracted temp files after copying
+        // Cleanup temp files
         foreach (var tempFile in extractedFromZip)
         {
-            try
-            {
-                if (File.Exists(tempFile))
-                    File.Delete(tempFile);
-            }
-            catch { }
+            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
         }
-
-        // Try to clean up temp directories
         foreach (var tempFile in extractedFromZip)
         {
             try
@@ -478,7 +259,6 @@ public partial class LoraDatasetHelperView : UserControl
     private void AddMediaFromFolder(string folderPath, List<string> mediaFiles)
     {
         if (!Directory.Exists(folderPath)) return;
-
         foreach (var file in Directory.EnumerateFiles(folderPath))
         {
             var ext = Path.GetExtension(file).ToLowerInvariant();
@@ -489,18 +269,12 @@ public partial class LoraDatasetHelperView : UserControl
         }
     }
 
-    /// <summary>
-    /// Extracts media and caption files from a ZIP archive to a temporary directory.
-    /// </summary>
-    /// <param name="zipPath">Path to the ZIP file.</param>
-    /// <returns>List of extracted file paths (media + captions), or empty list if no files found.</returns>
     private List<string> ExtractMediaFromZip(string zipPath)
     {
         var extractedFiles = new List<string>();
-        
+
         try
         {
-            // Create a temporary directory for extraction
             var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ZipExtract_" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(tempDir);
 
@@ -508,19 +282,12 @@ public partial class LoraDatasetHelperView : UserControl
             {
                 foreach (var entry in archive.Entries)
                 {
-                    // Skip directories and empty entries
-                    if (string.IsNullOrEmpty(entry.Name))
-                        continue;
+                    if (string.IsNullOrEmpty(entry.Name)) continue;
 
                     var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                    
-                    // Extract media files and text/caption files
                     if (AllowedExtensions.Contains(ext))
                     {
-                        // Extract to temp directory with flat structure (just filename)
                         var destPath = Path.Combine(tempDir, entry.Name);
-                        
-                        // Handle duplicate filenames by adding a suffix
                         var counter = 1;
                         while (File.Exists(destPath))
                         {
@@ -528,39 +295,28 @@ public partial class LoraDatasetHelperView : UserControl
                             destPath = Path.Combine(tempDir, $"{nameWithoutExt}_{counter}{ext}");
                             counter++;
                         }
-
                         entry.ExtractToFile(destPath);
                         extractedFiles.Add(destPath);
                     }
                 }
             }
 
-            // If no files were found, clean up the temp directory
             if (extractedFiles.Count == 0 && Directory.Exists(tempDir))
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
-        catch
-        {
-            // Ignore extraction errors
-        }
+        catch { }
 
         return extractedFiles;
     }
 
-    /// <summary>
-    /// Checks if a file is a ZIP archive.
-    /// </summary>
     private static bool IsZipFile(string filePath)
     {
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
         return ArchiveExtensions.Contains(ext);
     }
 
-    /// <summary>
-    /// Analyzes a ZIP file to determine if it contains valid media files.
-    /// </summary>
     private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInZip(string zipPath)
     {
         var hasValid = false;
@@ -571,9 +327,7 @@ public partial class LoraDatasetHelperView : UserControl
             using var archive = ZipFile.OpenRead(zipPath);
             foreach (var entry in archive.Entries)
             {
-                // Skip directories
-                if (string.IsNullOrEmpty(entry.Name))
-                    continue;
+                if (string.IsNullOrEmpty(entry.Name)) continue;
 
                 var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
                 if (MediaExtensions.Contains(ext))
@@ -581,32 +335,29 @@ public partial class LoraDatasetHelperView : UserControl
                 else
                     hasInvalid = true;
 
-                // Early exit if we've found both types
                 if (hasValid && hasInvalid) break;
             }
         }
         catch
         {
-            // If we can't read the ZIP, treat it as invalid
             hasInvalid = true;
         }
 
         return (hasValid, hasInvalid);
     }
 
-    private async Task CopyFilesToDatasetAsync(DatasetManagementViewModel dmVm, List<string> filesToCopy)
+    private async Task CopyFilesToDatasetAsync(DatasetManagementViewModel vm, List<string> filesToCopy)
     {
-        if (dmVm.ActiveDataset is null) return;
+        if (vm.ActiveDataset is null) return;
 
-        dmVm.IsLoading = true;
+        vm.IsLoading = true;
         try
         {
             var copied = 0;
             var captionsCopied = 0;
             var skipped = 0;
-            var destFolderPath = dmVm.ActiveDataset.CurrentVersionFolderPath;
+            var destFolderPath = vm.ActiveDataset.CurrentVersionFolderPath;
 
-            // Ensure the folder exists
             Directory.CreateDirectory(destFolderPath);
 
             foreach (var sourceFile in filesToCopy)
@@ -618,7 +369,6 @@ public partial class LoraDatasetHelperView : UserControl
                 if (!File.Exists(destPath))
                 {
                     File.Copy(sourceFile, destPath);
-                    
                     if (TextExtensions.Contains(ext))
                         captionsCopied++;
                     else
@@ -630,38 +380,32 @@ public partial class LoraDatasetHelperView : UserControl
                 }
             }
 
-            // Build status message
             var hasVideos = filesToCopy.Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
             var fileType = hasVideos ? "files" : "images";
-            
+
             var parts = new List<string>();
-            if (copied > 0)
-                parts.Add($"{copied} {fileType}");
-            if (captionsCopied > 0)
-                parts.Add($"{captionsCopied} captions");
-            
+            if (copied > 0) parts.Add($"{copied} {fileType}");
+            if (captionsCopied > 0) parts.Add($"{captionsCopied} captions");
+
             if (parts.Count > 0)
             {
                 var addedText = $"Added {string.Join(", ", parts)}";
-                dmVm.StatusMessage = skipped > 0
-                    ? $"{addedText}, skipped {skipped} duplicates"
-                    : $"{addedText} to dataset";
+                vm.StatusMessage = skipped > 0 ? $"{addedText}, skipped {skipped} duplicates" : $"{addedText} to dataset";
             }
             else if (skipped > 0)
             {
-                dmVm.StatusMessage = $"Skipped {skipped} duplicates (files already exist)";
+                vm.StatusMessage = $"Skipped {skipped} duplicates (files already exist)";
             }
 
-            // Refresh the dataset to show new files
-            await dmVm.RefreshActiveDatasetAsync();
+            await vm.RefreshActiveDatasetAsync();
         }
         catch (Exception ex)
         {
-            dmVm.StatusMessage = $"Error adding files: {ex.Message}";
+            vm.StatusMessage = $"Error adding files: {ex.Message}";
         }
         finally
         {
-            dmVm.IsLoading = false;
+            vm.IsLoading = false;
         }
     }
 
@@ -672,24 +416,19 @@ public partial class LoraDatasetHelperView : UserControl
     {
         if (sender is not Border border) return;
         if (border.DataContext is not DatasetImageViewModel image) return;
-        if (DataContext is not LoraDatasetHelperViewModel vm) return;
+        if (DataContext is not DatasetManagementViewModel vm) return;
 
         var props = e.GetCurrentPoint(border).Properties;
-        
-        // Only handle left mouse button
         if (!props.IsLeftButtonPressed) return;
 
-        // Check for modifier keys
         var isCtrlPressed = e.KeyModifiers.HasFlag(KeyModifiers.Control);
         var isShiftPressed = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
         if (isShiftPressed || isCtrlPressed)
         {
-            // Use the ViewModel's modifier-aware selection
-            vm.DatasetManagement.SelectWithModifiers(image, isShiftPressed, isCtrlPressed);
+            vm.SelectWithModifiers(image, isShiftPressed, isCtrlPressed);
             e.Handled = true;
         }
-        // Note: Normal clicks are handled by the CheckBox inside the card
     }
 
     /// <summary>
@@ -697,19 +436,17 @@ public partial class LoraDatasetHelperView : UserControl
     /// </summary>
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (DataContext is not LoraDatasetHelperViewModel vm) return;
-        if (!vm.DatasetManagement.IsViewingDataset) return;
+        if (DataContext is not DatasetManagementViewModel vm) return;
+        if (!vm.IsViewingDataset) return;
 
-        // Ctrl+A: Select All
         if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            vm.DatasetManagement.SelectAllCommand.Execute(null);
+            vm.SelectAllCommand.Execute(null);
             e.Handled = true;
         }
-        // Escape: Clear Selection
-        else if (e.Key == Key.Escape && vm.DatasetManagement.HasSelection)
+        else if (e.Key == Key.Escape && vm.HasSelection)
         {
-            vm.DatasetManagement.ClearSelectionCommand.Execute(null);
+            vm.ClearSelectionCommand.Execute(null);
             e.Handled = true;
         }
     }
@@ -720,16 +457,15 @@ public partial class LoraDatasetHelperView : UserControl
     private void OnImageTapped(object? sender, TappedEventArgs e)
     {
         if (sender is not Border border) return;
-        
-        // Walk up to find the DatasetImageViewModel
+
         var parent = border.Parent;
         while (parent is not null)
         {
             if (parent.DataContext is DatasetImageViewModel image)
             {
-                if (DataContext is LoraDatasetHelperViewModel vm)
+                if (DataContext is DatasetManagementViewModel vm)
                 {
-                    vm.DatasetManagement.OpenImageViewerCommand.Execute(image);
+                    vm.OpenImageViewerCommand.Execute(image);
                 }
                 e.Handled = true;
                 return;

@@ -149,11 +149,12 @@ public class DialogService : IDialogService
     public async Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
+        IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, onSendToImageEditor, onDeleteRequested);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested);
 
         await dialog.ShowDialog(_window);
     }

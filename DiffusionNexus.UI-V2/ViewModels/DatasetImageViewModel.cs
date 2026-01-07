@@ -1,19 +1,33 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel representing a single media item (image or video) in a dataset with its editable caption.
+/// 
+/// <para>
+/// <b>Event Integration:</b>
+/// This ViewModel can publish events via <see cref="IDatasetEventAggregator"/> when:
+/// <list type="bullet">
+/// <item>Rating changes (approved/rejected/unrated)</item>
+/// <item>Caption is saved</item>
+/// <item>Selection state changes</item>
+/// </list>
+/// </para>
+/// 
+/// <para>
+/// <b>Factory Method:</b>
+/// Use <see cref="FromFile(string, IDatasetEventAggregator?)"/> to create instances
+/// with proper event aggregator integration.
+/// </para>
 /// </summary>
 public class DatasetImageViewModel : ObservableObject
 {
     private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
     
-    private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
-    private readonly Action<DatasetImageViewModel>? _onCaptionChanged;
-    private readonly Action<DatasetImageViewModel>? _onRatingChanged;
-    private readonly Action<DatasetImageViewModel>? _onSelectionChanged;
+    private readonly IDatasetEventAggregator? _eventAggregator;
     private string _originalCaption = string.Empty;
     
     private string _imagePath = string.Empty;
@@ -23,10 +37,9 @@ public class DatasetImageViewModel : ObservableObject
     private ImageRatingStatus _ratingStatus = ImageRatingStatus.Unrated;
     private string? _thumbnailPath;
     private bool _isEditorSelected;
+    private bool _isVideo;
 
-    /// <summary>
-    /// Full path to the media file (image or video).
-    /// </summary>
+    /// <summary>Full path to the media file (image or video).</summary>
     public string ImagePath
     {
         get => _imagePath;
@@ -55,31 +68,19 @@ public class DatasetImageViewModel : ObservableObject
         set => SetProperty(ref _thumbnailPath, value);
     }
 
-    /// <summary>
-    /// Whether this media item is a video file.
-    /// </summary>
+    /// <summary>Whether this media item is a video file.</summary>
     public bool IsVideo => _isVideo;
 
-    /// <summary>
-    /// Whether this media item is an image file.
-    /// </summary>
+    /// <summary>Whether this media item is an image file.</summary>
     public bool IsImage => !_isVideo;
 
-    /// <summary>
-    /// Display text for the media type.
-    /// </summary>
+    /// <summary>Display text for the media type.</summary>
     public string MediaType => _isVideo ? "Video" : "Image";
 
-    /// <summary>
-    /// File extension of the media file.
-    /// </summary>
+    /// <summary>File extension of the media file.</summary>
     public string FileExtension => Path.GetExtension(_imagePath).ToUpperInvariant().TrimStart('.');
 
-    private bool _isVideo;
-
-    /// <summary>
-    /// Caption text (loaded from .txt file with same name).
-    /// </summary>
+    /// <summary>Caption text (loaded from .txt file with same name).</summary>
     public string Caption
     {
         get => _caption;
@@ -88,23 +89,18 @@ public class DatasetImageViewModel : ObservableObject
             if (SetProperty(ref _caption, value))
             {
                 HasUnsavedChanges = value != _originalCaption;
-                _onCaptionChanged?.Invoke(this);
             }
         }
     }
 
-    /// <summary>
-    /// Whether the caption has been modified.
-    /// </summary>
+    /// <summary>Whether the caption has been modified.</summary>
     public bool HasUnsavedChanges
     {
         get => _hasUnsavedChanges;
         set => SetProperty(ref _hasUnsavedChanges, value);
     }
 
-    /// <summary>
-    /// Whether this item is currently selected.
-    /// </summary>
+    /// <summary>Whether this item is currently selected.</summary>
     public bool IsSelected
     {
         get => _isSelected;
@@ -112,23 +108,23 @@ public class DatasetImageViewModel : ObservableObject
         {
             if (SetProperty(ref _isSelected, value))
             {
-                _onSelectionChanged?.Invoke(this);
+                _eventAggregator?.PublishImageSelectionChanged(new ImageSelectionChangedEventArgs
+                {
+                    Image = this,
+                    IsSelected = value
+                });
             }
         }
     }
 
-    /// <summary>
-    /// Whether this image is currently selected in the Image Editor.
-    /// </summary>
+    /// <summary>Whether this image is currently selected in the Image Editor.</summary>
     public bool IsEditorSelected
     {
         get => _isEditorSelected;
         set => SetProperty(ref _isEditorSelected, value);
     }
 
-    /// <summary>
-    /// The quality rating status of this media item.
-    /// </summary>
+    /// <summary>The quality rating status of this media item.</summary>
     public ImageRatingStatus RatingStatus
     {
         get => _ratingStatus;
@@ -139,90 +135,49 @@ public class DatasetImageViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsApproved));
                 OnPropertyChanged(nameof(IsRejected));
                 OnPropertyChanged(nameof(IsUnrated));
-                _onRatingChanged?.Invoke(this);
             }
         }
     }
 
-    /// <summary>
-    /// Whether the item is marked as approved/production-ready.
-    /// </summary>
+    /// <summary>Whether the item is marked as approved/production-ready.</summary>
     public bool IsApproved => _ratingStatus == ImageRatingStatus.Approved;
 
-    /// <summary>
-    /// Whether the item is marked as rejected/failed.
-    /// </summary>
+    /// <summary>Whether the item is marked as rejected/failed.</summary>
     public bool IsRejected => _ratingStatus == ImageRatingStatus.Rejected;
 
-    /// <summary>
-    /// Whether the item has not been rated yet.
-    /// </summary>
+    /// <summary>Whether the item has not been rated yet.</summary>
     public bool IsUnrated => _ratingStatus == ImageRatingStatus.Unrated;
 
-    /// <summary>
-    /// File name without extension for display.
-    /// </summary>
+    /// <summary>File name without extension for display.</summary>
     public string FileName => Path.GetFileNameWithoutExtension(_imagePath);
 
-    /// <summary>
-    /// Full file name with extension.
-    /// </summary>
+    /// <summary>Full file name with extension.</summary>
     public string FullFileName => Path.GetFileName(_imagePath);
 
-    /// <summary>
-    /// Path to the caption text file.
-    /// </summary>
+    /// <summary>Path to the caption text file.</summary>
     public string CaptionFilePath => Path.ChangeExtension(_imagePath, ".txt");
 
-    /// <summary>
-    /// Path to the rating metadata file.
-    /// </summary>
+    /// <summary>Path to the rating metadata file.</summary>
     public string RatingFilePath => Path.ChangeExtension(_imagePath, ".rating");
 
-    /// <summary>
-    /// Command to save the caption.
-    /// </summary>
+    #region Commands
+
     public IRelayCommand SaveCaptionCommand { get; }
-
-    /// <summary>
-    /// Command to revert caption to last saved state.
-    /// </summary>
     public IRelayCommand RevertCaptionCommand { get; }
-
-    /// <summary>
-    /// Command to delete this item.
-    /// </summary>
     public IRelayCommand DeleteCommand { get; }
-
-    /// <summary>
-    /// Command to mark the item as approved (production-ready).
-    /// </summary>
     public IRelayCommand MarkApprovedCommand { get; }
-
-    /// <summary>
-    /// Command to mark the item as rejected (failed).
-    /// </summary>
     public IRelayCommand MarkRejectedCommand { get; }
-
-    /// <summary>
-    /// Command to clear the rating (set to unrated).
-    /// </summary>
     public IRelayCommand ClearRatingCommand { get; }
 
-    public DatasetImageViewModel() : this(null, null, null, null)
-    {
-    }
+    #endregion
 
-    public DatasetImageViewModel(
-        Action<DatasetImageViewModel>? onDeleteRequested, 
-        Action<DatasetImageViewModel>? onCaptionChanged,
-        Action<DatasetImageViewModel>? onRatingChanged = null,
-        Action<DatasetImageViewModel>? onSelectionChanged = null)
+    /// <summary>
+    /// Creates a new DatasetImageViewModel with optional event aggregator integration.
+    /// </summary>
+    /// <param name="eventAggregator">Optional event aggregator for publishing events.</param>
+    public DatasetImageViewModel(IDatasetEventAggregator? eventAggregator = null)
     {
-        _onDeleteRequested = onDeleteRequested;
-        _onCaptionChanged = onCaptionChanged;
-        _onRatingChanged = onRatingChanged;
-        _onSelectionChanged = onSelectionChanged;
+        _eventAggregator = eventAggregator;
         
         SaveCaptionCommand = new RelayCommand(SaveCaption);
         RevertCaptionCommand = new RelayCommand(RevertCaption);
@@ -233,16 +188,13 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Creates a DatasetImageViewModel from a media file path (image or video).
+    /// Creates a DatasetImageViewModel from a media file path with event aggregator support.
     /// </summary>
-    public static DatasetImageViewModel FromFile(
-        string mediaPath,
-        Action<DatasetImageViewModel>? onDeleteRequested = null,
-        Action<DatasetImageViewModel>? onCaptionChanged = null,
-        Action<DatasetImageViewModel>? onRatingChanged = null,
-        Action<DatasetImageViewModel>? onSelectionChanged = null)
+    /// <param name="mediaPath">Path to the media file.</param>
+    /// <param name="eventAggregator">Optional event aggregator for publishing events.</param>
+    public static DatasetImageViewModel FromFile(string mediaPath, IDatasetEventAggregator? eventAggregator = null)
     {
-        var vm = new DatasetImageViewModel(onDeleteRequested, onCaptionChanged, onRatingChanged, onSelectionChanged)
+        var vm = new DatasetImageViewModel(eventAggregator)
         {
             ImagePath = mediaPath,
             _isVideo = IsVideoFile(mediaPath)
@@ -252,9 +204,7 @@ public class DatasetImageViewModel : ObservableObject
         return vm;
     }
 
-    /// <summary>
-    /// Checks if a file is a video file based on its extension.
-    /// </summary>
+    /// <summary>Checks if a file is a video file based on its extension.</summary>
     public static bool IsVideoFile(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
@@ -264,15 +214,11 @@ public class DatasetImageViewModel : ObservableObject
         return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Gets the path to the video thumbnail (generated _thumb.webp file).
-    /// </summary>
     private string? GetVideoThumbnailPath()
     {
         if (string.IsNullOrWhiteSpace(_imagePath))
             return null;
         
-        // Use the _thumb.webp naming convention
         var directory = Path.GetDirectoryName(_imagePath) ?? string.Empty;
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(_imagePath);
         var thumbnailPath = Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
@@ -280,9 +226,7 @@ public class DatasetImageViewModel : ObservableObject
         return File.Exists(thumbnailPath) ? thumbnailPath : null;
     }
 
-    /// <summary>
-    /// Loads the caption from the associated .txt file.
-    /// </summary>
+    /// <summary>Loads the caption from the associated .txt file.</summary>
     public void LoadCaption()
     {
         if (File.Exists(CaptionFilePath))
@@ -307,9 +251,7 @@ public class DatasetImageViewModel : ObservableObject
         HasUnsavedChanges = false;
     }
 
-    /// <summary>
-    /// Loads the rating from the associated .rating file.
-    /// </summary>
+    /// <summary>Loads the rating from the associated .rating file.</summary>
     public void LoadRating()
     {
         if (File.Exists(RatingFilePath))
@@ -337,30 +279,22 @@ public class DatasetImageViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Saves the rating to the associated .rating file.
-    /// </summary>
+    /// <summary>Saves the rating to the associated .rating file.</summary>
     public void SaveRating()
     {
         try
         {
             if (_ratingStatus == ImageRatingStatus.Unrated)
             {
-                // Delete the file if unrated
                 if (File.Exists(RatingFilePath))
-                {
                     File.Delete(RatingFilePath);
-                }
             }
             else
             {
                 File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
             }
         }
-        catch
-        {
-            // Ignore errors
-        }
+        catch { }
     }
 
     private void SaveCaption()
@@ -370,11 +304,15 @@ public class DatasetImageViewModel : ObservableObject
             File.WriteAllText(CaptionFilePath, _caption);
             _originalCaption = _caption;
             HasUnsavedChanges = false;
+
+            // Publish caption saved event
+            _eventAggregator?.PublishCaptionChanged(new CaptionChangedEventArgs
+            {
+                Image = this,
+                WasSaved = true
+            });
         }
-        catch
-        {
-            // TODO: Handle error
-        }
+        catch { }
     }
 
     private void RevertCaption()
@@ -385,30 +323,54 @@ public class DatasetImageViewModel : ObservableObject
 
     private void Delete()
     {
-        _onDeleteRequested?.Invoke(this);
+        // Deletion is handled by the parent ViewModel which has access to file operations
+        // This command is typically bound to a delete button that triggers a confirmation dialog
+        // The actual deletion is performed via the event aggregator or parent callback
     }
 
     private void MarkApproved()
     {
-        // Toggle: if already approved, clear it
+        var previousRating = _ratingStatus;
         RatingStatus = _ratingStatus == ImageRatingStatus.Approved 
             ? ImageRatingStatus.Unrated 
             : ImageRatingStatus.Approved;
         SaveRating();
+
+        _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+        {
+            Image = this,
+            NewRating = _ratingStatus,
+            PreviousRating = previousRating
+        });
     }
 
     private void MarkRejected()
     {
-        // Toggle: if already rejected, clear it
+        var previousRating = _ratingStatus;
         RatingStatus = _ratingStatus == ImageRatingStatus.Rejected 
             ? ImageRatingStatus.Unrated 
             : ImageRatingStatus.Rejected;
         SaveRating();
+
+        _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+        {
+            Image = this,
+            NewRating = _ratingStatus,
+            PreviousRating = previousRating
+        });
     }
 
     private void ClearRating()
     {
+        var previousRating = _ratingStatus;
         RatingStatus = ImageRatingStatus.Unrated;
         SaveRating();
+
+        _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
+        {
+            Image = this,
+            NewRating = ImageRatingStatus.Unrated,
+            PreviousRating = previousRating
+        });
     }
 }
