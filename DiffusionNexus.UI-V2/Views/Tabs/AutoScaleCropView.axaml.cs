@@ -10,6 +10,8 @@ namespace DiffusionNexus.UI.Views.Tabs;
 /// </summary>
 public partial class AutoScaleCropView : UserControl
 {
+    private bool _eventsWired;
+
     public AutoScaleCropView()
     {
         InitializeComponent();
@@ -18,6 +20,10 @@ public partial class AutoScaleCropView : UserControl
     protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
+
+        // Only wire up events once to prevent multiple folder picker dialogs
+        if (_eventsWired) return;
+        _eventsWired = true;
 
         // Wire up browse buttons
         var browseSourceButton = this.FindControl<Button>("BrowseSourceButton");
