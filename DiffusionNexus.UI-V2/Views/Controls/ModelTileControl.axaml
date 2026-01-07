@@ -65,8 +65,9 @@
           <Border IsVisible="{Binding ShowPlaceholder}"
                   Background="#252525">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-              <TextBlock Text="&#x1F5BC;" FontSize="40" HorizontalAlignment="Center" Opacity="0.3"/>
-              <TextBlock Text="No Preview" FontSize="11" Opacity="0.3" HorizontalAlignment="Center"/>
+              <Border Background="#333" CornerRadius="8" Padding="12,8">
+                <TextBlock Text="No Preview" FontSize="11" Opacity="0.4" HorizontalAlignment="Center"/>
+              </Border>
             </StackPanel>
           </Border>
 
@@ -119,39 +120,41 @@
           
           <!-- Open on Civitai -->
           <Button Grid.Column="0"
-                  Content="&#x1F310;"
+                  Content="Web"
                   Command="{Binding OpenOnCivitaiCommand}"
                   ToolTip.Tip="Open on Civitai"
                   HorizontalAlignment="Center"
-                  Padding="8,4"
-                  FontSize="14"/>
+                  Padding="6,4"
+                  FontSize="10"/>
           
           <!-- Copy Trigger Words -->
           <Button Grid.Column="1"
-                  Content="&#x1F4CB;"
+                  Content="Copy"
                   Command="{Binding CopyTriggerWordsCommand}"
                   ToolTip.Tip="Copy Trigger Words"
                   HorizontalAlignment="Center"
-                  Padding="8,4"
-                  FontSize="14"/>
+                  Padding="6,4"
+                  FontSize="10"/>
           
           <!-- Open Folder -->
           <Button Grid.Column="2"
-                  Content="&#x1F4C2;"
+                  Content="Folder"
                   Command="{Binding OpenFolderCommand}"
                   ToolTip.Tip="Open Folder"
                   HorizontalAlignment="Center"
-                  Padding="8,4"
-                  FontSize="14"/>
+                  Padding="6,4"
+                  FontSize="10"/>
           
           <!-- Delete -->
           <Button Grid.Column="3"
-                  Content="&#x274C;"
+                  Content="X"
+                  FontWeight="Bold"
+                  Foreground="#FF6B6B"
                   Command="{Binding DeleteCommand}"
                   ToolTip.Tip="Delete Model"
                   HorizontalAlignment="Center"
                   Padding="8,4"
-                  FontSize="14"/>
+                  FontSize="12"/>
           
         </Grid>
       </Border>
