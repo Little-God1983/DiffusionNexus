@@ -6,6 +6,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
 using System.IO.Compression;
@@ -15,14 +16,17 @@ namespace DiffusionNexus.UI.Views.Tabs;
 /// <summary>
 /// View for the Dataset Management tab in the LoRA Dataset Helper.
 /// Handles drag-drop operations, keyboard shortcuts, and pointer events for image selection.
+/// 
+/// <para>
+/// <b>DRY Compliance:</b>
+/// This view uses <see cref="MediaFileExtensions"/> for all file type detection
+/// to maintain a single source of truth for supported file extensions.
+/// </para>
 /// </summary>
 public partial class DatasetManagementView : UserControl
 {
-    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
-    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
-    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
-    private static readonly string[] TextExtensions = [".txt", ".caption"];
-    private static readonly string[] AllowedExtensions = [..MediaExtensions, ..TextExtensions];
+    // Archive extensions are kept here as they are view-specific (drag-drop behavior)
+    // and not part of the core media file handling in MediaFileExtensions
     private static readonly string[] ArchiveExtensions = [".zip"];
 
     private Border? _emptyDatasetDropZone;
@@ -131,14 +135,16 @@ public partial class DatasetManagementView : UserControl
         {
             if (item is IStorageFile file)
             {
-                var ext = Path.GetExtension(file.Path.LocalPath).ToLowerInvariant();
-                if (MediaExtensions.Contains(ext))
+                var filePath = file.Path.LocalPath;
+                
+                // Use centralized MediaFileExtensions for file type detection
+                if (MediaFileExtensions.IsMediaFile(filePath))
                 {
                     hasValid = true;
                 }
-                else if (IsZipFile(file.Path.LocalPath))
+                else if (IsZipFile(filePath))
                 {
-                    var (zipHasValid, zipHasInvalid) = AnalyzeMediaFilesInZip(file.Path.LocalPath);
+                    var (zipHasValid, zipHasInvalid) = AnalyzeMediaFilesInZip(filePath);
                     if (zipHasValid) hasValid = true;
                     if (zipHasInvalid) hasInvalid = true;
                 }
@@ -160,7 +166,7 @@ public partial class DatasetManagementView : UserControl
         return (hasValid, hasInvalid);
     }
 
-    private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInFolder(string folderPath)
+    private static (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInFolder(string folderPath)
     {
         if (!Directory.Exists(folderPath)) return (false, false);
 
@@ -171,8 +177,8 @@ public partial class DatasetManagementView : UserControl
         {
             foreach (var file in Directory.EnumerateFiles(folderPath))
             {
-                var ext = Path.GetExtension(file).ToLowerInvariant();
-                if (MediaExtensions.Contains(ext))
+                // Use centralized MediaFileExtensions for file type detection
+                if (MediaFileExtensions.IsMediaFile(file))
                     hasValid = true;
                 else
                     hasInvalid = true;
@@ -180,7 +186,16 @@ public partial class DatasetManagementView : UserControl
                 if (hasValid && hasInvalid) break;
             }
         }
-        catch { }
+        catch (IOException)
+        {
+            // Directory access error - treat as having invalid files
+            hasInvalid = true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Permission denied - treat as having invalid files
+            hasInvalid = true;
+        }
 
         return (hasValid, hasInvalid);
     }
@@ -205,9 +220,9 @@ public partial class DatasetManagementView : UserControl
             if (item is IStorageFile file)
             {
                 var filePath = file.Path.LocalPath;
-                var ext = Path.GetExtension(filePath).ToLowerInvariant();
 
-                if (MediaExtensions.Contains(ext))
+                // Use centralized MediaFileExtensions for file type detection
+                if (MediaFileExtensions.IsMediaFile(filePath))
                 {
                     mediaFiles.Add(filePath);
                 }
@@ -233,11 +248,15 @@ public partial class DatasetManagementView : UserControl
 
         await CopyFilesToDatasetAsync(vm, mediaFiles);
 
-        // Cleanup temp files
+        // Cleanup temp files extracted from ZIP
         foreach (var tempFile in extractedFromZip)
         {
-            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+            try { if (File.Exists(tempFile)) File.Delete(tempFile); }
+            catch (IOException) { /* File in use, skip cleanup */ }
+            catch (UnauthorizedAccessException) { /* Permission denied, skip cleanup */ }
         }
+        
+        // Cleanup empty temp directories
         foreach (var tempFile in extractedFromZip)
         {
             try
@@ -246,24 +265,26 @@ public partial class DatasetManagementView : UserControl
                 if (dir is not null && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
                     Directory.Delete(dir);
             }
-            catch { }
+            catch (IOException) { /* Directory in use or not empty */ }
+            catch (UnauthorizedAccessException) { /* Permission denied */ }
         }
     }
 
-    private void AddMediaFromFolder(string folderPath, List<string> mediaFiles)
+    private static void AddMediaFromFolder(string folderPath, List<string> mediaFiles)
     {
         if (!Directory.Exists(folderPath)) return;
+        
         foreach (var file in Directory.EnumerateFiles(folderPath))
         {
-            var ext = Path.GetExtension(file).ToLowerInvariant();
-            if (MediaExtensions.Contains(ext))
+            // Use centralized MediaFileExtensions for file type detection
+            if (MediaFileExtensions.IsMediaFile(file))
             {
                 mediaFiles.Add(file);
             }
         }
     }
 
-    private List<string> ExtractMediaFromZip(string zipPath)
+    private static List<string> ExtractMediaFromZip(string zipPath)
     {
         var extractedFiles = new List<string>();
 
@@ -278,9 +299,11 @@ public partial class DatasetManagementView : UserControl
                 {
                     if (string.IsNullOrEmpty(entry.Name)) continue;
 
-                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                    if (AllowedExtensions.Contains(ext))
+                    // Use centralized MediaFileExtensions for file type detection
+                    // Extract both media files and caption files
+                    if (MediaFileExtensions.IsMediaFile(entry.Name) || MediaFileExtensions.IsCaptionFile(entry.Name))
                     {
+                        var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
                         var destPath = Path.Combine(tempDir, entry.Name);
                         var counter = 1;
                         while (File.Exists(destPath))
@@ -297,10 +320,19 @@ public partial class DatasetManagementView : UserControl
 
             if (extractedFiles.Count == 0 && Directory.Exists(tempDir))
             {
-                try { Directory.Delete(tempDir, recursive: true); } catch { }
+                try { Directory.Delete(tempDir, recursive: true); }
+                catch (IOException) { /* Directory in use */ }
+                catch (UnauthorizedAccessException) { /* Permission denied */ }
             }
         }
-        catch { }
+        catch (InvalidDataException)
+        {
+            // Corrupt or invalid ZIP file - return empty list
+        }
+        catch (IOException)
+        {
+            // File access error
+        }
 
         return extractedFiles;
     }
@@ -311,7 +343,7 @@ public partial class DatasetManagementView : UserControl
         return ArchiveExtensions.Contains(ext);
     }
 
-    private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInZip(string zipPath)
+    private static (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInZip(string zipPath)
     {
         var hasValid = false;
         var hasInvalid = false;
@@ -323,8 +355,8 @@ public partial class DatasetManagementView : UserControl
             {
                 if (string.IsNullOrEmpty(entry.Name)) continue;
 
-                var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                if (MediaExtensions.Contains(ext))
+                // Use centralized MediaFileExtensions for file type detection
+                if (MediaFileExtensions.IsMediaFile(entry.Name))
                     hasValid = true;
                 else
                     hasInvalid = true;
@@ -332,8 +364,14 @@ public partial class DatasetManagementView : UserControl
                 if (hasValid && hasInvalid) break;
             }
         }
-        catch
+        catch (InvalidDataException)
         {
+            // Corrupt or invalid ZIP file
+            hasInvalid = true;
+        }
+        catch (IOException)
+        {
+            // File access error
             hasInvalid = true;
         }
 
@@ -358,12 +396,13 @@ public partial class DatasetManagementView : UserControl
             {
                 var fileName = Path.GetFileName(sourceFile);
                 var destPath = Path.Combine(destFolderPath, fileName);
-                var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
 
                 if (!File.Exists(destPath))
                 {
                     File.Copy(sourceFile, destPath);
-                    if (TextExtensions.Contains(ext))
+                    
+                    // Use centralized MediaFileExtensions for file type detection
+                    if (MediaFileExtensions.IsCaptionFile(sourceFile))
                         captionsCopied++;
                     else
                         copied++;
@@ -374,7 +413,8 @@ public partial class DatasetManagementView : UserControl
                 }
             }
 
-            var hasVideos = filesToCopy.Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
+            // Use centralized MediaFileExtensions to check for videos
+            var hasVideos = filesToCopy.Any(MediaFileExtensions.IsVideoFile);
             var fileType = hasVideos ? "files" : "images";
 
             var parts = new List<string>();
@@ -393,9 +433,13 @@ public partial class DatasetManagementView : UserControl
 
             await vm.RefreshActiveDatasetAsync();
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
             vm.StatusMessage = $"Error adding files: {ex.Message}";
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            vm.StatusMessage = $"Permission denied: {ex.Message}";
         }
         finally
         {

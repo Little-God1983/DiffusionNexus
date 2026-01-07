@@ -9,5 +9,13 @@
 
     <Application.Styles>
         <FluentTheme />
+        
+        <!-- Global font with emoji fallback -->
+        <Style Selector="TextBlock">
+            <Setter Property="FontFamily" Value="Inter, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif"/>
+        </Style>
+        <Style Selector="Button">
+            <Setter Property="FontFamily" Value="Inter, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif"/>
+        </Style>
     </Application.Styles>
 </Application>
