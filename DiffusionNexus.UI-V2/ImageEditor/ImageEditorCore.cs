@@ -573,6 +573,20 @@ public class ImageEditorCore : IDisposable
     public void ZoomToFit() => IsFitMode = true;
 
     /// <summary>
+    /// Sets fit mode with a pre-calculated zoom level.
+    /// Used when the caller knows the canvas dimensions and can calculate the fit zoom.
+    /// </summary>
+    /// <param name="fitZoom">The calculated zoom level for fit mode.</param>
+    public void SetFitModeWithZoom(float fitZoom)
+    {
+        _zoomLevel = Math.Clamp(fitZoom, MinZoom, MaxZoom);
+        _isFitMode = true;
+        _panX = 0;
+        _panY = 0;
+        OnZoomChanged();
+    }
+
+    /// <summary>
     /// Resets the zoom level to 100% and pans to the original position.
     /// </summary>
     public void ZoomToActual()
