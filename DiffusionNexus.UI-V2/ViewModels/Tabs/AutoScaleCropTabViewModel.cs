@@ -49,7 +49,7 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
 
-    #region Dataset Selection Properties
+    #region Dataset Selection Properties (Source)
 
     private DatasetCardViewModel? _selectedDataset;
     private EditorVersionItem? _selectedVersion;
@@ -72,8 +72,10 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
                     OnPropertyChanged(nameof(SourceFolder));
                 }
                 _ = LoadDatasetVersionsAsync();
+                UpdateNextVersionNumber();
                 OnPropertyChanged(nameof(HasSourceSelected));
                 OnPropertyChanged(nameof(CanStart));
+                OnPropertyChanged(nameof(CanIncrementVersion));
                 StartCommand.NotifyCanExecuteChanged();
             }
         }
@@ -96,6 +98,30 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
             }
         }
     }
+
+    #endregion
+
+    #region Target Version Properties
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOverwriteMode))]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(EffectiveTargetFolder))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand))]
+    private bool _useIncrementVersion;
+
+    [ObservableProperty]
+    private int _nextVersionNumber;
+
+    /// <summary>
+    /// True if a dataset is selected (enables version increment option).
+    /// </summary>
+    public bool CanIncrementVersion => SelectedDataset is not null;
+
+    /// <summary>
+    /// Display text for the increment version button.
+    /// </summary>
+    public string IncrementVersionDisplayText => $"Create New Version Folder in {SelectedDataset?.Name} {NextVersionNumber}";
 
     #endregion
 
@@ -137,6 +163,7 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsOverwriteMode))]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(EffectiveTargetFolder))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     private string _targetFolder = string.Empty;
 
@@ -201,7 +228,11 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     public bool HasSelectedBuckets => BucketOptions.Any(b => b.IsSelected);
 
-    public bool IsOverwriteMode => string.IsNullOrWhiteSpace(TargetFolder);
+    /// <summary>
+    /// True if no target is specified (overwrite mode).
+    /// </summary>
+    public bool IsOverwriteMode => 
+        string.IsNullOrWhiteSpace(TargetFolder) && !UseIncrementVersion;
 
     /// <summary>
     /// True if either a source folder is specified OR a dataset+version is selected.
@@ -224,6 +255,23 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
                 return SelectedDataset.GetVersionFolderPath(SelectedVersion.Version);
 
             return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Gets the effective target folder path (manual folder, new version folder, or null for overwrite).
+    /// </summary>
+    public string? EffectiveTargetFolder
+    {
+        get
+        {
+            if (UseIncrementVersion && SelectedDataset is not null)
+                return SelectedDataset.GetVersionFolderPath(NextVersionNumber);
+
+            if (!string.IsNullOrWhiteSpace(TargetFolder))
+                return TargetFolder;
+
+            return null;
         }
     }
 
@@ -306,6 +354,10 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
             VersionItems.Clear();
             OnPropertyChanged(nameof(SelectedDataset));
             OnPropertyChanged(nameof(SelectedVersion));
+            
+            // Also clear increment version option since no dataset is selected
+            UseIncrementVersion = false;
+            OnPropertyChanged(nameof(CanIncrementVersion));
         }
 
         if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
@@ -321,14 +373,51 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     partial void OnTargetFolderChanged(string value)
     {
+        // Clear increment version when manual folder is specified
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            UseIncrementVersion = false;
+        }
+        
         CheckTargetFolderEmpty();
         OnPropertyChanged(nameof(IsOverwriteMode));
         OnPropertyChanged(nameof(CanStart));
     }
 
+    partial void OnUseIncrementVersionChanged(bool value)
+    {
+        // Clear manual target folder when increment version is selected
+        if (value && !string.IsNullOrWhiteSpace(TargetFolder))
+        {
+            _targetFolder = string.Empty;
+            OnPropertyChanged(nameof(TargetFolder));
+        }
+        
+        OnPropertyChanged(nameof(IsOverwriteMode));
+        OnPropertyChanged(nameof(CanStart));
+        OnPropertyChanged(nameof(EffectiveTargetFolder));
+        OnPropertyChanged(nameof(IncrementVersionDisplayText));
+    }
+
     #endregion
 
     #region Dataset Methods
+
+    /// <summary>
+    /// Updates the next version number based on the selected dataset.
+    /// </summary>
+    private void UpdateNextVersionNumber()
+    {
+        if (_selectedDataset is not null)
+        {
+            NextVersionNumber = _selectedDataset.GetNextVersionNumber();
+            OnPropertyChanged(nameof(IncrementVersionDisplayText));
+        }
+        else
+        {
+            NextVersionNumber = 1;
+        }
+    }
 
     /// <summary>
     /// Loads the available versions for the selected dataset.
@@ -420,6 +509,7 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
         SelectedDataset = null;
         SelectedVersion = null;
         VersionItems.Clear();
+        UseIncrementVersion = false;
         TotalFiles = 0;
         ImageFiles = 0;
         StatusMessage = string.Empty;
@@ -470,6 +560,20 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
         try
         {
+            // Create the target version folder if using increment version
+            if (UseIncrementVersion && SelectedDataset is not null)
+            {
+                var newVersionPath = SelectedDataset.GetVersionFolderPath(NextVersionNumber);
+                Directory.CreateDirectory(newVersionPath);
+                
+                // Record the branch in the dataset metadata
+                if (SelectedVersion is not null)
+                {
+                    SelectedDataset.RecordBranch(NextVersionNumber, SelectedVersion.Version);
+                    SelectedDataset.SaveMetadata();
+                }
+            }
+
             // Determine max resolution
             int? maxLongestSide = null;
             if (SelectedResolution != ResolutionOption.None)
@@ -487,10 +591,10 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
             var progress = new Progress<CropProgress>(OnProgressUpdate);
 
-            // Use effective source folder (manual or from dataset)
+            // Use effective source and target folders
             var result = await _cropperService.ProcessImagesAsync(
                 EffectiveSourceFolder,
-                string.IsNullOrWhiteSpace(TargetFolder) ? null : TargetFolder,
+                EffectiveTargetFolder,
                 SelectedBuckets,
                 maxLongestSide,
                 SkipUnchanged,
@@ -500,7 +604,18 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
             SuccessCount = result.SuccessCount;
             FailedCount = result.FailedCount;
             SkippedCount = result.SkippedCount;
-            StatusMessage = $"Completed: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed";
+            
+            var targetInfo = UseIncrementVersion 
+                ? $" to V{NextVersionNumber}" 
+                : "";
+            StatusMessage = $"Completed{targetInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed";
+
+            // If we created a new version, update the next version number for subsequent runs
+            if (UseIncrementVersion && SelectedDataset is not null)
+            {
+                UpdateNextVersionNumber();
+                _ = LoadDatasetVersionsAsync(); // Refresh version list
+            }
         }
         catch (OperationCanceledException)
         {
@@ -538,12 +653,16 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
         {
             UpdateDatasetImageCount();
         }
+        
+        // Also refresh next version number
+        UpdateNextVersionNumber();
     }
 
     [RelayCommand]
     private void ClearTargetFolder()
     {
         TargetFolder = string.Empty;
+        UseIncrementVersion = false;
     }
 
     #endregion

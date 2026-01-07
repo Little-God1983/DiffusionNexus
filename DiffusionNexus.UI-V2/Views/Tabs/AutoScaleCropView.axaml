@@ -216,29 +216,75 @@
                 </StackPanel>
             </Border>
 
-            <!-- Target Folder Card -->
+            <!-- Target Destination Card -->
             <Border Classes="Card">
-                <StackPanel Spacing="12">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="Target Folder" Classes="Header" Margin="0"/>
-                        <TextBlock Text="(Optional - leave empty to overwrite originals)"
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Target Destination" Classes="Header" Margin="0"/>
+
+                    <!-- Increment Version Option (only when dataset is selected) -->
+                    <StackPanel Spacing="8" IsVisible="{Binding CanIncrementVersion}">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <CheckBox Content="{Binding IncrementVersionDisplayText}"
+                                      IsChecked="{Binding UseIncrementVersion}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      FontWeight="SemiBold"/>
+                            <TextBlock Text="(Recommended - tracked by DiffusionNexus)"
+                                       Classes="SubText"
+                                       VerticalAlignment="Center"
+                                       Foreground="#4ade80"/>
+                        </StackPanel>
+                        <TextBlock Text="Creates a new version in the selected dataset with the processed images."
                                    Classes="SubText"
-                                   VerticalAlignment="Center"/>
+                                   Margin="28,0,0,0"/>
                     </StackPanel>
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <TextBox Grid.Column="0"
-                                 Text="{Binding TargetFolder}"
-                                 Watermark="Same as source folder"
-                                 IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="1"
-                                x:Name="BrowseTargetButton"
-                                Content="Browse..."
-                                IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="2"
-                                Content="Clear"
-                                Command="{Binding ClearTargetFolderCommand}"
-                                IsEnabled="{Binding !IsProcessing}"/>
+
+                    <!-- OR Separator (only when dataset is selected) -->
+                    <Grid ColumnDefinitions="*,Auto,*" Margin="0,8" IsVisible="{Binding CanIncrementVersion}">
+                        <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
+                        <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
+                        <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
                     </Grid>
+
+                    <!-- Target Folder Selection -->
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Target Folder" FontWeight="SemiBold"/>
+                            <TextBlock Text="(Optional - leave empty to overwrite originals)"
+                                       Classes="SubText"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding TargetFolder}"
+                                     Watermark="Same as source folder"
+                                     IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="1"
+                                    x:Name="BrowseTargetButton"
+                                    Content="Browse..."
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="2"
+                                    Content="Clear"
+                                    Command="{Binding ClearTargetFolderCommand}"
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                        </Grid>
+
+                        <!-- Warning for external folder -->
+                        <Border Background="#443322"
+                                CornerRadius="6"
+                                Padding="12"
+                                Margin="0,8,0,0"
+                                IsVisible="{Binding TargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="?? External Folder"
+                                           FontWeight="SemiBold"
+                                           Foreground="#fbbf24"/>
+                                <TextBlock Text="Files saved to this folder will not be tracked by DiffusionNexus. Consider using 'Create New Version' if working with a dataset."
+                                           TextWrapping="Wrap"
+                                           Opacity="0.9"
+                                           FontSize="12"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
 
                     <!-- Overwrite Confirmation -->
                     <Border Background="#442222"
