@@ -800,20 +800,19 @@
                   <TextBlock Text="Dataset:"
                              VerticalAlignment="Center"
                              Opacity="0.7"/>
-                  <AutoCompleteBox ItemsSource="{Binding Datasets}"
-                                   SelectedItem="{Binding SelectedEditorDataset, Mode=TwoWay}"
-                                   ValueMemberBinding="{Binding Name}"
-                                   FilterMode="Contains"
-                                   MinWidth="180"
-                                   MaxWidth="250"
-                                   Watermark="Search datasets..."
-                                   ToolTip.Tip="Search and select a dataset">
-                    <AutoCompleteBox.ItemTemplate>
+                  <ComboBox ItemsSource="{Binding Datasets}"
+                            SelectedItem="{Binding SelectedEditorDataset, Mode=TwoWay}"
+                            IsEditable="True"
+                            MinWidth="180"
+                            MaxWidth="250"
+                            PlaceholderText="Search datasets..."
+                            ToolTip.Tip="Search and select a dataset">
+                    <ComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:DatasetCardViewModel">
                         <TextBlock Text="{Binding Name}"/>
                       </DataTemplate>
-                    </AutoCompleteBox.ItemTemplate>
-                  </AutoCompleteBox>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
                 </StackPanel>
                 
                 <!-- Version Selector -->

@@ -1754,6 +1754,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
             }
 
+            // Update selection count since selected items were removed
+            UpdateSelectionCount();
+
             StatusMessage = $"Deleted {selectedImages.Count} items";
         }
         catch (Exception ex)
