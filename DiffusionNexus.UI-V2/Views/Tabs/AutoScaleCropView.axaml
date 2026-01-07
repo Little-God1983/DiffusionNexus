@@ -4,9 +4,14 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:vms="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
              x:Class="DiffusionNexus.UI.Views.Tabs.AutoScaleCropView"
              x:DataType="vm:AutoScaleCropTabViewModel">
+
+    <UserControl.Resources>
+        <converters:BoolToAccentBrushConverter x:Key="BoolToAccentBrushConverter"/>
+    </UserControl.Resources>
 
     <UserControl.Styles>
         <Style Selector="Border.Card">
@@ -144,52 +149,74 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="Fit Mode" Classes="Header" Margin="0"/>
                     
-                    <!-- Crop vs Pad Toggle -->
-                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,8">
-                        <RadioButton Grid.Column="0"
-                                     GroupName="FitMode"
-                                     IsChecked="{Binding !UsePadding}"
-                                     IsEnabled="{Binding !IsProcessing}"
-                                     Padding="12,8">
-                            <StackPanel>
-                                <TextBlock Text="✂️ Crop" FontWeight="SemiBold"/>
-                                <TextBlock Text="Remove pixels to fit aspect ratio" 
-                                           Classes="SubText" 
-                                           TextWrapping="Wrap"/>
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton Grid.Column="1"
-                                     GroupName="FitMode"
-                                     IsChecked="{Binding UsePadding}"
-                                     IsEnabled="{Binding !IsProcessing}"
-                                     Padding="12,8">
-                            <StackPanel>
-                                <TextBlock Text="🖼️ Pad (Letterbox)" FontWeight="SemiBold"/>
-                                <TextBlock Text="Add canvas to preserve entire image" 
-                                           Classes="SubText" 
-                                           TextWrapping="Wrap"/>
-                            </StackPanel>
-                        </RadioButton>
+                    <!-- Crop vs Pad Toggle - Side by Side -->
+                    <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,8">
+                        <Border Grid.Column="0"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                CornerRadius="8"
+                                Padding="16"
+                                BorderThickness="2"
+                                BorderBrush="{Binding !UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
+                            <RadioButton GroupName="FitMode"
+                                         IsChecked="{Binding !UsePadding}"
+                                         IsEnabled="{Binding !IsProcessing}">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="✂️" FontSize="20"/>
+                                        <TextBlock Text="Crop" FontSize="16" FontWeight="Bold"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Remove pixels to fit aspect ratio. May cut off parts of the image." 
+                                               Classes="SubText" 
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </Border>
+                        
+                        <Border Grid.Column="2"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                CornerRadius="8"
+                                Padding="16"
+                                BorderThickness="2"
+                                BorderBrush="{Binding UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
+                            <RadioButton GroupName="FitMode"
+                                         IsChecked="{Binding UsePadding}"
+                                         IsEnabled="{Binding !IsProcessing}">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="🖼️" FontSize="20"/>
+                                        <TextBlock Text="Pad (Letterbox)" FontSize="16" FontWeight="Bold"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Add canvas to preserve entire image. Nothing is lost." 
+                                               Classes="SubText" 
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </Border>
                     </Grid>
 
                     <!-- Padding Fill Options (only visible when Pad is selected) -->
-                    <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                    <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
                             CornerRadius="6"
                             Padding="12"
                             IsVisible="{Binding IsPadMode}">
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
-                            <ComboBox ItemsSource="{Binding PaddingFillOptions}"
-                                      SelectedItem="{Binding SelectedPaddingFill}"
-                                      IsEnabled="{Binding !IsProcessing}"
-                                      MinWidth="200">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate DataType="vm:PaddingFillOption">
-                                        <TextBlock Text="{Binding DisplayName}"/>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                            <TextBlock Classes="SubText" TextWrapping="Wrap">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <StackPanel Grid.Column="0" Spacing="8">
+                                <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
+                                <ComboBox ItemsSource="{Binding PaddingFillOptions}"
+                                          SelectedItem="{Binding SelectedPaddingFill}"
+                                          IsEnabled="{Binding !IsProcessing}"
+                                          MinWidth="160">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate DataType="vm:PaddingFillOption">
+                                            <TextBlock Text="{Binding DisplayName}"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" 
+                                       Classes="SubText" 
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center">
                                 <TextBlock.Text>
                                     <Binding Path="SelectedPaddingFill.Mode">
                                         <Binding.Converter>
@@ -198,7 +225,7 @@
                                     </Binding>
                                 </TextBlock.Text>
                             </TextBlock>
-                        </StackPanel>
+                        </Grid>
                     </Border>
                 </StackPanel>
             </Border>

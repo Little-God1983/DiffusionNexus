@@ -1,8 +1,30 @@
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using DiffusionNexus.UI.ViewModels;
+using System.Globalization;
 
 namespace DiffusionNexus.UI.Converters;
+
+/// <summary>
+/// Converts a boolean to accent brush for highlighting selected options.
+/// </summary>
+public class BoolToAccentBrushConverter : IValueConverter
+{
+    private static readonly IBrush AccentBrush = new SolidColorBrush(Color.Parse("#667eea"));
+    private static readonly IBrush TransparentBrush = Brushes.Transparent;
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool b)
+        {
+            return b ? AccentBrush : TransparentBrush;
+        }
+        return TransparentBrush;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
 
 /// <summary>
 /// Common boolean converters for XAML bindings.
