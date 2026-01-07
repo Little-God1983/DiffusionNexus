@@ -16,6 +16,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <list type="bullet">
 /// <item><see cref="DatasetManagementViewModel"/> - Dataset listing, creation, image management</item>
 /// <item><see cref="ImageEditTabViewModel"/> - Image editing with the ImageEditorControl</item>
+/// <item><see cref="AutoScaleCropTabViewModel"/> - Batch image cropping to aspect ratio buckets</item>
 /// </list>
 /// </para>
 /// 
@@ -55,6 +56,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// ViewModel for the Image Edit tab.
     /// </summary>
     public ImageEditTabViewModel ImageEdit { get; }
+
+    /// <summary>
+    /// ViewModel for the Auto Scale/Crop tab.
+    /// </summary>
+    public AutoScaleCropTabViewModel AutoScaleCrop { get; }
 
     #endregion
 
@@ -103,6 +109,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Create tab ViewModels
         DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, videoThumbnailService);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state);
+        AutoScaleCrop = new AutoScaleCropTabViewModel();
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -158,6 +165,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             DatasetManagement.DialogService = DialogService;
             ImageEdit.DialogService = DialogService;
+            AutoScaleCrop.DialogService = DialogService;
         }
     }
 
@@ -191,6 +199,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             // Dispose child ViewModels
             DatasetManagement.Dispose();
             ImageEdit.Dispose();
+            AutoScaleCrop.Dispose();
         }
 
         _disposed = true;

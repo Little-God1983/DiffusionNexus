@@ -1,0 +1,277 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
+             x:Class="DiffusionNexus.UI.Views.Tabs.AutoScaleCropView"
+             x:DataType="vm:AutoScaleCropTabViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="Border.Card">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
+
+        <Style Selector="TextBlock.Header">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+
+        <Style Selector="TextBlock.SubText">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+
+        <Style Selector="Button.primary-btn">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                        <GradientStop Color="#667eea" Offset="0"/>
+                        <GradientStop Color="#764ba2" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Padding" Value="32,12"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style Selector="Button.primary-btn:pointerover">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                        <GradientStop Color="#764ba2" Offset="0"/>
+                        <GradientStop Color="#667eea" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style Selector="Button.primary-btn:disabled">
+            <Setter Property="Background" Value="#555577"/>
+            <Setter Property="Foreground" Value="#888888"/>
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24">
+
+            <!-- Bucket Selection Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Aspect Ratio Buckets"
+                                       Classes="Header"
+                                       Margin="0"/>
+                            <TextBlock Text="Images will be cropped to the nearest bucket."
+                                       Classes="SubText"
+                                       Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="Select All"
+                                Command="{Binding SelectAllBucketsCommand}"
+                                Margin="0,0,8,0"
+                                IsEnabled="{Binding !IsProcessing}"/>
+                        <Button Grid.Column="2"
+                                Content="Deselect All"
+                                Command="{Binding DeselectAllBucketsCommand}"
+                                IsEnabled="{Binding !IsProcessing}"/>
+                    </Grid>
+
+                    <ItemsControl ItemsSource="{Binding BucketOptions}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:BucketOption">
+                                <ToggleButton IsChecked="{Binding IsSelected}"
+                                              Content="{Binding DisplayName}"
+                                              Margin="4"
+                                              Padding="12,8"
+                                              MinWidth="60"
+                                              HorizontalContentAlignment="Center"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="Select at least one bucket to enable processing"
+                               Classes="SubText"
+                               Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"
+                               IsVisible="{Binding !HasSelectedBuckets}"/>
+
+                    <!-- Resolution Selection -->
+                    <Separator Margin="0,8" Opacity="0.2"/>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12">
+                        <TextBlock Text="Target Resolution:"
+                                   VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding ResolutionOptions}"
+                                  SelectedItem="{Binding SelectedResolution}"
+                                  IsEnabled="{Binding !IsProcessing}"
+                                  MinWidth="200">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate DataType="vm:ResolutionOption">
+                                    <TextBlock Text="{Binding DisplayName}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <TextBox Grid.Column="2"
+                                 Text="{Binding CustomResolution}"
+                                 Watermark="Custom"
+                                 IsEnabled="{Binding !IsProcessing}"
+                                 Width="100"/>
+                        <TextBlock Grid.Column="3"
+                                   Text="px"
+                                   VerticalAlignment="Center"
+                                   Opacity="0.7"/>
+                    </Grid>
+                    <TextBlock Text="Images will be cropped first, then scaled down by longest side"
+                               Classes="SubText"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Source Folder Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Source Folder" Classes="Header"/>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding SourceFolder}"
+                                 Watermark="Select a folder containing images..."
+                                 IsEnabled="{Binding !IsProcessing}"/>
+                        <Button Grid.Column="1"
+                                x:Name="BrowseSourceButton"
+                                Content="Browse..."
+                                IsEnabled="{Binding !IsProcessing}"/>
+                    </Grid>
+                    <TextBlock Classes="SubText">
+                        <TextBlock.Text>
+                            <MultiBinding StringFormat="Found {0} images in {1} files">
+                                <Binding Path="ImageFiles"/>
+                                <Binding Path="TotalFiles"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Target Folder Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Target Folder" Classes="Header" Margin="0"/>
+                        <TextBlock Text="(Optional - leave empty to overwrite originals)"
+                                   Classes="SubText"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding TargetFolder}"
+                                 Watermark="Same as source folder"
+                                 IsEnabled="{Binding !IsProcessing}"/>
+                        <Button Grid.Column="1"
+                                x:Name="BrowseTargetButton"
+                                Content="Browse..."
+                                IsEnabled="{Binding !IsProcessing}"/>
+                        <Button Grid.Column="2"
+                                Content="Clear"
+                                Command="{Binding ClearTargetFolderCommand}"
+                                IsEnabled="{Binding !IsProcessing}"/>
+                    </Grid>
+
+                    <!-- Overwrite Confirmation -->
+                    <Border Background="#442222"
+                            CornerRadius="6"
+                            Padding="12"
+                            IsVisible="{Binding IsOverwriteMode}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="?? Warning: Overwrite Mode"
+                                       FontWeight="SemiBold"
+                                       Foreground="#ff6666"/>
+                            <TextBlock Text="Images will be overwritten in place. This cannot be undone!"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.9"/>
+                            <CheckBox Content="I understand and want to overwrite original files"
+                                      IsChecked="{Binding OverwriteConfirmed}"
+                                      IsEnabled="{Binding !IsProcessing}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <CheckBox Content="Skip copying unchanged files"
+                              IsChecked="{Binding SkipUnchanged}"
+                              IsEnabled="{Binding !IsProcessing}"
+                              IsVisible="{Binding !IsOverwriteMode}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Progress Card (visible during processing) -->
+            <Border Classes="Card" IsVisible="{Binding IsProcessing}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Processing..." Classes="Header"/>
+                    <ProgressBar Value="{Binding ProgressPercentage}"
+                                 Maximum="100"
+                                 Height="8"/>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding CurrentFile}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="1" Text="{Binding CurrentBucket}"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,*,*,*">
+                        <StackPanel>
+                            <TextBlock Text="Processed" Classes="SubText"/>
+                            <TextBlock Text="{Binding ProcessedCount}" FontSize="18"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Success" Classes="SubText"/>
+                            <TextBlock Text="{Binding SuccessCount}" FontSize="18" Foreground="#4ade80"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Skipped" Classes="SubText"/>
+                            <TextBlock Text="{Binding SkippedCount}" FontSize="18" Foreground="#fbbf24"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="3">
+                            <TextBlock Text="Failed" Classes="SubText"/>
+                            <TextBlock Text="{Binding FailedCount}" FontSize="18" Foreground="#f87171"/>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{Binding ElapsedTime}" HorizontalAlignment="Right" Opacity="0.7"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action Buttons -->
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        Spacing="16"
+                        Margin="0,16">
+                <Button Classes="primary-btn"
+                        Content="?? Start Processing"
+                        Command="{Binding StartCommand}"
+                        IsVisible="{Binding !IsProcessing}"/>
+                <Button Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        IsVisible="{Binding IsProcessing}"
+                        Padding="32,12"/>
+                <Button Content="Refresh"
+                        Command="{Binding RefreshCommand}"
+                        IsVisible="{Binding !IsProcessing}"
+                        Padding="24,12"/>
+            </StackPanel>
+
+            <!-- Status Message -->
+            <TextBlock Text="{Binding StatusMessage}"
+                       HorizontalAlignment="Center"
+                       Opacity="0.8"
+                       Margin="0,8"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
