@@ -2,8 +2,9 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.Core.Models.Configuration;
-using DiffusionNexus.Core.Services;
+using DiffusionNexus.Domain.Autocropper;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
