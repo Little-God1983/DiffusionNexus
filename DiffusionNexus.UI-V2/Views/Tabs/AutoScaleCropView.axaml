@@ -64,8 +64,6 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
 
-            
-
             <!-- Source Selection Card -->
             <Border Classes="Card">
                 <StackPanel Spacing="16">
@@ -141,6 +139,70 @@
                 </StackPanel>
             </Border>
 
+            <!-- Fit Mode Card -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Fit Mode" Classes="Header" Margin="0"/>
+                    
+                    <!-- Crop vs Pad Toggle -->
+                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,8">
+                        <RadioButton Grid.Column="0"
+                                     GroupName="FitMode"
+                                     IsChecked="{Binding !UsePadding}"
+                                     IsEnabled="{Binding !IsProcessing}"
+                                     Padding="12,8">
+                            <StackPanel>
+                                <TextBlock Text="✂️ Crop" FontWeight="SemiBold"/>
+                                <TextBlock Text="Remove pixels to fit aspect ratio" 
+                                           Classes="SubText" 
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton Grid.Column="1"
+                                     GroupName="FitMode"
+                                     IsChecked="{Binding UsePadding}"
+                                     IsEnabled="{Binding !IsProcessing}"
+                                     Padding="12,8">
+                            <StackPanel>
+                                <TextBlock Text="🖼️ Pad (Letterbox)" FontWeight="SemiBold"/>
+                                <TextBlock Text="Add canvas to preserve entire image" 
+                                           Classes="SubText" 
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </RadioButton>
+                    </Grid>
+
+                    <!-- Padding Fill Options (only visible when Pad is selected) -->
+                    <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                            CornerRadius="6"
+                            Padding="12"
+                            IsVisible="{Binding IsPadMode}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
+                            <ComboBox ItemsSource="{Binding PaddingFillOptions}"
+                                      SelectedItem="{Binding SelectedPaddingFill}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      MinWidth="200">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vm:PaddingFillOption">
+                                        <TextBlock Text="{Binding DisplayName}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBlock Classes="SubText" TextWrapping="Wrap">
+                                <TextBlock.Text>
+                                    <Binding Path="SelectedPaddingFill.Mode">
+                                        <Binding.Converter>
+                                            <vm:PaddingFillDescriptionConverter/>
+                                        </Binding.Converter>
+                                    </Binding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Bucket Selection Card -->
             <Border Classes="Card">
                 <StackPanel Spacing="12">
@@ -149,9 +211,15 @@
                             <TextBlock Text="Aspect Ratio Buckets"
                                        Classes="Header"
                                        Margin="0"/>
-                            <TextBlock Text="Images will be cropped to the nearest bucket."
-                                       Classes="SubText"
-                                       Margin="0,4,0,0"/>
+                            <TextBlock Classes="SubText" Margin="0,4,0,0">
+                                <TextBlock.Text>
+                                    <Binding Path="UsePadding">
+                                        <Binding.Converter>
+                                            <vm:BucketDescriptionConverter/>
+                                        </Binding.Converter>
+                                    </Binding>
+                                </TextBlock.Text>
+                            </TextBlock>
                         </StackPanel>
                         <Button Grid.Column="1"
                                 Content="Select All"
@@ -213,8 +281,15 @@
                                    VerticalAlignment="Center"
                                    Opacity="0.7"/>
                     </Grid>
-                    <TextBlock Text="Images will be cropped first, then scaled down by longest side"
-                               Classes="SubText"/>
+                    <TextBlock Classes="SubText">
+                        <TextBlock.Text>
+                            <Binding Path="UsePadding">
+                                <Binding.Converter>
+                                    <vm:ScaleDescriptionConverter/>
+                                </Binding.Converter>
+                            </Binding>
+                        </TextBlock.Text>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

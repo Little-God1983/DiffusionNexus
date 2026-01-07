@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
+using Avalonia.Data.Converters;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Autocropper;
@@ -17,6 +19,78 @@ public record ResolutionOption(int? MaxSize, string DisplayName)
 {
     public static ResolutionOption None { get; } = new(null, "No scaling (original size)");
     public static ResolutionOption Custom { get; } = new(null, "Custom");
+}
+
+/// <summary>
+/// Represents a padding fill mode option for the UI.
+/// </summary>
+public record PaddingFillOption(PaddingFillMode Mode, string DisplayName)
+{
+    public static PaddingFillOption Black { get; } = new(PaddingFillMode.SolidColor, "Black");
+    public static PaddingFillOption White { get; } = new(PaddingFillMode.White, "White");
+    public static PaddingFillOption BlurFill { get; } = new(PaddingFillMode.BlurFill, "Blur Fill");
+    public static PaddingFillOption Mirror { get; } = new(PaddingFillMode.Mirror, "Mirror");
+}
+
+/// <summary>
+/// Converter that returns a description for the selected padding fill mode.
+/// </summary>
+public class PaddingFillDescriptionConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is PaddingFillMode mode)
+        {
+            return mode switch
+            {
+                PaddingFillMode.SolidColor => "Fills padding area with solid black.",
+                PaddingFillMode.White => "Fills padding area with solid white.",
+                PaddingFillMode.BlurFill => "Fills padding with a blurred/stretched version of the image. Great for maintaining visual context.",
+                PaddingFillMode.Mirror => "Mirrors the image edges into the padding area for a seamless look.",
+                _ => "Select a fill style for the padding area."
+            };
+        }
+        return "Select a fill style for the padding area.";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
+/// Converter that returns description text based on whether padding mode is active.
+/// </summary>
+public class BucketDescriptionConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool usePadding && usePadding)
+        {
+            return "Images will be padded to the nearest bucket aspect ratio.";
+        }
+        return "Images will be cropped to the nearest bucket aspect ratio.";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
+/// Converter that returns scale description text based on whether padding mode is active.
+/// </summary>
+public class ScaleDescriptionConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool usePadding && usePadding)
+        {
+            return "Images will be padded first, then scaled down by longest side.";
+        }
+        return "Images will be cropped first, then scaled down by longest side.";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -41,6 +115,7 @@ public partial class BucketOption : ObservableObject
 /// ViewModel for the Auto Scale/Crop tab.
 /// Handles batch cropping images to standard aspect ratio buckets for LoRA training.
 /// Supports both folder-based and dataset-based source selection.
+/// Supports both cropping (remove pixels) and padding (add canvas) fit modes.
 /// </summary>
 public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 {
@@ -121,7 +196,34 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Display text for the increment version button.
     /// </summary>
-    public string IncrementVersionDisplayText => $"Create New Version Folder in {SelectedDataset?.Name} {NextVersionNumber}";
+    public string IncrementVersionDisplayText => $"Create V{NextVersionNumber}";
+
+    #endregion
+
+    #region Fit Mode Properties
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPadMode))]
+    private bool _usePadding;
+
+    /// <summary>
+    /// True when padding mode is selected (shows padding options).
+    /// </summary>
+    public bool IsPadMode => UsePadding;
+
+    [ObservableProperty]
+    private PaddingFillOption _selectedPaddingFill = PaddingFillOption.Black;
+
+    /// <summary>
+    /// Available padding fill options.
+    /// </summary>
+    public ObservableCollection<PaddingFillOption> PaddingFillOptions { get; } =
+    [
+        PaddingFillOption.Black,
+        PaddingFillOption.White,
+        PaddingFillOption.BlurFill,
+        PaddingFillOption.Mirror
+    ];
 
     #endregion
 
@@ -589,6 +691,16 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
                 }
             }
 
+            // Configure fit mode and padding options
+            var fitMode = UsePadding ? FitMode.Pad : FitMode.Crop;
+            var paddingOptions = UsePadding 
+                ? new PaddingOptions 
+                { 
+                    FillMode = SelectedPaddingFill.Mode,
+                    FillColor = SelectedPaddingFill.Mode == PaddingFillMode.SolidColor ? "#FF000000" : "#FFFFFFFF"
+                }
+                : null;
+
             var progress = new Progress<CropProgress>(OnProgressUpdate);
 
             // Use effective source and target folders
@@ -598,6 +710,8 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
                 SelectedBuckets,
                 maxLongestSide,
                 SkipUnchanged,
+                fitMode,
+                paddingOptions,
                 progress,
                 _cancellationTokenSource.Token);
 
@@ -605,10 +719,11 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
             FailedCount = result.FailedCount;
             SkippedCount = result.SkippedCount;
             
+            var modeInfo = UsePadding ? " (padded)" : " (cropped)";
             var targetInfo = UseIncrementVersion 
                 ? $" to V{NextVersionNumber}" 
                 : "";
-            StatusMessage = $"Completed{targetInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed";
+            StatusMessage = $"Completed{targetInfo}{modeInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed";
 
             // If we created a new version, update the next version number for subsequent runs
             if (UseIncrementVersion && SelectedDataset is not null)
