@@ -157,6 +157,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _eventAggregator.ImageSaved += OnImageSaved;
         _eventAggregator.ImageDeleted += OnImageDeleted;
         _eventAggregator.DatasetImagesLoaded += OnDatasetImagesLoaded;
+        _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -324,6 +325,33 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         {
             // The DatasetManagementViewModel has loaded images for this dataset
             // We may need to refresh our editor image list if versions match
+        }
+    }
+
+    /// <summary>
+    /// Handles rating changes from other components (e.g., Dataset Management tab).
+    /// Syncs the rating to our local image instances.
+    /// </summary>
+    private void OnImageRatingChanged(object? sender, ImageRatingChangedEventArgs e)
+    {
+        // Find the matching image in EditorDatasetImages by file path and sync the rating
+        var matchingImage = EditorDatasetImages.FirstOrDefault(img =>
+            string.Equals(img.ImagePath, e.Image.ImagePath, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingImage is not null && matchingImage != e.Image)
+        {
+            // Update the rating on our instance to match - this triggers UI update via PropertyChanged
+            matchingImage.RatingStatus = e.NewRating;
+        }
+
+        // Also update the ImageEditor's SelectedDatasetImage if it matches
+        if (ImageEditor.SelectedDatasetImage is not null &&
+            string.Equals(ImageEditor.SelectedDatasetImage.ImagePath, e.Image.ImagePath, StringComparison.OrdinalIgnoreCase) &&
+            ImageEditor.SelectedDatasetImage != e.Image)
+        {
+            ImageEditor.SelectedDatasetImage.RatingStatus = e.NewRating;
+            // Notify ImageEditor to refresh its rating display
+            ImageEditor.RefreshRatingDisplay();
         }
     }
 

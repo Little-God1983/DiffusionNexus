@@ -384,8 +384,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     private void OnImageRatingChanged(object? sender, ImageRatingChangedEventArgs e)
     {
-        // Rating changes are already reflected in the DatasetImageViewModel
-        // No additional action needed here
+        // Find the matching image in DatasetImages by file path and sync the rating
+        // This handles the case where different ViewModels have separate DatasetImageViewModel instances
+        var matchingImage = DatasetImages.FirstOrDefault(img =>
+            string.Equals(img.ImagePath, e.Image.ImagePath, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingImage is not null && matchingImage != e.Image)
+        {
+            // Update the rating on our instance to match - this triggers UI update via PropertyChanged
+            matchingImage.RatingStatus = e.NewRating;
+        }
     }
 
     #endregion

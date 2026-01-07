@@ -551,4 +551,17 @@ public partial class ImageEditorViewModel : ObservableObject
         MarkRejectedCommand.NotifyCanExecuteChanged();
         ClearRatingCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>
+    /// Refreshes the rating display properties after an external rating change.
+    /// Called when another component changes the rating of the currently selected image.
+    /// </summary>
+    public void RefreshRatingDisplay()
+    {
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(HasRating));
+        NotifyRatingCommandsCanExecuteChanged();
+    }
 }
