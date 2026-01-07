@@ -1,4 +1,4 @@
-using DiffusionNexus.Autocropper.ViewModels;
+using DiffusionNexus.UI.ViewModels.Tabs;
 using FluentAssertions;
 using Xunit;
 
@@ -15,10 +15,7 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenNoneAccessedThenReturnsNoScalingOption()
     {
-        // Act
         var none = ResolutionOption.None;
-
-        // Assert
         none.MaxSize.Should().BeNull();
         none.DisplayName.Should().Contain("No scaling");
     }
@@ -26,10 +23,7 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenCustomAccessedThenReturnsCustomOption()
     {
-        // Act
         var custom = ResolutionOption.Custom;
-
-        // Assert
         custom.MaxSize.Should().BeNull();
         custom.DisplayName.Should().Be("Custom");
     }
@@ -37,22 +31,16 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenNoneAccessedMultipleTimesThenReturnsSameInstance()
     {
-        // Act
         var none1 = ResolutionOption.None;
         var none2 = ResolutionOption.None;
-
-        // Assert
         none1.Should().BeSameAs(none2);
     }
 
     [Fact]
     public void WhenCustomAccessedMultipleTimesThenReturnsSameInstance()
     {
-        // Act
         var custom1 = ResolutionOption.Custom;
         var custom2 = ResolutionOption.Custom;
-
-        // Assert
         custom1.Should().BeSameAs(custom2);
     }
 
@@ -63,30 +51,21 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenResolutionOptionCreatedWithSizeThenMaxSizeIsSet()
     {
-        // Act
         var option = new ResolutionOption(1024, "1024px");
-
-        // Assert
         option.MaxSize.Should().Be(1024);
     }
 
     [Fact]
     public void WhenResolutionOptionCreatedWithDisplayNameThenDisplayNameIsSet()
     {
-        // Act
         var option = new ResolutionOption(512, "512 pixels");
-
-        // Assert
         option.DisplayName.Should().Be("512 pixels");
     }
 
     [Fact]
     public void WhenResolutionOptionCreatedWithNullSizeThenMaxSizeIsNull()
     {
-        // Act
         var option = new ResolutionOption(null, "No size");
-
-        // Assert
         option.MaxSize.Should().BeNull();
     }
 
@@ -104,10 +83,7 @@ public class ResolutionOptionTests
     [InlineData(2048, "2048px")]
     public void WhenCommonResolutionCreatedThenValuesAreCorrect(int size, string displayName)
     {
-        // Act
         var option = new ResolutionOption(size, displayName);
-
-        // Assert
         option.MaxSize.Should().Be(size);
         option.DisplayName.Should().Be(displayName);
     }
@@ -119,43 +95,31 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenTwoOptionsHaveSameValuesThenTheyAreEqual()
     {
-        // Arrange
         var option1 = new ResolutionOption(1024, "1024px");
         var option2 = new ResolutionOption(1024, "1024px");
-
-        // Assert
         option1.Should().Be(option2);
     }
 
     [Fact]
     public void WhenTwoOptionsHaveDifferentSizesThenTheyAreNotEqual()
     {
-        // Arrange
         var option1 = new ResolutionOption(1024, "1024px");
         var option2 = new ResolutionOption(512, "1024px");
-
-        // Assert
         option1.Should().NotBe(option2);
     }
 
     [Fact]
     public void WhenTwoOptionsHaveDifferentDisplayNamesThenTheyAreNotEqual()
     {
-        // Arrange
         var option1 = new ResolutionOption(1024, "1024px");
         var option2 = new ResolutionOption(1024, "1024 pixels");
-
-        // Assert
         option1.Should().NotBe(option2);
     }
 
     [Fact]
     public void WhenOptionComparedToNullThenNotEqual()
     {
-        // Arrange
         var option = new ResolutionOption(1024, "1024px");
-
-        // Assert
         option.Should().NotBe(null);
     }
 
@@ -166,31 +130,23 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenWithMaxSizeCalledThenNewInstanceIsCreated()
     {
-        // Arrange
         var original = new ResolutionOption(1024, "1024px");
-
-        // Act
         var modified = original with { MaxSize = 2048 };
 
-        // Assert
         modified.MaxSize.Should().Be(2048);
         modified.DisplayName.Should().Be("1024px");
-        original.MaxSize.Should().Be(1024); // Original unchanged
+        original.MaxSize.Should().Be(1024);
     }
 
     [Fact]
     public void WhenWithDisplayNameCalledThenNewInstanceIsCreated()
     {
-        // Arrange
         var original = new ResolutionOption(1024, "1024px");
-
-        // Act
         var modified = original with { DisplayName = "One K" };
 
-        // Assert
         modified.MaxSize.Should().Be(1024);
         modified.DisplayName.Should().Be("One K");
-        original.DisplayName.Should().Be("1024px"); // Original unchanged
+        original.DisplayName.Should().Be("1024px");
     }
 
     #endregion
@@ -200,22 +156,16 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenTwoEqualOptionsGetHashCodeThenHashCodesMatch()
     {
-        // Arrange
         var option1 = new ResolutionOption(1024, "1024px");
         var option2 = new ResolutionOption(1024, "1024px");
-
-        // Assert
         option1.GetHashCode().Should().Be(option2.GetHashCode());
     }
 
     [Fact]
     public void WhenTwoDifferentOptionsGetHashCodeThenHashCodesAreLikelyDifferent()
     {
-        // Arrange
         var option1 = new ResolutionOption(1024, "1024px");
         var option2 = new ResolutionOption(512, "512px");
-
-        // Assert - hash codes should be different (though not guaranteed)
         option1.GetHashCode().Should().NotBe(option2.GetHashCode());
     }
 
@@ -226,13 +176,9 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenToStringCalledThenReturnsRecordRepresentation()
     {
-        // Arrange
         var option = new ResolutionOption(1024, "1024px");
-
-        // Act
         var str = option.ToString();
 
-        // Assert
         str.Should().Contain("1024");
         str.Should().Contain("1024px");
     }
@@ -244,13 +190,9 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenDeconstructedThenValuesAreCorrect()
     {
-        // Arrange
         var option = new ResolutionOption(1024, "1024px");
-
-        // Act
         var (maxSize, displayName) = option;
 
-        // Assert
         maxSize.Should().Be(1024);
         displayName.Should().Be("1024px");
     }
@@ -262,14 +204,12 @@ public class ResolutionOptionTests
     [Fact]
     public void WhenNoneAndCustomComparedThenTheyAreDifferent()
     {
-        // Assert
         ResolutionOption.None.Should().NotBe(ResolutionOption.Custom);
     }
 
     [Fact]
     public void WhenNoneAndCustomBothHaveNullMaxSizeThenDistinguishedByDisplayName()
     {
-        // Assert
         ResolutionOption.None.MaxSize.Should().BeNull();
         ResolutionOption.Custom.MaxSize.Should().BeNull();
         ResolutionOption.None.DisplayName.Should().NotBe(ResolutionOption.Custom.DisplayName);

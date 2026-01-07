@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using DiffusionNexus.Autocropper.ViewModels;
-using DiffusionNexus.Core.Models.Configuration;
+using DiffusionNexus.Domain.Autocropper;
+using DiffusionNexus.UI.ViewModels.Tabs;
 using FluentAssertions;
 using Xunit;
 

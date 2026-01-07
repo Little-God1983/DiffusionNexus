@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using DiffusionNexus.Core.Models.Configuration;
-using DiffusionNexus.Core.Services;
+using DiffusionNexus.Domain.Autocropper;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services;
 using FluentAssertions;
 using Xunit;
 
@@ -13,7 +14,6 @@ namespace DiffusionNexus.Tests.Autocropper;
 /// <summary>
 /// Unit tests for ImageCropperService.
 /// Tests folder scanning, image processing, and service behavior.
-/// These tests are designed to be framework-agnostic for reuse in other implementations.
 /// </summary>
 public class ImageCropperServiceTests : IDisposable
 {
@@ -42,6 +42,7 @@ public class ImageCropperServiceTests : IDisposable
         {
             // Ignore cleanup failures in tests
         }
+        GC.SuppressFinalize(this);
     }
 
     #region ScanFolder Validation Tests
@@ -430,6 +431,77 @@ public class ImageCropperServiceTests : IDisposable
 
     #endregion
 
+    #region FitMode Tests
+
+    [Fact]
+    public async Task WhenFitModeCropThenImageIsCropped()
+    {
+        // Arrange
+        var sourceFolder = Path.Combine(_testDirectory, "CropMode");
+        var targetFolder = Path.Combine(_testDirectory, "CropModeOutput");
+        Directory.CreateDirectory(sourceFolder);
+        CreateTestImage(Path.Combine(sourceFolder, "test.png"), 1920, 1080);
+
+        // Act
+        var result = await _service.ProcessImagesAsync(
+            sourceFolder,
+            targetFolder,
+            fitMode: FitMode.Crop);
+
+        // Assert
+        result.SuccessCount.Should().Be(1);
+        File.Exists(Path.Combine(targetFolder, "test.png")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WhenFitModePadThenImageIsPadded()
+    {
+        // Arrange
+        var sourceFolder = Path.Combine(_testDirectory, "PadMode");
+        var targetFolder = Path.Combine(_testDirectory, "PadModeOutput");
+        Directory.CreateDirectory(sourceFolder);
+        CreateTestImage(Path.Combine(sourceFolder, "test.png"), 1920, 1080);
+
+        // Act
+        var result = await _service.ProcessImagesAsync(
+            sourceFolder,
+            targetFolder,
+            fitMode: FitMode.Pad);
+
+        // Assert
+        result.SuccessCount.Should().Be(1);
+        File.Exists(Path.Combine(targetFolder, "test.png")).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(PaddingFillMode.SolidColor)]
+    [InlineData(PaddingFillMode.White)]
+    [InlineData(PaddingFillMode.BlurFill)]
+    [InlineData(PaddingFillMode.Mirror)]
+    public async Task WhenPaddingWithFillModeThenImageIsProcessed(PaddingFillMode fillMode)
+    {
+        // Arrange
+        var sourceFolder = Path.Combine(_testDirectory, $"Fill_{fillMode}");
+        var targetFolder = Path.Combine(_testDirectory, $"Fill_{fillMode}_Output");
+        Directory.CreateDirectory(sourceFolder);
+        CreateTestImage(Path.Combine(sourceFolder, "test.png"), 100, 150);
+
+        var paddingOptions = new PaddingOptions { FillMode = fillMode };
+
+        // Act
+        var result = await _service.ProcessImagesAsync(
+            sourceFolder,
+            targetFolder,
+            [Ratio1x1],
+            fitMode: FitMode.Pad,
+            paddingOptions: paddingOptions);
+
+        // Assert
+        result.SuccessCount.Should().Be(1);
+    }
+
+    #endregion
+
     #region SkipUnchanged Tests
 
     [Fact]
@@ -439,9 +511,6 @@ public class ImageCropperServiceTests : IDisposable
         var sourceFolder = Path.Combine(_testDirectory, "SkipUnchanged");
         var targetFolder = Path.Combine(_testDirectory, "SkipUnchangedOutput");
         Directory.CreateDirectory(sourceFolder);
-        
-        // Create a 1024x1024 image (1:1 ratio)
-        // If we allow 1:1 bucket and don't scale, this should be unchanged.
         CreateTestImage(Path.Combine(sourceFolder, "perfect.png"), 1024, 1024);
 
         // Act

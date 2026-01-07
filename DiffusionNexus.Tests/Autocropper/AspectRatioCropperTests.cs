@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using DiffusionNexus.Core.Models.Configuration;
-using DiffusionNexus.Core.Services;
+using DiffusionNexus.Domain.Autocropper;
+using DiffusionNexus.Service.Services;
 using FluentAssertions;
 using Xunit;
 
@@ -10,7 +10,6 @@ namespace DiffusionNexus.Tests.Autocropper;
 /// <summary>
 /// Unit tests for AspectRatioCropper.
 /// Tests aspect ratio calculation, bucket selection, and dimension rounding.
-/// These tests are designed to be framework-agnostic for reuse in other implementations.
 /// </summary>
 public class AspectRatioCropperTests
 {
@@ -76,7 +75,43 @@ public class AspectRatioCropperTests
 
     #endregion
 
-    #region Aspect Ratio Bucket Matching Tests
+    #region CalculatePad Validation Tests
+
+    [Theory]
+    [InlineData(0, 100)]
+    [InlineData(100, 0)]
+    [InlineData(-1, 100)]
+    [InlineData(100, -1)]
+    public void WhenCalculatePadCalledWithInvalidDimensionsThenThrowsException(int width, int height)
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var action = () => cropper.CalculatePad(width, height);
+
+        // Assert
+        action.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void WhenCalculatePadCalledWithValidDimensionsThenReturnsResult()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.CanvasWidth.Should().BeGreaterThanOrEqualTo(1920);
+        result.CanvasHeight.Should().BeGreaterThanOrEqualTo(1080);
+    }
+
+    #endregion
+
+    #region Aspect Ratio Bucket Matching Tests (Crop)
 
     [Fact]
     public void WhenImageIs16x9ThenReturns16x9Bucket()
@@ -191,6 +226,36 @@ public class AspectRatioCropperTests
 
     #endregion
 
+    #region Aspect Ratio Bucket Matching Tests (Pad)
+
+    [Fact]
+    public void WhenPadding16x9ImageThenReturns16x9Bucket()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
+
+        // Assert
+        result.Bucket.Name.Should().Be(Ratio16x9.Name);
+    }
+
+    [Fact]
+    public void WhenPadding1x1ImageThenReturns1x1Bucket()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1024, 1024);
+
+        // Assert
+        result.Bucket.Name.Should().Be(Ratio1x1.Name);
+    }
+
+    #endregion
+
     #region Dimension Rounding Tests
 
     [Fact]
@@ -219,12 +284,38 @@ public class AspectRatioCropperTests
         (result.TargetHeight % 8).Should().Be(0);
     }
 
+    [Fact]
+    public void WhenPadCalculatedThenCanvasWidthIsMultipleOf8()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
+
+        // Assert
+        (result.CanvasWidth % 8).Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenPadCalculatedThenCanvasHeightIsMultipleOf8()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
+
+        // Assert
+        (result.CanvasHeight % 8).Should().Be(0);
+    }
+
     [Theory]
     [InlineData(1000, 1000)]
     [InlineData(1001, 1001)]
     [InlineData(1005, 1005)]
     [InlineData(1007, 1007)]
-    public void WhenDimensionsNotMultipleOf8ThenRoundedDown(int width, int height)
+    public void WhenDimensionsNotMultipleOf8ThenCropRoundsDown(int width, int height)
     {
         // Arrange
         var cropper = new AspectRatioCropper();
@@ -237,6 +328,25 @@ public class AspectRatioCropperTests
         (result.TargetHeight % 8).Should().Be(0);
         result.TargetWidth.Should().BeLessThanOrEqualTo(width);
         result.TargetHeight.Should().BeLessThanOrEqualTo(height);
+    }
+
+    [Theory]
+    [InlineData(1000, 1000)]
+    [InlineData(1001, 1001)]
+    [InlineData(1005, 1005)]
+    public void WhenDimensionsNotMultipleOf8ThenPadRoundsUp(int width, int height)
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(width, height);
+
+        // Assert
+        (result.CanvasWidth % 8).Should().Be(0);
+        (result.CanvasHeight % 8).Should().Be(0);
+        result.CanvasWidth.Should().BeGreaterThanOrEqualTo(width);
+        result.CanvasHeight.Should().BeGreaterThanOrEqualTo(height);
     }
 
     #endregion
@@ -304,6 +414,69 @@ public class AspectRatioCropperTests
         // Assert - offset should be approximately half the difference
         int expectedCropX = (1200 - result.TargetWidth) / 2;
         result.CropX.Should().Be(expectedCropX);
+    }
+
+    #endregion
+
+    #region Pad Offset Tests
+
+    [Fact]
+    public void WhenImageAlreadyMatchesBucketThenPadOffsetsAreZero()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1024, 1024);
+
+        // Assert
+        result.ImageX.Should().Be(0);
+        result.ImageY.Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenPaddingWiderImageThenImageYIsPositive()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+        cropper.SetAllowedBuckets([Ratio1x1]);
+
+        // Act
+        var result = cropper.CalculatePad(1200, 1000);
+
+        // Assert
+        // For 1:1, we need to pad vertically, so ImageY > 0
+        result.ImageY.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void WhenPaddingTallerImageThenImageXIsPositive()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+        cropper.SetAllowedBuckets([Ratio1x1]);
+
+        // Act
+        var result = cropper.CalculatePad(1000, 1200);
+
+        // Assert
+        // For 1:1, we need to pad horizontally, so ImageX > 0
+        result.ImageX.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void WhenPaddingThenImageIsCentered()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+        cropper.SetAllowedBuckets([Ratio1x1]);
+
+        // Act
+        var result = cropper.CalculatePad(1000, 1200);
+
+        // Assert - image offset should be approximately half the difference
+        int expectedImageX = (result.CanvasWidth - 1000) / 2;
+        result.ImageX.Should().Be(expectedImageX);
     }
 
     #endregion
@@ -422,9 +595,25 @@ public class AspectRatioCropperTests
         (result.CropY + result.TargetHeight).Should().BeLessThanOrEqualTo(1080);
     }
 
+    [Fact]
+    public void WhenPadCalculatedThenCanvasContainsOriginalImage()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
+
+        // Assert
+        result.CanvasWidth.Should().BeGreaterThanOrEqualTo(1920);
+        result.CanvasHeight.Should().BeGreaterThanOrEqualTo(1080);
+        (result.ImageX + 1920).Should().BeLessThanOrEqualTo(result.CanvasWidth);
+        (result.ImageY + 1080).Should().BeLessThanOrEqualTo(result.CanvasHeight);
+    }
+
     #endregion
 
-    #region Minimal Pixel Loss Tests
+    #region Minimal Pixel Loss/Addition Tests
 
     [Fact]
     public void WhenImageMatchesBucketExactlyThenNoPixelsAreLost()
@@ -442,6 +631,20 @@ public class AspectRatioCropperTests
     }
 
     [Fact]
+    public void WhenImageMatchesBucketExactlyThenNoPaddingAdded()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Act
+        var result = cropper.CalculatePad(1024, 1024);
+
+        // Assert
+        result.CanvasWidth.Should().Be(1024);
+        result.CanvasHeight.Should().Be(1024);
+    }
+
+    [Fact]
     public void WhenChoosingBetweenBucketsThenMinimalPixelLossIsPreferred()
     {
         // Arrange
@@ -451,6 +654,21 @@ public class AspectRatioCropperTests
         // 1920x1080 should prefer 16:9 (minimal loss) over 1:1 (large loss)
         // Act
         var result = cropper.CalculateCrop(1920, 1080);
+
+        // Assert
+        result.Bucket.Name.Should().Be(Ratio16x9.Name);
+    }
+
+    [Fact]
+    public void WhenChoosingBetweenBucketsForPadThenMinimalCanvasAdditionIsPreferred()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+        cropper.SetAllowedBuckets([Ratio1x1, Ratio16x9]);
+
+        // 1920x1080 should prefer 16:9 (minimal addition) over 1:1 (large addition)
+        // Act
+        var result = cropper.CalculatePad(1920, 1080);
 
         // Assert
         result.Bucket.Name.Should().Be(Ratio16x9.Name);
@@ -474,6 +692,22 @@ public class AspectRatioCropperTests
         result.Should().NotBeNull();
         result.TargetWidth.Should().BeGreaterThan(0);
         result.TargetHeight.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void WhenImageIsVerySmallThenPadStillWorks()
+    {
+        // Arrange
+        var cropper = new AspectRatioCropper();
+
+        // Very small image
+        // Act
+        var result = cropper.CalculatePad(16, 16);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.CanvasWidth.Should().BeGreaterThan(0);
+        result.CanvasHeight.Should().BeGreaterThan(0);
     }
 
     [Fact]
@@ -518,6 +752,32 @@ public class AspectRatioCropperTests
 
         // Assert
         result.Bucket.Name.Should().Be(Ratio9x16.Name);
+    }
+
+    #endregion
+
+    #region Static Helper Tests
+
+    [Theory]
+    [InlineData(8, 8)]
+    [InlineData(9, 8)]
+    [InlineData(15, 8)]
+    [InlineData(16, 16)]
+    [InlineData(17, 16)]
+    public void WhenRoundDownToMultipleThenRoundsCorrectly(int input, int expected)
+    {
+        AspectRatioCropper.RoundDownToMultiple(input).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(8, 8)]
+    [InlineData(9, 16)]
+    [InlineData(15, 16)]
+    [InlineData(16, 16)]
+    [InlineData(17, 24)]
+    public void WhenRoundUpToMultipleThenRoundsCorrectly(int input, int expected)
+    {
+        AspectRatioCropper.RoundUpToMultiple(input).Should().Be(expected);
     }
 
     #endregion
