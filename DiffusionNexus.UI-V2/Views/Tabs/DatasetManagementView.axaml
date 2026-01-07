@@ -272,11 +272,11 @@
               <Border Grid.Column="2" Width="1" Background="#444" Margin="12,4"/>
               <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
                 <Button Content="Ready" Command="{Binding SelectApprovedCommand}" Padding="8,4" Background="#2D7D46"/>
-                <Button Content="Failed" Command="{Binding SelectRejectedCommand}" Padding="8,4" Background="#D9534F"/>
+                <Button Content="Trash" Command="{Binding SelectRejectedCommand}" Padding="8,4" Background="#D9534F"/>
               </StackPanel>
               <Border Grid.Column="4"/>
               <Button Grid.Column="6" Content="Mark Ready" Command="{Binding ApproveSelectedCommand}" Background="#2D7D46" Padding="12,6" Margin="0,0,4,0"/>
-              <Button Grid.Column="7" Content="Mark Failed" Command="{Binding RejectSelectedCommand}" Background="#D9534F" Padding="12,6" Margin="0,0,4,0"/>
+              <Button Grid.Column="7" Content="Mark Trash" Command="{Binding RejectSelectedCommand}" Background="#D9534F" Padding="12,6" Margin="0,0,4,0"/>
               <Button Grid.Column="8" Content="Clear Rating" Command="{Binding ClearRatingSelectedCommand}" Padding="12,6" Margin="0,0,4,0"/>
               <Border Grid.Column="9" Width="1" Background="#444" Margin="8,4"/>
               <Button Grid.Column="10" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}" Background="#B22222" Padding="12,6"/>

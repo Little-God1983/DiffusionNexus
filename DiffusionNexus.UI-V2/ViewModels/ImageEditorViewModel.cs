@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -33,6 +34,27 @@ public partial class ImageEditorViewModel : ObservableObject
     private int _imageDpi = 72;
     private long _fileSizeBytes;
     private DatasetImageViewModel? _selectedDatasetImage;
+
+    // Color Balance fields
+    private bool _isColorBalancePanelOpen;
+    private ColorBalanceRange _selectedColorBalanceRange = ColorBalanceRange.Midtones;
+    private bool _preserveLuminosity = true;
+    
+    // Store color balance values for each range separately
+    private float _shadowsCyanRed;
+    private float _shadowsMagentaGreen;
+    private float _shadowsYellowBlue;
+    private float _midtonesCyanRed;
+    private float _midtonesMagentaGreen;
+    private float _midtonesYellowBlue;
+    private float _highlightsCyanRed;
+    private float _highlightsMagentaGreen;
+    private float _highlightsYellowBlue;
+
+    // Brightness/Contrast fields
+    private bool _isBrightnessContrastPanelOpen;
+    private float _brightness;
+    private float _contrast;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -120,6 +142,361 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Color Balance Properties
+
+    /// <summary>Whether the color balance panel is open.</summary>
+    public bool IsColorBalancePanelOpen
+    {
+        get => _isColorBalancePanelOpen;
+        set
+        {
+            if (SetProperty(ref _isColorBalancePanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when color balance is activated
+                    DeactivateOtherTools(nameof(IsColorBalancePanelOpen));
+                }
+                else
+                {
+                    // Reset sliders and cancel preview when panel closes
+                    ResetColorBalanceSliders();
+                    CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
+                }
+                ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+                ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The currently selected tonal range to adjust.
+    /// </summary>
+    public ColorBalanceRange SelectedColorBalanceRange
+    {
+        get => _selectedColorBalanceRange;
+        set
+        {
+            if (SetProperty(ref _selectedColorBalanceRange, value))
+            {
+                OnPropertyChanged(nameof(IsShadowsSelected));
+                OnPropertyChanged(nameof(IsMidtonesSelected));
+                OnPropertyChanged(nameof(IsHighlightsSelected));
+                // Notify that the displayed slider values have changed
+                OnPropertyChanged(nameof(ColorBalanceCyanRed));
+                OnPropertyChanged(nameof(ColorBalanceMagentaGreen));
+                OnPropertyChanged(nameof(ColorBalanceYellowBlue));
+                OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+                ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+                ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Whether Shadows range is selected.</summary>
+    public bool IsShadowsSelected
+    {
+        get => _selectedColorBalanceRange == ColorBalanceRange.Shadows;
+        set { if (value) SelectedColorBalanceRange = ColorBalanceRange.Shadows; }
+    }
+
+    /// <summary>Whether Midtones range is selected.</summary>
+    public bool IsMidtonesSelected
+    {
+        get => _selectedColorBalanceRange == ColorBalanceRange.Midtones;
+        set { if (value) SelectedColorBalanceRange = ColorBalanceRange.Midtones; }
+    }
+
+    /// <summary>Whether Highlights range is selected.</summary>
+    public bool IsHighlightsSelected
+    {
+        get => _selectedColorBalanceRange == ColorBalanceRange.Highlights;
+        set { if (value) SelectedColorBalanceRange = ColorBalanceRange.Highlights; }
+    }
+
+    /// <summary>Cyan (-100) to Red (+100) adjustment for the current range.</summary>
+    public float ColorBalanceCyanRed
+    {
+        get => _selectedColorBalanceRange switch
+        {
+            ColorBalanceRange.Shadows => _shadowsCyanRed,
+            ColorBalanceRange.Midtones => _midtonesCyanRed,
+            ColorBalanceRange.Highlights => _highlightsCyanRed,
+            _ => 0
+        };
+        set
+        {
+            var clamped = Math.Clamp(value, -100f, 100f);
+            var changed = _selectedColorBalanceRange switch
+            {
+                ColorBalanceRange.Shadows => SetProperty(ref _shadowsCyanRed, clamped, nameof(ColorBalanceCyanRed)),
+                ColorBalanceRange.Midtones => SetProperty(ref _midtonesCyanRed, clamped, nameof(ColorBalanceCyanRed)),
+                ColorBalanceRange.Highlights => SetProperty(ref _highlightsCyanRed, clamped, nameof(ColorBalanceCyanRed)),
+                _ => false
+            };
+            if (changed)
+            {
+                OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+                ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+                ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+                RequestColorBalancePreview();
+            }
+        }
+    }
+
+    /// <summary>Magenta (-100) to Green (+100) adjustment for the current range.</summary>
+    public float ColorBalanceMagentaGreen
+    {
+        get => _selectedColorBalanceRange switch
+        {
+            ColorBalanceRange.Shadows => _shadowsMagentaGreen,
+            ColorBalanceRange.Midtones => _midtonesMagentaGreen,
+            ColorBalanceRange.Highlights => _highlightsMagentaGreen,
+            _ => 0
+        };
+        set
+        {
+            var clamped = Math.Clamp(value, -100f, 100f);
+            var changed = _selectedColorBalanceRange switch
+            {
+                ColorBalanceRange.Shadows => SetProperty(ref _shadowsMagentaGreen, clamped, nameof(ColorBalanceMagentaGreen)),
+                ColorBalanceRange.Midtones => SetProperty(ref _midtonesMagentaGreen, clamped, nameof(ColorBalanceMagentaGreen)),
+                ColorBalanceRange.Highlights => SetProperty(ref _highlightsMagentaGreen, clamped, nameof(ColorBalanceMagentaGreen)),
+                _ => false
+            };
+            if (changed)
+            {
+                OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+                ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+                ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+                RequestColorBalancePreview();
+            }
+        }
+    }
+
+    /// <summary>Yellow (-100) to Blue (+100) adjustment for the current range.</summary>
+    public float ColorBalanceYellowBlue
+    {
+        get => _selectedColorBalanceRange switch
+        {
+            ColorBalanceRange.Shadows => _shadowsYellowBlue,
+            ColorBalanceRange.Midtones => _midtonesYellowBlue,
+            ColorBalanceRange.Highlights => _highlightsYellowBlue,
+            _ => 0
+        };
+        set
+        {
+            var clamped = Math.Clamp(value, -100f, 100f);
+            var changed = _selectedColorBalanceRange switch
+            {
+                ColorBalanceRange.Shadows => SetProperty(ref _shadowsYellowBlue, clamped, nameof(ColorBalanceYellowBlue)),
+                ColorBalanceRange.Midtones => SetProperty(ref _midtonesYellowBlue, clamped, nameof(ColorBalanceYellowBlue)),
+                ColorBalanceRange.Highlights => SetProperty(ref _highlightsYellowBlue, clamped, nameof(ColorBalanceYellowBlue)),
+                _ => false
+            };
+            if (changed)
+            {
+                OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+                ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+                ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+                RequestColorBalancePreview();
+            }
+        }
+    }
+
+    /// <summary>Whether to preserve luminosity when adjusting colors.</summary>
+    public bool PreserveLuminosity
+    {
+        get => _preserveLuminosity;
+        set
+        {
+            if (SetProperty(ref _preserveLuminosity, value))
+            {
+                RequestColorBalancePreview();
+            }
+        }
+    }
+
+    /// <summary>Whether any color balance slider has a non-zero value (across all ranges).</summary>
+    public bool HasColorBalanceAdjustments =>
+        _shadowsCyanRed != 0 || _shadowsMagentaGreen != 0 || _shadowsYellowBlue != 0 ||
+        _midtonesCyanRed != 0 || _midtonesMagentaGreen != 0 || _midtonesYellowBlue != 0 ||
+        _highlightsCyanRed != 0 || _highlightsMagentaGreen != 0 || _highlightsYellowBlue != 0;
+
+    private void RequestColorBalancePreview()
+    {
+        if (IsColorBalancePanelOpen && HasImage)
+        {
+            ColorBalancePreviewRequested?.Invoke(this, CurrentColorBalanceSettings);
+        }
+    }
+
+    /// <summary>Gets the current color balance settings from all ranges.</summary>
+    public ColorBalanceSettings CurrentColorBalanceSettings
+    {
+        get
+        {
+            return new ColorBalanceSettings
+            {
+                PreserveLuminosity = PreserveLuminosity,
+                ShadowsCyanRed = _shadowsCyanRed,
+                ShadowsMagentaGreen = _shadowsMagentaGreen,
+                ShadowsYellowBlue = _shadowsYellowBlue,
+                MidtonesCyanRed = _midtonesCyanRed,
+                MidtonesMagentaGreen = _midtonesMagentaGreen,
+                MidtonesYellowBlue = _midtonesYellowBlue,
+                HighlightsCyanRed = _highlightsCyanRed,
+                HighlightsMagentaGreen = _highlightsMagentaGreen,
+                HighlightsYellowBlue = _highlightsYellowBlue
+            };
+        }
+    }
+
+    /// <summary>Resets all color balance sliders for all ranges.</summary>
+    private void ResetColorBalanceSliders()
+    {
+        _shadowsCyanRed = 0;
+        _shadowsMagentaGreen = 0;
+        _shadowsYellowBlue = 0;
+        _midtonesCyanRed = 0;
+        _midtonesMagentaGreen = 0;
+        _midtonesYellowBlue = 0;
+        _highlightsCyanRed = 0;
+        _highlightsMagentaGreen = 0;
+        _highlightsYellowBlue = 0;
+        
+        OnPropertyChanged(nameof(ColorBalanceCyanRed));
+        OnPropertyChanged(nameof(ColorBalanceMagentaGreen));
+        OnPropertyChanged(nameof(ColorBalanceYellowBlue));
+        OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Resets only the current range's sliders.</summary>
+    private void ResetCurrentRangeSliders()
+    {
+        switch (_selectedColorBalanceRange)
+        {
+            case ColorBalanceRange.Shadows:
+                _shadowsCyanRed = 0;
+                _shadowsMagentaGreen = 0;
+                _shadowsYellowBlue = 0;
+                break;
+            case ColorBalanceRange.Midtones:
+                _midtonesCyanRed = 0;
+                _midtonesMagentaGreen = 0;
+                _midtonesYellowBlue = 0;
+                break;
+            case ColorBalanceRange.Highlights:
+                _highlightsCyanRed = 0;
+                _highlightsMagentaGreen = 0;
+                _highlightsYellowBlue = 0;
+                break;
+        }
+        
+        OnPropertyChanged(nameof(ColorBalanceCyanRed));
+        OnPropertyChanged(nameof(ColorBalanceMagentaGreen));
+        OnPropertyChanged(nameof(ColorBalanceYellowBlue));
+        OnPropertyChanged(nameof(HasColorBalanceAdjustments));
+        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+        
+        // Update preview with remaining adjustments
+        RequestColorBalancePreview();
+    }
+
+    #endregion
+
+    #region Brightness and Contrast Properties
+
+    /// <summary>Whether the brightness/contrast panel is open.</summary>
+    public bool IsBrightnessContrastPanelOpen
+    {
+        get => _isBrightnessContrastPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isBrightnessContrastPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when brightness/contrast is activated
+                    DeactivateOtherTools(nameof(IsBrightnessContrastPanelOpen));
+                }
+                else
+                {
+                    // Reset sliders and cancel preview when panel closes
+                    ResetBrightnessContrastSliders();
+                    CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+                }
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Brightness adjustment from -100 (darken) to +100 (brighten).</summary>
+    public float Brightness
+    {
+        get => _brightness;
+        set
+        {
+            if (SetProperty(ref _brightness, Math.Clamp(value, -100f, 100f)))
+            {
+                OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                RequestBrightnessContrastPreview();
+            }
+        }
+    }
+
+    /// <summary>Contrast adjustment from -100 (reduce) to +100 (increase).</summary>
+    public float Contrast
+    {
+        get => _contrast;
+        set
+        {
+            if (SetProperty(ref _contrast, Math.Clamp(value, -100f, 100f)))
+            {
+                OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                RequestBrightnessContrastPreview();
+            }
+        }
+    }
+
+    /// <summary>Whether any brightness/contrast slider has a non-zero value.</summary>
+    public bool HasBrightnessContrastAdjustments => _brightness != 0 || _contrast != 0;
+
+    /// <summary>Gets the current brightness/contrast settings.</summary>
+    public BrightnessContrastSettings CurrentBrightnessContrastSettings =>
+        new(_brightness, _contrast);
+
+    private void RequestBrightnessContrastPreview()
+    {
+        if (IsBrightnessContrastPanelOpen && HasImage)
+        {
+            BrightnessContrastPreviewRequested?.Invoke(this, CurrentBrightnessContrastSettings);
+        }
+    }
+
+    private void ResetBrightnessContrastSliders()
+    {
+        _brightness = 0;
+        _contrast = 0;
+        OnPropertyChanged(nameof(Brightness));
+        OnPropertyChanged(nameof(Contrast));
+        OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -153,9 +530,15 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             if (SetProperty(ref _isCropToolActive, value))
             {
+                if (value)
+                {
+                    // Deactivate other tools when crop is activated
+                    DeactivateOtherTools(nameof(IsCropToolActive));
+                }
                 ToggleCropToolCommand.NotifyCanExecuteChanged();
                 ApplyCropCommand.NotifyCanExecuteChanged();
                 CancelCropCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
                 StatusMessage = value ? "Crop: Drag to select region. Press C or Enter to apply, Escape to cancel." : null;
             }
         }
@@ -245,6 +628,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand MarkApprovedCommand { get; }
     public IRelayCommand MarkRejectedCommand { get; }
     public IRelayCommand ClearRatingCommand { get; }
+    public IRelayCommand RotateLeftCommand { get; }
+    public IRelayCommand RotateRightCommand { get; }
+    public IRelayCommand Rotate180Command { get; }
+    public IRelayCommand FlipHorizontalCommand { get; }
+    public IRelayCommand FlipVerticalCommand { get; }
+    public IRelayCommand ToggleColorBalanceCommand { get; }
+    public IRelayCommand ApplyColorBalanceCommand { get; }
+    public IRelayCommand ResetColorBalanceRangeCommand { get; }
+    public IRelayCommand ToggleBrightnessContrastCommand { get; }
+    public IRelayCommand ApplyBrightnessContrastCommand { get; }
+    public IRelayCommand ResetBrightnessContrastCommand { get; }
 
     #endregion
 
@@ -263,6 +657,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
     public event EventHandler? ZoomToActualRequested;
+    public event EventHandler? RotateLeftRequested;
+    public event EventHandler? RotateRightRequested;
+    public event EventHandler? Rotate180Requested;
+    public event EventHandler? FlipHorizontalRequested;
+    public event EventHandler? FlipVerticalRequested;
+    public event EventHandler<ColorBalanceSettings>? ApplyColorBalanceRequested;
+    public event EventHandler<ColorBalanceSettings>? ColorBalancePreviewRequested;
+    public event EventHandler? CancelColorBalancePreviewRequested;
+    public event EventHandler<BrightnessContrastSettings>? ApplyBrightnessContrastRequested;
+    public event EventHandler<BrightnessContrastSettings>? BrightnessContrastPreviewRequested;
+    public event EventHandler? CancelBrightnessContrastPreviewRequested;
 
     /// <summary>
     /// Event raised when an image save completes successfully.
@@ -271,6 +676,54 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<string>? ImageSaved;
 
     #endregion
+
+    /// <summary>
+    /// Deactivates all tools except the one specified.
+    /// Ensures mutual exclusion - only one tool can be active at a time.
+    /// </summary>
+    /// <param name="exceptTool">The name of the tool property to keep active.</param>
+    private void DeactivateOtherTools(string exceptTool)
+    {
+        if (exceptTool != nameof(IsCropToolActive) && _isCropToolActive)
+        {
+            _isCropToolActive = false;
+            OnPropertyChanged(nameof(IsCropToolActive));
+            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (exceptTool != nameof(IsColorBalancePanelOpen) && _isColorBalancePanelOpen)
+        {
+            _isColorBalancePanelOpen = false;
+            ResetColorBalanceSliders();
+            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
+        }
+
+        if (exceptTool != nameof(IsBrightnessContrastPanelOpen) && _isBrightnessContrastPanelOpen)
+        {
+            _isBrightnessContrastPanelOpen = false;
+            ResetBrightnessContrastSliders();
+            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
+        }
+
+        // Add more tools here as they are added in the future
+    }
+
+    /// <summary>
+    /// Notifies all tool-related commands that their CanExecute state may have changed.
+    /// </summary>
+    private void NotifyToolCommandsCanExecuteChanged()
+    {
+        ToggleCropToolCommand.NotifyCanExecuteChanged();
+        ApplyCropCommand.NotifyCanExecuteChanged();
+        CancelCropCommand.NotifyCanExecuteChanged();
+        ToggleColorBalanceCommand.NotifyCanExecuteChanged();
+        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+    }
 
     /// <summary>
     /// Creates a new ImageEditorViewModel with event aggregator integration.
@@ -282,7 +735,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
-        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage);
+        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
         SaveAsNewCommand = new RelayCommand(ExecuteSaveAsNew, () => HasImage);
@@ -295,6 +748,23 @@ public partial class ImageEditorViewModel : ObservableObject
         MarkApprovedCommand = new RelayCommand(ExecuteMarkApproved, () => HasImage && _selectedDatasetImage is not null);
         MarkRejectedCommand = new RelayCommand(ExecuteMarkRejected, () => HasImage && _selectedDatasetImage is not null);
         ClearRatingCommand = new RelayCommand(ExecuteClearRating, () => HasImage && _selectedDatasetImage is not null && !IsUnrated);
+
+        // Transform commands
+        RotateLeftCommand = new RelayCommand(ExecuteRotateLeft, () => HasImage);
+        RotateRightCommand = new RelayCommand(ExecuteRotateRight, () => HasImage);
+        Rotate180Command = new RelayCommand(ExecuteRotate180, () => HasImage);
+        FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
+        FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
+
+        // Color Balance commands
+        ToggleColorBalanceCommand = new RelayCommand(ExecuteToggleColorBalance, () => HasImage && !IsCropToolActive);
+        ApplyColorBalanceCommand = new RelayCommand(ExecuteApplyColorBalance, () => HasImage && IsColorBalancePanelOpen && HasColorBalanceAdjustments);
+        ResetColorBalanceRangeCommand = new RelayCommand(ExecuteResetColorBalanceRange, () => IsColorBalancePanelOpen && HasColorBalanceAdjustments);
+
+        // Brightness/Contrast commands
+        ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
+        ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
+        ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
     }
 
     /// <summary>Loads an image by path.</summary>
@@ -305,6 +775,9 @@ public partial class ImageEditorViewModel : ObservableObject
             StatusMessage = "Image file not found.";
             return;
         }
+
+        // Close any active tools before loading a new image
+        CloseAllTools();
 
         CurrentImagePath = imagePath;
         
@@ -325,6 +798,41 @@ public partial class ImageEditorViewModel : ObservableObject
         catch { }
         
         StatusMessage = $"Loaded: {ImageFileName}";
+    }
+
+    /// <summary>
+    /// Closes all active tools and resets their state.
+    /// Should be called before loading a new image or clearing the current image.
+    /// </summary>
+    private void CloseAllTools()
+    {
+        // Close crop tool
+        if (_isCropToolActive)
+        {
+            _isCropToolActive = false;
+            OnPropertyChanged(nameof(IsCropToolActive));
+            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Close color balance panel and cancel any preview
+        if (_isColorBalancePanelOpen)
+        {
+            _isColorBalancePanelOpen = false;
+            ResetColorBalanceSliders();
+            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
+        }
+
+        // Close brightness/contrast panel and cancel any preview
+        if (_isBrightnessContrastPanelOpen)
+        {
+            _isBrightnessContrastPanelOpen = false;
+            ResetBrightnessContrastSliders();
+            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
+        }
+
+        NotifyToolCommandsCanExecuteChanged();
     }
 
     /// <summary>Updates image dimensions from the editor control.</summary>
@@ -410,11 +918,13 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private void ExecuteClearImage()
     {
+        // Close any active tools first
+        CloseAllTools();
+        
         CurrentImagePath = null;
         SelectedDatasetImage = null;
         ImageWidth = 0;
         ImageHeight = 0;
-        IsCropToolActive = false;
         StatusMessage = "Image cleared.";
         ClearRequested?.Invoke(this, EventArgs.Empty);
     }
@@ -446,6 +956,118 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
+
+    #region Transform Command Implementations
+
+    private void ExecuteRotateLeft()
+    {
+        RotateLeftRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 90° left";
+    }
+
+    private void ExecuteRotateRight()
+    {
+        RotateRightRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 90° right";
+    }
+
+    private void ExecuteRotate180()
+    {
+        Rotate180Requested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Rotated 180°";
+    }
+
+    private void ExecuteFlipHorizontal()
+    {
+        FlipHorizontalRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Flipped horizontally";
+    }
+
+    private void ExecuteFlipVertical()
+    {
+        FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Flipped vertically";
+    }
+
+    #endregion
+
+    #region Color Balance Command Implementations
+
+    private void ExecuteToggleColorBalance()
+    {
+        IsColorBalancePanelOpen = !IsColorBalancePanelOpen;
+        if (IsColorBalancePanelOpen)
+        {
+            StatusMessage = "Color Balance: Adjust sliders and click Apply";
+        }
+        else
+        {
+            StatusMessage = null;
+        }
+        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ExecuteApplyColorBalance()
+    {
+        var settings = CurrentColorBalanceSettings;
+        ApplyColorBalanceRequested?.Invoke(this, settings);
+        StatusMessage = $"Color balance applied to {_selectedDatasetImage?.FileName}";
+        ResetColorBalanceSliders();
+    }
+
+    private void ExecuteResetColorBalanceRange()
+    {
+        ResetCurrentRangeSliders();
+        StatusMessage = $"Reset {_selectedColorBalanceRange} color balance";
+    }
+
+    /// <summary>Called when color balance is successfully applied.</summary>
+    public void OnColorBalanceApplied()
+    {
+        StatusMessage = "Color balance applied";
+    }
+
+    #endregion
+
+    #region Brightness and Contrast Command Implementations
+
+    private void ExecuteToggleBrightnessContrast()
+    {
+        IsBrightnessContrastPanelOpen = !IsBrightnessContrastPanelOpen;
+        if (IsBrightnessContrastPanelOpen)
+        {
+            StatusMessage = "Brightness/Contrast: Adjust sliders and click Apply";
+        }
+        else
+        {
+            StatusMessage = null;
+        }
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ExecuteApplyBrightnessContrast()
+    {
+        var settings = CurrentBrightnessContrastSettings;
+        ApplyBrightnessContrastRequested?.Invoke(this, settings);
+        StatusMessage = "Brightness and contrast applied";
+        ResetBrightnessContrastSliders();
+    }
+
+    private void ExecuteResetBrightnessContrast()
+    {
+        ResetBrightnessContrastSliders();
+        StatusMessage = "Reset brightness and contrast";
+    }
+
+    /// <summary>Called when brightness/contrast is successfully applied.</summary>
+    public void OnBrightnessContrastApplied()
+    {
+        StatusMessage = "Brightness and contrast applied";
+    }
+
+    #endregion
 
     #region Rating Command Implementations
 
@@ -542,6 +1164,17 @@ public partial class ImageEditorViewModel : ObservableObject
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
         ZoomToActualCommand.NotifyCanExecuteChanged();
+        RotateLeftCommand.NotifyCanExecuteChanged();
+        RotateRightCommand.NotifyCanExecuteChanged();
+        Rotate180Command.NotifyCanExecuteChanged();
+        FlipHorizontalCommand.NotifyCanExecuteChanged();
+        FlipVerticalCommand.NotifyCanExecuteChanged();
+        ToggleColorBalanceCommand.NotifyCanExecuteChanged();
+        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
+        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+        ToggleBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 

@@ -1399,7 +1399,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         => SetRatingForSelected(ImageRatingStatus.Approved, "Marked {0} items as production-ready");
 
     private void RejectSelected() 
-        => SetRatingForSelected(ImageRatingStatus.Rejected, "Marked {0} items as failed");
+        => SetRatingForSelected(ImageRatingStatus.Rejected, "Marked {0} items as trash");
 
     private void ClearRatingSelected() 
         => SetRatingForSelected(ImageRatingStatus.Unrated, "Cleared rating for {0} items");

@@ -14,12 +14,12 @@ namespace DiffusionNexus.UI.Views.Tabs;
 public partial class ImageEditView : UserControl
 {
     private ImageEditorControl? _imageEditorCanvas;
-    private bool _isInitialized;
+    private bool _eventsWired;
 
     public ImageEditView()
     {
         InitializeComponent();
-        AttachedToVisualTree += OnAttachedToVisualTree;
+        DataContextChanged += OnDataContextChanged;
     }
 
     private void InitializeComponent()
@@ -28,15 +28,10 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
     }
 
-    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_isInitialized) return;
-        _isInitialized = true;
+        if (_eventsWired) return;
 
-        // Note: DialogService is injected by the parent LoraDatasetHelperView
-        // and forwarded via OnDialogServiceSet()
-
-        // Wire up image editor events
         if (DataContext is ImageEditTabViewModel vm)
         {
             TryWireUpImageEditorEvents(vm);
@@ -45,6 +40,8 @@ public partial class ImageEditView : UserControl
 
     private void TryWireUpImageEditorEvents(ImageEditTabViewModel vm)
     {
+        if (_eventsWired) return;
+
         _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
 
         if (_imageEditorCanvas is not null)
@@ -59,6 +56,8 @@ public partial class ImageEditView : UserControl
 
     private void OnLayoutUpdatedForEditorInit(object? sender, EventArgs e)
     {
+        if (_eventsWired) return;
+
         _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
 
         if (_imageEditorCanvas is not null && DataContext is ImageEditTabViewModel vm)
@@ -70,8 +69,9 @@ public partial class ImageEditView : UserControl
 
     private void WireUpImageEditorEvents(ImageEditTabViewModel vm)
     {
-        if (_imageEditorCanvas is null) return;
+        if (_imageEditorCanvas is null || _eventsWired) return;
 
+        _eventsWired = true;
         var imageEditor = vm.ImageEditor;
 
         // Update dimensions and file info when image changes
@@ -155,6 +155,86 @@ public partial class ImageEditView : UserControl
         imageEditor.ZoomToActualRequested += (_, _) =>
         {
             _imageEditorCanvas.ZoomToActual();
+        };
+
+        // Handle transform requests
+        imageEditor.RotateLeftRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.RotateLeft();
+        };
+
+        imageEditor.RotateRightRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.RotateRight();
+        };
+
+        imageEditor.Rotate180Requested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.Rotate180();
+        };
+
+        imageEditor.FlipHorizontalRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.FlipHorizontal();
+        };
+
+        imageEditor.FlipVerticalRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.FlipVertical();
+        };
+
+        // Handle color balance requests
+        imageEditor.ApplyColorBalanceRequested += (_, settings) =>
+        {
+            // Clear preview first, then apply to working bitmap
+            _imageEditorCanvas.EditorCore.ClearPreview();
+            if (_imageEditorCanvas.EditorCore.ApplyColorBalance(settings))
+            {
+                imageEditor.OnColorBalanceApplied();
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to apply color balance.";
+            }
+        };
+
+        // Handle color balance preview requests (live preview)
+        imageEditor.ColorBalancePreviewRequested += (_, settings) =>
+        {
+            _imageEditorCanvas.EditorCore.SetColorBalancePreview(settings);
+        };
+
+        // Handle color balance preview cancel
+        imageEditor.CancelColorBalancePreviewRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearPreview();
+        };
+
+        // Handle brightness/contrast requests
+        imageEditor.ApplyBrightnessContrastRequested += (_, settings) =>
+        {
+            // Clear preview first, then apply to working bitmap
+            _imageEditorCanvas.EditorCore.ClearPreview();
+            if (_imageEditorCanvas.EditorCore.ApplyBrightnessContrast(settings))
+            {
+                imageEditor.OnBrightnessContrastApplied();
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to apply brightness/contrast.";
+            }
+        };
+
+        // Handle brightness/contrast preview requests (live preview)
+        imageEditor.BrightnessContrastPreviewRequested += (_, settings) =>
+        {
+            _imageEditorCanvas.EditorCore.SetBrightnessContrastPreview(settings);
+        };
+
+        // Handle brightness/contrast preview cancel
+        imageEditor.CancelBrightnessContrastPreviewRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearPreview();
         };
 
         // Handle save requests

@@ -427,7 +427,26 @@ public class ImageEditorControl : Control
     /// </summary>
     public void ZoomToFit()
     {
-        _editorCore.ZoomToFit();
+        // Calculate the fit zoom level based on current bounds before switching to fit mode
+        var bounds = Bounds;
+        if (bounds.Width > 0 && bounds.Height > 0 && _editorCore.HasImage)
+        {
+            var fitRect = _editorCore.CalculateFitRect((float)bounds.Width, (float)bounds.Height);
+            if (fitRect.Width > 0)
+            {
+                var fitZoom = fitRect.Width / _editorCore.Width;
+                // Set the zoom level directly so the event carries the correct value
+                _editorCore.SetFitModeWithZoom(fitZoom);
+            }
+            else
+            {
+                _editorCore.ZoomToFit();
+            }
+        }
+        else
+        {
+            _editorCore.ZoomToFit();
+        }
         InvalidateVisual();
     }
 
