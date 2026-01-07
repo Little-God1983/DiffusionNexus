@@ -149,13 +149,56 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
 
-            // Dispose child ViewModels
-            (DatasetManagement as IDisposable)?.Dispose();
-            (ImageEdit as IDisposable)?.Dispose();
+            // Dispose child ViewModels (they implement IDisposable directly)
+            DatasetManagement.Dispose();
+            ImageEdit.Dispose();
         }
 
         _disposed = true;
     }
+}
+```
+
+### Exception Handling Best Practices
+
+All file I/O operations catch specific exception types instead of using bare `catch` blocks:
+
+```csharp
+// Good - catches specific exceptions
+try
+{
+    File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
+}
+catch (IOException)
+{
+    // File may be in use or read-only - rating will be lost on reload
+}
+catch (UnauthorizedAccessException)
+{
+    // No permission to write - rating will be lost on reload
+}
+
+// Bad - swallows all exceptions
+try
+{
+    File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
+}
+catch { }  // DON'T DO THIS
+```
+
+### Input Validation
+
+Public utility methods validate their inputs:
+
+```csharp
+public static string GetVideoThumbnailPath(string videoPath)
+{
+    if (string.IsNullOrWhiteSpace(videoPath))
+        throw new ArgumentException("Video path cannot be null or empty.", nameof(videoPath));
+
+    var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
+    var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
+    return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
 }
 ```
 
@@ -416,7 +459,7 @@ private void ClearRating()
 }
 ```
 
-After refactoring:
+After refactoring (in `DatasetImageViewModel`):
 ```csharp
 private void MarkApproved() 
     => SetRatingAndPublish(IsApproved ? ImageRatingStatus.Unrated : ImageRatingStatus.Approved);
@@ -433,6 +476,36 @@ private void SetRatingAndPublish(ImageRatingStatus newRating)
     RatingStatus = newRating;
     SaveRating();
     _eventAggregator?.PublishImageRatingChanged(...);
+}
+```
+
+### Centralized Bulk Rating Logic
+Similarly, bulk rating operations in `DatasetManagementViewModel` use a shared helper:
+
+```csharp
+private void ApproveSelected() 
+    => SetRatingForSelected(ImageRatingStatus.Approved, "Marked {0} items as production-ready");
+
+private void RejectSelected() 
+    => SetRatingForSelected(ImageRatingStatus.Rejected, "Marked {0} items as failed");
+
+private void ClearRatingSelected() 
+    => SetRatingForSelected(ImageRatingStatus.Unrated, "Cleared rating for {0} items");
+
+private void SetRatingForSelected(ImageRatingStatus newRating, string statusMessageFormat)
+{
+    var selected = DatasetImages.Where(i => i.IsSelected).ToList();
+    if (selected.Count == 0) return;
+
+    foreach (var image in selected)
+    {
+        var previousRating = image.RatingStatus;
+        image.RatingStatus = newRating;
+        image.SaveRating();
+        _eventAggregator.PublishImageRatingChanged(...);
+    }
+
+    StatusMessage = string.Format(statusMessageFormat, selected.Count);
 }
 ```
 
