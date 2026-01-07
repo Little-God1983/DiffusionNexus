@@ -47,7 +47,7 @@
     </Border>
     
     <!-- Main Editor Area -->
-    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
+    <Grid Grid.Column="1" RowDefinitions="Auto,*">
       <!-- Toolbar -->
       <Border Grid.Row="0" Background="#1E1E1E" Padding="16,8" BorderBrush="#333" BorderThickness="0,0,0,1">
         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
@@ -129,24 +129,6 @@
                                        ImagePath="{Binding ImageEditor.CurrentImagePath}"
                                        IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
                                        IsVisible="{Binding ImageEditor.HasImage}"/>
-        </Grid>
-      </Border>
-      
-      <!-- Bottom Status Bar -->
-      <Border Grid.Row="2" Background="#1E1E1E" Padding="8,4" BorderBrush="#333" BorderThickness="0,1,0,0"
-              IsVisible="{Binding ImageEditor.HasImage}">
-        <Grid ColumnDefinitions="*,Auto">
-          <TextBlock Grid.Column="0" Text="{Binding ImageEditor.StatusMessage}" Opacity="0.8" FontSize="12" VerticalAlignment="Center"
-                     IsVisible="{Binding ImageEditor.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <Button Content="-" Command="{Binding ImageEditor.ZoomOutCommand}" Width="28" Height="28" Padding="0" FontWeight="Bold"/>
-            <Border Background="#333" CornerRadius="4" Padding="8,4" MinWidth="50">
-              <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}" HorizontalAlignment="Center" FontSize="12" Foreground="#4CAF50"/>
-            </Border>
-            <Button Content="+" Command="{Binding ImageEditor.ZoomInCommand}" Width="28" Height="28" Padding="0" FontWeight="Bold"/>
-            <Button Content="Fit" Command="{Binding ImageEditor.ZoomToFitCommand}" Padding="8,4"/>
-            <Button Content="100%" Command="{Binding ImageEditor.ZoomToActualCommand}" Padding="8,4"/>
-          </StackPanel>
         </Grid>
       </Border>
     </Grid>
