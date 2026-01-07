@@ -188,9 +188,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
 
-            // Dispose child ViewModels if they implement IDisposable
-            (DatasetManagement as IDisposable)?.Dispose();
-            (ImageEdit as IDisposable)?.Dispose();
+            // Dispose child ViewModels
+            DatasetManagement.Dispose();
+            ImageEdit.Dispose();
         }
 
         _disposed = true;

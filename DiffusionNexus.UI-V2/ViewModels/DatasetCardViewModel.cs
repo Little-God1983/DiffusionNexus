@@ -839,9 +839,13 @@ public class DatasetCardViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasDescription));
             }
         }
-        catch
+        catch (IOException)
         {
-            // Ignore errors reading metadata
+            // File may be locked or inaccessible - use defaults
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Invalid JSON - use defaults
         }
     }
 
@@ -873,12 +877,23 @@ public class DatasetCardViewModel : ObservableObject
             // Clean up legacy file if it exists
             if (File.Exists(LegacyMetadataFilePath))
             {
-                try { File.Delete(LegacyMetadataFilePath); } catch { }
+                try 
+                { 
+                    File.Delete(LegacyMetadataFilePath); 
+                }
+                catch (IOException)
+                {
+                    // Legacy file may be locked - ignore, will try again next save
+                }
             }
         }
-        catch
+        catch (IOException)
         {
-            // Ignore errors writing metadata
+            // File may be locked or folder inaccessible - metadata not saved
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // No permission to write - metadata not saved
         }
     }
 

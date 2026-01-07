@@ -106,8 +106,12 @@ public static class MediaFileExtensions
     /// </summary>
     /// <param name="videoPath">Path to the video file.</param>
     /// <returns>Expected thumbnail path.</returns>
+    /// <exception cref="ArgumentException">Thrown when videoPath is null or whitespace.</exception>
     public static string GetVideoThumbnailPath(string videoPath)
     {
+        if (string.IsNullOrWhiteSpace(videoPath))
+            throw new ArgumentException("Video path cannot be null or empty.", nameof(videoPath));
+
         var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
         return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");

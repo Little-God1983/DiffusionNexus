@@ -227,8 +227,15 @@ public class DatasetImageViewModel : ObservableObject
                 _originalCaption = _caption;
                 OnPropertyChanged(nameof(Caption));
             }
-            catch
+            catch (IOException)
             {
+                // File may be locked or inaccessible
+                _caption = string.Empty;
+                _originalCaption = string.Empty;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // No permission to read
                 _caption = string.Empty;
                 _originalCaption = string.Empty;
             }
@@ -258,8 +265,14 @@ public class DatasetImageViewModel : ObservableObject
                     OnPropertyChanged(nameof(IsUnrated));
                 }
             }
-            catch
+            catch (IOException)
             {
+                // File may be locked or inaccessible
+                _ratingStatus = ImageRatingStatus.Unrated;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // No permission to read
                 _ratingStatus = ImageRatingStatus.Unrated;
             }
         }
@@ -284,7 +297,14 @@ public class DatasetImageViewModel : ObservableObject
                 File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
             }
         }
-        catch { }
+        catch (IOException)
+        {
+            // File may be in use or read-only - rating will be lost on reload
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // No permission to write - rating will be lost on reload
+        }
     }
 
     private void SaveCaption()
@@ -302,7 +322,14 @@ public class DatasetImageViewModel : ObservableObject
                 WasSaved = true
             });
         }
-        catch { }
+        catch (IOException)
+        {
+            // File may be in use or read-only - caption not saved
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // No permission to write - caption not saved
+        }
     }
 
     private void RevertCaption()

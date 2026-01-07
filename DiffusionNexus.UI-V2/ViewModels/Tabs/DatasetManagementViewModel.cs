@@ -1372,7 +1372,19 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         StatusMessage = "Selection cleared";
     }
 
-    private void ApproveSelected()
+    private void ApproveSelected() 
+        => SetRatingForSelected(ImageRatingStatus.Approved, "Marked {0} items as production-ready");
+
+    private void RejectSelected() 
+        => SetRatingForSelected(ImageRatingStatus.Rejected, "Marked {0} items as failed");
+
+    private void ClearRatingSelected() 
+        => SetRatingForSelected(ImageRatingStatus.Unrated, "Cleared rating for {0} items");
+
+    /// <summary>
+    /// Sets the rating for all selected images and publishes change events.
+    /// </summary>
+    private void SetRatingForSelected(ImageRatingStatus newRating, string statusMessageFormat)
     {
         var selected = DatasetImages.Where(i => i.IsSelected).ToList();
         if (selected.Count == 0) return;
@@ -1380,59 +1392,18 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         foreach (var image in selected)
         {
             var previousRating = image.RatingStatus;
-            image.RatingStatus = ImageRatingStatus.Approved;
+            image.RatingStatus = newRating;
             image.SaveRating();
 
             _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
             {
                 Image = image,
-                NewRating = ImageRatingStatus.Approved,
+                NewRating = newRating,
                 PreviousRating = previousRating
             });
         }
-        StatusMessage = $"Marked {selected.Count} items as production-ready";
-    }
 
-    private void RejectSelected()
-    {
-        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
-        if (selected.Count == 0) return;
-
-        foreach (var image in selected)
-        {
-            var previousRating = image.RatingStatus;
-            image.RatingStatus = ImageRatingStatus.Rejected;
-            image.SaveRating();
-
-            _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
-            {
-                Image = image,
-                NewRating = ImageRatingStatus.Rejected,
-                PreviousRating = previousRating
-            });
-        }
-        StatusMessage = $"Marked {selected.Count} items as failed";
-    }
-
-    private void ClearRatingSelected()
-    {
-        var selected = DatasetImages.Where(i => i.IsSelected).ToList();
-        if (selected.Count == 0) return;
-
-        foreach (var image in selected)
-        {
-            var previousRating = image.RatingStatus;
-            image.RatingStatus = ImageRatingStatus.Unrated;
-            image.SaveRating();
-
-            _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
-            {
-                Image = image,
-                NewRating = ImageRatingStatus.Unrated,
-                PreviousRating = previousRating
-            });
-        }
-        StatusMessage = $"Cleared rating for {selected.Count} items";
+        StatusMessage = string.Format(statusMessageFormat, selected.Count);
     }
 
     private void SelectApproved()

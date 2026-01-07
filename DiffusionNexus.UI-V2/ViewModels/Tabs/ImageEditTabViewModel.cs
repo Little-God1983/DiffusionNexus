@@ -164,7 +164,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;
         _eventAggregator.ImageSaved += OnImageSaved;
         _eventAggregator.ImageDeleted += OnImageDeleted;
-        _eventAggregator.DatasetImagesLoaded += OnDatasetImagesLoaded;
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
 
         // Subscribe to state changes
@@ -322,17 +321,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                     ImageEditor.ClearImageCommand.Execute(null);
                 }
             }
-        }
-    }
-
-    private void OnDatasetImagesLoaded(object? sender, DatasetImagesLoadedEventArgs e)
-    {
-        // If the loaded dataset matches our selected editor dataset, sync the images
-        if (_selectedEditorDataset is not null &&
-            string.Equals(_selectedEditorDataset.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase))
-        {
-            // The DatasetManagementViewModel has loaded images for this dataset
-            // We may need to refresh our editor image list if versions match
         }
     }
 
@@ -535,7 +523,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditorRequested;
             _eventAggregator.ImageSaved -= OnImageSaved;
             _eventAggregator.ImageDeleted -= OnImageDeleted;
-            _eventAggregator.DatasetImagesLoaded -= OnDatasetImagesLoaded;
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _state.StateChanged -= OnStateChanged;
         }
