@@ -1013,6 +1013,11 @@ public class DatasetCardViewModel : ObservableObject
             ThumbnailPath = null;
         }
     }
+
+    /// <summary>
+    /// Returns the dataset name for display in editable ComboBox controls.
+    /// </summary>
+    public override string ToString() => Name;
 }
 
 /// <summary>
