@@ -82,11 +82,12 @@
                        IsVisible="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <Border Grid.Column="4" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <!-- Rating buttons - consistent with DatasetManagementView -->
           <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <Button Content="?" Command="{Binding ImageEditor.MarkApprovedCommand}" Padding="12,6" FontSize="14"
+            <Button Content="+" Command="{Binding ImageEditor.MarkApprovedCommand}" Padding="12,6" FontSize="14" FontWeight="Bold"
                     Background="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                     Foreground="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}" CornerRadius="4"/>
-            <Button Content="?" Command="{Binding ImageEditor.MarkRejectedCommand}" Padding="12,6" FontSize="14"
+            <Button Content="-" Command="{Binding ImageEditor.MarkRejectedCommand}" Padding="12,6" FontSize="14" FontWeight="Bold"
                     Background="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
                     Foreground="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}" CornerRadius="4"/>
           </StackPanel>
@@ -96,31 +97,36 @@
                        FontSize="12" FontWeight="SemiBold" Foreground="White"/>
           </Border>
           <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <!-- Crop tool - text labels instead of emoji -->
           <StackPanel Grid.Column="8" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <ToggleButton Content="?? Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"/>
+            <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"/>
           </StackPanel>
           <Border Grid.Column="9"/>
           <StackPanel Grid.Column="10" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
-            <Button Content="? Apply Crop" Command="{Binding ImageEditor.ApplyCropCommand}" Background="#2D7D46"/>
-            <Button Content="? Cancel" Command="{Binding ImageEditor.CancelCropCommand}"/>
+            <Button Content="Apply" Command="{Binding ImageEditor.ApplyCropCommand}" Background="#2D7D46" Padding="12,6"/>
+            <Button Content="Cancel" Command="{Binding ImageEditor.CancelCropCommand}" Padding="12,6"/>
           </StackPanel>
           <Border Grid.Column="11" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <!-- Save buttons - text labels instead of emoji -->
           <StackPanel Grid.Column="12" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <Button Content="?? Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46"/>
-            <Button Content="?? Save" Command="{Binding ImageEditor.SaveOverwriteCommand}"/>
+            <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
+            <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
           </StackPanel>
           <Border Grid.Column="13" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
-          <Button Grid.Column="14" Content="? Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0"/>
-          <Button Grid.Column="15" Content="? Clear" Command="{Binding ImageEditor.ClearImageCommand}"/>
+          <Button Grid.Column="14" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"/>
+          <Button Grid.Column="15" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"/>
         </Grid>
       </Border>
       
       <!-- Image Editor Canvas -->
       <Border Grid.Row="1" Background="#1A1A1A" Margin="16">
         <Grid>
+          <!-- Empty state - text instead of emoji -->
           <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding !ImageEditor.HasImage}">
-            <TextBlock Text="???" FontSize="64" Opacity="0.2" HorizontalAlignment="Center"/>
-            <TextBlock Text="No image loaded" FontSize="16" Opacity="0.4" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+            <Border Background="#333" CornerRadius="12" Padding="24">
+              <TextBlock Text="No Image" FontSize="18" Opacity="0.4" HorizontalAlignment="Center"/>
+            </Border>
+            <TextBlock Text="No image loaded" FontSize="16" Opacity="0.4" HorizontalAlignment="Center" Margin="0,12,0,0"/>
             <TextBlock Text="Use 'Send to Image Edit' from Dataset Management" FontSize="12" Opacity="0.3" HorizontalAlignment="Center" Margin="0,4,0,0"/>
           </StackPanel>
           <controls:ImageEditorControl x:Name="ImageEditorCanvas"
@@ -137,11 +143,11 @@
           <TextBlock Grid.Column="0" Text="{Binding ImageEditor.StatusMessage}" Opacity="0.8" FontSize="12" VerticalAlignment="Center"
                      IsVisible="{Binding ImageEditor.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <Button Content="-" Command="{Binding ImageEditor.ZoomOutCommand}" Width="28" Height="28" Padding="0"/>
+            <Button Content="-" Command="{Binding ImageEditor.ZoomOutCommand}" Width="28" Height="28" Padding="0" FontWeight="Bold"/>
             <Border Background="#333" CornerRadius="4" Padding="8,4" MinWidth="50">
               <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}" HorizontalAlignment="Center" FontSize="12" Foreground="#4CAF50"/>
             </Border>
-            <Button Content="+" Command="{Binding ImageEditor.ZoomInCommand}" Width="28" Height="28" Padding="0"/>
+            <Button Content="+" Command="{Binding ImageEditor.ZoomInCommand}" Width="28" Height="28" Padding="0" FontWeight="Bold"/>
             <Button Content="Fit" Command="{Binding ImageEditor.ZoomToFitCommand}" Padding="8,4"/>
             <Button Content="100%" Command="{Binding ImageEditor.ZoomToActualCommand}" Padding="8,4"/>
           </StackPanel>
@@ -159,7 +165,7 @@
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="4">
                 <TextBlock FontSize="12" Opacity="0.8">
-                  <Run Text="Size: "/><Run Text="{Binding ImageEditor.ImageWidth}"/><Run Text=" × "/><Run Text="{Binding ImageEditor.ImageHeight}"/><Run Text=" px"/>
+                  <Run Text="Size: "/><Run Text="{Binding ImageEditor.ImageWidth}"/><Run Text=" x "/><Run Text="{Binding ImageEditor.ImageHeight}"/><Run Text=" px"/>
                 </TextBlock>
                 <TextBlock Text="{Binding ImageEditor.ImageDpi, StringFormat='Resolution: {0} DPI'}" FontSize="12" Opacity="0.8"/>
                 <TextBlock Text="{Binding ImageEditor.FileSizeText, StringFormat='File: {0}'}" FontSize="12" Opacity="0.8"/>
