@@ -43,7 +43,7 @@
       <CheckBox Content="Export unrated images/videos"
                 IsChecked="{Binding ExportUnrated}"
                 Margin="0,4"/>
-      <CheckBox Content="Export failed images/videos as well"
+      <CheckBox Content="Export trash images/videos as well"
                 IsChecked="{Binding IncludeFailedImages}"
                 Margin="0,4"/>
     </StackPanel>
@@ -76,9 +76,9 @@
         <!-- Failed -->
         <StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal">
           <Ellipse Width="10" Height="10" Fill="#F44336" Margin="0,0,6,0" VerticalAlignment="Center"/>
-          <TextBlock Text="Failed:" Foreground="#F44336"/>
+          <TextBlock Text="Trash:" Foreground="#F44336"/>
         </StackPanel>
-        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding FailedText}" Foreground="#F44336" HorizontalAlignment="Right"/>
+        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TrashText}" Foreground="#F44336" HorizontalAlignment="Right"/>
         
         <!-- Unrated -->
         <StackPanel Grid.Row="4" Grid.Column="0" Orientation="Horizontal">

@@ -83,7 +83,7 @@
                   Padding="12,6"
                   Margin="0,0,8,0"
                   IsVisible="{Binding IsRejected}">
-            <TextBlock Text="Failed"
+            <TextBlock Text="Trash"
                        FontSize="12"
                        FontWeight="SemiBold"
                        Foreground="White"/>
@@ -254,10 +254,10 @@
                     Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
                     Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
                     CornerRadius="4"
-                    ToolTip.Tip="Mark as failed/rejected (S or Down Arrow)">
+                    ToolTip.Tip="Mark as trash (S or Down Arrow)">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <TextBlock Text="-" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
-                <TextBlock Text="Mark Failed" VerticalAlignment="Center"/>
+                <TextBlock Text="Mark Trash" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
             
