@@ -920,19 +920,9 @@ public class ImageEditorCore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Creates a preview of color balance adjustments without modifying the working bitmap.
-    /// </summary>
-    public SKBitmap? PreviewColorBalance(ColorBalanceSettings settings)
-    {
-        lock (_bitmapLock)
-        {
-            if (_workingBitmap is null || settings is null)
-                return null;
+    #endregion Color Balance
 
-            return CreateColorBalancePreview(_workingBitmap, settings);
-        }
-    }
+    #region Preview Management
 
     /// <summary>
     /// Clears the current preview and restores normal display.
@@ -982,7 +972,134 @@ public class ImageEditorCore : IDisposable
         return true;
     }
 
-    #endregion Color Balance
+    #endregion Preview Management
+
+    #region Brightness and Contrast
+
+    /// <summary>
+    /// Applies brightness and contrast adjustments to the image.
+    /// </summary>
+    public bool ApplyBrightnessContrast(BrightnessContrastSettings settings)
+    {
+        if (_workingBitmap is null || settings is null || !settings.HasAdjustments)
+            return false;
+
+        try
+        {
+            var result = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            if (result is null)
+                return false;
+
+            _workingBitmap.Dispose();
+            _workingBitmap = result;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Sets a preview bitmap with brightness/contrast adjustments.
+    /// </summary>
+    public bool SetBrightnessContrastPreview(BrightnessContrastSettings settings)
+    {
+        if (settings is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            // Dispose old preview
+            var oldPreview = _previewBitmap;
+            _previewBitmap = null;
+
+            if (!settings.HasAdjustments)
+            {
+                _isPreviewActive = false;
+                oldPreview?.Dispose();
+                OnImageChanged();
+                return true;
+            }
+
+            // Create new preview from working bitmap
+            var newPreview = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            
+            // Only after new preview is ready, dispose old and assign new
+            _previewBitmap = newPreview;
+            _isPreviewActive = _previewBitmap is not null;
+            oldPreview?.Dispose();
+        }
+
+        OnImageChanged();
+        return _isPreviewActive;
+    }
+
+    /// <summary>
+    /// Creates a brightness/contrast preview bitmap from the source bitmap.
+    /// Does not modify any class fields.
+    /// </summary>
+    private static SKBitmap? CreateBrightnessContrastPreview(SKBitmap source, BrightnessContrastSettings settings)
+    {
+        if (source is null || settings is null || !settings.HasAdjustments)
+            return null;
+
+        try
+        {
+            var width = source.Width;
+            var height = source.Height;
+            var result = new SKBitmap(width, height);
+
+            var srcPixels = source.Pixels;
+            var dstPixels = new SKColor[srcPixels.Length];
+
+            // Normalize brightness (-100 to +100) to a factor
+            // Brightness: add/subtract from pixel values
+            var brightnessFactor = settings.Brightness / 100f;
+            
+            // Normalize contrast (-100 to +100) to a factor
+            // Contrast: 0 = gray, 1 = normal, >1 = more contrast
+            // Map -100..+100 to 0..2 (with 0 = no change)
+            var contrastFactor = (settings.Contrast + 100f) / 100f;
+
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var pixel = srcPixels[i];
+                
+                // Convert to 0-1 range
+                var r = pixel.Red / 255f;
+                var g = pixel.Green / 255f;
+                var b = pixel.Blue / 255f;
+
+                // Apply brightness (additive)
+                r += brightnessFactor;
+                g += brightnessFactor;
+                b += brightnessFactor;
+
+                // Apply contrast (multiply around 0.5 midpoint)
+                r = (r - 0.5f) * contrastFactor + 0.5f;
+                g = (g - 0.5f) * contrastFactor + 0.5f;
+                b = (b - 0.5f) * contrastFactor + 0.5f;
+
+                // Clamp and convert back to byte
+                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
+                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
+                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
+
+                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
+            }
+
+            result.Pixels = dstPixels;
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion Brightness and Contrast
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);

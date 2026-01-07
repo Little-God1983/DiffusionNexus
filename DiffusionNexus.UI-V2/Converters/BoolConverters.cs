@@ -1,5 +1,6 @@
 using Avalonia.Data.Converters;
 using Avalonia.Media;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Converters;
 
@@ -89,6 +90,38 @@ public static class BoolConverters
     /// </summary>
     public static readonly IValueConverter BoolToRejectedButtonForeground =
         new FuncValueConverter<bool, IBrush>(b => WhiteBrush);
+
+    #endregion
+
+    #region Thumbnail Rating Badge Converters
+
+    /// <summary>
+    /// Converts ImageRatingStatus to badge visibility (visible only if rated).
+    /// </summary>
+    public static readonly IValueConverter RatingStatusToVisibility =
+        new FuncValueConverter<ImageRatingStatus, bool>(status => status != ImageRatingStatus.Unrated);
+
+    /// <summary>
+    /// Converts ImageRatingStatus to badge background color (green for approved, red for rejected).
+    /// </summary>
+    public static readonly IValueConverter RatingStatusToBackground =
+        new FuncValueConverter<ImageRatingStatus, IBrush>(status => status switch
+        {
+            ImageRatingStatus.Approved => ApprovedGreen,
+            ImageRatingStatus.Rejected => RejectedRed,
+            _ => Brushes.Transparent
+        });
+
+    /// <summary>
+    /// Converts ImageRatingStatus to badge symbol (+ for approved, - for rejected).
+    /// </summary>
+    public static readonly IValueConverter RatingStatusToSymbol =
+        new FuncValueConverter<ImageRatingStatus, string>(status => status switch
+        {
+            ImageRatingStatus.Approved => "+",
+            ImageRatingStatus.Rejected => "-",
+            _ => ""
+        });
 
     #endregion
 }

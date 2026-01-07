@@ -51,6 +51,11 @@ public partial class ImageEditorViewModel : ObservableObject
     private float _highlightsMagentaGreen;
     private float _highlightsYellowBlue;
 
+    // Brightness/Contrast fields
+    private bool _isBrightnessContrastPanelOpen;
+    private float _brightness;
+    private float _contrast;
+
     /// <summary>
     /// Path to the currently loaded image.
     /// </summary>
@@ -165,7 +170,9 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
-    /// <summary>The currently selected tonal range to adjust.</summary>
+    /// <summary>
+    /// The currently selected tonal range to adjust.
+    /// </summary>
     public ColorBalanceRange SelectedColorBalanceRange
     {
         get => _selectedColorBalanceRange;
@@ -402,6 +409,94 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Brightness and Contrast Properties
+
+    /// <summary>Whether the brightness/contrast panel is open.</summary>
+    public bool IsBrightnessContrastPanelOpen
+    {
+        get => _isBrightnessContrastPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isBrightnessContrastPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when brightness/contrast is activated
+                    DeactivateOtherTools(nameof(IsBrightnessContrastPanelOpen));
+                }
+                else
+                {
+                    // Reset sliders and cancel preview when panel closes
+                    ResetBrightnessContrastSliders();
+                    CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+                }
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Brightness adjustment from -100 (darken) to +100 (brighten).</summary>
+    public float Brightness
+    {
+        get => _brightness;
+        set
+        {
+            if (SetProperty(ref _brightness, Math.Clamp(value, -100f, 100f)))
+            {
+                OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                RequestBrightnessContrastPreview();
+            }
+        }
+    }
+
+    /// <summary>Contrast adjustment from -100 (reduce) to +100 (increase).</summary>
+    public float Contrast
+    {
+        get => _contrast;
+        set
+        {
+            if (SetProperty(ref _contrast, Math.Clamp(value, -100f, 100f)))
+            {
+                OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+                ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+                ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+                RequestBrightnessContrastPreview();
+            }
+        }
+    }
+
+    /// <summary>Whether any brightness/contrast slider has a non-zero value.</summary>
+    public bool HasBrightnessContrastAdjustments => _brightness != 0 || _contrast != 0;
+
+    /// <summary>Gets the current brightness/contrast settings.</summary>
+    public BrightnessContrastSettings CurrentBrightnessContrastSettings =>
+        new(_brightness, _contrast);
+
+    private void RequestBrightnessContrastPreview()
+    {
+        if (IsBrightnessContrastPanelOpen && HasImage)
+        {
+            BrightnessContrastPreviewRequested?.Invoke(this, CurrentBrightnessContrastSettings);
+        }
+    }
+
+    private void ResetBrightnessContrastSliders()
+    {
+        _brightness = 0;
+        _contrast = 0;
+        OnPropertyChanged(nameof(Brightness));
+        OnPropertyChanged(nameof(Contrast));
+        OnPropertyChanged(nameof(HasBrightnessContrastAdjustments));
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -541,6 +636,9 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ToggleColorBalanceCommand { get; }
     public IRelayCommand ApplyColorBalanceCommand { get; }
     public IRelayCommand ResetColorBalanceRangeCommand { get; }
+    public IRelayCommand ToggleBrightnessContrastCommand { get; }
+    public IRelayCommand ApplyBrightnessContrastCommand { get; }
+    public IRelayCommand ResetBrightnessContrastCommand { get; }
 
     #endregion
 
@@ -567,6 +665,9 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<ColorBalanceSettings>? ApplyColorBalanceRequested;
     public event EventHandler<ColorBalanceSettings>? ColorBalancePreviewRequested;
     public event EventHandler? CancelColorBalancePreviewRequested;
+    public event EventHandler<BrightnessContrastSettings>? ApplyBrightnessContrastRequested;
+    public event EventHandler<BrightnessContrastSettings>? BrightnessContrastPreviewRequested;
+    public event EventHandler? CancelBrightnessContrastPreviewRequested;
 
     /// <summary>
     /// Event raised when an image save completes successfully.
@@ -598,6 +699,14 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsColorBalancePanelOpen));
         }
 
+        if (exceptTool != nameof(IsBrightnessContrastPanelOpen) && _isBrightnessContrastPanelOpen)
+        {
+            _isBrightnessContrastPanelOpen = false;
+            ResetBrightnessContrastSliders();
+            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
+        }
+
         // Add more tools here as they are added in the future
     }
 
@@ -612,6 +721,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleColorBalanceCommand.NotifyCanExecuteChanged();
         ApplyColorBalanceCommand.NotifyCanExecuteChanged();
         ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -649,6 +760,11 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleColorBalanceCommand = new RelayCommand(ExecuteToggleColorBalance, () => HasImage && !IsCropToolActive);
         ApplyColorBalanceCommand = new RelayCommand(ExecuteApplyColorBalance, () => HasImage && IsColorBalancePanelOpen && HasColorBalanceAdjustments);
         ResetColorBalanceRangeCommand = new RelayCommand(ExecuteResetColorBalanceRange, () => IsColorBalancePanelOpen && HasColorBalanceAdjustments);
+
+        // Brightness/Contrast commands
+        ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
+        ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
+        ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
     }
 
     /// <summary>Loads an image by path.</summary>
@@ -705,6 +821,15 @@ public partial class ImageEditorViewModel : ObservableObject
             ResetColorBalanceSliders();
             CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
             OnPropertyChanged(nameof(IsColorBalancePanelOpen));
+        }
+
+        // Close brightness/contrast panel and cancel any preview
+        if (_isBrightnessContrastPanelOpen)
+        {
+            _isBrightnessContrastPanelOpen = false;
+            ResetBrightnessContrastSliders();
+            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
         }
 
         NotifyToolCommandsCanExecuteChanged();
@@ -887,7 +1012,7 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         var settings = CurrentColorBalanceSettings;
         ApplyColorBalanceRequested?.Invoke(this, settings);
-        StatusMessage = $"Color balance applied to {_selectedColorBalanceRange}";
+        StatusMessage = $"Color balance applied to {_selectedDatasetImage?.FileName}";
         ResetColorBalanceSliders();
     }
 
@@ -901,6 +1026,45 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnColorBalanceApplied()
     {
         StatusMessage = "Color balance applied";
+    }
+
+    #endregion
+
+    #region Brightness and Contrast Command Implementations
+
+    private void ExecuteToggleBrightnessContrast()
+    {
+        IsBrightnessContrastPanelOpen = !IsBrightnessContrastPanelOpen;
+        if (IsBrightnessContrastPanelOpen)
+        {
+            StatusMessage = "Brightness/Contrast: Adjust sliders and click Apply";
+        }
+        else
+        {
+            StatusMessage = null;
+        }
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ExecuteApplyBrightnessContrast()
+    {
+        var settings = CurrentBrightnessContrastSettings;
+        ApplyBrightnessContrastRequested?.Invoke(this, settings);
+        StatusMessage = "Brightness and contrast applied";
+        ResetBrightnessContrastSliders();
+    }
+
+    private void ExecuteResetBrightnessContrast()
+    {
+        ResetBrightnessContrastSliders();
+        StatusMessage = "Reset brightness and contrast";
+    }
+
+    /// <summary>Called when brightness/contrast is successfully applied.</summary>
+    public void OnBrightnessContrastApplied()
+    {
+        StatusMessage = "Brightness and contrast applied";
     }
 
     #endregion
@@ -1008,6 +1172,9 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleColorBalanceCommand.NotifyCanExecuteChanged();
         ApplyColorBalanceCommand.NotifyCanExecuteChanged();
         ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
+        ToggleBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
+        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 

@@ -210,6 +210,33 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.EditorCore.ClearPreview();
         };
 
+        // Handle brightness/contrast requests
+        imageEditor.ApplyBrightnessContrastRequested += (_, settings) =>
+        {
+            // Clear preview first, then apply to working bitmap
+            _imageEditorCanvas.EditorCore.ClearPreview();
+            if (_imageEditorCanvas.EditorCore.ApplyBrightnessContrast(settings))
+            {
+                imageEditor.OnBrightnessContrastApplied();
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to apply brightness/contrast.";
+            }
+        };
+
+        // Handle brightness/contrast preview requests (live preview)
+        imageEditor.BrightnessContrastPreviewRequested += (_, settings) =>
+        {
+            _imageEditorCanvas.EditorCore.SetBrightnessContrastPreview(settings);
+        };
+
+        // Handle brightness/contrast preview cancel
+        imageEditor.CancelBrightnessContrastPreviewRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearPreview();
+        };
+
         // Handle save requests
         imageEditor.SaveAsNewRequested += (_, _) =>
         {
