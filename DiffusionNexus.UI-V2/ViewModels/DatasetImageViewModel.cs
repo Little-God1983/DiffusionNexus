@@ -22,6 +22,7 @@ public class DatasetImageViewModel : ObservableObject
     private bool _isSelected;
     private ImageRatingStatus _ratingStatus = ImageRatingStatus.Unrated;
     private string? _thumbnailPath;
+    private bool _isEditorSelected;
 
     /// <summary>
     /// Full path to the media file (image or video).
@@ -114,6 +115,15 @@ public class DatasetImageViewModel : ObservableObject
                 _onSelectionChanged?.Invoke(this);
             }
         }
+    }
+
+    /// <summary>
+    /// Whether this image is currently selected in the Image Editor.
+    /// </summary>
+    public bool IsEditorSelected
+    {
+        get => _isEditorSelected;
+        set => SetProperty(ref _isEditorSelected, value);
     }
 
     /// <summary>

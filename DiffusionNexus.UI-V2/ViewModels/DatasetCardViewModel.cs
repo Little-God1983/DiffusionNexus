@@ -103,6 +103,7 @@ public class DatasetCardViewModel : ObservableObject
                 OnPropertyChanged(nameof(MediaCountText));
                 OnPropertyChanged(nameof(TotalMediaCount));
                 OnPropertyChanged(nameof(CanIncrementVersion));
+                OnPropertyChanged(nameof(DetailedCountText));
             }
         }
     }
@@ -122,6 +123,7 @@ public class DatasetCardViewModel : ObservableObject
                 OnPropertyChanged(nameof(TotalMediaCount));
                 OnPropertyChanged(nameof(HasVideos));
                 OnPropertyChanged(nameof(CanIncrementVersion));
+                OnPropertyChanged(nameof(DetailedCountText));
             }
         }
     }
@@ -948,11 +950,74 @@ public class DatasetCardViewModel : ObservableObject
 
     /// <summary>
     /// Refreshes the media count and thumbnail from the current version folder.
+    /// For version cards (flattened view), only refreshes the specific version's counts.
     /// </summary>
     public void RefreshImageInfo()
     {
-        DetectAndLoadMedia();
+        if (IsVersionCard && _displayVersion.HasValue)
+        {
+            // For version cards, only refresh counts for the specific version
+            RefreshVersionCardCounts(_displayVersion.Value);
+        }
+        else
+        {
+            // For normal cards, do full detection
+            DetectAndLoadMedia();
+        }
     }
+
+    /// <summary>
+    /// Refreshes just the media counts for a specific version (used by version cards in flattened view).
+    /// </summary>
+    private void RefreshVersionCardCounts(int version)
+    {
+        var versionPath = GetVersionFolderPath(version);
+        
+        if (!Directory.Exists(versionPath))
+        {
+            ImageCount = 0;
+            VideoCount = 0;
+            CaptionCount = 0;
+            ThumbnailPath = null;
+            return;
+        }
+
+        var files = Directory.EnumerateFiles(versionPath).ToList();
+        
+        var videos = files.Where(f => IsVideoFile(f)).ToList();
+        var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
+        var captions = files.Where(f => IsCaptionFile(f)).ToList();
+        
+        ImageCount = images.Count;
+        VideoCount = videos.Count;
+        CaptionCount = captions.Count;
+        
+        // For version cards, the "all versions" totals show the same as current (they display DetailedCountText)
+        TotalImageCountAllVersions = images.Count;
+        TotalVideoCountAllVersions = videos.Count;
+        TotalCaptionCountAllVersions = captions.Count;
+        
+        // Update thumbnail
+        if (images.Count > 0)
+        {
+            ThumbnailPath = images.First();
+        }
+        else if (videos.Count > 0)
+        {
+            var firstVideo = videos.First();
+            var videoThumbnail = GetVideoThumbnailPath(firstVideo);
+            ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
+        }
+        else
+        {
+            ThumbnailPath = null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the dataset name for display in editable ComboBox controls.
+    /// </summary>
+    public override string ToString() => Name;
 }
 
 /// <summary>

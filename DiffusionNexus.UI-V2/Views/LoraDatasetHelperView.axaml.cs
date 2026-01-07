@@ -84,7 +84,38 @@ public partial class LoraDatasetHelperView : UserControl
         {
             vm.CheckStorageConfigurationCommand.Execute(null);
 
-            // Wire up image editor events
+            // Wire up image editor events - try now, or defer if control not ready
+            TryWireUpImageEditorEvents(vm);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to wire up image editor events. If the control isn't found yet,
+    /// this will be retried when the control becomes available.
+    /// </summary>
+    private void TryWireUpImageEditorEvents(LoraDatasetHelperViewModel vm)
+    {
+        // Try to find the control if not already found
+        _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
+        
+        if (_imageEditorCanvas is not null)
+        {
+            WireUpImageEditorEvents(vm);
+        }
+        else
+        {
+            // Control not ready yet - subscribe to layout updated to try again
+            LayoutUpdated += OnLayoutUpdatedForEditorInit;
+        }
+    }
+
+    private void OnLayoutUpdatedForEditorInit(object? sender, EventArgs e)
+    {
+        _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
+        
+        if (_imageEditorCanvas is not null && DataContext is LoraDatasetHelperViewModel vm)
+        {
+            LayoutUpdated -= OnLayoutUpdatedForEditorInit;
             WireUpImageEditorEvents(vm);
         }
     }

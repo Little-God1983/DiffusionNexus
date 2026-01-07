@@ -724,8 +724,68 @@
 
       <!-- Image Edit Tab -->
       <TabItem Header="Image Edit">
-        <Grid ColumnDefinitions="*,Auto">
-          <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto">
+        <Grid ColumnDefinitions="Auto,*,Auto">
+          
+          <!-- Left Side Panel - Image Thumbnails -->
+          <Border Grid.Column="0"
+                  Width="120"
+                  Background="#1E1E1E"
+                  BorderBrush="#333"
+                  BorderThickness="0,0,1,0"
+                  IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <Grid RowDefinitions="Auto,*">
+              <!-- Header -->
+              <Border Grid.Row="0" 
+                      Background="#2A2A2A"
+                      Padding="8,6"
+                      BorderBrush="#333"
+                      BorderThickness="0,0,0,1">
+                <TextBlock Text="{Binding EditorDatasetImages.Count, StringFormat='{}{0} Images'}"
+                           FontSize="11"
+                           Opacity="0.7"
+                           HorizontalAlignment="Center"/>
+              </Border>
+              
+              <!-- Scrollable Thumbnail List -->
+              <ScrollViewer Grid.Row="1" 
+                            VerticalScrollBarVisibility="Auto"
+                            HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding EditorDatasetImages}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <StackPanel Orientation="Vertical"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DatasetImageViewModel">
+                      <Button Command="{Binding $parent[ItemsControl].((vm:LoraDatasetHelperViewModel)DataContext).LoadEditorImageCommand}"
+                              CommandParameter="{Binding}"
+                              Padding="0"
+                              Margin="4"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              Cursor="Hand"
+                              ToolTip.Tip="{Binding FullFileName}">
+                        <Border Width="104"
+                                Height="78"
+                                Background="#2A2A2A"
+                                CornerRadius="4"
+                                ClipToBounds="True"
+                                BorderBrush="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionBorder}}"
+                                BorderThickness="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionThickness}}">
+                          <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                 Stretch="UniformToFill"/>
+                        </Border>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </Grid>
+          </Border>
+          
+          <!-- Main Editor Area -->
+          <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
           
             <!-- Toolbar -->
             <Border Grid.Row="0" 
@@ -733,10 +793,53 @@
                     Padding="16,12"
                     BorderBrush="#333"
                     BorderThickness="0,0,0,1">
-              <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+              <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                
+                <!-- Dataset Selector -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="Dataset:"
+                             VerticalAlignment="Center"
+                             Opacity="0.7"/>
+                  <ComboBox ItemsSource="{Binding Datasets}"
+                            SelectedItem="{Binding SelectedEditorDataset, Mode=TwoWay}"
+                            IsEditable="True"
+                            MinWidth="180"
+                            MaxWidth="250"
+                            PlaceholderText="Search datasets..."
+                            ToolTip.Tip="Search and select a dataset">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                        <TextBlock Text="{Binding Name}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                
+                <!-- Version Selector -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center"
+                            IsEnabled="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  <TextBlock Text="Version:"
+                             VerticalAlignment="Center"
+                             Opacity="0.7"/>
+                  <ComboBox ItemsSource="{Binding EditorVersionItems}"
+                            SelectedItem="{Binding SelectedEditorVersion, Mode=TwoWay}"
+                            MinWidth="120"
+                            ToolTip.Tip="Select version to browse images">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:EditorVersionItem">
+                        <TextBlock Text="{Binding DisplayText}"
+                                   Foreground="#4CAF50"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                
+                <!-- Separator -->
+                <Border Grid.Column="2" Width="1" Background="#444" Margin="16,4"
+                        IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                 
                 <!-- Image Info -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="16">
                   <TextBlock Text="{Binding ImageEditor.ImageFileName, FallbackValue='No image loaded'}"
                              FontSize="16"
                              FontWeight="SemiBold"
@@ -750,10 +853,47 @@
                 </StackPanel>
                 
                 <!-- Tool Separator -->
-                <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="4" Width="1" Background="#444" Margin="16,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                
+                <!-- Rating Buttons (similar to Dataset Management) -->
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                  <Button Content="▲"
+                          Command="{Binding ImageEditor.MarkApprovedCommand}"
+                          Padding="12,6"
+                          FontSize="14"
+                          Background="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                          Foreground="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                          CornerRadius="4"
+                          ToolTip.Tip="Mark as production-ready (toggle)"/>
+                  <Button Content="▼"
+                          Command="{Binding ImageEditor.MarkRejectedCommand}"
+                          Padding="12,6"
+                          FontSize="14"
+                          Background="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                          Foreground="{Binding ImageEditor.IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                          CornerRadius="4"
+                          ToolTip.Tip="Mark as failed/rejected (toggle)"/>
+                </StackPanel>
+                
+                <!-- Rating status indicator -->
+                <Border Grid.Column="6"
+                        Background="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
+                        CornerRadius="4"
+                        Padding="8,4"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding ImageEditor.HasRating}">
+                  <TextBlock Text="{Binding ImageEditor.IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             Foreground="White"/>
+                </Border>
+                
+                <!-- Separator before tools -->
+                <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Tools -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <StackPanel Grid.Column="8" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <!-- Crop Tool Button -->
                   <ToggleButton Content="✂️ Crop"
                                 IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}"
@@ -762,10 +902,10 @@
                 </StackPanel>
                 
                 <!-- Spacer -->
-                <Border Grid.Column="3"/>
+                <Border Grid.Column="9"/>
                 
                 <!-- Crop Actions (visible when crop tool is active) -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+                <StackPanel Grid.Column="10" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsCropToolActive}">
                   <Button Content="✓ Apply Crop"
                           Command="{Binding ImageEditor.ApplyCropCommand}"
                           Background="#2D7D46"
@@ -776,10 +916,10 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="5" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="11" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Save Buttons -->
-                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+                <StackPanel Grid.Column="12" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
                   <Button Content="💾 Save As New"
                           Command="{Binding ImageEditor.SaveAsNewCommand}"
                           Background="#2D7D46"
@@ -790,17 +930,17 @@
                 </StackPanel>
                 
                 <!-- Separator -->
-                <Border Grid.Column="7" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+                <Border Grid.Column="13" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
                 
                 <!-- Reset Button -->
-                <Button Grid.Column="8"
+                <Button Grid.Column="14"
                         Content="↺ Reset"
                         Command="{Binding ImageEditor.ResetImageCommand}"
                         Margin="0,0,8,0"
                         ToolTip.Tip="Reset to original image"/>
                 
                 <!-- Clear Button -->
-                <Button Grid.Column="9"
+                <Button Grid.Column="15"
                         Content="✕ Clear"
                         Command="{Binding ImageEditor.ClearImageCommand}"
                         ToolTip.Tip="Clear the image"/>
@@ -896,7 +1036,7 @@
           </Grid>
           
           <!-- Right Side Panel - Info -->
-          <Border Grid.Column="1"
+          <Border Grid.Column="2"
                   Width="200"
                   Background="#1E1E1E"
                   BorderBrush="#333"

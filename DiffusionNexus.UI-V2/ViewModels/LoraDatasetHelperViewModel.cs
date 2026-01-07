@@ -35,6 +35,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _isFileDialogOpen;
     private int _selectionCount;
     private DatasetImageViewModel? _lastClickedImage;
+    
+    // Image Edit tab dataset/version selection
+    private DatasetCardViewModel? _selectedEditorDataset;
+    private EditorVersionItem? _selectedEditorVersion;
+    private DatasetImageViewModel? _selectedEditorImage;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -227,6 +232,53 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public string SelectionText => _selectionCount == 1 ? "1 selected" : $"{_selectionCount} selected";
 
+    /// <summary>
+    /// Selected dataset in the Image Edit tab.
+    /// Changing this loads the available versions for that dataset.
+    /// </summary>
+    public DatasetCardViewModel? SelectedEditorDataset
+    {
+        get => _selectedEditorDataset;
+        set
+        {
+            if (SetProperty(ref _selectedEditorDataset, value))
+            {
+                _ = LoadEditorDatasetVersionsAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selected version in the Image Edit tab.
+    /// Changing this loads the images for that version.
+    /// </summary>
+    public EditorVersionItem? SelectedEditorVersion
+    {
+        get => _selectedEditorVersion;
+        set
+        {
+            if (SetProperty(ref _selectedEditorVersion, value))
+            {
+                _ = LoadEditorDatasetImagesAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Currently selected image in the Image Edit tab thumbnail list.
+    /// </summary>
+    public DatasetImageViewModel? SelectedEditorImage
+    {
+        get => _selectedEditorImage;
+        set
+        {
+            if (SetProperty(ref _selectedEditorImage, value) && value is not null)
+            {
+                LoadEditorImage(value);
+            }
+        }
+    }
+
     #endregion
 
     #region Collections
@@ -262,6 +314,17 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public ObservableCollection<int> AvailableVersions { get; } = [];
 
+    /// <summary>
+    /// Version items for the Image Edit tab version dropdown.
+    /// Format: "V1 | 45 Images"
+    /// </summary>
+    public ObservableCollection<EditorVersionItem> EditorVersionItems { get; } = [];
+
+    /// <summary>
+    /// Images available in the Image Edit tab for the selected dataset/version.
+    /// </summary>
+    public ObservableCollection<DatasetImageViewModel> EditorDatasetImages { get; } = [];
+
     #endregion
 
     #region Commands
@@ -279,6 +342,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
+    public IRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
     
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -303,6 +367,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Subscribe to DatasetImages collection changes to update HasNoImages
         DatasetImages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoImages));
         
+        // Subscribe to ImageEditor save events to refresh the thumbnail list
+        ImageEditor.ImageSaved += OnImageEditorImageSaved;
+        
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
         LoadDatasetsCommand = new AsyncRelayCommand(LoadDatasetsAsync);
@@ -317,6 +384,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
+        LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
         
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -907,7 +975,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
         else
         {
-            // Deleting the entire dataset
+            // Deleting the entirety of the dataset
             var confirm = await DialogService.ShowConfirmAsync(
                 "Delete Dataset",
                 $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in ALL versions of this dataset.");
@@ -1060,7 +1128,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             "Cancel",
             "Start Fresh (Empty)",
             $"Copy from V{currentVersion}");
-
+        
         // 0 = Cancel, 1 = Start Fresh, 2 = Copy
         if (selectedOption == 0 || selectedOption == -1)
         {
@@ -1235,7 +1303,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
     }
 
-    private void SendToImageEdit(DatasetImageViewModel? image)
+    private async void SendToImageEdit(DatasetImageViewModel? image)
     {
         if (image is null) return;
 
@@ -1246,8 +1314,71 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             return;
         }
 
+        // Determine which dataset and version this image belongs to
+        if (ActiveDataset is not null)
+        {
+            // Find the matching dataset in the Datasets collection (for the editor dropdown)
+            var editorDataset = Datasets.FirstOrDefault(d => 
+                string.Equals(d.FolderPath, ActiveDataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+            
+            if (editorDataset is not null)
+            {
+                // Set the dataset (this will trigger version loading)
+                _selectedEditorDataset = editorDataset;
+                OnPropertyChanged(nameof(SelectedEditorDataset));
+                
+                // Wait for version items to be loaded
+                await LoadEditorDatasetVersionsAsync();
+                
+                // Find and select the matching version
+                var currentVersion = ActiveDataset.CurrentVersion;
+                var versionItem = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersion);
+                
+                if (versionItem is not null)
+                {
+                    // Set the version (this will trigger image loading)
+                    _selectedEditorVersion = versionItem;
+                    OnPropertyChanged(nameof(SelectedEditorVersion));
+                    
+                    // Wait for images to be loaded
+                    await LoadEditorDatasetImagesAsync();
+                    
+                    // Find and select the image in the thumbnail list
+                    var editorImage = EditorDatasetImages.FirstOrDefault(img => 
+                        string.Equals(img.ImagePath, image.ImagePath, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (editorImage is not null)
+                    {
+                        // Clear previous editor selection
+                        foreach (var img in EditorDatasetImages)
+                        {
+                            img.IsEditorSelected = false;
+                        }
+                        
+                        // Mark this image as selected (shows blue outline)
+                        editorImage.IsEditorSelected = true;
+                        _selectedEditorImage = editorImage;
+                        OnPropertyChanged(nameof(SelectedEditorImage));
+                        
+                        // Set the selected dataset image on the ImageEditor for rating support
+                        ImageEditor.SelectedDatasetImage = editorImage;
+                    }
+                }
+            }
+        }
+
+        // Load the image into the editor
         ImageEditor.LoadImage(image.ImagePath);
-        SelectedTabIndex = 1; // Switch to Image Edit tab
+        
+        // If we didn't find the image in the editor list, still set it for rating support
+        if (ImageEditor.SelectedDatasetImage is null)
+        {
+            ImageEditor.SelectedDatasetImage = image;
+        }
+        
+        // Switch to Image Edit tab
+        SelectedTabIndex = 1;
+        
         StatusMessage = $"Editing: {image.FullFileName}";
     }
 
@@ -1264,7 +1395,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         await DialogService.ShowImageViewerDialogAsync(
             DatasetImages,
             index,
-            onSendToImageEditor: SendToImageEdit,
+            onSendToImageEditor: img => SendToImageEdit(img),
             onDeleteRequested: OnImageDeleteRequested);
     }
 
@@ -1686,6 +1817,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
             }
 
+            // Update selection count since selected items were removed
+            UpdateSelectionCount();
+
             StatusMessage = $"Deleted {selectedImages.Count} items";
         }
         catch (Exception ex)
@@ -1700,6 +1834,258 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private void UpdateSelectionCount()
     {
         SelectionCount = DatasetImages.Count(i => i.IsSelected);
+    }
+
+    #endregion
+
+    #region Image Edit Tab Dataset Navigation
+
+    /// <summary>
+    /// Handles the ImageSaved event from the ImageEditor.
+    /// Refreshes the version dropdown and image list, maintaining the current selection.
+    /// Also refreshes the Dataset Management tab if viewing a dataset.
+    /// </summary>
+    private async void OnImageEditorImageSaved(object? sender, string savedImagePath)
+    {
+        try
+        {
+            // First, refresh the Image Edit tab's thumbnail list and version dropdown
+            if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
+            {
+                // Remember the current version
+                var currentVersionNumber = _selectedEditorVersion.Version;
+                
+                // Reload the version items (to update image counts)
+                var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
+                EditorVersionItems.Clear();
+                
+                foreach (var version in versionNumbers)
+                {
+                    var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
+                    var imageCount = 0;
+                    
+                    if (Directory.Exists(versionPath))
+                    {
+                        imageCount = Directory.EnumerateFiles(versionPath)
+                            .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+                    }
+                    
+                    EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
+                }
+
+                // Re-select the same version
+                var versionToSelect = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersionNumber);
+                if (versionToSelect is not null)
+                {
+                    // Manually reload images to avoid double-loading
+                    EditorDatasetImages.Clear();
+                    
+                    var versionPath = _selectedEditorDataset.GetVersionFolderPath(currentVersionNumber);
+                    if (Directory.Exists(versionPath))
+                    {
+                        var imageFiles = Directory.EnumerateFiles(versionPath)
+                            .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                            .OrderBy(f => f)
+                            .ToList();
+
+                        foreach (var imagePath in imageFiles)
+                        {
+                            var imageVm = DatasetImageViewModel.FromFile(
+                                imagePath,
+                                onDeleteRequested: null,
+                                onCaptionChanged: null,
+                                onRatingChanged: null,
+                                onSelectionChanged: null);
+                            
+                            EditorDatasetImages.Add(imageVm);
+                        }
+                    }
+
+                    // Update the selected version without triggering reload
+                    _selectedEditorVersion = versionToSelect;
+                    OnPropertyChanged(nameof(SelectedEditorVersion));
+                    
+                    // Find and select the saved image in the list
+                    var savedImageVm = EditorDatasetImages.FirstOrDefault(img => 
+                        string.Equals(img.ImagePath, savedImagePath, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (savedImageVm is not null)
+                    {
+                        // Mark the saved image as selected in the editor (shows blue outline)
+                        savedImageVm.IsEditorSelected = true;
+                        _selectedEditorImage = savedImageVm;
+                        OnPropertyChanged(nameof(SelectedEditorImage));
+                    }
+                }
+                
+                // Refresh the master dataset in the Datasets collection
+                // This ensures the overview cards show updated counts
+                var masterDataset = Datasets.FirstOrDefault(d => 
+                    string.Equals(d.FolderPath, _selectedEditorDataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+                if (masterDataset is not null)
+                {
+                    masterDataset.RefreshImageInfo();
+                    
+                    // Also refresh version cards in GroupedDatasets (for flattened view)
+                    // We need to refresh only the card for the specific version that was edited
+                    foreach (var group in GroupedDatasets)
+                    {
+                        foreach (var card in group.Datasets)
+                        {
+                            if (string.Equals(card.FolderPath, masterDataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                // For version cards, only refresh if it matches the version being edited
+                                if (card.IsVersionCard && card.DisplayVersion.HasValue)
+                                {
+                                    if (card.DisplayVersion.Value == currentVersionNumber)
+                                    {
+                                        card.RefreshImageInfo();
+                                    }
+                                }
+                                else
+                                {
+                                    // For non-version cards (collapsed view), always refresh
+                                    card.RefreshImageInfo();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Also refresh the Dataset Management tab if viewing the same dataset
+            await RefreshActiveDatasetAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing images: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Loads the specified image into the Image Editor.
+    /// </summary>
+    private void LoadEditorImage(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+        
+        // Only allow image editing for images, not videos
+        if (image.IsVideo)
+        {
+            StatusMessage = "Video editing is not supported.";
+            return;
+        }
+
+        // Clear previous editor selection
+        foreach (var img in EditorDatasetImages)
+        {
+            img.IsEditorSelected = false;
+        }
+
+        // Mark this image as selected in the editor
+        image.IsEditorSelected = true;
+        _selectedEditorImage = image;
+        OnPropertyChanged(nameof(SelectedEditorImage));
+
+        // Set the selected dataset image on the ImageEditor for rating support
+        ImageEditor.SelectedDatasetImage = image;
+        
+        ImageEditor.LoadImage(image.ImagePath);
+        StatusMessage = $"Editing: {image.FullFileName}";
+    }
+
+    /// <summary>
+    /// Loads the available versions for the selected dataset in the Image Edit tab.
+    /// </summary>
+    private async Task LoadEditorDatasetVersionsAsync()
+    {
+        EditorVersionItems.Clear();
+        EditorDatasetImages.Clear();
+        _selectedEditorVersion = null;
+        OnPropertyChanged(nameof(SelectedEditorVersion));
+
+        if (_selectedEditorDataset is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
+            
+            foreach (var version in versionNumbers)
+            {
+                var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
+                var imageCount = 0;
+                
+                if (Directory.Exists(versionPath))
+                {
+                    imageCount = Directory.EnumerateFiles(versionPath)
+                        .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+                }
+                
+                EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
+            }
+
+            // Auto-select the first version if available
+            if (EditorVersionItems.Count > 0)
+            {
+                SelectedEditorVersion = EditorVersionItems[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading versions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Loads the images for the selected version in the Image Edit tab.
+    /// </summary>
+    private async Task LoadEditorDatasetImagesAsync()
+    {
+        EditorDatasetImages.Clear();
+
+        if (_selectedEditorDataset is null || _selectedEditorVersion is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var versionPath = _selectedEditorDataset.GetVersionFolderPath(_selectedEditorVersion.Version);
+            
+            if (!Directory.Exists(versionPath))
+            {
+                return;
+            }
+
+            // Load only image files (not videos) for the image editor
+            var imageFiles = Directory.EnumerateFiles(versionPath)
+                .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var imagePath in imageFiles)
+            {
+                var imageVm = DatasetImageViewModel.FromFile(
+                    imagePath,
+                    onDeleteRequested: null,
+                    onCaptionChanged: null,
+                    onRatingChanged: null,
+                    onSelectionChanged: null);
+                
+                EditorDatasetImages.Add(imageVm);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading images: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
     }
 
     #endregion
