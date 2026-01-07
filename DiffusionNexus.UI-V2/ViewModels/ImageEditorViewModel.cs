@@ -354,6 +354,30 @@ public partial class ImageEditorViewModel : ObservableObject
         }
 
         CurrentImagePath = imagePath;
+        
+        // Pre-load file info directly so it's available immediately
+        // The control will update these values when it loads, but this ensures
+        // we have data even if the control's ImageChanged event hasn't fired yet
+        try
+        {
+            var fileInfo = new FileInfo(imagePath);
+            FileSizeBytes = fileInfo.Length;
+            ImageDpi = 72; // Default DPI, will be updated by control if different
+            
+            // Try to read image dimensions
+            using var stream = File.OpenRead(imagePath);
+            using var skCodec = SkiaSharp.SKCodec.Create(stream);
+            if (skCodec is not null)
+            {
+                ImageWidth = skCodec.Info.Width;
+                ImageHeight = skCodec.Info.Height;
+            }
+        }
+        catch
+        {
+            // Ignore errors reading file info - the control will update when it loads
+        }
+        
         StatusMessage = $"Loaded: {ImageFileName}";
     }
 
