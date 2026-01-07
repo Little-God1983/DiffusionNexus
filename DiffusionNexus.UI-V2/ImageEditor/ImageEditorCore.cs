@@ -10,12 +10,15 @@ public class ImageEditorCore : IDisposable
 {
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
+    private SKBitmap? _previewBitmap;
+    private bool _isPreviewActive;
     private bool _disposed;
     private float _zoomLevel = 1f;
     private float _panX;
     private float _panY;
     private bool _isFitMode = true;
     private int _imageDpi = 72;
+    private readonly object _bitmapLock = new();
 
     private const float MinZoom = 0.1f;
     private const float MaxZoom = 10f;
@@ -40,6 +43,11 @@ public class ImageEditorCore : IDisposable
     /// Gets whether an image is currently loaded.
     /// </summary>
     public bool HasImage => _workingBitmap is not null;
+
+    /// <summary>
+    /// Gets whether a preview is currently active.
+    /// </summary>
+    public bool IsPreviewActive => _isPreviewActive;
 
     /// <summary>
     /// Gets the current image path.
@@ -133,6 +141,9 @@ public class ImageEditorCore : IDisposable
 
         try
         {
+            // Clear preview without raising event since we'll raise it after loading
+            ClearPreview(raiseEvent: false);
+            
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
 
@@ -141,17 +152,11 @@ public class ImageEditorCore : IDisposable
             FileSizeBytes = fileInfo.Length;
 
             using var stream = File.OpenRead(filePath);
-            
-            // Try to get DPI from codec
             using var codec = SKCodec.Create(stream);
             if (codec is not null)
-            {
-                // Reset stream position
                 stream.Position = 0;
-            }
 
             _originalBitmap = SKBitmap.Decode(stream);
-
             if (_originalBitmap is null)
                 return false;
 
@@ -160,10 +165,7 @@ public class ImageEditorCore : IDisposable
 
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
-            
-            // Reset zoom and pan
             ResetZoom();
-            
             OnImageChanged();
             return true;
         }
@@ -185,11 +187,13 @@ public class ImageEditorCore : IDisposable
 
         try
         {
+            // Clear preview without raising event since we'll raise it after loading
+            ClearPreview(raiseEvent: false);
+            
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
 
             _originalBitmap = SKBitmap.Decode(imageData);
-
             if (_originalBitmap is null)
                 return false;
 
@@ -211,10 +215,18 @@ public class ImageEditorCore : IDisposable
     /// <param name="destRect">Destination rectangle for rendering.</param>
     public void Render(SKCanvas canvas, SKRect destRect)
     {
-        if (_workingBitmap is null || canvas is null)
+        if (canvas is null)
             return;
-
-        canvas.DrawBitmap(_workingBitmap, destRect);
+            
+        SKBitmap? bitmap;
+        lock (_bitmapLock)
+        {
+            bitmap = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+            if (bitmap is null)
+                return;
+            
+            canvas.DrawBitmap(bitmap, destRect);
+        }
     }
 
     /// <summary>
@@ -229,17 +241,21 @@ public class ImageEditorCore : IDisposable
     {
         canvas.Clear(backgroundColor);
 
-        if (_workingBitmap is null)
-            return SKRect.Empty;
+        lock (_bitmapLock)
+        {
+            var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+            if (bitmapToRender is null)
+                return SKRect.Empty;
 
-        var imageRect = CalculateFitRect(canvasWidth, canvasHeight);
-        canvas.DrawBitmap(_workingBitmap, imageRect);
+            var imageRect = CalculateFitRectInternal(bitmapToRender, canvasWidth, canvasHeight);
+            canvas.DrawBitmap(bitmapToRender, imageRect);
 
-        // Update crop tool with current image bounds and render overlay
-        CropTool.SetImageBounds(imageRect);
-        CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+            // Update crop tool with current image bounds and render overlay
+            CropTool.SetImageBounds(imageRect);
+            CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
-        return imageRect;
+            return imageRect;
+        }
     }
 
     /// <summary>
@@ -247,11 +263,22 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public SKRect CalculateFitRect(float containerWidth, float containerHeight)
     {
-        if (_workingBitmap is null)
-            return SKRect.Empty;
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return SKRect.Empty;
 
-        var imageWidth = (float)_workingBitmap.Width;
-        var imageHeight = (float)_workingBitmap.Height;
+            return CalculateFitRectInternal(_workingBitmap, containerWidth, containerHeight);
+        }
+    }
+
+    /// <summary>
+    /// Internal method to calculate fit rect without locking (caller must hold lock).
+    /// </summary>
+    private static SKRect CalculateFitRectInternal(SKBitmap bitmap, float containerWidth, float containerHeight)
+    {
+        var imageWidth = (float)bitmap.Width;
+        var imageHeight = (float)bitmap.Height;
 
         // Calculate scale to fit
         var scaleX = containerWidth / imageWidth;
@@ -276,6 +303,7 @@ public class ImageEditorCore : IDisposable
         if (_originalBitmap is null)
             return;
 
+        ClearPreview();
         _workingBitmap?.Dispose();
         _workingBitmap = _originalBitmap.Copy();
         OnImageChanged();
@@ -286,6 +314,7 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void Clear()
     {
+        ClearPreview();
         _originalBitmap?.Dispose();
         _workingBitmap?.Dispose();
         _originalBitmap = null;
@@ -295,9 +324,27 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Gets the working bitmap for external rendering (read-only access recommended).
+    /// Gets the working bitmap for external rendering.
+    /// Returns preview bitmap if preview is active.
     /// </summary>
-    public SKBitmap? GetWorkingBitmap() => _workingBitmap;
+    public SKBitmap? GetWorkingBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            return _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+        }
+    }
+
+    /// <summary>
+    /// Gets the actual working bitmap without preview.
+    /// </summary>
+    public SKBitmap? GetActualWorkingBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            return _workingBitmap;
+        }
+    }
 
     /// <summary>
     /// Crops the image to the specified rectangle in image coordinates.
@@ -472,66 +519,75 @@ public class ImageEditorCore : IDisposable
     {
         canvas.Clear(backgroundColor);
 
-        if (_workingBitmap is null)
-            return SKRect.Empty;
-
-        SKRect imageRect;
-
-        if (_isFitMode)
+        lock (_bitmapLock)
         {
-            imageRect = CalculateFitRect(canvasWidth, canvasHeight);
-            // Update zoom level to reflect fit
-            var fitScale = imageRect.Width / _workingBitmap.Width;
-            _zoomLevel = fitScale;
+            var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+            if (bitmapToRender is null)
+                return SKRect.Empty;
+
+            SKRect imageRect;
+
+            if (_isFitMode)
+            {
+                imageRect = CalculateFitRectInternal(bitmapToRender, canvasWidth, canvasHeight);
+                // Update zoom level to reflect fit
+                var fitScale = imageRect.Width / bitmapToRender.Width;
+                _zoomLevel = fitScale;
+            }
+            else
+            {
+                // Calculate zoomed size
+                var zoomedWidth = bitmapToRender.Width * _zoomLevel;
+                var zoomedHeight = bitmapToRender.Height * _zoomLevel;
+
+                // Center with pan offset
+                var x = (canvasWidth - zoomedWidth) / 2f + _panX;
+                var y = (canvasHeight - zoomedHeight) / 2f + _panY;
+
+                imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
+            }
+
+            canvas.DrawBitmap(bitmapToRender, imageRect);
+
+            // Update crop tool with current image bounds and render overlay
+            CropTool.SetImageBounds(imageRect);
+            CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            return imageRect;
         }
-        else
-        {
-            // Calculate zoomed size
-            var zoomedWidth = _workingBitmap.Width * _zoomLevel;
-            var zoomedHeight = _workingBitmap.Height * _zoomLevel;
-
-            // Center with pan offset
-            var x = (canvasWidth - zoomedWidth) / 2f + _panX;
-            var y = (canvasHeight - zoomedHeight) / 2f + _panY;
-
-            imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
-        }
-
-        canvas.DrawBitmap(_workingBitmap, imageRect);
-
-        // Update crop tool with current image bounds and render overlay
-        CropTool.SetImageBounds(imageRect);
-        CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
-
-        return imageRect;
     }
 
     /// <summary>
-    /// Zooms in by one step.
+    /// Increases the zoom level to zoom in.
     /// </summary>
-    public void ZoomIn()
-    {
-        ZoomLevel = _zoomLevel + ZoomStep;
-    }
+    public void ZoomIn() => ZoomLevel += ZoomStep;
 
     /// <summary>
-    /// Zooms out by one step.
+    /// Decreases the zoom level to zoom out.
     /// </summary>
-    public void ZoomOut()
-    {
-        ZoomLevel = _zoomLevel - ZoomStep;
-    }
+    public void ZoomOut() => ZoomLevel -= ZoomStep;
 
     /// <summary>
-    /// Sets zoom to fit the image in the canvas.
+    /// Sets the zoom level to fit the image within the canvas.
     /// </summary>
-    public void ZoomToFit()
+    public void ZoomToFit() => IsFitMode = true;
+
+    /// <summary>
+    /// Sets fit mode with a pre-calculated zoom level.
+    /// Used when the caller knows the canvas dimensions and can calculate the fit zoom.
+    /// </summary>
+    /// <param name="fitZoom">The calculated zoom level for fit mode.</param>
+    public void SetFitModeWithZoom(float fitZoom)
     {
-        IsFitMode = true;
+        _zoomLevel = Math.Clamp(fitZoom, MinZoom, MaxZoom);
+        _isFitMode = true;
+        _panX = 0;
+        _panY = 0;
+        OnZoomChanged();
     }
 
     /// <summary>
-    /// Sets zoom to 100% (actual size).
+    /// Resets the zoom level to 100% and pans to the original position.
     /// </summary>
     public void ZoomToActual()
     {
@@ -541,7 +597,7 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Resets zoom and pan to defaults.
+    /// Resets the zoom level, pan offsets, and fit mode to their initial states.
     /// </summary>
     public void ResetZoom()
     {
@@ -553,25 +609,514 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Pans the image by the specified delta.
+    /// Pans the image by the specified delta values.
     /// </summary>
+    /// <param name="deltaX">The delta value for the X axis.</param>
+    /// <param name="deltaY">The delta value for the Y axis.</param>
     public void Pan(float deltaX, float deltaY)
     {
         if (_isFitMode) return;
-        
         _panX += deltaX;
         _panY += deltaY;
     }
 
-    protected virtual void OnZoomChanged()
+    #region Transform Operations
+
+    /// <summary>
+    /// Rotates the image 90 degrees clockwise.
+    /// </summary>
+    public bool RotateRight()
     {
-        ZoomChanged?.Invoke(this, EventArgs.Empty);
+        if (_workingBitmap is null) return false;
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Height, _workingBitmap.Width);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(rotated.Width, 0);
+                canvas.RotateDegrees(90);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
     }
 
-    protected virtual void OnImageChanged()
+    /// <summary>
+    /// Rotates the image 90 degrees counter-clockwise.
+    /// </summary>
+    public bool RotateLeft()
     {
-        ImageChanged?.Invoke(this, EventArgs.Empty);
+        if (_workingBitmap is null) return false;
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Height, _workingBitmap.Width);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(0, rotated.Height);
+                canvas.RotateDegrees(-90);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
     }
+
+    /// <summary>
+    /// Rotates the image 180 degrees.
+    /// </summary>
+    public bool Rotate180()
+    {
+        if (_workingBitmap is null) return false;
+        try
+        {
+            var rotated = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(rotated.Width, rotated.Height);
+                canvas.RotateDegrees(180);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+            _workingBitmap.Dispose();
+            _workingBitmap = rotated;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Flips the image horizontally (mirror).
+    /// </summary>
+    public bool FlipHorizontal()
+    {
+        if (_workingBitmap is null) return false;
+        try
+        {
+            var flipped = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(flipped))
+            {
+                canvas.Translate(flipped.Width, 0);
+                canvas.Scale(-1, 1);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+            _workingBitmap.Dispose();
+            _workingBitmap = flipped;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Flips the image vertically.
+    /// </summary>
+    public bool FlipVertical()
+    {
+        if (_workingBitmap is null) return false;
+        try
+        {
+            var flipped = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height);
+            using (var canvas = new SKCanvas(flipped))
+            {
+                canvas.Translate(0, flipped.Height);
+                canvas.Scale(1, -1);
+                canvas.DrawBitmap(_workingBitmap, 0, 0);
+            }
+            _workingBitmap.Dispose();
+            _workingBitmap = flipped;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    #endregion
+
+    #region Color Balance
+
+    /// <summary>
+    /// Applies color balance adjustments to the image.
+    /// </summary>
+    public bool ApplyColorBalance(ColorBalanceSettings settings)
+    {
+        if (_workingBitmap is null || settings is null || !settings.HasAdjustments)
+            return false;
+
+        try
+        {
+            var width = _workingBitmap.Width;
+            var height = _workingBitmap.Height;
+            var result = new SKBitmap(width, height);
+
+            var srcPixels = _workingBitmap.Pixels;
+            var dstPixels = new SKColor[srcPixels.Length];
+
+            var shadowsCR = settings.ShadowsCyanRed / 100f;
+            var shadowsMG = settings.ShadowsMagentaGreen / 100f;
+            var shadowsYB = settings.ShadowsYellowBlue / 100f;
+            var midtonesCR = settings.MidtonesCyanRed / 100f;
+            var midtonesMG = settings.MidtonesMagentaGreen / 100f;
+            var midtonesYB = settings.MidtonesYellowBlue / 100f;
+            var highlightsCR = settings.HighlightsCyanRed / 100f;
+            var highlightsMG = settings.HighlightsMagentaGreen / 100f;
+            var highlightsYB = settings.HighlightsYellowBlue / 100f;
+
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var pixel = srcPixels[i];
+                var r = pixel.Red / 255f;
+                var g = pixel.Green / 255f;
+                var b = pixel.Blue / 255f;
+
+                var lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+                var shadowWeight = 1f - Math.Clamp(lum * 2f, 0f, 1f);
+                var highlightWeight = Math.Clamp((lum - 0.5f) * 2f, 0f, 1f);
+                var midtoneWeight = 1f - shadowWeight - highlightWeight;
+
+                var rAdjust = shadowsCR * shadowWeight + midtonesCR * midtoneWeight + highlightsCR * highlightWeight;
+                var gAdjust = shadowsMG * shadowWeight + midtonesMG * midtoneWeight + highlightsMG * highlightWeight;
+                var bAdjust = shadowsYB * shadowWeight + midtonesYB * midtoneWeight + highlightsYB * highlightWeight;
+
+                r += rAdjust * 0.5f;
+                g += gAdjust * 0.5f - rAdjust * 0.15f;
+                b += bAdjust * 0.5f - rAdjust * 0.15f;
+
+                if (bAdjust < 0) { r -= bAdjust * 0.3f; g -= bAdjust * 0.3f; }
+                if (gAdjust < 0) { r -= gAdjust * 0.3f; b -= gAdjust * 0.3f; }
+
+                if (settings.PreserveLuminosity)
+                {
+                    var newLum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                    if (newLum > 0.001f)
+                    {
+                        var lumRatio = lum / newLum;
+                        r *= lumRatio; g *= lumRatio; b *= lumRatio;
+                    }
+                }
+
+                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
+                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
+                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
+
+                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
+            }
+
+            result.Pixels = dstPixels;
+            _workingBitmap.Dispose();
+            _workingBitmap = result;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Sets a preview bitmap to display instead of the working bitmap.
+    /// </summary>
+    public bool SetColorBalancePreview(ColorBalanceSettings settings)
+    {
+        if (settings is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            // Dispose old preview
+            var oldPreview = _previewBitmap;
+            _previewBitmap = null;
+
+            if (!settings.HasAdjustments)
+            {
+                _isPreviewActive = false;
+                oldPreview?.Dispose();
+                OnImageChanged();
+                return true;
+            }
+
+            // Create new preview from working bitmap (not swapping)
+            var newPreview = CreateColorBalancePreview(_workingBitmap, settings);
+            
+            // Only after new preview is ready, dispose old and assign new
+            _previewBitmap = newPreview;
+            _isPreviewActive = _previewBitmap is not null;
+            oldPreview?.Dispose();
+        }
+
+        OnImageChanged();
+        return _isPreviewActive;
+    }
+
+    /// <summary>
+    /// Creates a color balance preview bitmap from the source bitmap.
+    /// Does not modify any class fields.
+    /// </summary>
+    private static SKBitmap? CreateColorBalancePreview(SKBitmap source, ColorBalanceSettings settings)
+    {
+        if (source is null || settings is null || !settings.HasAdjustments)
+            return null;
+
+        try
+        {
+            var width = source.Width;
+            var height = source.Height;
+            var result = new SKBitmap(width, height);
+
+            var srcPixels = source.Pixels;
+            var dstPixels = new SKColor[srcPixels.Length];
+
+            var shadowsCR = settings.ShadowsCyanRed / 100f;
+            var shadowsMG = settings.ShadowsMagentaGreen / 100f;
+            var shadowsYB = settings.ShadowsYellowBlue / 100f;
+            var midtonesCR = settings.MidtonesCyanRed / 100f;
+            var midtonesMG = settings.MidtonesMagentaGreen / 100f;
+            var midtonesYB = settings.MidtonesYellowBlue / 100f;
+            var highlightsCR = settings.HighlightsCyanRed / 100f;
+            var highlightsMG = settings.HighlightsMagentaGreen / 100f;
+            var highlightsYB = settings.HighlightsYellowBlue / 100f;
+
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var pixel = srcPixels[i];
+                var r = pixel.Red / 255f;
+                var g = pixel.Green / 255f;
+                var b = pixel.Blue / 255f;
+
+                var lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+                var shadowWeight = 1f - Math.Clamp(lum * 2f, 0f, 1f);
+                var highlightWeight = Math.Clamp((lum - 0.5f) * 2f, 0f, 1f);
+                var midtoneWeight = 1f - shadowWeight - highlightWeight;
+
+                var rAdjust = shadowsCR * shadowWeight + midtonesCR * midtoneWeight + highlightsCR * highlightWeight;
+                var gAdjust = shadowsMG * shadowWeight + midtonesMG * midtoneWeight + highlightsMG * highlightWeight;
+                var bAdjust = shadowsYB * shadowWeight + midtonesYB * midtoneWeight + highlightsYB * highlightWeight;
+
+                r += rAdjust * 0.5f;
+                g += gAdjust * 0.5f - rAdjust * 0.15f;
+                b += bAdjust * 0.5f - rAdjust * 0.15f;
+
+                if (bAdjust < 0) { r -= bAdjust * 0.3f; g -= bAdjust * 0.3f; }
+                if (gAdjust < 0) { r -= gAdjust * 0.3f; b -= gAdjust * 0.3f; }
+
+                if (settings.PreserveLuminosity)
+                {
+                    var newLum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                    if (newLum > 0.001f)
+                    {
+                        var lumRatio = lum / newLum;
+                        r *= lumRatio; g *= lumRatio; b *= lumRatio;
+                    }
+                }
+
+                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
+                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
+                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
+
+                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
+            }
+
+            result.Pixels = dstPixels;
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion Color Balance
+
+    #region Preview Management
+
+    /// <summary>
+    /// Clears the current preview and restores normal display.
+    /// </summary>
+    /// <param name="raiseEvent">Whether to raise the ImageChanged event (default: true).</param>
+    public void ClearPreview(bool raiseEvent = true)
+    {
+        SKBitmap? oldPreview;
+        bool shouldRaiseEvent;
+        
+        lock (_bitmapLock)
+        {
+            oldPreview = _previewBitmap;
+            _previewBitmap = null;
+            _isPreviewActive = false;
+            shouldRaiseEvent = raiseEvent && _workingBitmap is not null;
+        }
+        
+        oldPreview?.Dispose();
+        
+        if (shouldRaiseEvent)
+        {
+            OnImageChanged();
+        }
+    }
+
+    /// <summary>
+    /// Applies the current preview to the working bitmap.
+    /// </summary>
+    public bool ApplyPreview()
+    {
+        SKBitmap? oldWorking;
+        
+        lock (_bitmapLock)
+        {
+            if (!_isPreviewActive || _previewBitmap is null)
+                return false;
+
+            oldWorking = _workingBitmap;
+            _workingBitmap = _previewBitmap;
+            _previewBitmap = null;
+            _isPreviewActive = false;
+        }
+        
+        oldWorking?.Dispose();
+        OnImageChanged();
+        return true;
+    }
+
+    #endregion Preview Management
+
+    #region Brightness and Contrast
+
+    /// <summary>
+    /// Applies brightness and contrast adjustments to the image.
+    /// </summary>
+    public bool ApplyBrightnessContrast(BrightnessContrastSettings settings)
+    {
+        if (_workingBitmap is null || settings is null || !settings.HasAdjustments)
+            return false;
+
+        try
+        {
+            var result = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            if (result is null)
+                return false;
+
+            _workingBitmap.Dispose();
+            _workingBitmap = result;
+            OnImageChanged();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Sets a preview bitmap with brightness/contrast adjustments.
+    /// </summary>
+    public bool SetBrightnessContrastPreview(BrightnessContrastSettings settings)
+    {
+        if (settings is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            // Dispose old preview
+            var oldPreview = _previewBitmap;
+            _previewBitmap = null;
+
+            if (!settings.HasAdjustments)
+            {
+                _isPreviewActive = false;
+                oldPreview?.Dispose();
+                OnImageChanged();
+                return true;
+            }
+
+            // Create new preview from working bitmap
+            var newPreview = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            
+            // Only after new preview is ready, dispose old and assign new
+            _previewBitmap = newPreview;
+            _isPreviewActive = _previewBitmap is not null;
+            oldPreview?.Dispose();
+        }
+
+        OnImageChanged();
+        return _isPreviewActive;
+    }
+
+    /// <summary>
+    /// Creates a brightness/contrast preview bitmap from the source bitmap.
+    /// Does not modify any class fields.
+    /// </summary>
+    private static SKBitmap? CreateBrightnessContrastPreview(SKBitmap source, BrightnessContrastSettings settings)
+    {
+        if (source is null || settings is null || !settings.HasAdjustments)
+            return null;
+
+        try
+        {
+            var width = source.Width;
+            var height = source.Height;
+            var result = new SKBitmap(width, height);
+
+            var srcPixels = source.Pixels;
+            var dstPixels = new SKColor[srcPixels.Length];
+
+            // Normalize brightness (-100 to +100) to a factor
+            // Brightness: add/subtract from pixel values
+            var brightnessFactor = settings.Brightness / 100f;
+            
+            // Normalize contrast (-100 to +100) to a factor
+            // Contrast: 0 = gray, 1 = normal, >1 = more contrast
+            // Map -100..+100 to 0..2 (with 0 = no change)
+            var contrastFactor = (settings.Contrast + 100f) / 100f;
+
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var pixel = srcPixels[i];
+                
+                // Convert to 0-1 range
+                var r = pixel.Red / 255f;
+                var g = pixel.Green / 255f;
+                var b = pixel.Blue / 255f;
+
+                // Apply brightness (additive)
+                r += brightnessFactor;
+                g += brightnessFactor;
+                b += brightnessFactor;
+
+                // Apply contrast (multiply around 0.5 midpoint)
+                r = (r - 0.5f) * contrastFactor + 0.5f;
+                g = (g - 0.5f) * contrastFactor + 0.5f;
+                b = (b - 0.5f) * contrastFactor + 0.5f;
+
+                // Clamp and convert back to byte
+                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
+                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
+                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
+
+                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
+            }
+
+            result.Pixels = dstPixels;
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion Brightness and Contrast
+
+    private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
+    private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
 
     public void Dispose()
     {
@@ -582,15 +1127,15 @@ public class ImageEditorCore : IDisposable
     protected virtual void Dispose(bool disposing)
     {
         if (_disposed) return;
-
         if (disposing)
         {
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
+            _previewBitmap?.Dispose();
             _originalBitmap = null;
             _workingBitmap = null;
+            _previewBitmap = null;
         }
-
         _disposed = true;
     }
 }

@@ -138,9 +138,9 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     public int ProductionReadyCount => _allMediaFiles.Count(m => m.IsApproved);
 
     /// <summary>
-    /// Number of media files marked as failed (rejected).
+    /// Number of media files marked as trash (rejected).
     /// </summary>
-    public int FailedCount => _allMediaFiles.Count(m => m.IsRejected);
+    public int TrashCount => _allMediaFiles.Count(m => m.IsRejected);
 
     /// <summary>
     /// Number of media files that are unrated (neither approved nor rejected).
@@ -163,7 +163,7 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             
             // Add failed if checkbox is checked
             if (_includeFailedImages)
-                count += FailedCount;
+                count += TrashCount;
             
             return count;
         }
@@ -180,9 +180,9 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     public string ProductionReadyText => FormatCount(ProductionReadyCount, "production ready");
 
     /// <summary>
-    /// Display text for failed count.
+    /// Display text for trash count.
     /// </summary>
-    public string FailedText => FormatCount(FailedCount, "failed");
+    public string TrashText => FormatCount(TrashCount, "trash");
 
     /// <summary>
     /// Display text for unrated count.

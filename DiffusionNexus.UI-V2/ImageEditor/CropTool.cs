@@ -21,18 +21,30 @@ public enum CropHandle
 
 /// <summary>
 /// Platform-independent crop tool with rule-of-thirds grid and draggable handles.
+/// Stores crop region in normalized coordinates (0-1) relative to the image.
 /// </summary>
 public class CropTool
 {
     private const float HandleRadius = 6f;
     private const float HandleHitRadius = 12f;
-    private const float MinCropSize = 20f;
+    private const float MinCropSizeNormalized = 0.02f; // 2% of image
 
-    private SKRect _cropRect;
+    // Crop region stored in normalized coordinates (0-1) relative to image
+    private float _normalizedLeft;
+    private float _normalizedTop;
+    private float _normalizedRight;
+    private float _normalizedBottom;
+
     private SKRect _imageRect;
     private CropHandle _activeHandle = CropHandle.None;
     private SKPoint _dragStartPoint;
-    private SKRect _dragStartRect;
+    
+    // Store drag start in normalized coordinates
+    private float _dragStartNormLeft;
+    private float _dragStartNormTop;
+    private float _dragStartNormRight;
+    private float _dragStartNormBottom;
+    
     private bool _isActive;
     private bool _hasCropRegion;
 
@@ -61,7 +73,7 @@ public class CropTool
     /// <summary>
     /// Gets the current crop rectangle in screen coordinates.
     /// </summary>
-    public SKRect CropRect => _cropRect;
+    public SKRect CropRect => GetScreenCropRect();
 
     /// <summary>
     /// Gets whether a handle is currently being dragged.
@@ -74,13 +86,43 @@ public class CropTool
     public event EventHandler? CropRegionChanged;
 
     /// <summary>
+    /// Gets the crop rectangle in screen coordinates from normalized coordinates.
+    /// </summary>
+    private SKRect GetScreenCropRect()
+    {
+        if (!_hasCropRegion || _imageRect.Width <= 0 || _imageRect.Height <= 0)
+            return SKRect.Empty;
+
+        return new SKRect(
+            _imageRect.Left + _normalizedLeft * _imageRect.Width,
+            _imageRect.Top + _normalizedTop * _imageRect.Height,
+            _imageRect.Left + _normalizedRight * _imageRect.Width,
+            _imageRect.Top + _normalizedBottom * _imageRect.Height
+        );
+    }
+
+    /// <summary>
+    /// Converts a screen point to normalized image coordinates.
+    /// </summary>
+    private (float x, float y) ScreenToNormalized(SKPoint point)
+    {
+        if (_imageRect.Width <= 0 || _imageRect.Height <= 0)
+            return (0, 0);
+
+        var x = (point.X - _imageRect.Left) / _imageRect.Width;
+        var y = (point.Y - _imageRect.Top) / _imageRect.Height;
+        return (x, y);
+    }
+
+    /// <summary>
     /// Sets the image bounds for constraining the crop region.
+    /// The crop region stays at the same relative position on the image.
     /// </summary>
     public void SetImageBounds(SKRect imageRect)
     {
         _imageRect = imageRect;
-        
-        // Don't auto-initialize crop region - let user drag to create it
+        // No need to update crop region - it's stored in normalized coordinates
+        // so it automatically scales with the image
     }
 
     /// <summary>
@@ -90,6 +132,10 @@ public class CropTool
     {
         _hasCropRegion = false;
         _activeHandle = CropHandle.None;
+        _normalizedLeft = 0;
+        _normalizedTop = 0;
+        _normalizedRight = 0;
+        _normalizedBottom = 0;
         CropRegionChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -109,14 +155,27 @@ public class CropTool
             _activeHandle = HitTestHandle(point);
             if (_activeHandle != CropHandle.None)
             {
-                _dragStartRect = _cropRect;
+                // Store drag start in normalized coordinates
+                _dragStartNormLeft = _normalizedLeft;
+                _dragStartNormTop = _normalizedTop;
+                _dragStartNormRight = _normalizedRight;
+                _dragStartNormBottom = _normalizedBottom;
                 return true;
             }
         }
 
         // Start new crop region
-        _cropRect = new SKRect(point.X, point.Y, point.X, point.Y);
-        _dragStartRect = _cropRect;
+        var (normX, normY) = ScreenToNormalized(point);
+        _normalizedLeft = normX;
+        _normalizedTop = normY;
+        _normalizedRight = normX;
+        _normalizedBottom = normY;
+        
+        _dragStartNormLeft = normX;
+        _dragStartNormTop = normY;
+        _dragStartNormRight = normX;
+        _dragStartNormBottom = normY;
+        
         _activeHandle = CropHandle.BottomRight;
         _hasCropRegion = true;
         return true;
@@ -130,48 +189,63 @@ public class CropTool
     {
         if (!_isActive || _activeHandle == CropHandle.None) return false;
 
-        var deltaX = point.X - _dragStartPoint.X;
-        var deltaY = point.Y - _dragStartPoint.Y;
+        // Calculate delta in normalized coordinates
+        var (startNormX, startNormY) = ScreenToNormalized(_dragStartPoint);
+        var (currentNormX, currentNormY) = ScreenToNormalized(point);
+        var deltaNormX = currentNormX - startNormX;
+        var deltaNormY = currentNormY - startNormY;
 
-        var newRect = _dragStartRect;
+        var newLeft = _dragStartNormLeft;
+        var newTop = _dragStartNormTop;
+        var newRight = _dragStartNormRight;
+        var newBottom = _dragStartNormBottom;
 
         switch (_activeHandle)
         {
             case CropHandle.TopLeft:
-                newRect.Left = _dragStartRect.Left + deltaX;
-                newRect.Top = _dragStartRect.Top + deltaY;
+                newLeft = _dragStartNormLeft + deltaNormX;
+                newTop = _dragStartNormTop + deltaNormY;
                 break;
             case CropHandle.Top:
-                newRect.Top = _dragStartRect.Top + deltaY;
+                newTop = _dragStartNormTop + deltaNormY;
                 break;
             case CropHandle.TopRight:
-                newRect.Right = _dragStartRect.Right + deltaX;
-                newRect.Top = _dragStartRect.Top + deltaY;
+                newRight = _dragStartNormRight + deltaNormX;
+                newTop = _dragStartNormTop + deltaNormY;
                 break;
             case CropHandle.Right:
-                newRect.Right = _dragStartRect.Right + deltaX;
+                newRight = _dragStartNormRight + deltaNormX;
                 break;
             case CropHandle.BottomRight:
-                newRect.Right = _dragStartRect.Right + deltaX;
-                newRect.Bottom = _dragStartRect.Bottom + deltaY;
+                newRight = _dragStartNormRight + deltaNormX;
+                newBottom = _dragStartNormBottom + deltaNormY;
                 break;
             case CropHandle.Bottom:
-                newRect.Bottom = _dragStartRect.Bottom + deltaY;
+                newBottom = _dragStartNormBottom + deltaNormY;
                 break;
             case CropHandle.BottomLeft:
-                newRect.Left = _dragStartRect.Left + deltaX;
-                newRect.Bottom = _dragStartRect.Bottom + deltaY;
+                newLeft = _dragStartNormLeft + deltaNormX;
+                newBottom = _dragStartNormBottom + deltaNormY;
                 break;
             case CropHandle.Left:
-                newRect.Left = _dragStartRect.Left + deltaX;
+                newLeft = _dragStartNormLeft + deltaNormX;
                 break;
             case CropHandle.Move:
-                newRect.Offset(deltaX, deltaY);
+                newLeft = _dragStartNormLeft + deltaNormX;
+                newTop = _dragStartNormTop + deltaNormY;
+                newRight = _dragStartNormRight + deltaNormX;
+                newBottom = _dragStartNormBottom + deltaNormY;
                 break;
         }
 
         // Normalize and constrain
-        _cropRect = NormalizeAndConstrain(newRect);
+        NormalizeAndConstrain(ref newLeft, ref newTop, ref newRight, ref newBottom);
+        
+        _normalizedLeft = newLeft;
+        _normalizedTop = newTop;
+        _normalizedRight = newRight;
+        _normalizedBottom = newBottom;
+        
         CropRegionChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
@@ -204,6 +278,9 @@ public class CropTool
     {
         if (!_isActive || !_hasCropRegion) return;
 
+        var cropRect = GetScreenCropRect();
+        if (cropRect.IsEmpty) return;
+
         // Draw darkened area outside crop region
         using var dimPaint = new SKPaint
         {
@@ -212,13 +289,13 @@ public class CropTool
         };
 
         // Top
-        canvas.DrawRect(new SKRect(canvasBounds.Left, canvasBounds.Top, canvasBounds.Right, _cropRect.Top), dimPaint);
+        canvas.DrawRect(new SKRect(canvasBounds.Left, canvasBounds.Top, canvasBounds.Right, cropRect.Top), dimPaint);
         // Bottom
-        canvas.DrawRect(new SKRect(canvasBounds.Left, _cropRect.Bottom, canvasBounds.Right, canvasBounds.Bottom), dimPaint);
+        canvas.DrawRect(new SKRect(canvasBounds.Left, cropRect.Bottom, canvasBounds.Right, canvasBounds.Bottom), dimPaint);
         // Left
-        canvas.DrawRect(new SKRect(canvasBounds.Left, _cropRect.Top, _cropRect.Left, _cropRect.Bottom), dimPaint);
+        canvas.DrawRect(new SKRect(canvasBounds.Left, cropRect.Top, cropRect.Left, cropRect.Bottom), dimPaint);
         // Right
-        canvas.DrawRect(new SKRect(_cropRect.Right, _cropRect.Top, canvasBounds.Right, _cropRect.Bottom), dimPaint);
+        canvas.DrawRect(new SKRect(cropRect.Right, cropRect.Top, canvasBounds.Right, cropRect.Bottom), dimPaint);
 
         // Draw crop border
         using var borderPaint = new SKPaint
@@ -228,32 +305,28 @@ public class CropTool
             StrokeWidth = 2f,
             IsAntialias = true
         };
-        canvas.DrawRect(_cropRect, borderPaint);
+        canvas.DrawRect(cropRect, borderPaint);
 
         // Draw rule-of-thirds grid
-        DrawRuleOfThirdsGrid(canvas);
+        DrawRuleOfThirdsGrid(canvas, cropRect);
 
         // Draw handles
-        DrawHandles(canvas);
+        DrawHandles(canvas, cropRect);
     }
 
     /// <summary>
-    /// Converts the crop rectangle from screen coordinates to image coordinates.
+    /// Converts the crop rectangle from normalized coordinates to image pixel coordinates.
     /// </summary>
     public SKRectI GetImageCropRect(int imageWidth, int imageHeight)
     {
-        if (!_hasCropRegion || _imageRect.Width <= 0 || _imageRect.Height <= 0)
+        if (!_hasCropRegion)
             return new SKRectI(0, 0, imageWidth, imageHeight);
 
-        // Calculate scale from screen to image
-        var scaleX = imageWidth / _imageRect.Width;
-        var scaleY = imageHeight / _imageRect.Height;
-
-        // Convert screen coordinates to image coordinates
-        var left = (int)Math.Round((_cropRect.Left - _imageRect.Left) * scaleX);
-        var top = (int)Math.Round((_cropRect.Top - _imageRect.Top) * scaleY);
-        var right = (int)Math.Round((_cropRect.Right - _imageRect.Left) * scaleX);
-        var bottom = (int)Math.Round((_cropRect.Bottom - _imageRect.Top) * scaleY);
+        // Convert normalized coordinates directly to image coordinates
+        var left = (int)Math.Round(_normalizedLeft * imageWidth);
+        var top = (int)Math.Round(_normalizedTop * imageHeight);
+        var right = (int)Math.Round(_normalizedRight * imageWidth);
+        var bottom = (int)Math.Round(_normalizedBottom * imageHeight);
 
         // Clamp to image bounds
         left = Math.Clamp(left, 0, imageWidth);
@@ -264,7 +337,7 @@ public class CropTool
         return new SKRectI(left, top, right, bottom);
     }
 
-    private void DrawRuleOfThirdsGrid(SKCanvas canvas)
+    private void DrawRuleOfThirdsGrid(SKCanvas canvas, SKRect cropRect)
     {
         using var gridPaint = new SKPaint
         {
@@ -274,31 +347,31 @@ public class CropTool
             IsAntialias = true
         };
 
-        var thirdWidth = _cropRect.Width / 3f;
-        var thirdHeight = _cropRect.Height / 3f;
+        var thirdWidth = cropRect.Width / 3f;
+        var thirdHeight = cropRect.Height / 3f;
 
         // Vertical lines
         canvas.DrawLine(
-            _cropRect.Left + thirdWidth, _cropRect.Top,
-            _cropRect.Left + thirdWidth, _cropRect.Bottom,
+            cropRect.Left + thirdWidth, cropRect.Top,
+            cropRect.Left + thirdWidth, cropRect.Bottom,
             gridPaint);
         canvas.DrawLine(
-            _cropRect.Left + thirdWidth * 2, _cropRect.Top,
-            _cropRect.Left + thirdWidth * 2, _cropRect.Bottom,
+            cropRect.Left + thirdWidth * 2, cropRect.Top,
+            cropRect.Left + thirdWidth * 2, cropRect.Bottom,
             gridPaint);
 
         // Horizontal lines
         canvas.DrawLine(
-            _cropRect.Left, _cropRect.Top + thirdHeight,
-            _cropRect.Right, _cropRect.Top + thirdHeight,
+            cropRect.Left, cropRect.Top + thirdHeight,
+            cropRect.Right, cropRect.Top + thirdHeight,
             gridPaint);
         canvas.DrawLine(
-            _cropRect.Left, _cropRect.Top + thirdHeight * 2,
-            _cropRect.Right, _cropRect.Top + thirdHeight * 2,
+            cropRect.Left, cropRect.Top + thirdHeight * 2,
+            cropRect.Right, cropRect.Top + thirdHeight * 2,
             gridPaint);
     }
 
-    private void DrawHandles(SKCanvas canvas)
+    private void DrawHandles(SKCanvas canvas, SKRect cropRect)
     {
         using var handleFillPaint = new SKPaint
         {
@@ -315,7 +388,7 @@ public class CropTool
             IsAntialias = true
         };
 
-        var handles = GetHandlePositions();
+        var handles = GetHandlePositions(cropRect);
         foreach (var handle in handles)
         {
             canvas.DrawCircle(handle, HandleRadius, handleFillPaint);
@@ -323,27 +396,30 @@ public class CropTool
         }
     }
 
-    private SKPoint[] GetHandlePositions()
+    private static SKPoint[] GetHandlePositions(SKRect cropRect)
     {
-        var midX = _cropRect.MidX;
-        var midY = _cropRect.MidY;
+        var midX = cropRect.MidX;
+        var midY = cropRect.MidY;
 
         return
         [
-            new SKPoint(_cropRect.Left, _cropRect.Top),      // TopLeft
-            new SKPoint(midX, _cropRect.Top),                 // Top
-            new SKPoint(_cropRect.Right, _cropRect.Top),     // TopRight
-            new SKPoint(_cropRect.Right, midY),               // Right
-            new SKPoint(_cropRect.Right, _cropRect.Bottom),  // BottomRight
-            new SKPoint(midX, _cropRect.Bottom),              // Bottom
-            new SKPoint(_cropRect.Left, _cropRect.Bottom),   // BottomLeft
-            new SKPoint(_cropRect.Left, midY)                 // Left
+            new SKPoint(cropRect.Left, cropRect.Top),      // TopLeft
+            new SKPoint(midX, cropRect.Top),                // Top
+            new SKPoint(cropRect.Right, cropRect.Top),     // TopRight
+            new SKPoint(cropRect.Right, midY),              // Right
+            new SKPoint(cropRect.Right, cropRect.Bottom),  // BottomRight
+            new SKPoint(midX, cropRect.Bottom),             // Bottom
+            new SKPoint(cropRect.Left, cropRect.Bottom),   // BottomLeft
+            new SKPoint(cropRect.Left, midY)                // Left
         ];
     }
 
     private CropHandle HitTestHandle(SKPoint point)
     {
-        var handles = GetHandlePositions();
+        var cropRect = GetScreenCropRect();
+        if (cropRect.IsEmpty) return CropHandle.None;
+
+        var handles = GetHandlePositions(cropRect);
         var handleTypes = new[]
         {
             CropHandle.TopLeft, CropHandle.Top, CropHandle.TopRight,
@@ -358,7 +434,7 @@ public class CropTool
         }
 
         // Check if inside the crop region for move
-        if (_cropRect.Contains(point))
+        if (cropRect.Contains(point))
             return CropHandle.Move;
 
         return CropHandle.None;
@@ -371,56 +447,53 @@ public class CropTool
         return dx * dx + dy * dy <= HandleHitRadius * HandleHitRadius;
     }
 
-    private SKRect NormalizeAndConstrain(SKRect rect)
+    private void NormalizeAndConstrain(ref float left, ref float top, ref float right, ref float bottom)
     {
         // Normalize (ensure left < right, top < bottom)
-        var left = Math.Min(rect.Left, rect.Right);
-        var right = Math.Max(rect.Left, rect.Right);
-        var top = Math.Min(rect.Top, rect.Bottom);
-        var bottom = Math.Max(rect.Top, rect.Bottom);
+        if (left > right) (left, right) = (right, left);
+        if (top > bottom) (top, bottom) = (bottom, top);
 
         // Ensure minimum size
-        if (right - left < MinCropSize)
-            right = left + MinCropSize;
-        if (bottom - top < MinCropSize)
-            bottom = top + MinCropSize;
+        if (right - left < MinCropSizeNormalized)
+            right = left + MinCropSizeNormalized;
+        if (bottom - top < MinCropSizeNormalized)
+            bottom = top + MinCropSizeNormalized;
 
-        // Constrain to image bounds
-        if (left < _imageRect.Left)
+        // Constrain to image bounds (0-1)
+        if (_activeHandle == CropHandle.Move)
         {
-            var shift = _imageRect.Left - left;
-            left = _imageRect.Left;
-            if (_activeHandle == CropHandle.Move)
-                right += shift;
-        }
-        if (right > _imageRect.Right)
-        {
-            var shift = right - _imageRect.Right;
-            right = _imageRect.Right;
-            if (_activeHandle == CropHandle.Move)
-                left -= shift;
-        }
-        if (top < _imageRect.Top)
-        {
-            var shift = _imageRect.Top - top;
-            top = _imageRect.Top;
-            if (_activeHandle == CropHandle.Move)
-                bottom += shift;
-        }
-        if (bottom > _imageRect.Bottom)
-        {
-            var shift = bottom - _imageRect.Bottom;
-            bottom = _imageRect.Bottom;
-            if (_activeHandle == CropHandle.Move)
-                top -= shift;
-        }
+            // For move, shift the entire region to stay within bounds
+            var width = right - left;
+            var height = bottom - top;
 
-        // Final clamp
-        left = Math.Clamp(left, _imageRect.Left, _imageRect.Right - MinCropSize);
-        right = Math.Clamp(right, _imageRect.Left + MinCropSize, _imageRect.Right);
-        top = Math.Clamp(top, _imageRect.Top, _imageRect.Bottom - MinCropSize);
-        bottom = Math.Clamp(bottom, _imageRect.Top + MinCropSize, _imageRect.Bottom);
-
-        return new SKRect(left, top, right, bottom);
+            if (left < 0)
+            {
+                left = 0;
+                right = width;
+            }
+            if (right > 1)
+            {
+                right = 1;
+                left = 1 - width;
+            }
+            if (top < 0)
+            {
+                top = 0;
+                bottom = height;
+            }
+            if (bottom > 1)
+            {
+                bottom = 1;
+                top = 1 - height;
+            }
+        }
+        else
+        {
+            // For resize, clamp individual edges
+            left = Math.Clamp(left, 0, 1 - MinCropSizeNormalized);
+            right = Math.Clamp(right, MinCropSizeNormalized, 1);
+            top = Math.Clamp(top, 0, 1 - MinCropSizeNormalized);
+            bottom = Math.Clamp(bottom, MinCropSizeNormalized, 1);
+        }
     }
 }
