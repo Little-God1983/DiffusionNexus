@@ -241,7 +241,9 @@
                     Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                     Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
                     CornerRadius="4"
-                    ToolTip.Tip="Mark as production-ready (W or Up Arrow)">
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="W or Up Arrow">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <TextBlock Text="+" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
                 <TextBlock Text="Mark Ready" VerticalAlignment="Center"/>
@@ -254,7 +256,9 @@
                     Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
                     Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
                     CornerRadius="4"
-                    ToolTip.Tip="Mark as trash (S or Down Arrow)">
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="S or Down Arrow">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <TextBlock Text="-" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
                 <TextBlock Text="Mark Trash" VerticalAlignment="Center"/>
@@ -268,7 +272,9 @@
                     Background="#80444444"
                     Foreground="White"
                     CornerRadius="4"
-                    ToolTip.Tip="Clear rating"/>
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="C"/>
           </StackPanel>
           
           <!-- Right side: Action buttons -->
@@ -284,7 +290,9 @@
                     Foreground="White"
                     CornerRadius="4"
                     IsVisible="{Binding IsImage}"
-                    ToolTip.Tip="Open in Image Editor (E)"/>
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="E"/>
             
             <Button Command="{Binding DeleteCommand}"
                     Padding="16,10"
@@ -292,7 +300,9 @@
                     Background="#B22222"
                     Foreground="White"
                     CornerRadius="4"
-                    ToolTip.Tip="Delete this item (Delete)">
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="Delete key">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <TextBlock Text="X" FontWeight="Bold" Foreground="#FF6B6B" VerticalAlignment="Center"/>
                 <TextBlock Text="Delete" VerticalAlignment="Center"/>
