@@ -975,7 +975,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         }
         else
         {
-            // Deleting the entire dataset
+            // Deleting the entirety of the dataset
             var confirm = await DialogService.ShowConfirmAsync(
                 "Delete Dataset",
                 $"Are you sure you want to delete '{dataset.Name}'? This will permanently delete all images and captions in ALL versions of this dataset.");
@@ -1777,79 +1777,116 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Handles the ImageSaved event from the ImageEditor.
     /// Refreshes the version dropdown and image list, maintaining the current selection.
+    /// Also refreshes the Dataset Management tab if viewing a dataset.
     /// </summary>
     private async void OnImageEditorImageSaved(object? sender, string savedImagePath)
     {
-        if (_selectedEditorDataset is null || _selectedEditorVersion is null)
-        {
-            return;
-        }
-
         try
         {
-            // Remember the current version
-            var currentVersionNumber = _selectedEditorVersion.Version;
-            
-            // Reload the version items (to update image counts)
-            var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
-            EditorVersionItems.Clear();
-            
-            foreach (var version in versionNumbers)
+            // First, refresh the Image Edit tab's thumbnail list and version dropdown
+            if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
             {
-                var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
-                var imageCount = 0;
+                // Remember the current version
+                var currentVersionNumber = _selectedEditorVersion.Version;
                 
-                if (Directory.Exists(versionPath))
+                // Reload the version items (to update image counts)
+                var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
+                EditorVersionItems.Clear();
+                
+                foreach (var version in versionNumbers)
                 {
-                    imageCount = Directory.EnumerateFiles(versionPath)
-                        .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
-                }
-                
-                EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
-            }
-
-            // Re-select the same version
-            var versionToSelect = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersionNumber);
-            if (versionToSelect is not null)
-            {
-                // Manually reload images to avoid double-loading
-                EditorDatasetImages.Clear();
-                
-                var versionPath = _selectedEditorDataset.GetVersionFolderPath(currentVersionNumber);
-                if (Directory.Exists(versionPath))
-                {
-                    var imageFiles = Directory.EnumerateFiles(versionPath)
-                        .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
-                        .OrderBy(f => f)
-                        .ToList();
-
-                    foreach (var imagePath in imageFiles)
+                    var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
+                    var imageCount = 0;
+                    
+                    if (Directory.Exists(versionPath))
                     {
-                        var imageVm = DatasetImageViewModel.FromFile(
-                            imagePath,
-                            onDeleteRequested: null,
-                            onCaptionChanged: null,
-                            onRatingChanged: null,
-                            onSelectionChanged: null);
-                        
-                        EditorDatasetImages.Add(imageVm);
+                        imageCount = Directory.EnumerateFiles(versionPath)
+                            .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+                    }
+                    
+                    EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
+                }
+
+                // Re-select the same version
+                var versionToSelect = EditorVersionItems.FirstOrDefault(v => v.Version == currentVersionNumber);
+                if (versionToSelect is not null)
+                {
+                    // Manually reload images to avoid double-loading
+                    EditorDatasetImages.Clear();
+                    
+                    var versionPath = _selectedEditorDataset.GetVersionFolderPath(currentVersionNumber);
+                    if (Directory.Exists(versionPath))
+                    {
+                        var imageFiles = Directory.EnumerateFiles(versionPath)
+                            .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                            .OrderBy(f => f)
+                            .ToList();
+
+                        foreach (var imagePath in imageFiles)
+                        {
+                            var imageVm = DatasetImageViewModel.FromFile(
+                                imagePath,
+                                onDeleteRequested: null,
+                                onCaptionChanged: null,
+                                onRatingChanged: null,
+                                onSelectionChanged: null);
+                            
+                            EditorDatasetImages.Add(imageVm);
+                        }
+                    }
+
+                    // Update the selected version without triggering reload
+                    _selectedEditorVersion = versionToSelect;
+                    OnPropertyChanged(nameof(SelectedEditorVersion));
+                    
+                    // Find and select the saved image in the list
+                    var savedImageVm = EditorDatasetImages.FirstOrDefault(img => 
+                        string.Equals(img.ImagePath, savedImagePath, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (savedImageVm is not null)
+                    {
+                        _selectedEditorImage = savedImageVm;
+                        OnPropertyChanged(nameof(SelectedEditorImage));
                     }
                 }
-
-                // Update the selected version without triggering reload
-                _selectedEditorVersion = versionToSelect;
-                OnPropertyChanged(nameof(SelectedEditorVersion));
                 
-                // Find and select the saved image in the list
-                var savedImageVm = EditorDatasetImages.FirstOrDefault(img => 
-                    string.Equals(img.ImagePath, savedImagePath, StringComparison.OrdinalIgnoreCase));
-                
-                if (savedImageVm is not null)
+                // Refresh the master dataset in the Datasets collection
+                // This ensures the overview cards show updated counts
+                var masterDataset = Datasets.FirstOrDefault(d => 
+                    string.Equals(d.FolderPath, _selectedEditorDataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+                if (masterDataset is not null)
                 {
-                    _selectedEditorImage = savedImageVm;
-                    OnPropertyChanged(nameof(SelectedEditorImage));
+                    masterDataset.RefreshImageInfo();
+                    
+                    // Also refresh version cards in GroupedDatasets (for flattened view)
+                    // We need to refresh only the card for the specific version that was edited
+                    foreach (var group in GroupedDatasets)
+                    {
+                        foreach (var card in group.Datasets)
+                        {
+                            if (string.Equals(card.FolderPath, masterDataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                // For version cards, only refresh if it matches the version being edited
+                                if (card.IsVersionCard && card.DisplayVersion.HasValue)
+                                {
+                                    if (card.DisplayVersion.Value == currentVersionNumber)
+                                    {
+                                        card.RefreshImageInfo();
+                                    }
+                                }
+                                else
+                                {
+                                    // For non-version cards (collapsed view), always refresh
+                                    card.RefreshImageInfo();
+                                }
+                            }
+                        }
+                    }
                 }
             }
+
+            // Also refresh the Dataset Management tab if viewing the same dataset
+            await RefreshActiveDatasetAsync();
         }
         catch (Exception ex)
         {
