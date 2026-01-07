@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -34,17 +35,19 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// <item>Navigation to Image Editor is requested</item>
 /// </list>
 /// </para>
+/// 
+/// <para>
+/// <b>Disposal:</b>
+/// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
+/// </para>
 /// </summary>
-public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware
+public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IDisposable
 {
     private readonly IAppSettingsService _settingsService;
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
-
-    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
-    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
-    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+    private bool _disposed;
 
     private DatasetCategoryViewModel? _selectedCategory;
     private DatasetType? _selectedType;
@@ -552,16 +555,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 return;
             }
 
-            // Load media files
+            // Load media files using the shared MediaFileExtensions utility
             var allFiles = Directory.EnumerateFiles(mediaFolderPath).ToList();
             var mediaFiles = allFiles
-                .Where(f =>
-                {
-                    var ext = Path.GetExtension(f).ToLowerInvariant();
-                    if (!MediaExtensions.Contains(ext)) return false;
-                    if (DatasetCardViewModel.IsVideoThumbnailFile(f)) return false;
-                    return true;
-                })
+                .Where(f => MediaFileExtensions.IsDisplayableMediaFile(f))
                 .OrderBy(f => f)
                 .ToList();
 
@@ -1166,7 +1163,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
     }
 
-    private async Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
+    private Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
     {
         var rootPath = dataset.FolderPath;
         var v1Path = dataset.GetVersionFolderPath(1);
@@ -1179,7 +1176,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 var ext = Path.GetExtension(f).ToLowerInvariant();
                 var fileName = Path.GetFileName(f);
                 if (fileName.StartsWith(".")) return false;
-                return MediaExtensions.Contains(ext) || ext == ".txt";
+                return MediaFileExtensions.MediaExtensions.Contains(ext) || ext == ".txt";
             })
             .ToList();
 
@@ -1195,7 +1192,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         dataset.TotalVersions = 1;
         dataset.SaveMetadata();
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     private async Task ExportDatasetAsync()
@@ -1233,8 +1230,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         try
         {
             var exportedCount = result.ExportType == ExportType.Zip
-                ? await ExportAsZipAsync(result.FilesToExport, destinationPath)
-                : await ExportAsSingleFilesAsync(result.FilesToExport, destinationPath);
+                ? ExportAsZip(result.FilesToExport, destinationPath)
+                : ExportAsSingleFiles(result.FilesToExport, destinationPath);
 
             StatusMessage = $"Exported {exportedCount} files successfully.";
         }
@@ -1248,7 +1245,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
     }
 
-    private async Task<int> ExportAsSingleFilesAsync(List<DatasetImageViewModel> files, string destinationFolder)
+    private int ExportAsSingleFiles(List<DatasetImageViewModel> files, string destinationFolder)
     {
         var exportedCount = 0;
         Directory.CreateDirectory(destinationFolder);
@@ -1270,11 +1267,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
         }
 
-        await Task.CompletedTask;
         return exportedCount;
     }
 
-    private async Task<int> ExportAsZipAsync(List<DatasetImageViewModel> files, string zipPath)
+    private int ExportAsZip(List<DatasetImageViewModel> files, string zipPath)
     {
         var exportedCount = 0;
 
@@ -1301,7 +1297,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
         }
 
-        await Task.CompletedTask;
         return exportedCount;
     }
 
@@ -1542,6 +1537,38 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 await OpenDatasetAsync(ActiveDataset);
             }
         }
+    }
+
+    #endregion
+
+    #region IDisposable
+
+    /// <summary>
+    /// Releases all resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Releases resources used by this ViewModel.
+    /// </summary>
+    /// <param name="disposing">True if called from Dispose(), false if from finalizer.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events to prevent memory leaks
+            _state.StateChanged -= OnStateChanged;
+            _eventAggregator.ImageSaved -= OnImageSaved;
+            _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
+        }
+
+        _disposed = true;
     }
 
     #endregion

@@ -7,6 +7,7 @@ The LoRA Dataset Helper module was refactored to address state synchronization i
 1. **State not updating across components** - Changes made in one tab (e.g., Image Edit) were not reflected in other tabs (e.g., Dataset Management)
 2. **Tight coupling** - Components were directly dependent on each other
 3. **No clear separation of concerns** - The main ViewModel was handling too many responsibilities
+4. **Code duplication** - File extension arrays and type checking methods were duplicated across multiple files
 
 ## Architecture
 
@@ -63,7 +64,39 @@ Centralized state management via `IDatasetState` service.
 ???????????????????????????????????????????????????????????????????
 ```
 
+#### 4. DRY Principle - Centralized Utilities
+`MediaFileExtensions` utility class consolidates all file type constants and helper methods.
+
 ## Key Implementation Details
+
+### MediaFileExtensions Utility Class
+**Location:** `DiffusionNexus.UI-V2/Utilities/MediaFileExtensions.cs`
+
+Centralizes all file type detection logic that was previously duplicated across multiple ViewModels:
+
+```csharp
+public static class MediaFileExtensions
+{
+    public static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    public static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    public static readonly string[] CaptionExtensions = [".txt", ".caption"];
+    public static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+
+    public static bool IsImageFile(string filePath);
+    public static bool IsVideoFile(string filePath);
+    public static bool IsMediaFile(string filePath);
+    public static bool IsCaptionFile(string filePath);
+    public static bool IsVideoThumbnailFile(string filePath);
+    public static string GetVideoThumbnailPath(string videoPath);
+    public static bool IsDisplayableMediaFile(string filePath);
+}
+```
+
+**Benefits:**
+- Single source of truth for file type constants
+- Eliminates code duplication across ViewModels
+- Easy to add new file types in one place
+- Consistent behavior across all components
 
 ### Instance Synchronization Pattern
 
@@ -90,6 +123,41 @@ This pattern ensures that:
 - Rating changes in Image Editor ? update Dataset Management grid
 - Rating changes in ImageViewer ? update Dataset Management grid
 - Rating changes in Dataset Management ? update Image Editor (if same image is being edited)
+
+### Proper Resource Cleanup with IDisposable
+
+All ViewModels that subscribe to events implement `IDisposable` to prevent memory leaks:
+
+```csharp
+public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware, IDisposable
+{
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events
+            _state.StateChanged -= OnStateChanged;
+            _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
+
+            // Dispose child ViewModels
+            (DatasetManagement as IDisposable)?.Dispose();
+            (ImageEdit as IDisposable)?.Dispose();
+        }
+
+        _disposed = true;
+    }
+}
+```
 
 ## Components
 
@@ -291,10 +359,12 @@ services.AddScoped<LoraDatasetHelperViewModel>();
 - `ImageEditTabViewModel` - Only handles image editing
 - `DatasetEventAggregator` - Only routes events
 - `DatasetStateService` - Only manages state
+- `MediaFileExtensions` - Only handles file type detection
 
 ### Open/Closed (O)
 - New event types can be added without modifying existing subscribers
 - New tabs can subscribe to events without changing publishers
+- New file types can be added to MediaFileExtensions without changing consumers
 
 ### Liskov Substitution (L)
 - All ViewModels derive from `ObservableObject` or `ViewModelBase`
@@ -303,6 +373,7 @@ services.AddScoped<LoraDatasetHelperViewModel>();
 ### Interface Segregation (I)
 - `IDialogServiceAware` - Only for ViewModels needing dialogs
 - `IBusyViewModel` - Only for ViewModels with loading states
+- `IDisposable` - Only for ViewModels that need cleanup
 
 ### Dependency Inversion (D)
 - ViewModels depend on interfaces (`IDatasetEventAggregator`, `IDatasetState`)
@@ -310,31 +381,92 @@ services.AddScoped<LoraDatasetHelperViewModel>();
 
 ## DRY Principles Applied
 
-### Centralized State
-Instead of each ViewModel tracking its own copy of datasets/images, all use `IDatasetState`.
+### Centralized File Type Detection
+Before refactoring:
+- `DatasetCardViewModel` had its own `ImageExtensions`, `VideoExtensions`, `MediaExtensions`, `CaptionExtensions`
+- `DatasetManagementViewModel` had duplicated arrays
+- `DatasetImageViewModel` had duplicated `VideoExtensions`
 
-### Event Arguments
-Reusable event argument classes in `DatasetEventAggregator.cs`:
-- `ImageRatingChangedEventArgs`
-- `DatasetCreatedEventArgs`
-- etc.
+After refactoring:
+- All use `MediaFileExtensions` utility class
+- Single source of truth
+- Consistent behavior
 
-### Common View Patterns
-- All tabs use the same `IDialogService` interface
-- Common busy/loading patterns via `IBusyViewModel`
+### Centralized Rating Logic
+Before refactoring:
+```csharp
+private void MarkApproved()
+{
+    var previousRating = _ratingStatus;
+    RatingStatus = _ratingStatus == ImageRatingStatus.Approved 
+        ? ImageRatingStatus.Unrated 
+        : ImageRatingStatus.Approved;
+    SaveRating();
+    _eventAggregator?.PublishImageRatingChanged(...);
+}
+
+private void MarkRejected()
+{
+    // Same pattern duplicated
+}
+
+private void ClearRating()
+{
+    // Same pattern duplicated
+}
+```
+
+After refactoring:
+```csharp
+private void MarkApproved() 
+    => SetRatingAndPublish(IsApproved ? ImageRatingStatus.Unrated : ImageRatingStatus.Approved);
+
+private void MarkRejected() 
+    => SetRatingAndPublish(IsRejected ? ImageRatingStatus.Unrated : ImageRatingStatus.Rejected);
+
+private void ClearRating() 
+    => SetRatingAndPublish(ImageRatingStatus.Unrated);
+
+private void SetRatingAndPublish(ImageRatingStatus newRating)
+{
+    var previousRating = _ratingStatus;
+    RatingStatus = newRating;
+    SaveRating();
+    _eventAggregator?.PublishImageRatingChanged(...);
+}
+```
+
+### Centralized Version Loading
+`ImageEditTabViewModel` now uses `PopulateVersionItemsAsync` shared method for both initial load and refresh.
 
 ## File Locations Summary
 
 | Component | Path |
 |-----------|------|
+| MediaFileExtensions (NEW) | `UI-V2/Utilities/MediaFileExtensions.cs` |
 | IDatasetEventAggregator | `UI-V2/Services/DatasetEventAggregator.cs` |
 | IDatasetState | `UI-V2/Services/IDatasetState.cs` |
 | DatasetStateService | `UI-V2/Services/DatasetStateService.cs` |
 | LoraDatasetHelperViewModel | `UI-V2/ViewModels/LoraDatasetHelperViewModel.cs` |
 | DatasetManagementViewModel | `UI-V2/ViewModels/Tabs/DatasetManagementViewModel.cs` |
 | ImageEditTabViewModel | `UI-V2/ViewModels/Tabs/ImageEditTabViewModel.cs` |
+| DatasetCardViewModel | `UI-V2/ViewModels/DatasetCardViewModel.cs` |
+| DatasetImageViewModel | `UI-V2/ViewModels/DatasetImageViewModel.cs` |
 | LoraDatasetHelperView | `UI-V2/Views/LoraDatasetHelperView.axaml` |
 | App (DI Registration) | `UI-V2/App.axaml.cs` |
+
+## Dependency Injection Registration
+
+**Location:** `DiffusionNexus.UI-V2/App.axaml.cs`
+
+```csharp
+// Dataset Helper services (singletons - shared state across all components)
+services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
+services.AddSingleton<IDatasetState, DatasetStateService>();
+
+// ViewModels (scoped to app lifetime)
+services.AddScoped<LoraDatasetHelperViewModel>();
+```
 
 ## Migration Notes
 
@@ -348,11 +480,31 @@ services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
 services.AddSingleton<IDatasetState, DatasetStateService>();
 ```
 
+### Disposal
+Views should dispose their ViewModels when unloaded to prevent memory leaks from event subscriptions.
+
+## Code Quality Improvements
+
+### Removed Code Duplication
+- File extension arrays consolidated to `MediaFileExtensions`
+- Rating change logic consolidated to `SetRatingAndPublish` helper
+- Version loading logic consolidated to `PopulateVersionItemsAsync`
+
+### Removed Unnecessary Async/Await
+- `MigrateLegacyToVersionedAsync` now returns `Task.CompletedTask` instead of using `await`
+- `ExportAsSingleFiles` and `ExportAsZip` are now synchronous (they were faking async)
+
+### Added Proper Resource Cleanup
+- All event-subscribing ViewModels implement `IDisposable`
+- Event handlers are unsubscribed in `Dispose()`
+- Child ViewModels are disposed by parent
+
 ## Future Extensions
 
 The architecture supports easy extension for:
-1. **New tabs** - Create new ViewModel, subscribe to relevant events
+1. **New tabs** - Create new ViewModel, subscribe to relevant events, implement IDisposable
 2. **External integration** - Other modules can subscribe to dataset events
 3. **Undo/Redo** - Events can be captured for history
 4. **Logging/Analytics** - Subscribe to events for tracking
 5. **Testing** - Mock `IDatasetEventAggregator` and `IDatasetState` for unit tests
+6. **New file types** - Add to `MediaFileExtensions` in one place

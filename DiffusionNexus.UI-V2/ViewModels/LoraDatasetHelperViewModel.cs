@@ -24,11 +24,18 @@ namespace DiffusionNexus.UI.ViewModels;
 /// All tab ViewModels communicate through <see cref="IDatasetEventAggregator"/>,
 /// ensuring loose coupling and proper state synchronization across tabs.
 /// </para>
+/// 
+/// <para>
+/// <b>Disposal:</b>
+/// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
+/// The view should dispose this ViewModel when unloaded.
+/// </para>
 /// </summary>
-public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware
+public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware, IDisposable
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
+    private bool _disposed;
 
     private int _selectedTabIndex;
 
@@ -152,6 +159,41 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             DatasetManagement.DialogService = DialogService;
             ImageEdit.DialogService = DialogService;
         }
+    }
+
+    #endregion
+
+    #region IDisposable
+
+    /// <summary>
+    /// Releases all resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Releases resources used by this ViewModel.
+    /// </summary>
+    /// <param name="disposing">True if called from Dispose(), false if from finalizer.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events to prevent memory leaks
+            _state.StateChanged -= OnStateChanged;
+            _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
+
+            // Dispose child ViewModels if they implement IDisposable
+            (DatasetManagement as IDisposable)?.Dispose();
+            (ImageEdit as IDisposable)?.Dispose();
+        }
+
+        _disposed = true;
     }
 
     #endregion

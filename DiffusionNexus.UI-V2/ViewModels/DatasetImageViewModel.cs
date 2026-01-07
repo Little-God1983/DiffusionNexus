@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -25,8 +26,6 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public class DatasetImageViewModel : ObservableObject
 {
-    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
-    
     private readonly IDatasetEventAggregator? _eventAggregator;
     private string _originalCaption = string.Empty;
     
@@ -205,24 +204,15 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>Checks if a file is a video file based on its extension.</summary>
-    public static bool IsVideoFile(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return false;
-        
-        var ext = Path.GetExtension(filePath);
-        return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsVideoFile(string filePath) 
+        => MediaFileExtensions.IsVideoFile(filePath);
 
     private string? GetVideoThumbnailPath()
     {
         if (string.IsNullOrWhiteSpace(_imagePath))
             return null;
         
-        var directory = Path.GetDirectoryName(_imagePath) ?? string.Empty;
-        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(_imagePath);
-        var thumbnailPath = Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
-        
+        var thumbnailPath = MediaFileExtensions.GetVideoThumbnailPath(_imagePath);
         return File.Exists(thumbnailPath) ? thumbnailPath : null;
     }
 
@@ -328,48 +318,28 @@ public class DatasetImageViewModel : ObservableObject
         // The actual deletion is performed via the event aggregator or parent callback
     }
 
-    private void MarkApproved()
+    private void MarkApproved() 
+        => SetRatingAndPublish(IsApproved ? ImageRatingStatus.Unrated : ImageRatingStatus.Approved);
+
+    private void MarkRejected() 
+        => SetRatingAndPublish(IsRejected ? ImageRatingStatus.Unrated : ImageRatingStatus.Rejected);
+
+    private void ClearRating() 
+        => SetRatingAndPublish(ImageRatingStatus.Unrated);
+
+    /// <summary>
+    /// Sets the rating status, saves to file, and publishes the change event.
+    /// </summary>
+    private void SetRatingAndPublish(ImageRatingStatus newRating)
     {
         var previousRating = _ratingStatus;
-        RatingStatus = _ratingStatus == ImageRatingStatus.Approved 
-            ? ImageRatingStatus.Unrated 
-            : ImageRatingStatus.Approved;
+        RatingStatus = newRating;
         SaveRating();
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {
             Image = this,
-            NewRating = _ratingStatus,
-            PreviousRating = previousRating
-        });
-    }
-
-    private void MarkRejected()
-    {
-        var previousRating = _ratingStatus;
-        RatingStatus = _ratingStatus == ImageRatingStatus.Rejected 
-            ? ImageRatingStatus.Unrated 
-            : ImageRatingStatus.Rejected;
-        SaveRating();
-
-        _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
-        {
-            Image = this,
-            NewRating = _ratingStatus,
-            PreviousRating = previousRating
-        });
-    }
-
-    private void ClearRating()
-    {
-        var previousRating = _ratingStatus;
-        RatingStatus = ImageRatingStatus.Unrated;
-        SaveRating();
-
-        _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
-        {
-            Image = this,
-            NewRating = ImageRatingStatus.Unrated,
+            NewRating = newRating,
             PreviousRating = previousRating
         });
     }

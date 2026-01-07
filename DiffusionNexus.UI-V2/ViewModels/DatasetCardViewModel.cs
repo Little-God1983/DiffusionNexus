@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -13,11 +14,6 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public class DatasetCardViewModel : ObservableObject
 {
-    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
-    private static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
-    private static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
-    private static readonly string[] CaptionExtensions = [".txt", ".caption"];
-    
     private string _name = string.Empty;
     private string _folderPath = string.Empty;
     private string? _currentVersionDescription;
@@ -515,74 +511,56 @@ public class DatasetCardViewModel : ObservableObject
     /// Gets the expected thumbnail path for a video file.
     /// Uses the naming convention: {videoname}_thumb.webp
     /// </summary>
-    public static string GetVideoThumbnailPath(string videoPath)
-    {
-        var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
-        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
-        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
-    }
+    public static string GetVideoThumbnailPath(string videoPath) 
+        => MediaFileExtensions.GetVideoThumbnailPath(videoPath);
 
     /// <summary>
     /// Checks if a file is a video thumbnail (ends with _thumb.webp, _thumb.jpg, or _thumb.png).
     /// </summary>
-    public static bool IsVideoThumbnailFile(string filePath)
-    {
-        var fileName = Path.GetFileNameWithoutExtension(filePath);
-        var ext = Path.GetExtension(filePath).ToLowerInvariant();
-        return fileName.EndsWith("_thumb", StringComparison.OrdinalIgnoreCase) &&
-               (ext == ".webp" || ext == ".jpg" || ext == ".png");
-    }
+    public static bool IsVideoThumbnailFile(string filePath) 
+        => MediaFileExtensions.IsVideoThumbnailFile(filePath);
 
     /// <summary>
     /// Checks if a file is an image file.
     /// </summary>
-    public static bool IsImageFile(string filePath)
-    {
-        var ext = Path.GetExtension(filePath);
-        return ImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsImageFile(string filePath) 
+        => MediaFileExtensions.IsImageFile(filePath);
 
     /// <summary>
     /// Checks if a file is a video file.
     /// </summary>
-    public static bool IsVideoFile(string filePath)
-    {
-        var ext = Path.GetExtension(filePath);
-        return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsVideoFile(string filePath) 
+        => MediaFileExtensions.IsVideoFile(filePath);
 
     /// <summary>
     /// Checks if a file is a media file (image or video).
     /// </summary>
-    public static bool IsMediaFile(string filePath)
-    {
-        var ext = Path.GetExtension(filePath);
-        return MediaExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsMediaFile(string filePath) 
+        => MediaFileExtensions.IsMediaFile(filePath);
 
     /// <summary>
     /// Checks if a file is a caption file.
     /// </summary>
-    public static bool IsCaptionFile(string filePath)
-    {
-        var ext = Path.GetExtension(filePath);
-        return CaptionExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsCaptionFile(string filePath) 
+        => MediaFileExtensions.IsCaptionFile(filePath);
 
     /// <summary>
     /// Gets supported media extensions (images + videos).
     /// </summary>
-    public static IReadOnlyList<string> GetMediaExtensions() => MediaExtensions;
+    public static IReadOnlyList<string> GetMediaExtensions() 
+        => MediaFileExtensions.MediaExtensions;
 
     /// <summary>
     /// Gets supported image extensions.
     /// </summary>
-    public static IReadOnlyList<string> GetImageExtensions() => ImageExtensions;
+    public static IReadOnlyList<string> GetImageExtensions() 
+        => MediaFileExtensions.ImageExtensions;
 
     /// <summary>
     /// Gets supported video extensions.
     /// </summary>
-    public static IReadOnlyList<string> GetVideoExtensions() => VideoExtensions;
+    public static IReadOnlyList<string> GetVideoExtensions() 
+        => MediaFileExtensions.VideoExtensions;
 
     /// <summary>
     /// Creates a DatasetCardViewModel from a folder path.

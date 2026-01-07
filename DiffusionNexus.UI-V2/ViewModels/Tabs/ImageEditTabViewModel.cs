@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -26,13 +27,20 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// <item>NavigateToImageEditorRequested - to load images sent from Dataset Management</item>
 /// <item>ImageSaved - to refresh thumbnail list after saves</item>
 /// <item>ActiveDatasetChanged - to sync editor dataset selection</item>
+/// <item>ImageRatingChanged - to sync ratings from other components</item>
 /// </list>
 /// </para>
+/// 
+/// <para>
+/// <b>Disposal:</b>
+/// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
+/// </para>
 /// </summary>
-public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware
+public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware, IDisposable
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
+    private bool _disposed;
 
     private DatasetCardViewModel? _selectedEditorDataset;
     private EditorVersionItem? _selectedEditorVersion;
@@ -405,21 +413,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         try
         {
-            var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
-
-            foreach (var version in versionNumbers)
-            {
-                var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
-                var imageCount = 0;
-
-                if (Directory.Exists(versionPath))
-                {
-                    imageCount = Directory.EnumerateFiles(versionPath)
-                        .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
-                }
-
-                EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
-            }
+            await PopulateVersionItemsAsync(_selectedEditorDataset, EditorVersionItems);
 
             // Auto-select the first version if available
             if (EditorVersionItems.Count > 0)
@@ -431,8 +425,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         {
             StatusMessage = $"Error loading versions: {ex.Message}";
         }
-
-        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -442,22 +434,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     {
         if (_selectedEditorDataset is null) return;
 
-        var versionNumbers = _selectedEditorDataset.GetAllVersionNumbers();
         EditorVersionItems.Clear();
-
-        foreach (var version in versionNumbers)
-        {
-            var versionPath = _selectedEditorDataset.GetVersionFolderPath(version);
-            var imageCount = 0;
-
-            if (Directory.Exists(versionPath))
-            {
-                imageCount = Directory.EnumerateFiles(versionPath)
-                    .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
-            }
-
-            EditorVersionItems.Add(EditorVersionItem.Create(version, imageCount));
-        }
+        await PopulateVersionItemsAsync(_selectedEditorDataset, EditorVersionItems);
 
         // Re-select the version
         var versionToReselect = EditorVersionItems.FirstOrDefault(v => v.Version == versionToSelect);
@@ -467,28 +445,52 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             OnPropertyChanged(nameof(SelectedEditorVersion));
             _state.SelectedEditorVersion = versionToReselect;
         }
+    }
 
-        await Task.CompletedTask;
+    /// <summary>
+    /// Populates version items for a dataset. Shared logic for initial load and refresh.
+    /// </summary>
+    private static Task PopulateVersionItemsAsync(
+        DatasetCardViewModel dataset,
+        ObservableCollection<EditorVersionItem> versionItems)
+    {
+        var versionNumbers = dataset.GetAllVersionNumbers();
+
+        foreach (var version in versionNumbers)
+        {
+            var versionPath = dataset.GetVersionFolderPath(version);
+            var imageCount = 0;
+
+            if (Directory.Exists(versionPath))
+            {
+                imageCount = Directory.EnumerateFiles(versionPath)
+                    .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f));
+            }
+
+            versionItems.Add(EditorVersionItem.Create(version, imageCount));
+        }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
     /// Loads the images for the selected version.
     /// </summary>
-    private async Task LoadEditorDatasetImagesAsync()
+    private Task LoadEditorDatasetImagesAsync()
     {
         EditorDatasetImages.Clear();
 
-        if (_selectedEditorDataset is null || _selectedEditorVersion is null) return;
+        if (_selectedEditorDataset is null || _selectedEditorVersion is null) return Task.CompletedTask;
 
         try
         {
             var versionPath = _selectedEditorDataset.GetVersionFolderPath(_selectedEditorVersion.Version);
 
-            if (!Directory.Exists(versionPath)) return;
+            if (!Directory.Exists(versionPath)) return Task.CompletedTask;
 
             // Load only image files (not videos) for the image editor
             var imageFiles = Directory.EnumerateFiles(versionPath)
-                .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+                .Where(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
                 .OrderBy(f => f)
                 .ToList();
 
@@ -503,7 +505,42 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             StatusMessage = $"Error loading images: {ex.Message}";
         }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region IDisposable
+
+    /// <summary>
+    /// Releases all resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Releases resources used by this ViewModel.
+    /// </summary>
+    /// <param name="disposing">True if called from Dispose(), false if from finalizer.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events to prevent memory leaks
+            _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditorRequested;
+            _eventAggregator.ImageSaved -= OnImageSaved;
+            _eventAggregator.ImageDeleted -= OnImageDeleted;
+            _eventAggregator.DatasetImagesLoaded -= OnDatasetImagesLoaded;
+            _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
+            _state.StateChanged -= OnStateChanged;
+        }
+
+        _disposed = true;
     }
 
     #endregion
