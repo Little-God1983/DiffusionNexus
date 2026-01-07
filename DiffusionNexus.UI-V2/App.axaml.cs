@@ -7,6 +7,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.Data.Sqlite;
@@ -120,6 +121,10 @@ public partial class App : Application
         
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
         services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
+
+        // Dataset Helper services (singletons - shared state across all components)
+        services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
+        services.AddSingleton<IDatasetState, DatasetStateService>();
 
         // ViewModels (scoped to app lifetime)
         services.AddScoped<SettingsViewModel>();
