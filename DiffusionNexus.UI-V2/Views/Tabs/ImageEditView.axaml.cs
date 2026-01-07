@@ -183,6 +183,33 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.EditorCore.FlipVertical();
         };
 
+        // Handle color balance requests
+        imageEditor.ApplyColorBalanceRequested += (_, settings) =>
+        {
+            // Clear preview first, then apply to working bitmap
+            _imageEditorCanvas.EditorCore.ClearPreview();
+            if (_imageEditorCanvas.EditorCore.ApplyColorBalance(settings))
+            {
+                imageEditor.OnColorBalanceApplied();
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to apply color balance.";
+            }
+        };
+
+        // Handle color balance preview requests (live preview)
+        imageEditor.ColorBalancePreviewRequested += (_, settings) =>
+        {
+            _imageEditorCanvas.EditorCore.SetColorBalancePreview(settings);
+        };
+
+        // Handle color balance preview cancel
+        imageEditor.CancelColorBalancePreviewRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearPreview();
+        };
+
         // Handle save requests
         imageEditor.SaveAsNewRequested += (_, _) =>
         {
