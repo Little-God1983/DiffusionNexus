@@ -1848,6 +1848,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                     
                     if (savedImageVm is not null)
                     {
+                        // Mark the saved image as selected in the editor (shows blue outline)
+                        savedImageVm.IsEditorSelected = true;
                         _selectedEditorImage = savedImageVm;
                         OnPropertyChanged(nameof(SelectedEditorImage));
                     }
@@ -2021,29 +2023,4 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     }
 
     #endregion
-
-    /// <summary>
-    /// Event handler for when an image is saved in the Image Editor.
-    /// Refreshes the thumbnail list for the current dataset.
-    /// </summary>
-    private async void OnImageEditorImageSaved(string imagePath)
-    {
-        if (ActiveDataset is null || !IsViewingDataset)
-        {
-            return;
-        }
-
-        try
-        {
-            // Refresh the dataset card's image info from current version folder
-            ActiveDataset.RefreshImageInfo();
-
-            // Reload images for the current dataset
-            await OpenDatasetAsync(ActiveDataset);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Error refreshing dataset: {ex.Message}";
-        }
-    }
 }
