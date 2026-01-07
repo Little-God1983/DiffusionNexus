@@ -25,7 +25,7 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
         
         <!-- Back to Overview Button -->
         <Button Grid.Column="0"
@@ -118,27 +118,31 @@
         
         <Border Grid.Column="6"/>
         
-        <!-- Action Buttons - Replaced emoji with text -->
+        <!-- Action Buttons -->
         <Button Grid.Column="7" Content="Open Folder"
                 Command="{Binding OpenContainingFolderCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="8" Content="Open Viewer"
+        <Button Grid.Column="8" Content="Auto Scale/Crop"
+                Command="{Binding SendToAutoScaleCropCommand}"
+                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
+                ToolTip.Tip="Send dataset to Auto Scale/Crop tab"/>
+        <Button Grid.Column="9" Content="Open Viewer"
                 Command="{Binding OpenViewerCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="9" Content="Export"
+        <Button Grid.Column="10" Content="Export"
                 Command="{Binding ExportDatasetCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="10" Content="+ Add Files"
+        <Button Grid.Column="11" Content="+ Add Files"
                 Command="{Binding AddImagesCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="11" Content="+ New Version"
+        <Button Grid.Column="12" Content="+ New Version"
                 Command="{Binding IncrementVersionCommand}"
                 IsVisible="{Binding IsViewingDataset}"
                 IsEnabled="{Binding ActiveDataset.CanIncrementVersion}" Margin="0,0,8,0"/>
-        <Button Grid.Column="12" Content="Save Captions"
+        <Button Grid.Column="13" Content="Save Captions"
                 Command="{Binding SaveAllCaptionsCommand}"
                 IsVisible="{Binding HasUnsavedChanges}" Margin="0,0,8,0" Background="#2D7D46"/>
-        <Button Grid.Column="14" Content="+ New Dataset" 
+        <Button Grid.Column="15" Content="+ New Dataset" 
                 Command="{Binding CreateDatasetCommand}"
                 IsVisible="{Binding !IsViewingDataset}"/>
       </Grid>

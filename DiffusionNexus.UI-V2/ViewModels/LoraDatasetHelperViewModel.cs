@@ -116,6 +116,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
         // Subscribe to navigation events to switch tabs
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
+        _eventAggregator.NavigateToAutoScaleCropRequested += OnNavigateToAutoScaleCrop;
     }
 
     /// <summary>
@@ -150,6 +151,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         // Switch to Image Edit tab (index 1)
         SelectedTabIndex = 1;
+    }
+
+    private void OnNavigateToAutoScaleCrop(object? sender, NavigateToAutoScaleCropEventArgs e)
+    {
+        // Preselect the dataset and version in AutoScaleCrop tab
+        AutoScaleCrop.PreselectDataset(e.Dataset, e.Version);
+        
+        // Switch to Auto Scale/Crop tab (index 3)
+        SelectedTabIndex = 3;
     }
 
     #endregion
@@ -195,6 +205,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             // Unsubscribe from events to prevent memory leaks
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
+            _eventAggregator.NavigateToAutoScaleCropRequested -= OnNavigateToAutoScaleCrop;
 
             // Dispose child ViewModels
             DatasetManagement.Dispose();

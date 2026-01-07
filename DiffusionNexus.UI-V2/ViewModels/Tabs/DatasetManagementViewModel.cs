@@ -263,6 +263,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IAsyncRelayCommand OpenViewerCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
+    public IRelayCommand SendToAutoScaleCropCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
 
@@ -315,6 +316,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         OpenViewerCommand = new AsyncRelayCommand(OpenViewerAsync, () => !HasNoImages);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
+        SendToAutoScaleCropCommand = new RelayCommand(SendToAutoScaleCrop);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
 
@@ -880,6 +882,19 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         });
 
         StatusMessage = $"Sent to Image Edit: {image.FullFileName}";
+    }
+
+    private void SendToAutoScaleCrop()
+    {
+        if (ActiveDataset is null) return;
+
+        _eventAggregator.PublishNavigateToAutoScaleCrop(new NavigateToAutoScaleCropEventArgs
+        {
+            Dataset = ActiveDataset,
+            Version = ActiveDataset.CurrentVersion
+        });
+
+        StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Auto Scale/Crop";
     }
 
     private async Task OpenImageViewerAsync(DatasetImageViewModel? image)

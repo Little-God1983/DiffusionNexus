@@ -506,6 +506,44 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     #region Dataset Methods
 
     /// <summary>
+    /// Preselects a dataset and version for processing.
+    /// Called when navigating from the Dataset Management view.
+    /// </summary>
+    public void PreselectDataset(DatasetCardViewModel dataset, int version)
+    {
+        // Find the matching dataset in our collection
+        var matchingDataset = Datasets.FirstOrDefault(d => 
+            string.Equals(d.FolderPath, dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingDataset is not null)
+        {
+            SelectedDataset = matchingDataset;
+        }
+        else
+        {
+            // Dataset not in shared state yet - set it directly
+            SelectedDataset = dataset;
+        }
+
+        // Select the version after dataset is set (allows version items to load)
+        _ = SelectVersionAsync(version);
+
+        StatusMessage = $"Dataset '{dataset.Name}' V{version} loaded for processing";
+    }
+
+    private async Task SelectVersionAsync(int version)
+    {
+        // Small delay to allow version loading to complete
+        await Task.Delay(150);
+        
+        var matchingVersion = VersionItems.FirstOrDefault(v => v.Version == version);
+        if (matchingVersion is not null)
+        {
+            SelectedVersion = matchingVersion;
+        }
+    }
+
+    /// <summary>
     /// Updates the next version number based on the selected dataset.
     /// </summary>
     private void UpdateNextVersionNumber()

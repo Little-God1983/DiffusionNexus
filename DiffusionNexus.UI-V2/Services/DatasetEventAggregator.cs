@@ -246,6 +246,22 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when navigation to the Auto Scale/Crop tab is requested.
+/// </summary>
+public sealed class NavigateToAutoScaleCropEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// The dataset to process.
+    /// </summary>
+    public required DatasetCardViewModel Dataset { get; init; }
+
+    /// <summary>
+    /// The version to preselect.
+    /// </summary>
+    public required int Version { get; init; }
+}
+
+/// <summary>
 /// Event raised when the dataset list should be refreshed.
 /// </summary>
 public sealed class RefreshDatasetsRequestedEventArgs : DatasetEventArgs
@@ -365,6 +381,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
 
+    /// <summary>
+    /// Raised when navigation to the Auto Scale/Crop tab is requested.
+    /// </summary>
+    event EventHandler<NavigateToAutoScaleCropEventArgs>? NavigateToAutoScaleCropRequested;
+
     #endregion
 
     #region Publish Methods
@@ -383,6 +404,7 @@ public interface IDatasetEventAggregator
     void PublishCaptionChanged(CaptionChangedEventArgs args);
     void PublishImageSelectionChanged(ImageSelectionChangedEventArgs args);
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
+    void PublishNavigateToAutoScaleCrop(NavigateToAutoScaleCropEventArgs args);
 
     #endregion
 }
@@ -446,6 +468,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToAutoScaleCropEventArgs>? NavigateToAutoScaleCropRequested;
 
     #endregion
 
@@ -547,6 +572,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToImageEditorRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToAutoScaleCrop(NavigateToAutoScaleCropEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToAutoScaleCropRequested, args);
     }
 
     #endregion
