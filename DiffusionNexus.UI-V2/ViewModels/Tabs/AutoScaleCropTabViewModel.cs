@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Autocropper;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -39,17 +40,97 @@ public partial class BucketOption : ObservableObject
 /// <summary>
 /// ViewModel for the Auto Scale/Crop tab.
 /// Handles batch cropping images to standard aspect ratio buckets for LoRA training.
+/// Supports both folder-based and dataset-based source selection.
 /// </summary>
 public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 {
     private readonly IImageCropperService _cropperService;
+    private readonly IDatasetState? _state;
     private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
+
+    #region Dataset Selection Properties
+
+    private DatasetCardViewModel? _selectedDataset;
+    private EditorVersionItem? _selectedVersion;
+
+    /// <summary>
+    /// Selected dataset for processing.
+    /// Selecting a dataset clears the source folder.
+    /// </summary>
+    public DatasetCardViewModel? SelectedDataset
+    {
+        get => _selectedDataset;
+        set
+        {
+            if (SetProperty(ref _selectedDataset, value))
+            {
+                // Clear source folder when dataset is selected
+                if (value is not null && !string.IsNullOrWhiteSpace(SourceFolder))
+                {
+                    _sourceFolder = string.Empty;
+                    OnPropertyChanged(nameof(SourceFolder));
+                }
+                _ = LoadDatasetVersionsAsync();
+                OnPropertyChanged(nameof(HasSourceSelected));
+                OnPropertyChanged(nameof(CanStart));
+                StartCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selected version within the dataset.
+    /// </summary>
+    public EditorVersionItem? SelectedVersion
+    {
+        get => _selectedVersion;
+        set
+        {
+            if (SetProperty(ref _selectedVersion, value))
+            {
+                UpdateDatasetImageCount();
+                OnPropertyChanged(nameof(HasSourceSelected));
+                OnPropertyChanged(nameof(CanStart));
+                StartCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    #endregion
+
+    #region Collections
+
+    /// <summary>
+    /// Collection of all datasets for the dropdown.
+    /// </summary>
+    public ObservableCollection<DatasetCardViewModel> Datasets => _state?.Datasets ?? [];
+
+    /// <summary>
+    /// Version items for the version dropdown.
+    /// </summary>
+    public ObservableCollection<EditorVersionItem> VersionItems { get; } = [];
+
+    public ObservableCollection<BucketOption> BucketOptions { get; } = [];
+
+    public ObservableCollection<ResolutionOption> ResolutionOptions { get; } =
+    [
+        ResolutionOption.None,
+        new(512, "512 px"),
+        new(768, "768 px"),
+        new(1024, "1024 px"),
+        new(1536, "1536 px"),
+        new(2048, "2048 px"),
+        ResolutionOption.Custom
+    ];
+
+    #endregion
 
     #region Observable Properties
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(HasSourceSelected))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     private string _sourceFolder = string.Empty;
 
@@ -111,23 +192,6 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     #endregion
 
-    #region Collections
-
-    public ObservableCollection<BucketOption> BucketOptions { get; } = [];
-
-    public ObservableCollection<ResolutionOption> ResolutionOptions { get; } =
-    [
-        ResolutionOption.None,
-        new(512, "512 px"),
-        new(768, "768 px"),
-        new(1024, "1024 px"),
-        new(1536, "1536 px"),
-        new(2048, "2048 px"),
-        ResolutionOption.Custom
-    ];
-
-    #endregion
-
     #region Computed Properties
 
     public BucketDefinition[] SelectedBuckets => BucketOptions
@@ -139,8 +203,32 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     public bool IsOverwriteMode => string.IsNullOrWhiteSpace(TargetFolder);
 
+    /// <summary>
+    /// True if either a source folder is specified OR a dataset+version is selected.
+    /// </summary>
+    public bool HasSourceSelected =>
+        !string.IsNullOrWhiteSpace(SourceFolder) ||
+        (SelectedDataset is not null && SelectedVersion is not null);
+
+    /// <summary>
+    /// Gets the effective source folder path (either manual or from dataset).
+    /// </summary>
+    public string EffectiveSourceFolder
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(SourceFolder))
+                return SourceFolder;
+
+            if (SelectedDataset is not null && SelectedVersion is not null)
+                return SelectedDataset.GetVersionFolderPath(SelectedVersion.Version);
+
+            return string.Empty;
+        }
+    }
+
     public bool CanStart =>
-        !string.IsNullOrWhiteSpace(SourceFolder) &&
+        HasSourceSelected &&
         HasSelectedBuckets &&
         (!IsOverwriteMode || OverwriteConfirmed) &&
         !IsProcessing;
@@ -159,8 +247,12 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     #region Constructor
 
-    public AutoScaleCropTabViewModel()
+    /// <summary>
+    /// Creates a new AutoScaleCropTabViewModel with dataset state support.
+    /// </summary>
+    public AutoScaleCropTabViewModel(IDatasetState? state = null)
     {
+        _state = state;
         _cropperService = new ImageCropperService();
 
         // Load default buckets
@@ -206,11 +298,21 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
     partial void OnSourceFolderChanged(string value)
     {
+        // Clear dataset selection when source folder is specified
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            _selectedDataset = null;
+            _selectedVersion = null;
+            VersionItems.Clear();
+            OnPropertyChanged(nameof(SelectedDataset));
+            OnPropertyChanged(nameof(SelectedVersion));
+        }
+
         if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
         {
             UpdateFolderMetadata();
         }
-        else
+        else if (string.IsNullOrWhiteSpace(value) && SelectedDataset is null)
         {
             TotalFiles = 0;
             ImageFiles = 0;
@@ -222,6 +324,105 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
         CheckTargetFolderEmpty();
         OnPropertyChanged(nameof(IsOverwriteMode));
         OnPropertyChanged(nameof(CanStart));
+    }
+
+    #endregion
+
+    #region Dataset Methods
+
+    /// <summary>
+    /// Loads the available versions for the selected dataset.
+    /// </summary>
+    private async Task LoadDatasetVersionsAsync()
+    {
+        VersionItems.Clear();
+        _selectedVersion = null;
+        OnPropertyChanged(nameof(SelectedVersion));
+
+        if (_selectedDataset is null) return;
+
+        try
+        {
+            var versionNumbers = _selectedDataset.GetAllVersionNumbers();
+
+            foreach (var version in versionNumbers)
+            {
+                var versionPath = _selectedDataset.GetVersionFolderPath(version);
+                var imageCount = 0;
+
+                if (Directory.Exists(versionPath))
+                {
+                    imageCount = Directory.EnumerateFiles(versionPath)
+                        .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f));
+                }
+
+                VersionItems.Add(EditorVersionItem.Create(version, imageCount));
+            }
+
+            // Auto-select the first version if available
+            if (VersionItems.Count > 0)
+            {
+                SelectedVersion = VersionItems[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error loading versions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Updates the image count when a dataset version is selected.
+    /// </summary>
+    private void UpdateDatasetImageCount()
+    {
+        if (_selectedDataset is null || _selectedVersion is null)
+        {
+            if (string.IsNullOrWhiteSpace(SourceFolder))
+            {
+                TotalFiles = 0;
+                ImageFiles = 0;
+            }
+            return;
+        }
+
+        try
+        {
+            var versionPath = _selectedDataset.GetVersionFolderPath(_selectedVersion.Version);
+            if (Directory.Exists(versionPath))
+            {
+                var allFiles = Directory.GetFiles(versionPath, "*", SearchOption.TopDirectoryOnly);
+                var imageFilesList = allFiles
+                    .Where(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                    .ToArray();
+
+                TotalFiles = allFiles.Length;
+                ImageFiles = imageFilesList.Length;
+                StatusMessage = $"Found {ImageFiles} images in dataset version {_selectedVersion.Version}";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error scanning dataset: {ex.Message}";
+            TotalFiles = 0;
+            ImageFiles = 0;
+        }
+    }
+
+    /// <summary>
+    /// Clears the dataset selection.
+    /// </summary>
+    [RelayCommand]
+    private void ClearDatasetSelection()
+    {
+        SelectedDataset = null;
+        SelectedVersion = null;
+        VersionItems.Clear();
+        TotalFiles = 0;
+        ImageFiles = 0;
+        StatusMessage = string.Empty;
     }
 
     #endregion
@@ -286,8 +487,9 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
 
             var progress = new Progress<CropProgress>(OnProgressUpdate);
 
+            // Use effective source folder (manual or from dataset)
             var result = await _cropperService.ProcessImagesAsync(
-                SourceFolder,
+                EffectiveSourceFolder,
                 string.IsNullOrWhiteSpace(TargetFolder) ? null : TargetFolder,
                 SelectedBuckets,
                 maxLongestSide,
@@ -331,6 +533,10 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrWhiteSpace(SourceFolder) && Directory.Exists(SourceFolder))
         {
             UpdateFolderMetadata();
+        }
+        else if (SelectedDataset is not null && SelectedVersion is not null)
+        {
+            UpdateDatasetImageCount();
         }
     }
 

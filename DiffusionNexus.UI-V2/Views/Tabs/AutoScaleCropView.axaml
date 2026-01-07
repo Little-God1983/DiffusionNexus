@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:vms="using:DiffusionNexus.UI.ViewModels"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
              x:Class="DiffusionNexus.UI.Views.Tabs.AutoScaleCropView"
              x:DataType="vm:AutoScaleCropTabViewModel">
@@ -140,21 +141,71 @@
                 </StackPanel>
             </Border>
 
-            <!-- Source Folder Card -->
+            <!-- Source Selection Card -->
             <Border Classes="Card">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Source Folder" Classes="Header"/>
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                        <TextBox Grid.Column="0"
-                                 Text="{Binding SourceFolder}"
-                                 Watermark="Select a folder containing images..."
-                                 IsEnabled="{Binding !IsProcessing}"/>
-                        <Button Grid.Column="1"
-                                x:Name="BrowseSourceButton"
-                                Content="Browse..."
-                                IsEnabled="{Binding !IsProcessing}"/>
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Image Source" Classes="Header" Margin="0"/>
+
+                    <!-- Dataset Selection -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Select Dataset" FontWeight="SemiBold"/>
+                        <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="8">
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding Datasets}"
+                                      SelectedItem="{Binding SelectedDataset}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      PlaceholderText="Select a dataset..."
+                                      HorizontalAlignment="Stretch">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vms:DatasetCardViewModel">
+                                        <TextBlock Text="{Binding Name}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding VersionItems}"
+                                      SelectedItem="{Binding SelectedVersion}"
+                                      IsEnabled="{Binding !IsProcessing}"
+                                      IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                      MinWidth="140">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vms:EditorVersionItem">
+                                        <TextBlock Text="{Binding DisplayText}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button Grid.Column="3"
+                                    Content="Clear"
+                                    Command="{Binding ClearDatasetSelectionCommand}"
+                                    IsEnabled="{Binding !IsProcessing}"
+                                    IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- OR Separator -->
+                    <Grid ColumnDefinitions="*,Auto,*" Margin="0,8">
+                        <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
+                        <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
+                        <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
                     </Grid>
-                    <TextBlock Classes="SubText">
+
+                    <!-- Source Folder Selection -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Source Folder" FontWeight="SemiBold"/>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding SourceFolder}"
+                                     Watermark="Select a folder containing images..."
+                                     IsEnabled="{Binding !IsProcessing}"/>
+                            <Button Grid.Column="1"
+                                    x:Name="BrowseSourceButton"
+                                    Content="Browse..."
+                                    IsEnabled="{Binding !IsProcessing}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Image Count Display -->
+                    <TextBlock Classes="SubText" Margin="0,8,0,0">
                         <TextBlock.Text>
                             <MultiBinding StringFormat="Found {0} images in {1} files">
                                 <Binding Path="ImageFiles"/>
