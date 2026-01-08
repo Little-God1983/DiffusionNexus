@@ -299,6 +299,43 @@ public partial class ImageEditView : UserControl
             }
         };
 
+        // Handle upscaling requests
+        imageEditor.UpscaleImageRequested += async (_, _) =>
+        {
+            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
+            if (imageData is null)
+            {
+                imageEditor.StatusMessage = "No image loaded";
+                return;
+            }
+
+            await imageEditor.ProcessUpscalingAsync(
+                imageData.Value.Data,
+                imageData.Value.Width,
+                imageData.Value.Height);
+        };
+
+        // Handle upscaling completed
+        imageEditor.UpscalingCompleted += (_, result) =>
+        {
+            if (result.Success && result.ImageData is not null)
+            {
+                // Load the upscaled image (PNG bytes) into the editor
+                if (_imageEditorCanvas.EditorCore.LoadImage(result.ImageData))
+                {
+                    imageEditor.OnUpscalingApplied();
+                    // Update dimensions in ViewModel
+                    imageEditor.UpdateDimensions(
+                        _imageEditorCanvas.ImageWidth,
+                        _imageEditorCanvas.ImageHeight);
+                }
+                else
+                {
+                    imageEditor.StatusMessage = "Failed to load upscaled image";
+                }
+            }
+        };
+
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
         {

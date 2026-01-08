@@ -98,19 +98,21 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="state">The shared dataset state service.</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service.</param>
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
+    /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
     public LoraDatasetHelperViewModel(
         IAppSettingsService settingsService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IVideoThumbnailService? videoThumbnailService = null,
-        IBackgroundRemovalService? backgroundRemovalService = null)
+        IBackgroundRemovalService? backgroundRemovalService = null,
+        IImageUpscalingService? upscalingService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
 
         // Create tab ViewModels
         DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, videoThumbnailService);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
         BatchCropScale = new BatchCropScaleTabViewModel(state);
 
         // Subscribe to state changes for property forwarding
@@ -124,7 +126,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null, null, null)
     {
     }
 

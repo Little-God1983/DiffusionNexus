@@ -125,6 +125,9 @@ public partial class App : Application
         // Background removal service (singleton - maintains ONNX session)
         services.AddSingleton<IBackgroundRemovalService, BackgroundRemovalService>();
 
+        // Image upscaling service (singleton - maintains ONNX session)
+        services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
+
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();
