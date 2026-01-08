@@ -5,6 +5,7 @@
         x:DataType="vm:DiffusionNexusMainWindowViewModel"
         Title="Diffusion Nexus"
         MinWidth="1300" MinHeight="800"
+        Icon="avares://DiffusionNexus.UI-V2/Assets/AIKnowledgeIcon.ico"
         x:Name="MainWin">
     
     <Design.DataContext>
@@ -38,6 +39,37 @@
                                 FontWeight="Bold"
                                 Width="48" Height="48"
                                 Margin="0,8,0,16"/>
+
+                        <!-- Bottom Social Links -->
+                        <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
+                            <Button Width="196" Height="40" Margin="2,2"
+                                    Command="{Binding OpenYoutubeCommand}"
+                                    HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/yt.png" Width="24" Height="24"/>
+                                    <TextBlock Text="Youtube" VerticalAlignment="Center"
+                                               IsVisible="{Binding IsMenuOpen}"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Width="196" Height="40" Margin="2,2"
+                                    Command="{Binding OpenPatreonCommand}"
+                                    HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/patreon.png" Width="24" Height="24"/>
+                                    <TextBlock Text="Patreon" VerticalAlignment="Center"
+                                               IsVisible="{Binding IsMenuOpen}"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Width="196" Height="40" Margin="2,2"
+                                    Command="{Binding OpenCivitaiCommand}"
+                                    HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/civitai.png" Width="24" Height="24"/>
+                                    <TextBlock Text="Civitai" VerticalAlignment="Center"
+                                               IsVisible="{Binding IsMenuOpen}"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
 
                         <!-- Module Navigation -->
                         <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">

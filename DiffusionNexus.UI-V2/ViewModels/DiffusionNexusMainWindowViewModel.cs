@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Views;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -78,6 +80,38 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         SelectedModule = module;
         CurrentModuleView = module.View;
     }
+
+    [RelayCommand]
+    private void OpenYoutube()
+    {
+        OpenUrl("https://youtube.com/@AIKnowledge2Go");
+    }
+
+    [RelayCommand]
+    private void OpenCivitai()
+    {
+        OpenUrl("https://civitai.com/user/AIknowlege2go");
+    }
+
+    [RelayCommand]
+    private void OpenPatreon()
+    {
+        OpenUrl("https://patreon.com/AIKnowledgeCentral?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink");
+    }
+
+    [RelayCommand]
+    private void OpenSettings()
+    {
+        CurrentModuleView = new SettingsView();
+    }
+
+    [RelayCommand]
+    private void OpenAbout()
+    {
+        CurrentModuleView = new AboutView();
+    }
+
+    private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 
     /// <summary>
     /// Registers a module for navigation.
