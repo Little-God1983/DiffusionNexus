@@ -120,6 +120,13 @@ public interface IDialogService
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null);
+
+    /// <summary>
+    /// Shows the Save As dialog for saving an image with a new name and optional rating.
+    /// </summary>
+    /// <param name="originalFilePath">Full path to the original file.</param>
+    /// <returns>Save result with filename and rating, or cancelled result.</returns>
+    Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath);
 }
 
 /// <summary>

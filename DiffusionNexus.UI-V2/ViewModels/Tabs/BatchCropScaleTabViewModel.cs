@@ -112,12 +112,12 @@ public partial class BucketOption : ObservableObject
 }
 
 /// <summary>
-/// ViewModel for the Auto Scale/Crop tab.
+/// ViewModel for the Batch Crop/Scale tab.
 /// Handles batch cropping images to standard aspect ratio buckets for LoRA training.
 /// Supports both folder-based and dataset-based source selection.
 /// Supports both cropping (remove pixels) and padding (add canvas) fit modes.
 /// </summary>
-public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
+public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 {
     private readonly IImageCropperService _cropperService;
     private readonly IDatasetState? _state;
@@ -398,9 +398,9 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     #region Constructor
 
     /// <summary>
-    /// Creates a new AutoScaleCropTabViewModel with dataset state support.
+    /// Creates a new BatchCropScaleTabViewModel with dataset state support.
     /// </summary>
-    public AutoScaleCropTabViewModel(IDatasetState? state = null)
+    public BatchCropScaleTabViewModel(IDatasetState? state = null)
     {
         _state = state;
         _cropperService = new ImageCropperService();
@@ -504,6 +504,44 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     #endregion
 
     #region Dataset Methods
+
+    /// <summary>
+    /// Preselects a dataset and version for processing.
+    /// Called when navigating from the Dataset Management view.
+    /// </summary>
+    public void PreselectDataset(DatasetCardViewModel dataset, int version)
+    {
+        // Find the matching dataset in our collection
+        var matchingDataset = Datasets.FirstOrDefault(d => 
+            string.Equals(d.FolderPath, dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingDataset is not null)
+        {
+            SelectedDataset = matchingDataset;
+        }
+        else
+        {
+            // Dataset not in shared state yet - set it directly
+            SelectedDataset = dataset;
+        }
+
+        // Select the version after dataset is set (allows version items to load)
+        _ = SelectVersionAsync(version);
+
+        StatusMessage = $"Dataset '{dataset.Name}' V{version} loaded for processing";
+    }
+
+    private async Task SelectVersionAsync(int version)
+    {
+        // Small delay to allow version loading to complete
+        await Task.Delay(150);
+        
+        var matchingVersion = VersionItems.FirstOrDefault(v => v.Version == version);
+        if (matchingVersion is not null)
+        {
+            SelectedVersion = matchingVersion;
+        }
+    }
 
     /// <summary>
     /// Updates the next version number based on the selected dataset.

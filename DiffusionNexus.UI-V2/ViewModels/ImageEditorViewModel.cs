@@ -619,7 +619,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ToggleCropToolCommand { get; }
     public IRelayCommand ApplyCropCommand { get; }
     public IRelayCommand CancelCropCommand { get; }
-    public IRelayCommand SaveAsNewCommand { get; }
+    public IAsyncRelayCommand SaveAsNewCommand { get; }
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
@@ -650,7 +650,19 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? CropToolDeactivated;
     public event EventHandler? ApplyCropRequested;
     public event EventHandler? CancelCropRequested;
-    public event EventHandler? SaveAsNewRequested;
+    
+    /// <summary>
+    /// Event raised to request the Save As dialog.
+    /// The handler should show the dialog and call back with the result.
+    /// </summary>
+    public event Func<Task<SaveAsResult>>? SaveAsDialogRequested;
+    
+    /// <summary>
+    /// Event raised when Save As dialog completes with a result.
+    /// The handler should perform the actual save with the provided filename.
+    /// </summary>
+    public event EventHandler<SaveAsResult>? SaveAsRequested;
+    
     public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
     public event EventHandler? SaveOverwriteRequested;
     public event EventHandler? ZoomInRequested;
@@ -738,7 +750,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
-        SaveAsNewCommand = new RelayCommand(ExecuteSaveAsNew, () => HasImage);
+        SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
@@ -864,7 +876,9 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Called when save as new completes successfully.</summary>
-    public void OnSaveAsNewCompleted(string newPath)
+    /// <param name="newPath">The path where the image was saved.</param>
+    /// <param name="rating">The rating to apply to the saved image.</param>
+    public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating = ImageRatingStatus.Unrated)
     {
         StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
         CurrentImagePath = newPath;
@@ -873,7 +887,8 @@ public partial class ImageEditorViewModel : ObservableObject
         _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
         {
             ImagePath = newPath,
-            OriginalPath = _currentImagePath
+            OriginalPath = _currentImagePath,
+            Rating = rating
         });
 
         // Also raise legacy event for backward compatibility
@@ -936,7 +951,24 @@ public partial class ImageEditorViewModel : ObservableObject
         ResetRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ExecuteSaveAsNew() => SaveAsNewRequested?.Invoke(this, EventArgs.Empty);
+    private async Task ExecuteSaveAsNewAsync()
+    {
+        if (SaveAsDialogRequested is null || CurrentImagePath is null)
+        {
+            StatusMessage = "Save As is not available.";
+            return;
+        }
+
+        var result = await SaveAsDialogRequested.Invoke();
+        if (result.IsCancelled)
+        {
+            StatusMessage = "Save cancelled.";
+            return;
+        }
+
+        // Raise event for View to perform the actual save
+        SaveAsRequested?.Invoke(this, result);
+    }
 
     private async Task ExecuteSaveOverwriteAsync()
     {

@@ -6,13 +6,13 @@ using DiffusionNexus.UI.ViewModels.Tabs;
 namespace DiffusionNexus.UI.Views.Tabs;
 
 /// <summary>
-/// View for the Auto Scale/Crop tab. Handles folder browsing functionality.
+/// View for the Batch Crop/Scale tab. Handles folder browsing functionality.
 /// </summary>
-public partial class AutoScaleCropView : UserControl
+public partial class BatchCropScaleView : UserControl
 {
     private bool _eventsWired;
 
-    public AutoScaleCropView()
+    public BatchCropScaleView()
     {
         InitializeComponent();
     }
@@ -51,7 +51,7 @@ public partial class AutoScaleCropView : UserControl
             AllowMultiple = false
         });
 
-        if (folders.Count > 0 && DataContext is AutoScaleCropTabViewModel vm)
+        if (folders.Count > 0 && DataContext is BatchCropScaleTabViewModel vm)
         {
             vm.SourceFolder = folders[0].Path.LocalPath;
         }
@@ -68,7 +68,7 @@ public partial class AutoScaleCropView : UserControl
             AllowMultiple = false
         });
 
-        if (folders.Count > 0 && DataContext is AutoScaleCropTabViewModel vm)
+        if (folders.Count > 0 && DataContext is BatchCropScaleTabViewModel vm)
         {
             vm.TargetFolder = folders[0].Path.LocalPath;
         }

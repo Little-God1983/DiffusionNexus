@@ -517,9 +517,10 @@ public class ImageEditorControl : Control
 
         public bool Equals(ICustomDrawOperation? other)
         {
-            return other is ImageEditorDrawOperation op &&
-                   op._bounds == _bounds &&
-                   op._editorCore == _editorCore;
+            // Always return false to ensure redraws happen when InvalidateVisual is called.
+            // The editor core's preview state can change without affecting the bounds or reference,
+            // so we must always redraw to reflect changes like color grading or brightness adjustments.
+            return false;
         }
 
         public void Dispose()

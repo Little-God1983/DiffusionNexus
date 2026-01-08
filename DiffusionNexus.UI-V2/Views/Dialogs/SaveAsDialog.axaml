@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SaveAsDialog"
+        x:DataType="local:SaveAsDialog"
+        Width="480"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Title="Save As">
+
+    <StackPanel Margin="20" Spacing="16">
+        
+        <!-- Filename Input -->
+        <StackPanel Spacing="8">
+            <TextBlock Text="New filename:" FontWeight="SemiBold"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox Grid.Column="0"
+                         x:Name="FileNameTextBox"
+                         Text="{Binding FileName, Mode=TwoWay}"
+                         Watermark="Enter filename..."/>
+                <TextBlock Grid.Column="1" 
+                           Text="{Binding FileExtension}"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0"
+                           Opacity="0.7"/>
+            </Grid>
+            
+            <!-- Validation warning (filename unchanged or already exists) -->
+            <Border Background="#442222"
+                    CornerRadius="4"
+                    Padding="12,8"
+                    IsVisible="{Binding HasValidationError}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="??" FontSize="14"/>
+                    <TextBlock Text="{Binding ValidationMessage}"
+                               Foreground="#ff6666"
+                               FontSize="12"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Rating Section -->
+        <StackPanel Spacing="8">
+            <controls:RatingButtonsControl x:Name="RatingButtons"
+                                           Rating="{Binding Rating, Mode=TwoWay}"
+                                           ShowLabel="True"
+                                           RatingChanged="OnRatingChanged"/>
+        </StackPanel>
+
+        <!-- Buttons -->
+        <StackPanel Orientation="Horizontal" 
+                    HorizontalAlignment="Right" 
+                    Spacing="8"
+                    Margin="0,8,0,0">
+            <Button Content="Cancel" 
+                    Width="80"
+                    Click="OnCancelClick"/>
+            <Button Content="Save" 
+                    Width="80"
+                    IsDefault="True"
+                    IsEnabled="{Binding CanSave}"
+                    Click="OnSaveClick"/>
+        </StackPanel>
+        
+    </StackPanel>
+</Window>

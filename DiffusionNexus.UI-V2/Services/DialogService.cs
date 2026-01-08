@@ -158,4 +158,13 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
     }
+
+    public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath)
+    {
+        var dialog = new SaveAsDialog()
+            .WithOriginalFile(originalFilePath);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? SaveAsResult.Cancelled();
+    }
 }

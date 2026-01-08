@@ -153,6 +153,11 @@ public sealed class ImageSavedEventArgs : DatasetEventArgs
     /// Whether this was a new file or an overwrite.
     /// </summary>
     public bool IsNewFile => OriginalPath is not null;
+
+    /// <summary>
+    /// Rating to apply to the saved image.
+    /// </summary>
+    public ImageRatingStatus Rating { get; init; } = ImageRatingStatus.Unrated;
 }
 
 /// <summary>
@@ -243,6 +248,22 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
     /// The dataset containing the image.
     /// </summary>
     public required DatasetCardViewModel Dataset { get; init; }
+}
+
+/// <summary>
+/// Event raised when navigation to the Batch Crop/Scale tab is requested.
+/// </summary>
+public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// The dataset to process.
+    /// </summary>
+    public required DatasetCardViewModel Dataset { get; init; }
+
+    /// <summary>
+    /// The version to preselect.
+    /// </summary>
+    public required int Version { get; init; }
 }
 
 /// <summary>
@@ -365,6 +386,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
 
+    /// <summary>
+    /// Raised when navigation to the Batch Crop/Scale tab is requested.
+    /// </summary>
+    event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
+
     #endregion
 
     #region Publish Methods
@@ -383,6 +409,7 @@ public interface IDatasetEventAggregator
     void PublishCaptionChanged(CaptionChangedEventArgs args);
     void PublishImageSelectionChanged(ImageSelectionChangedEventArgs args);
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
+    void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
 
     #endregion
 }
@@ -446,6 +473,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
 
     #endregion
 
@@ -547,6 +577,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToImageEditorRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToBatchCropScaleRequested, args);
     }
 
     #endregion

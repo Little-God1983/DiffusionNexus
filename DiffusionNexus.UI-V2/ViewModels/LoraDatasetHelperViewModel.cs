@@ -16,7 +16,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <list type="bullet">
 /// <item><see cref="DatasetManagementViewModel"/> - Dataset listing, creation, image management</item>
 /// <item><see cref="ImageEditTabViewModel"/> - Image editing with the ImageEditorControl</item>
-/// <item><see cref="AutoScaleCropTabViewModel"/> - Batch image cropping to aspect ratio buckets</item>
+/// <item><see cref="BatchCropScaleTabViewModel"/> - Batch image cropping to aspect ratio buckets</item>
 /// </list>
 /// </para>
 /// 
@@ -58,9 +58,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public ImageEditTabViewModel ImageEdit { get; }
 
     /// <summary>
-    /// ViewModel for the Auto Scale/Crop tab.
+    /// ViewModel for the Batch Crop/Scale tab.
     /// </summary>
-    public AutoScaleCropTabViewModel AutoScaleCrop { get; }
+    public BatchCropScaleTabViewModel BatchCropScale { get; }
 
     #endregion
 
@@ -109,13 +109,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Create tab ViewModels
         DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, videoThumbnailService);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state);
-        AutoScaleCrop = new AutoScaleCropTabViewModel(state);
+        BatchCropScale = new BatchCropScaleTabViewModel(state);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
 
         // Subscribe to navigation events to switch tabs
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
+        _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
     }
 
     /// <summary>
@@ -152,6 +153,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         SelectedTabIndex = 1;
     }
 
+    private void OnNavigateToBatchCropScale(object? sender, NavigateToBatchCropScaleEventArgs e)
+    {
+        // Preselect the dataset and version in BatchCropScale tab
+        BatchCropScale.PreselectDataset(e.Dataset, e.Version);
+        
+        // Switch to Batch Crop/Scale tab (index 3)
+        SelectedTabIndex = 3;
+    }
+
     #endregion
 
     #region DialogService Forwarding
@@ -165,7 +175,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         {
             DatasetManagement.DialogService = DialogService;
             ImageEdit.DialogService = DialogService;
-            AutoScaleCrop.DialogService = DialogService;
+            BatchCropScale.DialogService = DialogService;
         }
     }
 
@@ -195,11 +205,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             // Unsubscribe from events to prevent memory leaks
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
+            _eventAggregator.NavigateToBatchCropScaleRequested -= OnNavigateToBatchCropScale;
 
             // Dispose child ViewModels
             DatasetManagement.Dispose();
             ImageEdit.Dispose();
-            AutoScaleCrop.Dispose();
+            BatchCropScale.Dispose();
         }
 
         _disposed = true;
