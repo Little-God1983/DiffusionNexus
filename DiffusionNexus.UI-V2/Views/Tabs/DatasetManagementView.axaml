@@ -108,16 +108,49 @@
           </ComboBox>
         </StackPanel>
         
-        <!-- Flatten Versions Toggle -->
+        <!-- Filter Controls (Overview Mode) -->
         <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8"
                     IsVisible="{Binding !IsViewingDataset}" VerticalAlignment="Center">
+          <!-- Search by Name/Description -->
+          <TextBox Text="{Binding FilterText, Mode=TwoWay}"
+                   Watermark="Search by name or description..."
+                   Width="250"
+                   Padding="8,6"
+                   Background="#333"
+                   BorderBrush="#444"
+                   BorderThickness="1"
+                   CornerRadius="4"/>
+          
+          <!-- Filter by Type -->
+          <ComboBox ItemsSource="{Binding AvailableTypes}"
+                    SelectedItem="{Binding FilterType, Mode=TwoWay}"
+                    MinWidth="120"
+                    PlaceholderText="All Types">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          
+          <!-- Clear Filters Button -->
+          <Button Content="Clear"
+                  Command="{Binding ClearFiltersCommand}"
+                  IsVisible="{Binding HasActiveFilter}"
+                  Padding="8,6"
+                  ToolTip.Tip="Clear all filters"/>
+        </StackPanel>
+        
+        <!-- Flatten Versions Toggle -->
+        <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding !IsViewingDataset}" VerticalAlignment="Center" Margin="8,0,0,0">
           <ToggleSwitch IsChecked="{Binding FlattenVersions, Mode=TwoWay}"
                         OnContent="Flatten Versions" OffContent="Flatten Versions"
                         ToolTip.Tip="Show individual cards for each version folder"/>
         </StackPanel>
         
         <!-- Backup Status Button -->
-        <Button Grid.Column="6"
+        <Button Grid.Column="7"
                 Content="{Binding BackupStatusText}"
                 Command="{Binding GoToBackupSettingsCommand}"
                 IsVisible="{Binding !IsViewingDataset}"
@@ -127,27 +160,27 @@
                 Margin="8,0,0,0"/>
         
         <!-- Action Buttons -->
-        <Button Grid.Column="7" Content="Open Folder"
+        <Button Grid.Column="8" Content="Open Folder"
                 Command="{Binding OpenContainingFolderCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="8" Content="Batch Crop/Scale"
+        <Button Grid.Column="9" Content="Batch Crop/Scale"
                 Command="{Binding SendToBatchCropScaleCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
                 ToolTip.Tip="Send dataset to Batch Crop/Scale tab"/>
-        <Button Grid.Column="9" Content="Open Viewer"
+        <Button Grid.Column="10" Content="Open Viewer"
                 Command="{Binding OpenViewerCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="10" Content="Export"
+        <Button Grid.Column="11" Content="Export"
                 Command="{Binding ExportDatasetCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="11" Content="+ Add Files"
+        <Button Grid.Column="12" Content="+ Add Files"
                 Command="{Binding AddImagesCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="12" Content="+ New Version"
+        <Button Grid.Column="13" Content="+ New Version"
                 Command="{Binding IncrementVersionCommand}"
                 IsVisible="{Binding IsViewingDataset}"
                 IsEnabled="{Binding ActiveDataset.CanIncrementVersion}" Margin="0,0,8,0"/>
-        <Button Grid.Column="13" Content="Save Captions"
+        <Button Grid.Column="14" Content="Save Captions"
                 Command="{Binding SaveAllCaptionsCommand}"
                 IsVisible="{Binding HasUnsavedChanges}" Margin="0,0,8,0" Background="#2D7D46"/>
         <Button Grid.Column="15" Content="+ New Dataset" 
@@ -180,7 +213,7 @@
 
       <!-- Dataset Overview -->
       <ScrollViewer IsVisible="{Binding !IsViewingDataset}" Padding="16">
-        <ItemsControl ItemsSource="{Binding GroupedDatasets}">
+        <ItemsControl ItemsSource="{Binding FilteredGroupedDatasets}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
               <StackPanel Orientation="Vertical" Spacing="8"/>

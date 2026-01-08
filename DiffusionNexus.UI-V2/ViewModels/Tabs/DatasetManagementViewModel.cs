@@ -62,6 +62,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private DateTimeOffset? _nextBackupTime;
     private bool _isBackupInProgress;
 
+    // Filter fields
+    private string _filterText = string.Empty;
+    private DatasetType? _filterType;
+
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
@@ -243,6 +247,50 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     #endregion
 
+    #region Filter Properties
+
+    /// <summary>
+    /// Text to filter datasets by name or description.
+    /// </summary>
+    public string FilterText
+    {
+        get => _filterText;
+        set
+        {
+            if (SetProperty(ref _filterText, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Type to filter datasets by. Null means show all types.
+    /// </summary>
+    public DatasetType? FilterType
+    {
+        get => _filterType;
+        set
+        {
+            if (SetProperty(ref _filterType, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether any filter is currently active.
+    /// </summary>
+    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue;
+
+    /// <summary>
+    /// Filtered collection of datasets grouped by category.
+    /// </summary>
+    public ObservableCollection<DatasetGroupViewModel> FilteredGroupedDatasets { get; } = [];
+
+    #endregion
+
     #region Collections (Delegated to State)
 
     /// <summary>
@@ -295,6 +343,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
     public IRelayCommand GoToBackupSettingsCommand { get; }
+    public IRelayCommand ClearFiltersCommand { get; }
 
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -351,6 +400,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
         GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
+        ClearFiltersCommand = new RelayCommand(ClearFilters);
 
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -748,6 +798,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
                 GroupedDatasets.Add(uncategorized);
             }
+
+            // Apply filter to populate FilteredGroupedDatasets
+            ApplyFilter();
 
             StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";
         }
@@ -1586,6 +1639,87 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
 
         return exportedCount;
+    }
+
+    #endregion
+
+    #region Filter Methods
+
+    /// <summary>
+    /// Applies the current filter to the grouped datasets.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        FilteredGroupedDatasets.Clear();
+
+        var filterText = _filterText?.Trim() ?? string.Empty;
+        var hasTextFilter = !string.IsNullOrWhiteSpace(filterText);
+        var hasTypeFilter = _filterType.HasValue;
+
+        foreach (var group in GroupedDatasets)
+        {
+            var filteredDatasets = group.Datasets
+                .Where(dataset => MatchesFilter(dataset, filterText, hasTextFilter, hasTypeFilter))
+                .ToList();
+
+            if (filteredDatasets.Count > 0)
+            {
+                var filteredGroup = new DatasetGroupViewModel
+                {
+                    CategoryId = group.CategoryId,
+                    Name = group.Name,
+                    Description = group.Description,
+                    SortOrder = group.SortOrder
+                };
+
+                foreach (var dataset in filteredDatasets)
+                {
+                    filteredGroup.Datasets.Add(dataset);
+                }
+
+                FilteredGroupedDatasets.Add(filteredGroup);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasActiveFilter));
+    }
+
+    /// <summary>
+    /// Checks if a dataset matches the current filter criteria.
+    /// </summary>
+    private bool MatchesFilter(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
+    {
+        // Check type filter
+        if (hasTypeFilter && dataset.Type != _filterType)
+        {
+            return false;
+        }
+
+        // Check text filter (matches name or description)
+        if (hasTextFilter)
+        {
+            var matchesName = dataset.Name?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+            var matchesDescription = dataset.Description?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+
+            if (!matchesName && !matchesDescription)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Clears all active filters.
+    /// </summary>
+    public void ClearFilters()
+    {
+        _filterText = string.Empty;
+        _filterType = null;
+        OnPropertyChanged(nameof(FilterText));
+        OnPropertyChanged(nameof(FilterType));
+        ApplyFilter();
     }
 
     #endregion
