@@ -104,10 +104,8 @@
                           ToolTip.Tip="Color Balance"/>
             <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Brightness &amp; Contrast"/>
-            <Button Content="Rm BG" 
-                    Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
-                    Padding="12,6" 
-                    ToolTip.Tip="Remove Background using AI (RMBG-1.4)"/>
+            <ToggleButton Content="Rm BG" IsChecked="{Binding ImageEditor.IsBackgroundRemovalPanelOpen, Mode=TwoWay}" Padding="12,6" 
+                          ToolTip.Tip="Remove Background using AI (RMBG-1.4)"/>
             <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.IsBackgroundFillPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Fill transparent background with solid color"/>
           </StackPanel>
@@ -294,31 +292,9 @@
           </StackPanel>
           
           <!-- Background Removal Panel -->
-          <StackPanel Spacing="8">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsBackgroundRemovalPanelOpen}">
             <TextBlock Text="Background Removal" FontWeight="SemiBold" FontSize="14"/>
-            <Border Background="#2A2A2A" CornerRadius="4" Padding="8"
-                    BorderThickness="2"
-                    Classes.attentionNeeded="{Binding ImageEditor.ShowBackgroundRemovalAttention}">
-              <Border.Styles>
-                <Style Selector="Border.attentionNeeded">
-                  <Style.Animations>
-                    <Animation Duration="0:0:0.5" IterationCount="6">
-                      <KeyFrame Cue="0%">
-                        <Setter Property="BorderBrush" Value="#D9534F"/>
-                      </KeyFrame>
-                      <KeyFrame Cue="50%">
-                        <Setter Property="BorderBrush" Value="#FF4444"/>
-                      </KeyFrame>
-                      <KeyFrame Cue="100%">
-                        <Setter Property="BorderBrush" Value="#D9534F"/>
-                      </KeyFrame>
-                    </Animation>
-                  </Style.Animations>
-                </Style>
-                <Style Selector="Border:not(.attentionNeeded)">
-                  <Setter Property="BorderBrush" Value="Transparent"/>
-                </Style>
-              </Border.Styles>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
                 <!-- Model Status -->
                 <StackPanel Spacing="4">
@@ -357,6 +333,13 @@
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                 <TextBlock Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
                            FontSize="9" Opacity="0.4" TextWrapping="Wrap"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Action Buttons -->
+                <Button Content="Apply" Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
+                        Background="#2D7D46" HorizontalAlignment="Stretch"
+                        IsEnabled="{Binding ImageEditor.IsBackgroundRemovalModelReady}"/>
               </StackPanel>
             </Border>
           </StackPanel>

@@ -59,10 +59,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private float _contrast;
 
     // Background Removal fields
+    private bool _isBackgroundRemovalPanelOpen;
     private bool _isBackgroundRemovalBusy;
     private string? _backgroundRemovalStatus;
     private int _backgroundRemovalProgress;
-    private bool _showBackgroundRemovalAttention;
 
     // Background Fill fields
     private bool _isBackgroundFillPanelOpen;
@@ -513,6 +513,26 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Background Removal Properties
 
+    /// <summary>Whether the background removal panel is open.</summary>
+    public bool IsBackgroundRemovalPanelOpen
+    {
+        get => _isBackgroundRemovalPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isBackgroundRemovalPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when background removal is activated
+                    DeactivateOtherTools(nameof(IsBackgroundRemovalPanelOpen));
+                }
+                RemoveBackgroundCommand.NotifyCanExecuteChanged();
+                DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
     /// <summary>Whether background removal is currently in progress.</summary>
     public bool IsBackgroundRemovalBusy
     {
@@ -558,13 +578,6 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Whether GPU acceleration is available for background removal.</summary>
     public bool IsBackgroundRemovalGpuAvailable => _backgroundRemovalService?.IsGpuAvailable ?? false;
 
-    /// <summary>Whether to show the attention animation on the background removal panel.</summary>
-    public bool ShowBackgroundRemovalAttention
-    {
-        get => _showBackgroundRemovalAttention;
-        private set => SetProperty(ref _showBackgroundRemovalAttention, value);
-    }
-
     /// <summary>Refreshes the background removal model status properties.</summary>
     public void RefreshBackgroundRemovalModelStatus()
     {
@@ -576,7 +589,6 @@ public partial class ImageEditorViewModel : ObservableObject
         // Clear attention flag when model becomes ready
         if (IsBackgroundRemovalModelReady)
         {
-            ShowBackgroundRemovalAttention = false;
         }
     }
 
@@ -969,6 +981,12 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
         }
 
+        if (exceptTool != nameof(IsBackgroundRemovalPanelOpen) && _isBackgroundRemovalPanelOpen)
+        {
+            _isBackgroundRemovalPanelOpen = false;
+            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
+        }
+
         if (exceptTool != nameof(IsBackgroundFillPanelOpen) && _isBackgroundFillPanelOpen)
         {
             _isBackgroundFillPanelOpen = false;
@@ -1122,6 +1140,13 @@ public partial class ImageEditorViewModel : ObservableObject
             ResetBrightnessContrastSliders();
             CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
             OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
+        }
+
+        // Close background removal panel
+        if (_isBackgroundRemovalPanelOpen)
+        {
+            _isBackgroundRemovalPanelOpen = false;
+            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
         }
 
         // Close background fill panel and cancel any preview
@@ -1399,24 +1424,12 @@ public partial class ImageEditorViewModel : ObservableObject
             return;
         }
 
-        // Close other tools when executing background removal
-        CloseAllTools();
-
         // Check if model is ready - if not, notify user to download
         if (!IsBackgroundRemovalModelReady)
         {
-            StatusMessage = "Please download the RMBG-1.4 model first (see Background Removal panel)";
-            // Toggle off then on to re-trigger animation if already showing
-            _showBackgroundRemovalAttention = false;
-            OnPropertyChanged(nameof(ShowBackgroundRemovalAttention));
-            // Small delay to allow animation to reset
-            await Task.Delay(50);
-            ShowBackgroundRemovalAttention = true;
+            StatusMessage = "Please download the RMBG-1.4 model first";
             return;
         }
-
-        // Clear attention flag when actually executing
-        ShowBackgroundRemovalAttention = false;
 
         IsBackgroundRemovalBusy = true;
         BackgroundRemovalStatus = "Preparing image...";
