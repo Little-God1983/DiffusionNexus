@@ -59,9 +59,16 @@ public partial class ImageEditorViewModel : ObservableObject
     private float _contrast;
 
     // Background Removal fields
+    private bool _isBackgroundRemovalPanelOpen;
     private bool _isBackgroundRemovalBusy;
     private string? _backgroundRemovalStatus;
     private int _backgroundRemovalProgress;
+
+    // Background Fill fields
+    private bool _isBackgroundFillPanelOpen;
+    private byte _backgroundFillRed = 255;
+    private byte _backgroundFillGreen = 255;
+    private byte _backgroundFillBlue = 255;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -506,6 +513,26 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Background Removal Properties
 
+    /// <summary>Whether the background removal panel is open.</summary>
+    public bool IsBackgroundRemovalPanelOpen
+    {
+        get => _isBackgroundRemovalPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isBackgroundRemovalPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when background removal is activated
+                    DeactivateOtherTools(nameof(IsBackgroundRemovalPanelOpen));
+                }
+                RemoveBackgroundCommand.NotifyCanExecuteChanged();
+                DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
     /// <summary>Whether background removal is currently in progress.</summary>
     public bool IsBackgroundRemovalBusy
     {
@@ -558,6 +585,143 @@ public partial class ImageEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(IsBackgroundRemovalModelMissing));
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+        
+        // Clear attention flag when model becomes ready
+        if (IsBackgroundRemovalModelReady)
+        {
+        }
+    }
+
+    #endregion
+
+    #region Background Fill Properties
+
+    /// <summary>Whether the background fill panel is open.</summary>
+    public bool IsBackgroundFillPanelOpen
+    {
+        get => _isBackgroundFillPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isBackgroundFillPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when background fill is activated
+                    DeactivateOtherTools(nameof(IsBackgroundFillPanelOpen));
+                    // Request initial preview
+                    RequestBackgroundFillPreview();
+                }
+                else
+                {
+                    // Cancel preview when panel closes
+                    CancelBackgroundFillPreviewRequested?.Invoke(this, EventArgs.Empty);
+                }
+                ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Red component of the fill color (0-255).</summary>
+    public byte BackgroundFillRed
+    {
+        get => _backgroundFillRed;
+        set
+        {
+            if (SetProperty(ref _backgroundFillRed, value))
+            {
+                OnPropertyChanged(nameof(BackgroundFillColor));
+                OnPropertyChanged(nameof(BackgroundFillColorHex));
+                RequestBackgroundFillPreview();
+            }
+        }
+    }
+
+    /// <summary>Green component of the fill color (0-255).</summary>
+    public byte BackgroundFillGreen
+    {
+        get => _backgroundFillGreen;
+        set
+        {
+            if (SetProperty(ref _backgroundFillGreen, value))
+            {
+                OnPropertyChanged(nameof(BackgroundFillColor));
+                OnPropertyChanged(nameof(BackgroundFillColorHex));
+                RequestBackgroundFillPreview();
+            }
+        }
+    }
+
+    /// <summary>Blue component of the fill color (0-255).</summary>
+    public byte BackgroundFillBlue
+    {
+        get => _backgroundFillBlue;
+        set
+        {
+            if (SetProperty(ref _backgroundFillBlue, value))
+            {
+                OnPropertyChanged(nameof(BackgroundFillColor));
+                OnPropertyChanged(nameof(BackgroundFillColorHex));
+                RequestBackgroundFillPreview();
+            }
+        }
+    }
+
+    /// <summary>The current fill color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color BackgroundFillColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_backgroundFillRed, _backgroundFillGreen, _backgroundFillBlue);
+        set
+        {
+            if (_backgroundFillRed != value.R || _backgroundFillGreen != value.G || _backgroundFillBlue != value.B)
+            {
+                _backgroundFillRed = value.R;
+                _backgroundFillGreen = value.G;
+                _backgroundFillBlue = value.B;
+                OnPropertyChanged(nameof(BackgroundFillRed));
+                OnPropertyChanged(nameof(BackgroundFillGreen));
+                OnPropertyChanged(nameof(BackgroundFillBlue));
+                OnPropertyChanged(nameof(BackgroundFillColor));
+                OnPropertyChanged(nameof(BackgroundFillColorHex));
+                RequestBackgroundFillPreview();
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the fill color.</summary>
+    public string BackgroundFillColorHex => $"#{_backgroundFillRed:X2}{_backgroundFillGreen:X2}{_backgroundFillBlue:X2}";
+
+    /// <summary>Gets the current background fill settings.</summary>
+    public ImageEditor.BackgroundFillSettings CurrentBackgroundFillSettings =>
+        new(_backgroundFillRed, _backgroundFillGreen, _backgroundFillBlue);
+
+    private void RequestBackgroundFillPreview()
+    {
+        if (IsBackgroundFillPanelOpen && HasImage)
+        {
+            BackgroundFillPreviewRequested?.Invoke(this, CurrentBackgroundFillSettings);
+        }
+    }
+
+    /// <summary>Sets the fill color from a preset.</summary>
+    public void SetBackgroundFillPreset(string preset)
+    {
+        var settings = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ImageEditor.BackgroundFillSettings.Presets.White,
+            "BLACK" => ImageEditor.BackgroundFillSettings.Presets.Black,
+            "GRAY" or "GREY" => ImageEditor.BackgroundFillSettings.Presets.Gray,
+            "GREEN" => ImageEditor.BackgroundFillSettings.Presets.Green,
+            "BLUE" => ImageEditor.BackgroundFillSettings.Presets.Blue,
+            _ => null
+        };
+
+        if (settings is not null)
+        {
+            BackgroundFillRed = settings.Red;
+            BackgroundFillGreen = settings.Green;
+            BackgroundFillBlue = settings.Blue;
+        }
     }
 
     #endregion
@@ -706,6 +870,9 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ResetBrightnessContrastCommand { get; }
     public IAsyncRelayCommand RemoveBackgroundCommand { get; }
     public IAsyncRelayCommand DownloadBackgroundRemovalModelCommand { get; }
+    public IRelayCommand ToggleBackgroundFillCommand { get; }
+    public IRelayCommand ApplyBackgroundFillCommand { get; }
+    public IRelayCommand<string> SetBackgroundFillPresetCommand { get; }
 
     #endregion
 
@@ -761,6 +928,22 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalCompleted;
 
     /// <summary>
+    /// Event raised to request background fill preview.
+    /// The View should apply the preview to the image editor.
+    /// </summary>
+    public event EventHandler<ImageEditor.BackgroundFillSettings>? BackgroundFillPreviewRequested;
+
+    /// <summary>
+    /// Event raised to cancel background fill preview.
+    /// </summary>
+    public event EventHandler? CancelBackgroundFillPreviewRequested;
+
+    /// <summary>
+    /// Event raised to apply background fill permanently.
+    /// </summary>
+    public event EventHandler<ImageEditor.BackgroundFillSettings>? ApplyBackgroundFillRequested;
+
+    /// <summary>
     /// Event raised when an image save completes successfully.
     /// The string parameter contains the saved file path.
     /// </summary>
@@ -798,6 +981,19 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
         }
 
+        if (exceptTool != nameof(IsBackgroundRemovalPanelOpen) && _isBackgroundRemovalPanelOpen)
+        {
+            _isBackgroundRemovalPanelOpen = false;
+            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
+        }
+
+        if (exceptTool != nameof(IsBackgroundFillPanelOpen) && _isBackgroundFillPanelOpen)
+        {
+            _isBackgroundFillPanelOpen = false;
+            CancelBackgroundFillPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBackgroundFillPanelOpen));
+        }
+
         // Add more tools here as they are added in the future
     }
 
@@ -816,6 +1012,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+        ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
+        ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -866,10 +1064,15 @@ public partial class ImageEditorViewModel : ObservableObject
         // Background Removal commands
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
         DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
+
+        // Background Fill commands
+        ToggleBackgroundFillCommand = new RelayCommand(ExecuteToggleBackgroundFill, () => HasImage);
+        ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
+        SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
     }
 
     private bool CanExecuteRemoveBackground() => 
-        HasImage && IsBackgroundRemovalModelReady && !IsBackgroundRemovalBusy;
+        HasImage && !IsBackgroundRemovalBusy;
 
     private bool CanExecuteDownloadModel() => 
         IsBackgroundRemovalModelMissing && !IsBackgroundRemovalBusy;
@@ -939,7 +1142,22 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
         }
 
-        // Add more tools here as they are added in the future
+        // Close background removal panel
+        if (_isBackgroundRemovalPanelOpen)
+        {
+            _isBackgroundRemovalPanelOpen = false;
+            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
+        }
+
+        // Close background fill panel and cancel any preview
+        if (_isBackgroundFillPanelOpen)
+        {
+            _isBackgroundFillPanelOpen = false;
+            CancelBackgroundFillPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBackgroundFillPanelOpen));
+        }
+
+        NotifyToolCommandsCanExecuteChanged();
     }
 
     /// <summary>Updates image dimensions from the editor control.</summary>
@@ -1083,7 +1301,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
-
+    
     #region Transform Command Implementations
 
     private void ExecuteRotateLeft()
@@ -1185,6 +1403,8 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteResetBrightnessContrast()
     {
         ResetBrightnessContrastSliders();
+        // Clear the preview to show the original image
+        CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
         StatusMessage = "Reset brightness and contrast";
     }
 
@@ -1203,6 +1423,13 @@ public partial class ImageEditorViewModel : ObservableObject
         if (_backgroundRemovalService is null)
         {
             StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsBackgroundRemovalModelReady)
+        {
+            StatusMessage = "Please download the RMBG-1.4 model first";
             return;
         }
 
@@ -1322,6 +1549,38 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Background Fill Command Implementations
+
+    private void ExecuteToggleBackgroundFill()
+    {
+        IsBackgroundFillPanelOpen = !IsBackgroundFillPanelOpen;
+        if (IsBackgroundFillPanelOpen)
+        {
+            StatusMessage = "Background Fill: Select a color and click Apply";
+        }
+        else
+        {
+            StatusMessage = null;
+        }
+        ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ExecuteApplyBackgroundFill()
+    {
+        var settings = CurrentBackgroundFillSettings;
+        ApplyBackgroundFillRequested?.Invoke(this, settings);
+        StatusMessage = "Background filled";
+        // Keep panel open for additional fills if needed
+    }
+
+    /// <summary>Called when background fill is successfully applied.</summary>
+    public void OnBackgroundFillApplied()
+    {
+        StatusMessage = "Background filled";
+    }
+
+    #endregion
+
     #region Rating Command Implementations
 
     private void ExecuteMarkApproved()
@@ -1430,6 +1689,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+        ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
+        ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 
