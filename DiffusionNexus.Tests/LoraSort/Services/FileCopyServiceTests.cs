@@ -1,5 +1,6 @@
 using FluentAssertions;
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Enums;
 using DiffusionNexus.Service.Services;
 using System.Collections.ObjectModel;
 

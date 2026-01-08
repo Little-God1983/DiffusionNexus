@@ -4,6 +4,7 @@
  */
 using Serilog;
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Enums;
 
 namespace DiffusionNexus.Service.Services
 {

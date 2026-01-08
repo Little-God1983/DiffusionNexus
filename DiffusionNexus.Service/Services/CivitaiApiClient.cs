@@ -6,8 +6,15 @@ namespace DiffusionNexus.Service.Services
 {
     /// <summary>
     /// Default implementation for communicating with the Civitai API.
+    /// Returns raw JSON strings for manual parsing.
     /// </summary>
+    /// <remarks>
+    /// Consider using <see cref="DiffusionNexus.Civitai.CivitaiClient"/> for strongly-typed responses.
+    /// </remarks>
+    [Obsolete("Use DiffusionNexus.Civitai.CivitaiClient for strongly-typed API access. This class will be removed in a future version.")]
+#pragma warning disable CS0618 // Type or member is obsolete
     public class CivitaiApiClient : ICivitaiApiClient
+#pragma warning restore CS0618
     {
         private readonly HttpClient _httpClient;
 

@@ -1,7 +1,8 @@
 using System.Text.Json;
+using DiffusionNexus.Service.Enums;
 using DiffusionNexus.Service.Helper;
 
-namespace ModelMover.Core.Metadata;
+namespace DiffusionNexus.Service.Metadata;
 
 /// <summary>
 /// Utility helpers for parsing metadata common to multiple providers.

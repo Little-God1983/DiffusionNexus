@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DiffusionNexus.Civitai\DiffusionNexus.Civitai.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj" />

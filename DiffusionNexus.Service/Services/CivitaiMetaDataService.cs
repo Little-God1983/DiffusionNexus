@@ -2,21 +2,30 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using DiffusionNexus.Service.Enums;
 using Serilog;
 
 namespace DiffusionNexus.Service.Services
 {
-    public class CivitaiMetaDataService
+    /// <summary>
+    /// Service for fetching metadata from Civitai API using raw JSON parsing.
+    /// </summary>
+    /// <remarks>
+    /// Consider using <see cref="TypedCivitaiMetadataProvider"/> for new code,
+    /// which uses the strongly-typed <see cref="DiffusionNexus.Civitai.ICivitaiClient"/>.
+    /// </remarks>
+#pragma warning disable CS0618 // Type or member is obsolete - using legacy ICivitaiApiClient
+    public class CivitaiMetaDataService : ICivitaiMetaDataService
     {
         private readonly ICivitaiApiClient _apiClient;
         private readonly string _apiKey;
 
-        public CivitaiMetaDataService() 
+        public CivitaiMetaDataService()
             : this(new CivitaiApiClient(new HttpClient()), string.Empty)
         {
         }
 
-        public CivitaiMetaDataService(string apiKey) : this(new CivitaiApiClient(new HttpClient()), apiKey) 
+        public CivitaiMetaDataService(string apiKey) : this(new CivitaiApiClient(new HttpClient()), apiKey)
         {
         }
 
@@ -25,28 +34,29 @@ namespace DiffusionNexus.Service.Services
             _apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
             _apiKey = apiKey;
         }
-        /// <summary>
-        /// Extracts JSON metadata from a safetensors file, retrieves the Civitai URL (from "__metadata__" or "modelUrl"),
-        /// extracts the model id from that URL, constructs the API endpoint URL, and calls the Civitai API to retrieve
-        /// full model information.
-        /// </summary>
-        /// <param name="safetensorsFilePath">Full path to the safetensors file.</param>
-        /// <param name="apiKey">
-        /// (Optional) Your Civitai API key; if provided, it will be used in the Authorization header.
-        /// </param>
-        /// <returns>A JSON string containing the model information from the Civitai API.</returns>
-        public Task<string> GetModelVersionInformationFromCivitaiAsync(string sha256Hash)
+#pragma warning restore CS0618
+
+        /// <inheritdoc/>
+        public Task<string> GetModelVersionInformationFromCivitaiAsync(string sha256Hash, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+#pragma warning disable CS0618 // Using obsolete API client
             return _apiClient.GetModelVersionByHashAsync(sha256Hash, _apiKey);
+#pragma warning restore CS0618
         }
 
-        public async Task<string> GetModelInformationAsync(string safetensorsFilePath)
+        /// <inheritdoc/>
+        public async Task<string> GetModelInformationAsync(string safetensorsFilePath, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string metadataJson = ExtractMetadata(safetensorsFilePath);
             string civitaiUrl = ExtractModelUrl(metadataJson);
             string modelId = ParseModelId(civitaiUrl);
 
+            cancellationToken.ThrowIfCancellationRequested();
+#pragma warning disable CS0618 // Using obsolete API client
             return await _apiClient.GetModelAsync(modelId, _apiKey);
+#pragma warning restore CS0618
         }
 
         /// <summary>
@@ -56,32 +66,31 @@ namespace DiffusionNexus.Service.Services
         /// </summary>
         /// <param name="filePath">Path to the safetensors file.</param>
         /// <returns>A UTF-8 encoded string containing the JSON metadata.</returns>
-        private string ExtractMetadata(string filePath)
+        private static string ExtractMetadata(string filePath)
         {
-            using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+
+            // Read the first 8 bytes (header length)
+            byte[] lengthBytes = new byte[8];
+            int bytesRead = fs.Read(lengthBytes, 0, 8);
+            if (bytesRead < 8)
             {
-                // Read the first 8 bytes (header length)
-                byte[] lengthBytes = new byte[8];
-                int bytesRead = fs.Read(lengthBytes, 0, 8);
-                if (bytesRead < 8)
-                {
-                    throw new Exception("File is too short to contain a valid header length.");
-                }
-
-                // Convert the first 8 bytes into a UInt64 (little-endian)
-                ulong headerLength = BitConverter.ToUInt64(lengthBytes, 0);
-
-                // Read the JSON header bytes.
-                byte[] headerBytes = new byte[headerLength];
-                bytesRead = fs.Read(headerBytes, 0, (int)headerLength);
-                if ((ulong)bytesRead < headerLength)
-                {
-                    throw new Exception("File is too short to contain the full header.");
-                }
-
-                // Convert the header bytes into a UTF8 string.
-                return Encoding.UTF8.GetString(headerBytes);
+                throw new InvalidOperationException("File is too short to contain a valid header length.");
             }
+
+            // Convert the first 8 bytes into a UInt64 (little-endian)
+            ulong headerLength = BitConverter.ToUInt64(lengthBytes, 0);
+
+            // Read the JSON header bytes.
+            byte[] headerBytes = new byte[headerLength];
+            bytesRead = fs.Read(headerBytes, 0, (int)headerLength);
+            if ((ulong)bytesRead < headerLength)
+            {
+                throw new InvalidOperationException("File is too short to contain the full header.");
+            }
+
+            // Convert the header bytes into a UTF8 string.
+            return Encoding.UTF8.GetString(headerBytes);
         }
 
         private static string ExtractModelUrl(string metadataJson)
@@ -114,23 +123,30 @@ namespace DiffusionNexus.Service.Services
             return match.Groups[1].Value;
         }
 
+        /// <inheritdoc/>
         public string GetBaseModelName(string modelInfoApiResponse)
         {
             using JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse);
             return doc.RootElement.GetProperty("baseModel").ToString();
         }
 
+        /// <inheritdoc/>
         public string GetModelId(string modelInfoApiResponse)
         {
             using JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse);
             return doc.RootElement.GetProperty("modelId").ToString();
         }
 
-        public Task<string> GetModelInformationFromCivitaiAsync(string modelId)
+        /// <inheritdoc/>
+        public Task<string> GetModelInformationFromCivitaiAsync(string modelId, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+#pragma warning disable CS0618 // Using obsolete API client
             return _apiClient.GetModelAsync(modelId, _apiKey);
+#pragma warning restore CS0618
         }
 
+        /// <inheritdoc/>
         public List<string> GetTagsFromModelInfo(string modelInfoApiResponse)
         {
             var tags = new List<string>();
@@ -157,58 +173,56 @@ namespace DiffusionNexus.Service.Services
             return tags;
         }
 
+        /// <inheritdoc/>
         public DiffusionTypes GetModelType(string modelInfoApiResponse)
         {
-            using (JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse))
+            using JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse);
+            JsonElement root = doc.RootElement;
+
+            // 1. Check if `type` is directly in the root
+            if (root.TryGetProperty("type", out JsonElement typeElement) &&
+                typeElement.ValueKind == JsonValueKind.String)
             {
-                JsonElement root = doc.RootElement;
+                string? typeString = typeElement.GetString()?.Replace(" ", "").ToUpper();
 
-                // 1. Check if `type` is directly in the root
-                if (root.TryGetProperty("type", out JsonElement typeElement) &&
-                    typeElement.ValueKind == JsonValueKind.String)
+                if (typeString != null && Enum.TryParse(typeString, true, out DiffusionTypes modelType))
                 {
-                    string? typeString = typeElement.GetString()?.Replace(" ", "").ToUpper();
-
-                    if (typeString != null && Enum.TryParse(typeString, true, out DiffusionTypes modelType))
-                    {
-                        return modelType;
-                    }
+                    return modelType;
                 }
-
-                // 2. Check if `type` is inside `model`
-                if (root.TryGetProperty("model", out JsonElement modelElement) &&
-                    modelElement.TryGetProperty("type", out JsonElement nestedTypeElement) &&
-                    nestedTypeElement.ValueKind == JsonValueKind.String)
-                {
-                    string? nestedTypeString = nestedTypeElement.GetString()?.Replace(" ", "").ToUpper();
-
-                    if (nestedTypeString != null && Enum.TryParse(nestedTypeString, true, out DiffusionTypes nestedModelType))
-                    {
-                        return nestedModelType;
-                    }
-                }   
             }
-            return DiffusionTypes.UNASSIGNED; // Default if no match is found
+
+            // 2. Check if `type` is inside `model`
+            if (root.TryGetProperty("model", out JsonElement modelElement) &&
+                modelElement.TryGetProperty("type", out JsonElement nestedTypeElement) &&
+                nestedTypeElement.ValueKind == JsonValueKind.String)
+            {
+                string? nestedTypeString = nestedTypeElement.GetString()?.Replace(" ", "").ToUpper();
+
+                if (nestedTypeString != null && Enum.TryParse(nestedTypeString, true, out DiffusionTypes nestedModelType))
+                {
+                    return nestedModelType;
+                }
+            }
+
+            return DiffusionTypes.UNASSIGNED;
         }
 
-        internal string? GetModelVersionName(string modelInfoApiResponse)
+        /// <summary>
+        /// Extracts the model version name from a Civitai API response.
+        /// </summary>
+        /// <param name="modelInfoApiResponse">The raw JSON response.</param>
+        /// <returns>The version name, or null if not found.</returns>
+        internal static string? GetModelVersionName(string modelInfoApiResponse)
         {
-            using (JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse))
+            using JsonDocument doc = JsonDocument.Parse(modelInfoApiResponse);
+            JsonElement root = doc.RootElement;
+
+            if (root.TryGetProperty("name", out JsonElement nameElement) &&
+                nameElement.ValueKind == JsonValueKind.String)
             {
-                JsonElement root = doc.RootElement;
-
-                // Check if `name` is directly in the root
-                if (root.TryGetProperty("name", out JsonElement nameElement) &&
-                    nameElement.ValueKind == JsonValueKind.String)
-                {
-                    string? nameString = nameElement.GetString()?.Replace(" ", "").ToUpper();
-
-                    if (!string.IsNullOrEmpty(nameString))
-                    {
-                        return nameString; // Return the string directly instead of using Enum.TryParse
-                    }
-                }
+                return nameElement.GetString();
             }
+
             return null;
         }
     }

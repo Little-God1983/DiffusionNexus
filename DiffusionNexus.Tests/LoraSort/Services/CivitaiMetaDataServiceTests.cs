@@ -1,5 +1,6 @@
 using Moq;
 using FluentAssertions;
+using DiffusionNexus.Service.Enums;
 using DiffusionNexus.Service.Services;
 
 namespace DiffusionNexus.Tests.LoraSort.Services;
