@@ -263,7 +263,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand OpenContainingFolderCommand { get; }
     public IAsyncRelayCommand OpenViewerCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
-    public IRelayCommand SendToAutoScaleCropCommand { get; }
+    public IRelayCommand SendToBatchCropScaleCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
 
@@ -316,7 +316,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         OpenContainingFolderCommand = new RelayCommand(OpenContainingFolder);
         OpenViewerCommand = new AsyncRelayCommand(OpenViewerAsync, () => !HasNoImages);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
-        SendToAutoScaleCropCommand = new RelayCommand(SendToAutoScaleCrop);
+        SendToBatchCropScaleCommand = new RelayCommand(SendToBatchCropScale);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
 
@@ -884,17 +884,17 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         StatusMessage = $"Sent to Image Edit: {image.FullFileName}";
     }
 
-    private void SendToAutoScaleCrop()
+    private void SendToBatchCropScale()
     {
         if (ActiveDataset is null) return;
 
-        _eventAggregator.PublishNavigateToAutoScaleCrop(new NavigateToAutoScaleCropEventArgs
+        _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
         {
             Dataset = ActiveDataset,
             Version = ActiveDataset.CurrentVersion
         });
 
-        StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Auto Scale/Crop";
+        StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Batch Crop/Scale";
     }
 
     private async Task OpenImageViewerAsync(DatasetImageViewModel? image)

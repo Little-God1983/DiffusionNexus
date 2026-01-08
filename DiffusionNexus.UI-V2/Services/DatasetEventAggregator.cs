@@ -246,9 +246,9 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
 }
 
 /// <summary>
-/// Event raised when navigation to the Auto Scale/Crop tab is requested.
+/// Event raised when navigation to the Batch Crop/Scale tab is requested.
 /// </summary>
-public sealed class NavigateToAutoScaleCropEventArgs : DatasetEventArgs
+public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 {
     /// <summary>
     /// The dataset to process.
@@ -382,9 +382,9 @@ public interface IDatasetEventAggregator
     event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
 
     /// <summary>
-    /// Raised when navigation to the Auto Scale/Crop tab is requested.
+    /// Raised when navigation to the Batch Crop/Scale tab is requested.
     /// </summary>
-    event EventHandler<NavigateToAutoScaleCropEventArgs>? NavigateToAutoScaleCropRequested;
+    event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
 
     #endregion
 
@@ -404,7 +404,7 @@ public interface IDatasetEventAggregator
     void PublishCaptionChanged(CaptionChangedEventArgs args);
     void PublishImageSelectionChanged(ImageSelectionChangedEventArgs args);
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
-    void PublishNavigateToAutoScaleCrop(NavigateToAutoScaleCropEventArgs args);
+    void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
 
     #endregion
 }
@@ -470,7 +470,7 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     public event EventHandler<NavigateToImageEditorEventArgs>? NavigateToImageEditorRequested;
 
     /// <inheritdoc/>
-    public event EventHandler<NavigateToAutoScaleCropEventArgs>? NavigateToAutoScaleCropRequested;
+    public event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
 
     #endregion
 
@@ -575,10 +575,10 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     }
 
     /// <inheritdoc/>
-    public void PublishNavigateToAutoScaleCrop(NavigateToAutoScaleCropEventArgs args)
+    public void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args)
     {
         ArgumentNullException.ThrowIfNull(args);
-        RaiseEvent(NavigateToAutoScaleCropRequested, args);
+        RaiseEvent(NavigateToBatchCropScaleRequested, args);
     }
 
     #endregion

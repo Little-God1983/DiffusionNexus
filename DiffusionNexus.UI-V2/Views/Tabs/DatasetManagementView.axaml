@@ -25,7 +25,7 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
         
         <!-- Back to Overview Button -->
         <Button Grid.Column="0"
@@ -122,10 +122,10 @@
         <Button Grid.Column="7" Content="Open Folder"
                 Command="{Binding OpenContainingFolderCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="8" Content="Auto Scale/Crop"
-                Command="{Binding SendToAutoScaleCropCommand}"
+        <Button Grid.Column="8" Content="Batch Crop/Scale"
+                Command="{Binding SendToBatchCropScaleCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
-                ToolTip.Tip="Send dataset to Auto Scale/Crop tab"/>
+                ToolTip.Tip="Send dataset to Batch Crop/Scale tab"/>
         <Button Grid.Column="9" Content="Open Viewer"
                 Command="{Binding OpenViewerCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>

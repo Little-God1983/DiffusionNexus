@@ -112,12 +112,12 @@ public partial class BucketOption : ObservableObject
 }
 
 /// <summary>
-/// ViewModel for the Auto Scale/Crop tab.
+/// ViewModel for the Batch Crop/Scale tab.
 /// Handles batch cropping images to standard aspect ratio buckets for LoRA training.
 /// Supports both folder-based and dataset-based source selection.
 /// Supports both cropping (remove pixels) and padding (add canvas) fit modes.
 /// </summary>
-public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
+public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 {
     private readonly IImageCropperService _cropperService;
     private readonly IDatasetState? _state;
@@ -398,9 +398,9 @@ public partial class AutoScaleCropTabViewModel : ObservableObject, IDisposable
     #region Constructor
 
     /// <summary>
-    /// Creates a new AutoScaleCropTabViewModel with dataset state support.
+    /// Creates a new BatchCropScaleTabViewModel with dataset state support.
     /// </summary>
-    public AutoScaleCropTabViewModel(IDatasetState? state = null)
+    public BatchCropScaleTabViewModel(IDatasetState? state = null)
     {
         _state = state;
         _cropperService = new ImageCropperService();

@@ -36,9 +36,9 @@
         </Grid>
       </TabItem>
 
-      <!-- Auto Scale/Crop Tab -->
-      <TabItem Header="Auto Scale/Crop">
-        <views:AutoScaleCropView DataContext="{Binding AutoScaleCrop}"/>
+      <!-- Batch Crop/Scale Tab -->
+      <TabItem Header="Batch Crop/Scale">
+        <views:BatchCropScaleView DataContext="{Binding BatchCropScale}"/>
       </TabItem>
 
     </TabControl>

@@ -14,14 +14,14 @@ using Xunit;
 namespace DiffusionNexus.Tests.Autocropper;
 
 /// <summary>
-/// Unit tests for AutoScaleCropTabViewModel.
+/// Unit tests for BatchCropScaleTabViewModel.
 /// Tests ViewModel logic, property bindings, and command behavior.
 /// </summary>
-public class AutoScaleCropTabViewModelTests
+public class BatchCropScaleTabViewModelTests
 {
     private readonly Mock<IImageCropperService> _mockCropperService;
 
-    public AutoScaleCropTabViewModelTests()
+    public BatchCropScaleTabViewModelTests()
     {
         _mockCropperService = new Mock<IImageCropperService>();
         
@@ -31,7 +31,7 @@ public class AutoScaleCropTabViewModelTests
             .Returns(new FolderScanResult(0, 0, []));
     }
 
-    private AutoScaleCropTabViewModel CreateViewModel() => new(null);
+    private BatchCropScaleTabViewModel CreateViewModel() => new(null);
 
     #region Constructor Tests
 
