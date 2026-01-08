@@ -298,7 +298,70 @@
           
           <!-- Background Removal Panel -->
           <StackPanel Spacing="8">
-            <!-- ...existing Background Removal content... -->
+            <TextBlock Text="Background Removal" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8"
+                    BorderThickness="2"
+                    Classes.attentionNeeded="{Binding ImageEditor.ShowBackgroundRemovalAttention}">
+              <Border.Styles>
+                <Style Selector="Border.attentionNeeded">
+                  <Style.Animations>
+                    <Animation Duration="0:0:0.5" IterationCount="6">
+                      <KeyFrame Cue="0%">
+                        <Setter Property="BorderBrush" Value="#D9534F"/>
+                      </KeyFrame>
+                      <KeyFrame Cue="50%">
+                        <Setter Property="BorderBrush" Value="#FF4444"/>
+                      </KeyFrame>
+                      <KeyFrame Cue="100%">
+                        <Setter Property="BorderBrush" Value="#D9534F"/>
+                      </KeyFrame>
+                    </Animation>
+                  </Style.Animations>
+                </Style>
+                <Style Selector="Border:not(.attentionNeeded)">
+                  <Setter Property="BorderBrush" Value="Transparent"/>
+                </Style>
+              </Border.Styles>
+              <StackPanel Spacing="8">
+                <!-- Model Status -->
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Model Status" FontSize="11" Opacity="0.7"/>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Width="8" Height="8" CornerRadius="4"
+                            Background="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
+                    <TextBlock FontSize="12" Opacity="0.9"
+                               Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelStatusText}}"/>
+                  </StackPanel>
+                </StackPanel>
+                
+                <!-- Download Button (shown when model missing and not busy) -->
+                <Button Content="Download Model (~176 MB)" 
+                        Command="{Binding ImageEditor.DownloadBackgroundRemovalModelCommand}"
+                        HorizontalAlignment="Stretch"
+                        Background="#5E35B1"
+                        Foreground="White"
+                        IsVisible="{Binding ImageEditor.IsBackgroundRemovalModelMissing}"
+                        IsEnabled="{Binding !ImageEditor.IsBackgroundRemovalBusy}"/>
+                
+                <!-- Progress (shown when busy) -->
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsBackgroundRemovalBusy}">
+                  <TextBlock Text="{Binding ImageEditor.BackgroundRemovalStatus}" 
+                             FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.BackgroundRemovalProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
+                </StackPanel>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Instructions -->
+                <TextBlock Text="Uses RMBG-1.4 AI model to remove backgrounds. Runs locally on GPU/CPU." 
+                           FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
+                           FontSize="9" Opacity="0.4" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
           </StackPanel>
           
           <!-- Background Fill Panel -->

@@ -62,6 +62,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private bool _isBackgroundRemovalBusy;
     private string? _backgroundRemovalStatus;
     private int _backgroundRemovalProgress;
+    private bool _showBackgroundRemovalAttention;
 
     // Background Fill fields
     private bool _isBackgroundFillPanelOpen;
@@ -557,6 +558,13 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Whether GPU acceleration is available for background removal.</summary>
     public bool IsBackgroundRemovalGpuAvailable => _backgroundRemovalService?.IsGpuAvailable ?? false;
 
+    /// <summary>Whether to show the attention animation on the background removal panel.</summary>
+    public bool ShowBackgroundRemovalAttention
+    {
+        get => _showBackgroundRemovalAttention;
+        private set => SetProperty(ref _showBackgroundRemovalAttention, value);
+    }
+
     /// <summary>Refreshes the background removal model status properties.</summary>
     public void RefreshBackgroundRemovalModelStatus()
     {
@@ -564,6 +572,12 @@ public partial class ImageEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(IsBackgroundRemovalModelMissing));
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+        
+        // Clear attention flag when model becomes ready
+        if (IsBackgroundRemovalModelReady)
+        {
+            ShowBackgroundRemovalAttention = false;
+        }
     }
 
     #endregion
@@ -1040,7 +1054,7 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     private bool CanExecuteRemoveBackground() => 
-        HasImage && IsBackgroundRemovalModelReady && !IsBackgroundRemovalBusy;
+        HasImage && !IsBackgroundRemovalBusy;
 
     private bool CanExecuteDownloadModel() => 
         IsBackgroundRemovalModelMissing && !IsBackgroundRemovalBusy;
@@ -1384,6 +1398,18 @@ public partial class ImageEditorViewModel : ObservableObject
             StatusMessage = "Background removal service not available";
             return;
         }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsBackgroundRemovalModelReady)
+        {
+            StatusMessage = "Please download the RMBG-1.4 model first (see Background Removal panel)";
+            // Trigger the attention animation
+            ShowBackgroundRemovalAttention = true;
+            return;
+        }
+
+        // Clear attention flag when actually executing
+        ShowBackgroundRemovalAttention = false;
 
         IsBackgroundRemovalBusy = true;
         BackgroundRemovalStatus = "Preparing image...";
