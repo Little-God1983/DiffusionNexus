@@ -18,7 +18,7 @@ public sealed class OnnxModelManager
     
     // 4x-UltraSharp Upscaling Model
     private const string UltraSharp4xModelFileName = "4x-UltraSharp.onnx";
-    private const string UltraSharp4xModelUrl = "https://huggingface.co/Sirosky/Upscaler-Upscayl/resolve/main/4x-UltraSharp.onnx";
+    private const string UltraSharp4xModelUrl = "https://huggingface.co/ofter/4x-UltraSharp/resolve/main/4x-UltraSharp.onnx";
     private const long ExpectedUltraSharp4xSizeBytes = 67_000_000; // ~67MB
 
     private readonly string _modelsBasePath;
