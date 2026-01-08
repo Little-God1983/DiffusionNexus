@@ -159,6 +159,12 @@ public static class BoolConverters
         new FuncValueConverter<bool, string>(isReady => isReady ? "Ready" : "Not Downloaded");
 
     /// <summary>
+    /// Converts IsUpscalingModelReady boolean to status text for upscaling model.
+    /// </summary>
+    public static readonly IValueConverter BoolToUpscalingModelStatusText =
+        new FuncValueConverter<bool, string>(isReady => isReady ? "4x-UltraSharp Ready" : "Not Downloaded");
+
+    /// <summary>
     /// Converts IsModelReady boolean to status brush (green for ready, orange for not ready).
     /// </summary>
     public static readonly IValueConverter BoolToStatusBrush =

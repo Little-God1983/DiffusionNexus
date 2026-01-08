@@ -23,6 +23,7 @@ public partial class ImageEditorViewModel : ObservableObject
 {
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
+    private readonly IImageUpscalingService? _upscalingService;
 
     private string? _currentImagePath;
     private string? _imageFileName;
@@ -69,6 +70,13 @@ public partial class ImageEditorViewModel : ObservableObject
     private byte _backgroundFillRed = 255;
     private byte _backgroundFillGreen = 255;
     private byte _backgroundFillBlue = 255;
+
+    // AI Upscaling fields
+    private bool _isUpscalingPanelOpen;
+    private bool _isUpscalingBusy;
+    private string? _upscalingStatus;
+    private int _upscalingProgress;
+    private float _upscaleTargetScale = 2.0f;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -726,6 +734,116 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region AI Upscaling Properties
+
+    /// <summary>Whether the AI upscaling panel is open.</summary>
+    public bool IsUpscalingPanelOpen
+    {
+        get => _isUpscalingPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isUpscalingPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when upscaling is activated
+                    DeactivateOtherTools(nameof(IsUpscalingPanelOpen));
+                }
+                UpscaleImageCommand.NotifyCanExecuteChanged();
+                DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Whether AI upscaling is currently in progress.</summary>
+    public bool IsUpscalingBusy
+    {
+        get => _isUpscalingBusy;
+        private set
+        {
+            if (SetProperty(ref _isUpscalingBusy, value))
+            {
+                UpscaleImageCommand.NotifyCanExecuteChanged();
+                DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Status message for upscaling operations.</summary>
+    public string? UpscalingStatus
+    {
+        get => _upscalingStatus;
+        private set => SetProperty(ref _upscalingStatus, value);
+    }
+
+    /// <summary>Progress percentage for upscaling/download (0-100).</summary>
+    public int UpscalingProgress
+    {
+        get => _upscalingProgress;
+        private set => SetProperty(ref _upscalingProgress, value);
+    }
+
+    /// <summary>Target scale factor for upscaling (1.1 to 4.0).</summary>
+    public float UpscaleTargetScale
+    {
+        get => _upscaleTargetScale;
+        set
+        {
+            var clamped = Math.Clamp(value, 1.1f, 4.0f);
+            if (SetProperty(ref _upscaleTargetScale, clamped))
+            {
+                OnPropertyChanged(nameof(UpscaleTargetScaleText));
+                OnPropertyChanged(nameof(UpscaleOutputDimensions));
+            }
+        }
+    }
+
+    /// <summary>Formatted target scale for display.</summary>
+    public string UpscaleTargetScaleText => $"{_upscaleTargetScale:F1}x";
+
+    /// <summary>Predicted output dimensions based on current scale.</summary>
+    public string UpscaleOutputDimensions
+    {
+        get
+        {
+            if (!HasImage || ImageWidth == 0 || ImageHeight == 0)
+                return "N/A";
+            var targetWidth = (int)Math.Round(ImageWidth * _upscaleTargetScale);
+            var targetHeight = (int)Math.Round(ImageHeight * _upscaleTargetScale);
+            return $"{targetWidth} × {targetHeight} px";
+        }
+    }
+
+    /// <summary>Whether the upscaling model is ready for use.</summary>
+    public bool IsUpscalingModelReady => 
+        _upscalingService?.GetModelStatus() == ModelStatus.Ready;
+
+    /// <summary>Whether the upscaling model needs to be downloaded.</summary>
+    public bool IsUpscalingModelMissing
+    {
+        get
+        {
+            var status = _upscalingService?.GetModelStatus() ?? ModelStatus.NotDownloaded;
+            return status == ModelStatus.NotDownloaded || status == ModelStatus.Corrupted;
+        }
+    }
+
+    /// <summary>Whether GPU acceleration is available for upscaling.</summary>
+    public bool IsUpscalingGpuAvailable => _upscalingService?.IsGpuAvailable ?? false;
+
+    /// <summary>Refreshes the upscaling model status properties.</summary>
+    public void RefreshUpscalingModelStatus()
+    {
+        OnPropertyChanged(nameof(IsUpscalingModelReady));
+        OnPropertyChanged(nameof(IsUpscalingModelMissing));
+        OnPropertyChanged(nameof(IsUpscalingGpuAvailable));
+        UpscaleImageCommand.NotifyCanExecuteChanged();
+        DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -873,6 +991,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ToggleBackgroundFillCommand { get; }
     public IRelayCommand ApplyBackgroundFillCommand { get; }
     public IRelayCommand<string> SetBackgroundFillPresetCommand { get; }
+    public IAsyncRelayCommand UpscaleImageCommand { get; }
+    public IAsyncRelayCommand DownloadUpscalingModelCommand { get; }
 
     #endregion
 
@@ -949,6 +1069,18 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler<string>? ImageSaved;
 
+    /// <summary>
+    /// Event raised to request image data for upscaling.
+    /// The View should respond by calling ProcessUpscalingAsync with the image data.
+    /// </summary>
+    public event EventHandler? UpscaleImageRequested;
+
+    /// <summary>
+    /// Event raised when upscaling completes with result.
+    /// The View should apply the upscaled image to the image editor.
+    /// </summary>
+    public event EventHandler<ImageUpscalingResult>? UpscalingCompleted;
+
     #endregion
 
     /// <summary>
@@ -994,6 +1126,12 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsBackgroundFillPanelOpen));
         }
 
+        if (exceptTool != nameof(IsUpscalingPanelOpen) && _isUpscalingPanelOpen)
+        {
+            _isUpscalingPanelOpen = false;
+            OnPropertyChanged(nameof(IsUpscalingPanelOpen));
+        }
+
         // Add more tools here as they are added in the future
     }
 
@@ -1014,572 +1152,9 @@ public partial class ImageEditorViewModel : ObservableObject
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
+        UpscaleImageCommand.NotifyCanExecuteChanged();
+        DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
     }
-
-    /// <summary>
-    /// Creates a new ImageEditorViewModel with event aggregator integration.
-    /// </summary>
-    /// <param name="eventAggregator">The event aggregator for publishing events.</param>
-    /// <param name="backgroundRemovalService">Optional background removal service.</param>
-    public ImageEditorViewModel(
-        IDatasetEventAggregator? eventAggregator = null,
-        IBackgroundRemovalService? backgroundRemovalService = null)
-    {
-        _eventAggregator = eventAggregator;
-        _backgroundRemovalService = backgroundRemovalService;
-
-        ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
-        ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
-        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
-        ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
-        CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
-        SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
-        SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
-        ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
-        ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
-        ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
-        ZoomToActualCommand = new RelayCommand(ExecuteZoomToActual, () => HasImage);
-        
-        MarkApprovedCommand = new RelayCommand(ExecuteMarkApproved, () => HasImage && _selectedDatasetImage is not null);
-        MarkRejectedCommand = new RelayCommand(ExecuteMarkRejected, () => HasImage && _selectedDatasetImage is not null);
-        ClearRatingCommand = new RelayCommand(ExecuteClearRating, () => HasImage && _selectedDatasetImage is not null && !IsUnrated);
-
-        // Transform commands
-        RotateLeftCommand = new RelayCommand(ExecuteRotateLeft, () => HasImage);
-        RotateRightCommand = new RelayCommand(ExecuteRotateRight, () => HasImage);
-        Rotate180Command = new RelayCommand(ExecuteRotate180, () => HasImage);
-        FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
-        FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
-
-        // Color Balance commands
-        ToggleColorBalanceCommand = new RelayCommand(ExecuteToggleColorBalance, () => HasImage && !IsCropToolActive);
-        ApplyColorBalanceCommand = new RelayCommand(ExecuteApplyColorBalance, () => HasImage && IsColorBalancePanelOpen && HasColorBalanceAdjustments);
-        ResetColorBalanceRangeCommand = new RelayCommand(ExecuteResetColorBalanceRange, () => IsColorBalancePanelOpen && HasColorBalanceAdjustments);
-
-        // Brightness/Contrast commands
-        ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
-        ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
-        ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
-
-        // Background Removal commands
-        RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
-        DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
-
-        // Background Fill commands
-        ToggleBackgroundFillCommand = new RelayCommand(ExecuteToggleBackgroundFill, () => HasImage);
-        ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
-        SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
-    }
-
-    private bool CanExecuteRemoveBackground() => 
-        HasImage && !IsBackgroundRemovalBusy;
-
-    private bool CanExecuteDownloadModel() => 
-        IsBackgroundRemovalModelMissing && !IsBackgroundRemovalBusy;
-
-    /// <summary>Loads an image by path.</summary>
-    public void LoadImage(string imagePath)
-    {
-        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
-        {
-            StatusMessage = "Image file not found.";
-            return;
-        }
-
-        // Close any active tools before loading a new image
-        CloseAllTools();
-
-        CurrentImagePath = imagePath;
-        
-        try
-        {
-            var fileInfo = new FileInfo(imagePath);
-            FileSizeBytes = fileInfo.Length;
-            ImageDpi = 72;
-            
-            using var stream = File.OpenRead(imagePath);
-            using var skCodec = SkiaSharp.SKCodec.Create(stream);
-            if (skCodec is not null)
-            {
-                ImageWidth = skCodec.Info.Width;
-                ImageHeight = skCodec.Info.Height;
-            }
-        }
-        catch { }
-        
-        StatusMessage = $"Loaded: {ImageFileName}";
-    }
-
-    /// <summary>
-    /// Closes all active tools and resets their state.
-    /// Should be called before loading a new image or clearing the current image.
-    /// </summary>
-    private void CloseAllTools()
-    {
-        // Close crop tool
-        if (_isCropToolActive)
-        {
-            _isCropToolActive = false;
-            OnPropertyChanged(nameof(IsCropToolActive));
-            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
-        }
-
-        // Close color balance panel and cancel any preview
-        if (_isColorBalancePanelOpen)
-        {
-            _isColorBalancePanelOpen = false;
-            ResetColorBalanceSliders();
-            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
-        }
-
-        // Close brightness/contrast panel and cancel any preview
-        if (_isBrightnessContrastPanelOpen)
-        {
-            _isBrightnessContrastPanelOpen = false;
-            ResetBrightnessContrastSliders();
-            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
-        }
-
-        // Close background removal panel
-        if (_isBackgroundRemovalPanelOpen)
-        {
-            _isBackgroundRemovalPanelOpen = false;
-            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
-        }
-
-        // Close background fill panel and cancel any preview
-        if (_isBackgroundFillPanelOpen)
-        {
-            _isBackgroundFillPanelOpen = false;
-            CancelBackgroundFillPreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsBackgroundFillPanelOpen));
-        }
-
-        NotifyToolCommandsCanExecuteChanged();
-    }
-
-    /// <summary>Updates image dimensions from the editor control.</summary>
-    public void UpdateDimensions(int width, int height)
-    {
-        ImageWidth = width;
-        ImageHeight = height;
-    }
-
-    /// <summary>Updates zoom info from the editor control.</summary>
-    public void UpdateZoomInfo(int percentage, bool isFitMode)
-    {
-        ZoomPercentage = percentage;
-        IsFitMode = isFitMode;
-    }
-
-    /// <summary>Updates file info from the editor control.</summary>
-    public void UpdateFileInfo(int dpi, long fileSize)
-    {
-        ImageDpi = dpi;
-        FileSizeBytes = fileSize;
-    }
-
-    /// <summary>Called when crop is successfully applied.</summary>
-    public void OnCropApplied()
-    {
-        IsCropToolActive = false;
-        StatusMessage = "Crop applied successfully.";
-    }
-
-    /// <summary>Called when save as new completes successfully.</summary>
-    /// <param name="newPath">The path where the image was saved.</param>
-    /// <param name="rating">The rating to apply to the saved image.</param>
-    public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating = ImageRatingStatus.Unrated)
-    {
-        StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
-        CurrentImagePath = newPath;
-
-        // Publish event via aggregator
-        _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
-        {
-            ImagePath = newPath,
-            OriginalPath = _currentImagePath,
-            Rating = rating
-        });
-
-        // Also raise legacy event for backward compatibility
-        ImageSaved?.Invoke(this, newPath);
-    }
-
-    /// <summary>Called when save overwrite completes successfully.</summary>
-    public void OnSaveOverwriteCompleted()
-    {
-        StatusMessage = $"Saved: {ImageFileName}";
-
-        if (CurrentImagePath is not null)
-        {
-            // Publish event via aggregator
-            _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
-            {
-                ImagePath = CurrentImagePath
-            });
-
-            // Also raise legacy event
-            ImageSaved?.Invoke(this, CurrentImagePath);
-        }
-    }
-
-    private void ExecuteToggleCropTool()
-    {
-        IsCropToolActive = !IsCropToolActive;
-        if (IsCropToolActive)
-            CropToolActivated?.Invoke(this, EventArgs.Empty);
-        else
-            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void ExecuteApplyCrop() => ApplyCropRequested?.Invoke(this, EventArgs.Empty);
-
-    private void ExecuteCancelCrop()
-    {
-        IsCropToolActive = false;
-        CancelCropRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Crop cancelled.";
-    }
-
-    private void ExecuteClearImage()
-    {
-        // Close any active tools first
-        CloseAllTools();
-        
-        CurrentImagePath = null;
-        SelectedDatasetImage = null;
-        ImageWidth = 0;
-        ImageHeight = 0;
-        StatusMessage = "Image cleared.";
-        ClearRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void ExecuteResetImage()
-    {
-        IsCropToolActive = false;
-        StatusMessage = "Image reset to original.";
-        ResetRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private async Task ExecuteSaveAsNewAsync()
-    {
-        if (SaveAsDialogRequested is null || CurrentImagePath is null)
-        {
-            StatusMessage = "Save As is not available.";
-            return;
-        }
-
-        var result = await SaveAsDialogRequested.Invoke();
-        if (result.IsCancelled)
-        {
-            StatusMessage = "Save cancelled.";
-            return;
-        }
-
-        // Raise event for View to perform the actual save
-        SaveAsRequested?.Invoke(this, result);
-    }
-
-    private async Task ExecuteSaveOverwriteAsync()
-    {
-        if (SaveOverwriteConfirmRequested is not null)
-        {
-            var confirmed = await SaveOverwriteConfirmRequested.Invoke();
-            if (!confirmed)
-            {
-                StatusMessage = "Save cancelled.";
-                return;
-            }
-        }
-        SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void ExecuteZoomIn() => ZoomInRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
-    
-    #region Transform Command Implementations
-
-    private void ExecuteRotateLeft()
-    {
-        RotateLeftRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Rotated 90° left";
-    }
-
-    private void ExecuteRotateRight()
-    {
-        RotateRightRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Rotated 90° right";
-    }
-
-    private void ExecuteRotate180()
-    {
-        Rotate180Requested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Rotated 180°";
-    }
-
-    private void ExecuteFlipHorizontal()
-    {
-        FlipHorizontalRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Flipped horizontally";
-    }
-
-    private void ExecuteFlipVertical()
-    {
-        FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Flipped vertically";
-    }
-
-    #endregion
-
-    #region Color Balance Command Implementations
-
-    private void ExecuteToggleColorBalance()
-    {
-        IsColorBalancePanelOpen = !IsColorBalancePanelOpen;
-        if (IsColorBalancePanelOpen)
-        {
-            StatusMessage = "Color Balance: Adjust sliders and click Apply";
-        }
-        else
-        {
-            StatusMessage = null;
-        }
-        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
-        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
-    }
-
-    private void ExecuteApplyColorBalance()
-    {
-        var settings = CurrentColorBalanceSettings;
-        ApplyColorBalanceRequested?.Invoke(this, settings);
-        StatusMessage = $"Color balance applied to {_selectedDatasetImage?.FileName}";
-        ResetColorBalanceSliders();
-    }
-
-    private void ExecuteResetColorBalanceRange()
-    {
-        ResetCurrentRangeSliders();
-        StatusMessage = $"Reset {_selectedColorBalanceRange} color balance";
-    }
-
-    /// <summary>Called when color balance is successfully applied.</summary>
-    public void OnColorBalanceApplied()
-    {
-        StatusMessage = "Color balance applied";
-    }
-
-    #endregion
-
-    #region Brightness and Contrast Command Implementations
-
-    private void ExecuteToggleBrightnessContrast()
-    {
-        IsBrightnessContrastPanelOpen = !IsBrightnessContrastPanelOpen;
-        if (IsBrightnessContrastPanelOpen)
-        {
-            StatusMessage = "Brightness/Contrast: Adjust sliders and click Apply";
-        }
-        else
-        {
-            StatusMessage = null;
-        }
-        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
-        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
-    }
-
-    private void ExecuteApplyBrightnessContrast()
-    {
-        var settings = CurrentBrightnessContrastSettings;
-        ApplyBrightnessContrastRequested?.Invoke(this, settings);
-        StatusMessage = "Brightness and contrast applied";
-        ResetBrightnessContrastSliders();
-    }
-
-    private void ExecuteResetBrightnessContrast()
-    {
-        ResetBrightnessContrastSliders();
-        // Clear the preview to show the original image
-        CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
-        StatusMessage = "Reset brightness and contrast";
-    }
-
-    /// <summary>Called when brightness/contrast is successfully applied.</summary>
-    public void OnBrightnessContrastApplied()
-    {
-        StatusMessage = "Brightness and contrast applied";
-    }
-
-    #endregion
-
-    #region Background Removal Command Implementations
-
-    private async Task ExecuteRemoveBackgroundAsync()
-    {
-        if (_backgroundRemovalService is null)
-        {
-            StatusMessage = "Background removal service not available";
-            return;
-        }
-
-        // Check if model is ready - if not, notify user to download
-        if (!IsBackgroundRemovalModelReady)
-        {
-            StatusMessage = "Please download the RMBG-1.4 model first";
-            return;
-        }
-
-        IsBackgroundRemovalBusy = true;
-        BackgroundRemovalStatus = "Preparing image...";
-
-        try
-        {
-            // Request image data from the View
-            RemoveBackgroundRequested?.Invoke(this, EventArgs.Empty);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Background removal failed: {ex.Message}";
-            BackgroundRemovalStatus = null;
-            IsBackgroundRemovalBusy = false;
-        }
-    }
-
-    /// <summary>
-    /// Processes background removal with the provided image data.
-    /// Called by the View after responding to RemoveBackgroundRequested.
-    /// </summary>
-    /// <param name="imageData">Raw RGBA image data.</param>
-    /// <param name="width">Image width in pixels.</param>
-    /// <param name="height">Image height in pixels.</param>
-    public async Task ProcessBackgroundRemovalAsync(byte[] imageData, int width, int height)
-    {
-        if (_backgroundRemovalService is null)
-        {
-            StatusMessage = "Background removal service not available";
-            IsBackgroundRemovalBusy = false;
-            return;
-        }
-
-        try
-        {
-            BackgroundRemovalStatus = "Removing background...";
-            
-            var result = await _backgroundRemovalService.RemoveBackgroundAsync(imageData, width, height);
-
-            if (result.Success)
-            {
-                StatusMessage = "Background removed successfully";
-                BackgroundRemovalCompleted?.Invoke(this, result);
-            }
-            else
-            {
-                StatusMessage = result.ErrorMessage ?? "Background removal failed";
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Background removal failed: {ex.Message}";
-        }
-        finally
-        {
-            BackgroundRemovalStatus = null;
-            IsBackgroundRemovalBusy = false;
-        }
-    }
-
-    private async Task ExecuteDownloadBackgroundRemovalModelAsync()
-    {
-        if (_backgroundRemovalService is null)
-        {
-            StatusMessage = "Background removal service not available";
-            return;
-        }
-
-        IsBackgroundRemovalBusy = true;
-        BackgroundRemovalProgress = 0;
-        BackgroundRemovalStatus = "Downloading model...";
-
-        try
-        {
-            var progress = new Progress<ModelDownloadProgress>(p =>
-            {
-                if (p.Percentage >= 0)
-                    BackgroundRemovalProgress = (int)p.Percentage;
-                BackgroundRemovalStatus = p.Status;
-            });
-
-            var success = await _backgroundRemovalService.DownloadModelAsync(progress);
-
-            if (success)
-            {
-                StatusMessage = "Background removal model downloaded successfully";
-                RefreshBackgroundRemovalModelStatus();
-            }
-            else
-            {
-                StatusMessage = "Failed to download background removal model";
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            StatusMessage = "Model download cancelled";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Model download failed: {ex.Message}";
-        }
-        finally
-        {
-            BackgroundRemovalStatus = null;
-            BackgroundRemovalProgress = 0;
-            IsBackgroundRemovalBusy = false;
-        }
-    }
-
-    /// <summary>Called when background removal is successfully applied to the image.</summary>
-    public void OnBackgroundRemovalApplied()
-    {
-        StatusMessage = "Background removed";
-    }
-
-    #endregion
-
-    #region Background Fill Command Implementations
-
-    private void ExecuteToggleBackgroundFill()
-    {
-        IsBackgroundFillPanelOpen = !IsBackgroundFillPanelOpen;
-        if (IsBackgroundFillPanelOpen)
-        {
-            StatusMessage = "Background Fill: Select a color and click Apply";
-        }
-        else
-        {
-            StatusMessage = null;
-        }
-        ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
-    }
-
-    private void ExecuteApplyBackgroundFill()
-    {
-        var settings = CurrentBackgroundFillSettings;
-        ApplyBackgroundFillRequested?.Invoke(this, settings);
-        StatusMessage = "Background filled";
-        // Keep panel open for additional fills if needed
-    }
-
-    /// <summary>Called when background fill is successfully applied.</summary>
-    public void OnBackgroundFillApplied()
-    {
-        StatusMessage = "Background filled";
-    }
-
-    #endregion
 
     #region Rating Command Implementations
 
@@ -1664,6 +1239,12 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    private bool CanExecuteRemoveBackground() => 
+        HasImage && !IsBackgroundRemovalBusy;
+
+    private bool CanExecuteDownloadModel() => 
+        IsBackgroundRemovalModelMissing && !IsBackgroundRemovalBusy;
+
     private void NotifyCommandsCanExecuteChanged()
     {
         ClearImageCommand.NotifyCanExecuteChanged();
@@ -1691,6 +1272,8 @@ public partial class ImageEditorViewModel : ObservableObject
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
+        UpscaleImageCommand.NotifyCanExecuteChanged();
+        DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 
@@ -1713,4 +1296,657 @@ public partial class ImageEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(HasRating));
         NotifyRatingCommandsCanExecuteChanged();
     }
+
+    /// <summary>
+    /// Creates a new ImageEditorViewModel with event aggregator integration.
+    /// </summary>
+    /// <param name="eventAggregator">The event aggregator for publishing events.</param>
+    /// <param name="backgroundRemovalService">Optional background removal service.</param>
+    /// <param name="upscalingService">Optional image upscaling service.</param>
+    public ImageEditorViewModel(
+        IDatasetEventAggregator? eventAggregator = null,
+        IBackgroundRemovalService? backgroundRemovalService = null,
+        IImageUpscalingService? upscalingService = null)
+    {
+        _eventAggregator = eventAggregator;
+        _backgroundRemovalService = backgroundRemovalService;
+        _upscalingService = upscalingService;
+
+        ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
+        ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
+        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
+        ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
+        CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
+        SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
+        SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
+        ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
+        ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
+        ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
+        ZoomToActualCommand = new RelayCommand(ExecuteZoomToActual, () => HasImage);
+        
+        MarkApprovedCommand = new RelayCommand(ExecuteMarkApproved, () => HasImage && _selectedDatasetImage is not null);
+        MarkRejectedCommand = new RelayCommand(ExecuteMarkRejected, () => HasImage && _selectedDatasetImage is not null);
+        ClearRatingCommand = new RelayCommand(ExecuteClearRating, () => HasImage && _selectedDatasetImage is not null && !IsUnrated);
+
+        // Transform commands
+        RotateLeftCommand = new RelayCommand(ExecuteRotateLeft, () => HasImage);
+        RotateRightCommand = new RelayCommand(ExecuteRotateRight, () => HasImage);
+        Rotate180Command = new RelayCommand(ExecuteRotate180, () => HasImage);
+        FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
+        FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
+
+        // Color Balance commands
+        ToggleColorBalanceCommand = new RelayCommand(ExecuteToggleColorBalance, () => HasImage && !IsCropToolActive);
+        ApplyColorBalanceCommand = new RelayCommand(ExecuteApplyColorBalance, () => HasImage && IsColorBalancePanelOpen && HasColorBalanceAdjustments);
+        ResetColorBalanceRangeCommand = new RelayCommand(ExecuteResetColorBalanceRange, () => IsColorBalancePanelOpen && HasColorBalanceAdjustments);
+
+        // Brightness/Contrast commands
+        ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
+        ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
+        ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
+
+        // Background Removal commands
+        RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
+        DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
+
+        // Background Fill commands
+        ToggleBackgroundFillCommand = new RelayCommand(ExecuteToggleBackgroundFill, () => HasImage);
+        ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
+        SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
+
+        // AI Upscaling commands
+        UpscaleImageCommand = new AsyncRelayCommand(ExecuteUpscaleImageAsync, CanExecuteUpscaleImage);
+        DownloadUpscalingModelCommand = new AsyncRelayCommand(ExecuteDownloadUpscalingModelAsync, CanExecuteDownloadUpscalingModel);
+    }
+
+    #region Public Methods (View wiring)
+
+    /// <summary>
+    /// Loads an image from the specified file path.
+    /// </summary>
+    /// <param name="imagePath">The path to the image file.</param>
+    public void LoadImage(string imagePath)
+    {
+        CurrentImagePath = imagePath;
+    }
+
+    /// <summary>
+    /// Updates the image dimensions displayed in the ViewModel.
+    /// Called by the View when the image changes.
+    /// </summary>
+    public void UpdateDimensions(int width, int height)
+    {
+        ImageWidth = width;
+        ImageHeight = height;
+        OnPropertyChanged(nameof(UpscaleOutputDimensions));
+    }
+
+    /// <summary>
+    /// Updates file information displayed in the ViewModel.
+    /// Called by the View when the image changes.
+    /// </summary>
+    public void UpdateFileInfo(int dpi, long fileSizeBytes)
+    {
+        ImageDpi = dpi;
+        FileSizeBytes = fileSizeBytes;
+    }
+
+    /// <summary>
+    /// Updates zoom information displayed in the ViewModel.
+    /// Called by the View when zoom changes.
+    /// </summary>
+    public void UpdateZoomInfo(int zoomPercentage, bool isFitMode)
+    {
+        ZoomPercentage = zoomPercentage;
+        IsFitMode = isFitMode;
+    }
+
+    /// <summary>
+    /// Called when crop is applied successfully.
+    /// </summary>
+    public void OnCropApplied()
+    {
+        IsCropToolActive = false;
+        StatusMessage = "Crop applied";
+    }
+
+    /// <summary>
+    /// Called when color balance is applied successfully.
+    /// </summary>
+    public void OnColorBalanceApplied()
+    {
+        IsColorBalancePanelOpen = false;
+        StatusMessage = "Color balance applied";
+    }
+
+    /// <summary>
+    /// Called when brightness/contrast is applied successfully.
+    /// </summary>
+    public void OnBrightnessContrastApplied()
+    {
+        IsBrightnessContrastPanelOpen = false;
+        StatusMessage = "Brightness/Contrast applied";
+    }
+
+    /// <summary>
+    /// Called when background removal is applied successfully.
+    /// </summary>
+    public void OnBackgroundRemovalApplied()
+    {
+        StatusMessage = "Background removed";
+    }
+
+    /// <summary>
+    /// Called when background fill is applied successfully.
+    /// </summary>
+    public void OnBackgroundFillApplied()
+    {
+        IsBackgroundFillPanelOpen = false;
+        StatusMessage = "Background filled";
+    }
+
+    /// <summary>
+    /// Called when upscaling is applied successfully.
+    /// </summary>
+    public void OnUpscalingApplied()
+    {
+        StatusMessage = "Image upscaled";
+        OnPropertyChanged(nameof(UpscaleOutputDimensions));
+    }
+
+    /// <summary>
+    /// Called when Save As New completes successfully.
+    /// </summary>
+    /// <param name="newPath">The path where the image was saved.</param>
+    /// <param name="rating">The rating applied to the saved image.</param>
+    public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating)
+    {
+        StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
+        ImageSaved?.Invoke(this, newPath);
+
+        // Publish event via aggregator
+        _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+        {
+            ImagePath = newPath,
+            OriginalPath = CurrentImagePath,
+            Rating = rating
+        });
+    }
+
+    /// <summary>
+    /// Called when Save Overwrite completes successfully.
+    /// </summary>
+    public void OnSaveOverwriteCompleted()
+    {
+        StatusMessage = "Image saved";
+        if (CurrentImagePath is not null)
+        {
+            ImageSaved?.Invoke(this, CurrentImagePath);
+
+            // Publish event via aggregator
+            _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+            {
+                ImagePath = CurrentImagePath,
+                OriginalPath = null
+            });
+        }
+    }
+
+    /// <summary>
+    /// Processes background removal with the provided image data.
+    /// Called by the View after responding to RemoveBackgroundRequested.
+    /// </summary>
+    /// <param name="imageData">Raw RGBA image data.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="height">Image height in pixels.</param>
+    public async Task ProcessBackgroundRemovalAsync(byte[] imageData, int width, int height)
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            IsBackgroundRemovalBusy = false;
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Processing...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            var result = await _backgroundRemovalService.RemoveBackgroundAsync(imageData, width, height);
+
+            if (result.Success)
+            {
+                BackgroundRemovalCompleted?.Invoke(this, result);
+            }
+            else
+            {
+                StatusMessage = result.ErrorMessage ?? "Background removal failed";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Background removal cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Processes upscaling with the provided image data.
+    /// Called by the View after responding to UpscaleImageRequested.
+    /// </summary>
+    /// <param name="imageData">Raw RGBA image data.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="height">Image height in pixels.</param>
+    public async Task ProcessUpscalingAsync(byte[] imageData, int width, int height)
+    {
+        if (_upscalingService is null)
+        {
+            StatusMessage = "Upscaling service not available";
+            IsUpscalingBusy = false;
+            return;
+        }
+
+        try
+        {
+            var progress = new Progress<UpscalingProgress>(p =>
+            {
+                UpscalingStatus = p.Message;
+                if (p.Percentage >= 0)
+                    UpscalingProgress = p.Percentage;
+            });
+
+            var result = await _upscalingService.UpscaleImageAsync(
+                imageData, width, height, _upscaleTargetScale, progress);
+
+            if (result.Success)
+            {
+                StatusMessage = $"Upscaled to {result.Width}x{result.Height}";
+                UpscalingCompleted?.Invoke(this, result);
+            }
+            else
+            {
+                StatusMessage = result.ErrorMessage ?? "Upscaling failed";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Upscaling cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Upscaling failed: {ex.Message}";
+        }
+        finally
+        {
+            UpscalingStatus = null;
+            UpscalingProgress = 0;
+            IsUpscalingBusy = false;
+        }
+    }
+
+    #endregion
+
+    #region Command Implementations
+
+    private void ExecuteClearImage()
+    {
+        CloseAllTools();
+        CurrentImagePath = null;
+        ImageWidth = 0;
+        ImageHeight = 0;
+        ImageDpi = 72;
+        FileSizeBytes = 0;
+        SelectedDatasetImage = null;
+        ClearRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = null;
+    }
+
+    private void ExecuteResetImage()
+    {
+        CloseAllTools();
+        ResetRequested?.Invoke(this, EventArgs.Empty);
+        StatusMessage = "Reset to original";
+    }
+
+    private void ExecuteToggleCropTool()
+    {
+        IsCropToolActive = !IsCropToolActive;
+        if (IsCropToolActive)
+        {
+            CropToolActivated?.Invoke(this, EventArgs.Empty);
+        }
+        else
+        {
+            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ExecuteApplyCrop()
+    {
+        ApplyCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteCancelCrop()
+    {
+        IsCropToolActive = false;
+        CancelCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task ExecuteSaveAsNewAsync()
+    {
+        if (SaveAsDialogRequested is null) return;
+
+        var result = await SaveAsDialogRequested.Invoke();
+        if (!result.IsCancelled)
+        {
+            SaveAsRequested?.Invoke(this, result);
+        }
+    }
+
+    private async Task ExecuteSaveOverwriteAsync()
+    {
+        if (SaveOverwriteConfirmRequested is null)
+        {
+            SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        var confirmed = await SaveOverwriteConfirmRequested.Invoke();
+        if (confirmed)
+        {
+            SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ExecuteZoomIn() => ZoomInRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
+
+    private void ExecuteRotateLeft() => RotateLeftRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteRotateRight() => RotateRightRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteRotate180() => Rotate180Requested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteFlipHorizontal() => FlipHorizontalRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteFlipVertical() => FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
+
+    private void ExecuteToggleColorBalance()
+    {
+        IsColorBalancePanelOpen = !IsColorBalancePanelOpen;
+    }
+
+    private void ExecuteApplyColorBalance()
+    {
+        ApplyColorBalanceRequested?.Invoke(this, CurrentColorBalanceSettings);
+    }
+
+    private void ExecuteResetColorBalanceRange()
+    {
+        ResetCurrentRangeSliders();
+    }
+
+    private void ExecuteToggleBrightnessContrast()
+    {
+        IsBrightnessContrastPanelOpen = !IsBrightnessContrastPanelOpen;
+    }
+
+    private void ExecuteApplyBrightnessContrast()
+    {
+        ApplyBrightnessContrastRequested?.Invoke(this, CurrentBrightnessContrastSettings);
+    }
+
+    private void ExecuteResetBrightnessContrast()
+    {
+        ResetBrightnessContrastSliders();
+        CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task ExecuteRemoveBackgroundAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsBackgroundRemovalModelReady)
+        {
+            StatusMessage = "Please download the RMBG-1.4 model first";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Preparing image...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            // Request image data from the View
+            RemoveBackgroundRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    private async Task ExecuteDownloadBackgroundRemovalModelAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalProgress = 0;
+        BackgroundRemovalStatus = "Downloading model...";
+
+        try
+        {
+            var progress = new Progress<ModelDownloadProgress>(p =>
+            {
+                if (p.Percentage >= 0)
+                    BackgroundRemovalProgress = (int)p.Percentage;
+                BackgroundRemovalStatus = p.Status;
+            });
+
+            var success = await _backgroundRemovalService.DownloadModelAsync(progress);
+
+            if (success)
+            {
+                StatusMessage = "RMBG-1.4 model downloaded successfully";
+                RefreshBackgroundRemovalModelStatus();
+            }
+            else
+            {
+                StatusMessage = "Failed to download background removal model";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Model download cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Model download failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    private void ExecuteToggleBackgroundFill()
+    {
+        IsBackgroundFillPanelOpen = !IsBackgroundFillPanelOpen;
+    }
+
+    private void ExecuteApplyBackgroundFill()
+    {
+        ApplyBackgroundFillRequested?.Invoke(this, CurrentBackgroundFillSettings);
+    }
+
+    private bool CanExecuteUpscaleImage() => 
+        HasImage && !IsUpscalingBusy && IsUpscalingModelReady;
+
+    private bool CanExecuteDownloadUpscalingModel() => 
+        IsUpscalingModelMissing && !IsUpscalingBusy;
+
+    private async Task ExecuteUpscaleImageAsync()
+    {
+        if (_upscalingService is null)
+        {
+            StatusMessage = "Upscaling service not available";
+            return;
+        }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsUpscalingModelReady)
+        {
+            StatusMessage = "Please download the 4x-UltraSharp model first";
+            return;
+        }
+
+        IsUpscalingBusy = true;
+        UpscalingStatus = "Preparing image...";
+        UpscalingProgress = 0;
+
+        try
+        {
+            // Request image data from the View
+            UpscaleImageRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Upscaling failed: {ex.Message}";
+            UpscalingStatus = null;
+            UpscalingProgress = 0;
+            IsUpscalingBusy = false;
+        }
+    }
+
+    private async Task ExecuteDownloadUpscalingModelAsync()
+    {
+        if (_upscalingService is null)
+        {
+            StatusMessage = "Upscaling service not available";
+            return;
+        }
+
+        IsUpscalingBusy = true;
+        UpscalingProgress = 0;
+        UpscalingStatus = "Downloading model...";
+
+        try
+        {
+            var progress = new Progress<ModelDownloadProgress>(p =>
+            {
+                if (p.Percentage >= 0)
+                    UpscalingProgress = (int)p.Percentage;
+                UpscalingStatus = p.Status;
+            });
+
+            var success = await _upscalingService.DownloadModelAsync(progress);
+
+            if (success)
+            {
+                StatusMessage = "4x-UltraSharp model downloaded successfully";
+                RefreshUpscalingModelStatus();
+            }
+            else
+            {
+                StatusMessage = "Failed to download upscaling model";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Model download cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Model download failed: {ex.Message}";
+        }
+        finally
+        {
+            UpscalingStatus = null;
+            UpscalingProgress = 0;
+            IsUpscalingBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Closes all active tools and resets their state.
+    /// Should be called before loading a new image or clearing the current image.
+    /// </summary>
+    private void CloseAllTools()
+    {
+        // Close crop tool
+        if (_isCropToolActive)
+        {
+            _isCropToolActive = false;
+            OnPropertyChanged(nameof(IsCropToolActive));
+            CropToolDeactivated?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Close color balance panel and cancel any preview
+        if (_isColorBalancePanelOpen)
+        {
+            _isColorBalancePanelOpen = false;
+            ResetColorBalanceSliders();
+            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
+        }
+
+        // Close brightness/contrast panel and cancel any preview
+        if (_isBrightnessContrastPanelOpen)
+        {
+            _isBrightnessContrastPanelOpen = false;
+            ResetBrightnessContrastSliders();
+            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
+        }
+
+        // Close background removal panel
+        if (_isBackgroundRemovalPanelOpen)
+        {
+            _isBackgroundRemovalPanelOpen = false;
+            OnPropertyChanged(nameof(IsBackgroundRemovalPanelOpen));
+        }
+
+        // Close background fill panel and cancel any preview
+        if (_isBackgroundFillPanelOpen)
+        {
+            _isBackgroundFillPanelOpen = false;
+            CancelBackgroundFillPreviewRequested?.Invoke(this, EventArgs.Empty);
+            OnPropertyChanged(nameof(IsBackgroundFillPanelOpen));
+        }
+
+        // Close upscaling panel
+        if (_isUpscalingPanelOpen)
+        {
+            _isUpscalingPanelOpen = false;
+            OnPropertyChanged(nameof(IsUpscalingPanelOpen));
+        }
+
+        NotifyToolCommandsCanExecuteChanged();
+    }
+
+    #endregion
 }

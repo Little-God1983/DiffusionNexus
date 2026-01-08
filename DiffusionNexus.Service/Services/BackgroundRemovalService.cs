@@ -15,15 +15,16 @@ namespace DiffusionNexus.Service.Services;
 public sealed class BackgroundRemovalService : IBackgroundRemovalService
 {
     private const int ModelInputSize = 1024;
-    private const string InputName = "input";
-    private const string OutputName = "output";
 
     private readonly OnnxModelManager _modelManager;
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private InferenceSession? _session;
+    private string? _inputName;
+    private string? _outputName;
     private bool _isGpuAvailable;
     private bool _isProcessing;
     private bool _disposed;
+    private bool _disableGpu;
 
     /// <summary>
     /// Creates a new BackgroundRemovalService.
@@ -96,38 +97,43 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             return null;
         }
 
-        // Try GPU first
-        try
+        // Try DirectML first (only if not disabled)
+        if (!_disableGpu)
         {
-            var gpuOptions = new SessionOptions();
-            gpuOptions.AppendExecutionProvider_CUDA(0);
-            gpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+            try
+            {
+                var dmlOptions = new SessionOptions();
+                
+                // Compatibility parameters for DirectML on RMBG-1.4
+                // These settings prioritize stability over performance to fix the "Resize node" invalid parameter error.
+                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
+                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
+                
+                dmlOptions.EnableMemoryPattern = false;
+                dmlOptions.EnableCpuMemArena = false;
+                
+                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
+                dmlOptions.AddSessionConfigEntry("ep.dml.enable_graph_capture", "0");
+                
+                // Add DirectML as primary execution provider
+                dmlOptions.AppendExecutionProvider_DML(0);
+                
+                // Add CPU as fallback for operations DirectML doesn't support
+                dmlOptions.AppendExecutionProvider_CPU(0);
 
-            var session = new InferenceSession(modelPath, gpuOptions);
-            _isGpuAvailable = true;
-            Log.Information("RMBG-1.4 ONNX session created with GPU (CUDA) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "GPU (CUDA) not available, falling back to CPU");
-        }
-
-        // Try DirectML (for AMD/Intel GPUs on Windows)
-        try
-        {
-            var dmlOptions = new SessionOptions();
-            dmlOptions.AppendExecutionProvider_DML(0);
-            dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-
-            var session = new InferenceSession(modelPath, dmlOptions);
-            _isGpuAvailable = true;
-            Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DirectML not available, falling back to CPU");
+                var session = new InferenceSession(modelPath, dmlOptions);
+                _isGpuAvailable = true;
+                
+                // Discover input/output names from model metadata
+                DiscoverTensorNames(session);
+                
+                Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
+                return session;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
+            }
         }
 
         // Fall back to CPU
@@ -140,6 +146,10 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
 
             var session = new InferenceSession(modelPath, cpuOptions);
             _isGpuAvailable = false;
+            
+            // Discover input/output names from model metadata
+            DiscoverTensorNames(session);
+            
             Log.Information("RMBG-1.4 ONNX session created with CPU execution");
             return session;
         }
@@ -147,6 +157,29 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         {
             Log.Error(ex, "Failed to create ONNX session");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Discovers the actual input and output tensor names from the model metadata.
+    /// </summary>
+    private void DiscoverTensorNames(InferenceSession session)
+    {
+        // Get input name from model metadata
+        _inputName = session.InputMetadata.Keys.FirstOrDefault();
+        _outputName = session.OutputMetadata.Keys.FirstOrDefault();
+        
+        Log.Debug("RMBG-1.4 model input name: {InputName}, output name: {OutputName}", 
+            _inputName, _outputName);
+        
+        if (string.IsNullOrEmpty(_inputName))
+        {
+            throw new InvalidOperationException("Could not determine input tensor name from model metadata");
+        }
+        
+        if (string.IsNullOrEmpty(_outputName))
+        {
+            throw new InvalidOperationException("Could not determine output tensor name from model metadata");
         }
     }
 
@@ -173,6 +206,46 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         {
             return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
         }
+        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
+        {
+            Log.Warning("GPU inference failed (likely driver/model incompatibility). Disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
+
+            // Reset session
+            await _sessionLock.WaitAsync(cancellationToken);
+            try
+            {
+                _session?.Dispose();
+                _session = null;
+                _disableGpu = true;
+                _isGpuAvailable = false;
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            // Retry initialization (will force CPU)
+            if (await InitializeAsync(cancellationToken))
+            {
+                try
+                {
+                    Log.Information("Retrying background removal on CPU...");
+                    return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
+                }
+                catch (Exception retryEx)
+                {
+                    Log.Error(retryEx, "Retry on CPU failed");
+                    return BackgroundRemovalResult.Failed($"Background removal failed (CPU retry): {retryEx.Message}");
+                }
+            }
+
+            return BackgroundRemovalResult.Failed($"Background removal failed (GPU Error: {ex.Message})");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Background removal failed");
+            return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
+        }
         finally
         {
             _isProcessing = false;
@@ -185,43 +258,31 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         int height,
         CancellationToken cancellationToken)
     {
-        try
+        // Step 1: Load and preprocess image
+        cancellationToken.ThrowIfCancellationRequested();
+        using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+
+        // Step 2: Resize to model input size (1024x1024)
+        using var resizedImage = originalImage.Clone(ctx => ctx.Resize(ModelInputSize, ModelInputSize));
+
+        // Step 3: Create input tensor (planar format: [1, 3, 1024, 1024])
+        var inputTensor = PreprocessImage(resizedImage);
+
+        // Step 4: Run inference using discovered input name
+        cancellationToken.ThrowIfCancellationRequested();
+        var inputs = new List<NamedOnnxValue>
         {
-            // Step 1: Load and preprocess image
-            cancellationToken.ThrowIfCancellationRequested();
-            using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+            NamedOnnxValue.CreateFromTensor(_inputName!, inputTensor)
+        };
 
-            // Step 2: Resize to model input size (1024x1024)
-            using var resizedImage = originalImage.Clone(ctx => ctx.Resize(ModelInputSize, ModelInputSize));
+        using var results = _session!.Run(inputs);
+        var outputTensor = results.First().AsTensor<float>();
 
-            // Step 3: Create input tensor (planar format: [1, 3, 1024, 1024])
-            var inputTensor = PreprocessImage(resizedImage);
+        // Step 5: Postprocess - convert output to mask and resize
+        cancellationToken.ThrowIfCancellationRequested();
+        var maskData = PostprocessOutput(outputTensor, width, height);
 
-            // Step 4: Run inference
-            cancellationToken.ThrowIfCancellationRequested();
-            var inputs = new List<NamedOnnxValue>
-            {
-                NamedOnnxValue.CreateFromTensor(InputName, inputTensor)
-            };
-
-            using var results = _session!.Run(inputs);
-            var outputTensor = results.First().AsTensor<float>();
-
-            // Step 5: Postprocess - convert output to mask and resize
-            cancellationToken.ThrowIfCancellationRequested();
-            var maskData = PostprocessOutput(outputTensor, width, height);
-
-            return BackgroundRemovalResult.Succeeded(maskData, width, height);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Background removal failed");
-            return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
-        }
+        return BackgroundRemovalResult.Succeeded(maskData, width, height);
     }
 
     /// <summary>
@@ -263,7 +324,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         // The output is typically [1, 1, H, W] or [1, H, W]
         var dimensions = outputTensor.Dimensions.ToArray();
         var isChannelFirst = dimensions.Length == 4;
-        
+
         maskImage.ProcessPixelRows(accessor =>
         {
             for (var y = 0; y < ModelInputSize; y++)
