@@ -1,6 +1,7 @@
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Enums;
 using DiffusionNexus.Service.Helper;
-using ModelMover.Core.Metadata;
+using DiffusionNexus.Service.Metadata;
 using System.Security.Cryptography;
 using System.Text.Json;
 

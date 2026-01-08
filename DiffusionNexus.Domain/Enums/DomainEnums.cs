@@ -20,7 +20,33 @@ public enum ModelType
     VAE,
     Wildcards,
     Workflows,
-    Other
+    Other,
+    Embedding,
+    Detection,
+    Motion
+}
+
+/// <summary>
+/// Categories for Civitai models based on their primary use case.
+/// </summary>
+public enum CivitaiCategory
+{
+    Unknown = 0,
+    Character,
+    Style,
+    Celebrity,
+    Concept,
+    Clothing,
+    BaseModel,
+    Poses,
+    Background,
+    Tool,
+    Buildings,
+    Vehicle,
+    Objects,
+    Animal,
+    Assets,
+    Action
 }
 
 /// <summary>

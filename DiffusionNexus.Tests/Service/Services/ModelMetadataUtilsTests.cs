@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentAssertions;
-using ModelMover.Core.Metadata;
+using DiffusionNexus.Service.Enums;
+using DiffusionNexus.Service.Metadata;
 
 namespace DiffusionNexus.Tests.Service.Services;
 

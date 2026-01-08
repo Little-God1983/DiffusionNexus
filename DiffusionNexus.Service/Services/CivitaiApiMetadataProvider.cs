@@ -1,6 +1,7 @@
 using DiffusionNexus.Service.Classes;
+using DiffusionNexus.Service.Enums;
+using DiffusionNexus.Service.Metadata;
 using System.IO;
-using ModelMover.Core.Metadata;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -8,6 +9,14 @@ using System.Text.RegularExpressions;
 
 namespace DiffusionNexus.Service.Services;
 
+/// <summary>
+/// Metadata provider that fetches model information from Civitai API using raw JSON parsing.
+/// </summary>
+/// <remarks>
+/// Consider using <see cref="TypedCivitaiMetadataProvider"/> for new code,
+/// which uses the strongly-typed <see cref="DiffusionNexus.Civitai.ICivitaiClient"/>.
+/// </remarks>
+#pragma warning disable CS0618 // Type or member is obsolete - using legacy ICivitaiApiClient
 public class CivitaiApiMetadataProvider : IModelMetadataProvider
 {
     private readonly ICivitaiApiClient _apiClient;
@@ -100,4 +109,5 @@ public class CivitaiApiMetadataProvider : IModelMetadataProvider
     }
 
 }
+#pragma warning restore CS0618
 

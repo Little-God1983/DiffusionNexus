@@ -5,6 +5,7 @@
 
 using System.Collections;
 using System.Linq;
+using DiffusionNexus.Service.Enums;
 
 namespace DiffusionNexus.Service.Classes
 {

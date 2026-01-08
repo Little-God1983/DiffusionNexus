@@ -6,6 +6,11 @@ namespace DiffusionNexus.Service.Services
     /// Abstraction over the Civitai HTTP API. Allows mocking in tests and
     /// centralises all endpoint calls.
     /// </summary>
+    /// <remarks>
+    /// This interface returns raw JSON strings. Consider using 
+    /// <see cref="DiffusionNexus.Civitai.ICivitaiClient"/> for strongly-typed responses.
+    /// </remarks>
+    [Obsolete("Use DiffusionNexus.Civitai.ICivitaiClient for strongly-typed API access. This interface will be removed in a future version.")]
     public interface ICivitaiApiClient
     {
         Task<string> GetModelVersionByHashAsync(string sha256Hash, string apiKey = "");
