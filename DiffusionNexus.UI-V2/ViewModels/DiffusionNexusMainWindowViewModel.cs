@@ -5,7 +5,9 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Views;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -58,12 +60,61 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 
+    [ObservableProperty]
+    private bool _isDisclaimerAccepted;
+
+    [ObservableProperty]
+    private bool _disclaimerCheckboxChecked;
+
     public ObservableCollection<ModuleItem> Modules { get; } = new();
 
     public DiffusionNexusMainWindowViewModel()
     {
-        // Modules will be registered here as they are created
-        // For now, start with an empty shell
+        // Disclaimer check is called externally after services are initialized
+    }
+
+    /// <summary>
+    /// Checks disclaimer status against the database. Call after App.Services is initialized.
+    /// </summary>
+    public async Task CheckDisclaimerStatusAsync()
+    {
+        try
+        {
+            var disclaimerService = App.Services?.GetService<IDisclaimerService>();
+            if (disclaimerService is not null)
+            {
+                IsDisclaimerAccepted = await disclaimerService.HasUserAcceptedDisclaimerAsync();
+            }
+        }
+        catch
+        {
+            // If check fails, show disclaimer
+            IsDisclaimerAccepted = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task AcceptDisclaimerAsync()
+    {
+        if (!DisclaimerCheckboxChecked)
+            return;
+
+        try
+        {
+            var disclaimerService = App.Services?.GetService<IDisclaimerService>();
+            if (disclaimerService is not null)
+            {
+                await disclaimerService.AcceptDisclaimerAsync();
+                
+                // Double-check against database
+                IsDisclaimerAccepted = await disclaimerService.HasUserAcceptedDisclaimerAsync();
+            }
+        }
+        catch
+        {
+            // If save fails, don't unlock
+            IsDisclaimerAccepted = false;
+        }
     }
 
     [RelayCommand]

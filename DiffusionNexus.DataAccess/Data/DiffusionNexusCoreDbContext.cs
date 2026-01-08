@@ -56,6 +56,9 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Dataset categories for organizing training datasets.</summary>
     public DbSet<DatasetCategory> DatasetCategories => Set<DatasetCategory>();
 
+    /// <summary>Disclaimer acceptances.</summary>
+    public DbSet<DisclaimerAcceptance> DisclaimerAcceptances => Set<DisclaimerAcceptance>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -73,6 +76,7 @@ public class DiffusionNexusCoreDbContext : DbContext
         ConfigureAppSettings(modelBuilder);
         ConfigureLoraSource(modelBuilder);
         ConfigureDatasetCategory(modelBuilder);
+        ConfigureDisclaimerAcceptance(modelBuilder);
     }
 
     #region Entity Configurations
@@ -370,6 +374,21 @@ public class DiffusionNexusCoreDbContext : DbContext
 
             // NOTE: Default categories are seeded at runtime via IAppSettingsService
             // to ensure AppSettings row exists first
+        });
+    }
+
+    private static void ConfigureDisclaimerAcceptance(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DisclaimerAcceptance>(entity =>
+        {
+            entity.ToTable("DisclaimerAcceptances");
+            entity.HasKey(e => e.Id);
+
+            // Indexes
+            entity.HasIndex(e => e.WindowsUsername);
+
+            // Properties
+            entity.Property(e => e.WindowsUsername).IsRequired().HasMaxLength(256);
         });
     }
 

@@ -49,12 +49,18 @@ public partial class LoraDatasetHelperView : UserControl
         _isInitialized = true;
 
         // Inject DialogService into the ViewModel and forward to children
-        if (VisualRoot is Window window && DataContext is LoraDatasetHelperViewModel vm)
+        if (DataContext is LoraDatasetHelperViewModel vm)
         {
-            vm.DialogService = new DialogService(window);
-            vm.OnDialogServiceSet();
+            // Find the parent window - walk up the visual tree if needed
+            var window = this.VisualRoot as Window ?? TopLevel.GetTopLevel(this) as Window;
             
-            // Load datasets after DialogService is set up
+            if (window is not null)
+            {
+                vm.DialogService = new DialogService(window);
+                vm.OnDialogServiceSet();
+            }
+            
+            // Load datasets - always execute even if DialogService is not set yet
             vm.DatasetManagement.CheckStorageConfigurationCommand.Execute(null);
         }
     }

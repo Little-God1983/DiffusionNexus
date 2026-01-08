@@ -13,128 +13,191 @@
     </Design.DataContext>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+        <!-- Main Application Content -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-        <SplitView Grid.Row="0" 
-                   IsPaneOpen="{Binding IsMenuOpen}"
-                   DisplayMode="CompactInline"
-                   CompactPaneLength="48"
-                   OpenPaneLength="200"
-                   PanePlacement="Left">
-            
-            <!-- Sidebar Navigation Pane -->
-            <SplitView.Pane>
-                <Border Background="#1E1E1E">
-                    <DockPanel>
-                        <!-- Hamburger Menu Toggle -->
-                        <Button DockPanel.Dock="Top"
-                                Content="=" 
-                                Command="{Binding ToggleMenuCommand}"
-                                HorizontalContentAlignment="Center"
-                                VerticalContentAlignment="Center" 
-                                FontSize="20"
-                                FontWeight="Bold"
-                                Width="48" Height="48"
-                                Margin="0,8,0,16"/>
+            <SplitView Grid.Row="0" 
+                       IsPaneOpen="{Binding IsMenuOpen}"
+                       DisplayMode="CompactInline"
+                       CompactPaneLength="48"
+                       OpenPaneLength="200"
+                       PanePlacement="Left">
+                
+                <!-- Sidebar Navigation Pane -->
+                <SplitView.Pane>
+                    <Border Background="#1E1E1E">
+                        <DockPanel>
+                            <!-- Hamburger Menu Toggle -->
+                            <Button DockPanel.Dock="Top"
+                                    Content="=" 
+                                    Command="{Binding ToggleMenuCommand}"
+                                    HorizontalContentAlignment="Center"
+                                    VerticalContentAlignment="Center" 
+                                    FontSize="20"
+                                    FontWeight="Bold"
+                                    Width="48" Height="48"
+                                    Margin="0,8,0,16"/>
 
-                        <!-- Bottom Social Links -->
-                        <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
-                            <Button Width="196" Height="40" Margin="2,2"
-                                    Command="{Binding OpenYoutubeCommand}"
-                                    HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/yt.png" Width="24" Height="24"/>
-                                    <TextBlock Text="Youtube" VerticalAlignment="Center"
-                                               IsVisible="{Binding IsMenuOpen}"/>
-                                </StackPanel>
-                            </Button>
-                            <Button Width="196" Height="40" Margin="2,2"
-                                    Command="{Binding OpenPatreonCommand}"
-                                    HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/patreon.png" Width="24" Height="24"/>
-                                    <TextBlock Text="Patreon" VerticalAlignment="Center"
-                                               IsVisible="{Binding IsMenuOpen}"/>
-                                </StackPanel>
-                            </Button>
-                            <Button Width="196" Height="40" Margin="2,2"
-                                    Command="{Binding OpenCivitaiCommand}"
-                                    HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Image Source="avares://DiffusionNexus.UI-V2/Assets/civitai.png" Width="24" Height="24"/>
-                                    <TextBlock Text="Civitai" VerticalAlignment="Center"
-                                               IsVisible="{Binding IsMenuOpen}"/>
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
+                            <!-- Bottom Social Links -->
+                            <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
+                                <Button Width="196" Height="40" Margin="2,2"
+                                        Command="{Binding OpenYoutubeCommand}"
+                                        HorizontalContentAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <Image Source="avares://DiffusionNexus.UI-V2/Assets/yt.png" Width="24" Height="24"/>
+                                        <TextBlock Text="Youtube" VerticalAlignment="Center"
+                                                   IsVisible="{Binding IsMenuOpen}"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Width="196" Height="40" Margin="2,2"
+                                        Command="{Binding OpenPatreonCommand}"
+                                        HorizontalContentAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <Image Source="avares://DiffusionNexus.UI-V2/Assets/patreon.png" Width="24" Height="24"/>
+                                        <TextBlock Text="Patreon" VerticalAlignment="Center"
+                                                   IsVisible="{Binding IsMenuOpen}"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Width="196" Height="40" Margin="2,2"
+                                        Command="{Binding OpenCivitaiCommand}"
+                                        HorizontalContentAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <Image Source="avares://DiffusionNexus.UI-V2/Assets/civitai.png" Width="24" Height="24"/>
+                                        <TextBlock Text="Civitai" VerticalAlignment="Center"
+                                                   IsVisible="{Binding IsMenuOpen}"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
 
-                        <!-- Module Navigation -->
-                        <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
-                            <ItemsControl ItemsSource="{Binding Modules}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Width="196" 
-                                                Height="40"
-                                                Margin="2,2"
-                                                Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
-                                                CommandParameter="{Binding}"
-                                                HorizontalContentAlignment="Left">
-                                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                                <!-- Icon placeholder when no image -->
-                                                <Border Width="24" Height="24"
-                                                        Background="#3C3C3C"
-                                                        CornerRadius="4"
-                                                        IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNull}}">
-                                                    <TextBlock Text="?" 
-                                                               HorizontalAlignment="Center"
+                            <!-- Module Navigation -->
+                            <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Modules}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Width="196" 
+                                                    Height="40"
+                                                    Margin="2,2"
+                                                    Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    HorizontalContentAlignment="Left">
+                                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                                    <!-- Icon placeholder when no image -->
+                                                    <Border Width="24" Height="24"
+                                                            Background="#3C3C3C"
+                                                            CornerRadius="4"
+                                                            IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNull}}">
+                                                        <TextBlock Text="?" 
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   FontSize="14"/>
+                                                    </Border>
+                                                    <!-- Actual icon when provided -->
+                                                    <Image Source="{Binding Icon}" 
+                                                           Width="24" Height="24"
+                                                           IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                                    <TextBlock Text="{Binding Name}"
                                                                VerticalAlignment="Center"
-                                                               FontSize="14"/>
-                                                </Border>
-                                                <!-- Actual icon when provided -->
-                                                <Image Source="{Binding Icon}" 
-                                                       Width="24" Height="24"
-                                                       IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-                                                <TextBlock Text="{Binding Name}"
-                                                           VerticalAlignment="Center"
-                                                           IsVisible="{Binding $parent[Window].DataContext.IsMenuOpen}"/>
-                                            </StackPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                                                               IsVisible="{Binding $parent[Window].DataContext.IsMenuOpen}"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
 
-                        <!-- Spacer -->
-                        <Border/>
-                    </DockPanel>
-                </Border>
-            </SplitView.Pane>
+                            <!-- Spacer -->
+                            <Border/>
+                        </DockPanel>
+                    </Border>
+                </SplitView.Pane>
 
-            <!-- Main Content Area -->
-            <SplitView.Content>
-                <Border Background="#252526">
-                    <ContentControl Content="{Binding CurrentModuleView}">
-                        <ContentControl.ContentTemplate>
-                            <DataTemplate>
-                                <ContentPresenter Content="{Binding}"/>
-                            </DataTemplate>
-                        </ContentControl.ContentTemplate>
-                    </ContentControl>
-                </Border>
-            </SplitView.Content>
-        </SplitView>
+                <!-- Main Content Area -->
+                <SplitView.Content>
+                    <Border Background="#252526">
+                        <ContentControl Content="{Binding CurrentModuleView}">
+                            <ContentControl.ContentTemplate>
+                                <DataTemplate>
+                                    <ContentPresenter Content="{Binding}"/>
+                                </DataTemplate>
+                            </ContentControl.ContentTemplate>
+                        </ContentControl>
+                    </Border>
+                </SplitView.Content>
+            </SplitView>
 
-        <!-- Status Bar / Log Area (placeholder for future implementation) -->
-        <Border Grid.Row="1" 
-                Background="#007ACC" 
-                Height="24">
-            <TextBlock Text="Ready" 
-                       Foreground="White" 
-                       VerticalAlignment="Center" 
-                       Margin="8,0"/>
+            <!-- Status Bar / Log Area (placeholder for future implementation) -->
+            <Border Grid.Row="1" 
+                    Background="#007ACC" 
+                    Height="24">
+                <TextBlock Text="Ready" 
+                           Foreground="White" 
+                           VerticalAlignment="Center" 
+                           Margin="8,0"/>
+            </Border>
+        </Grid>
+
+        <!-- Disclaimer Overlay - blocks interaction when not accepted -->
+        <Border Background="#E0000000"
+                IsVisible="{Binding !IsDisclaimerAccepted}"
+                IsHitTestVisible="True"
+                ZIndex="1000">
+            <Border Background="#2D2D30"
+                    CornerRadius="8"
+                    Padding="32"
+                    MaxWidth="650"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center">
+                <StackPanel Spacing="20">
+                    
+                    <!-- Title -->
+                    <TextBlock Text="SOFTWARE DISCLAIMER"
+                               FontSize="24"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"/>
+                    
+                    <!-- Disclaimer Text -->
+                    <Border Background="#1E1E1E"
+                            CornerRadius="4"
+                            Padding="16">
+                        <StackPanel Spacing="16">
+                            <TextBlock TextWrapping="Wrap" FontSize="14" LineHeight="22">
+                                This software is NOT for sale. It is provided as FREE and OPEN-SOURCE software. By using this software, you acknowledge that NO legal action of any kind can be taken against the developer(s). This software is provided "AS IS" without warranty of any kind, express or implied.
+                            </TextBlock>
+                            
+                            <TextBlock TextWrapping="Wrap" FontSize="14" LineHeight="22">
+                                This software itself does not intentionally collect or transmit any user data. However, the software may rely on third-party frameworks or libraries whose internal behavior is outside the control of the developer(s). No guarantees can be made regarding data handling by such third-party components.
+                            </TextBlock>
+                            
+                            <TextBlock TextWrapping="Wrap" 
+                                       FontSize="14" 
+                                       FontWeight="Bold"
+                                       Foreground="#FF6B6B">
+                                Use at your own risk.
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    
+                    <!-- Checkbox -->
+                    <CheckBox x:Name="AcceptCheckBox"
+                              Content="I have read and accept the disclaimer above"
+                              IsChecked="{Binding DisclaimerCheckboxChecked, Mode=TwoWay}"
+                              FontSize="14"/>
+                    
+                    <!-- Accept Button -->
+                    <Button Content="Continue"
+                            HorizontalAlignment="Center"
+                            Width="150"
+                            Height="40"
+                            FontSize="14"
+                            IsEnabled="{Binding #AcceptCheckBox.IsChecked}"
+                            Command="{Binding AcceptDisclaimerCommand}"/>
+                    
+                </StackPanel>
+            </Border>
         </Border>
     </Grid>
 </Window>

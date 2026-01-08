@@ -56,6 +56,9 @@ public partial class App : Application
             var mainViewModel = new DiffusionNexusMainWindowViewModel();
             RegisterModules(mainViewModel);
 
+            // Check disclaimer status after services are ready
+            _ = mainViewModel.CheckDisclaimerStatusAsync();
+
             desktop.MainWindow = new DiffusionNexusMainWindow
             {
                 DataContext = mainViewModel
@@ -82,17 +85,14 @@ public partial class App : Application
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {
-            // If migration fails because tables already exist (legacy EnsureCreated usage),
-            // recreate the database to ensure clean state with migrations
-            scope.Dispose();
-            ResetDatabase();
-            return;
+            // Table already exists - this is usually fine, just continue
+            // Don't delete the database as that would lose user settings
+            System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
         {
-            scope.Dispose();
-            ResetDatabase();
-            return;
+            // Table already exists - this is usually fine, just continue
+            System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
         }
 
         scope.Dispose();
@@ -100,7 +100,8 @@ public partial class App : Application
 
     private static void ResetDatabase()
     {
-        // Use a fresh context for delete + migrate
+        // WARNING: This deletes ALL user data including settings!
+        // Only called in extreme cases - should rarely be needed
         using var freshScope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var freshContext = freshScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
         freshContext.Database.EnsureDeleted();
@@ -119,7 +120,8 @@ public partial class App : Application
         services.AddScoped<IAppSettingsService, AppSettingsService>();
         services.AddScoped<IModelSyncService, ModelFileSyncService>();
         services.AddScoped<IDatasetBackupService, DatasetBackupService>();
-        
+        services.AddScoped<IDisclaimerService, DisclaimerService>();
+
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
         services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
 
@@ -179,7 +181,7 @@ public partial class App : Application
 
         // Load settings on startup
         settingsVm.LoadCommand.Execute(null);
-        
+
         // Load models on startup
         loraViewerVm.RefreshCommand.Execute(null);
     }

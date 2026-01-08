@@ -19,8 +19,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.Domain", "Di
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.Infrastructure", "DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj", "{7438538F-5818-4DE2-B924-09E1C9372A1D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI", "DiffusionNexus.UI\DiffusionNexus.UI.csproj", "{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -127,18 +125,6 @@ Global
 		{7438538F-5818-4DE2-B924-09E1C9372A1D}.Release|x64.Build.0 = Release|Any CPU
 		{7438538F-5818-4DE2-B924-09E1C9372A1D}.Release|x86.ActiveCfg = Release|Any CPU
 		{7438538F-5818-4DE2-B924-09E1C9372A1D}.Release|x86.Build.0 = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|x64.Build.0 = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Debug|x86.Build.0 = Debug|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|Any CPU.Build.0 = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|x64.ActiveCfg = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|x64.Build.0 = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|x86.ActiveCfg = Release|Any CPU
-		{32E2629E-2128-7C01-1AB8-642BBAF5E6CE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
