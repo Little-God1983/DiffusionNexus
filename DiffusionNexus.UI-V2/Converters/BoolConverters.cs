@@ -146,4 +146,23 @@ public static class BoolConverters
         });
 
     #endregion
+
+    #region Model Status Converters
+
+    private static readonly IBrush ReadyGreenBrush = new SolidColorBrush(Color.Parse("#4CAF50"));
+    private static readonly IBrush NotReadyOrangeBrush = new SolidColorBrush(Color.Parse("#FF9800"));
+
+    /// <summary>
+    /// Converts IsModelReady boolean to status text ("Ready" or "Not Downloaded").
+    /// </summary>
+    public static readonly IValueConverter BoolToModelStatusText =
+        new FuncValueConverter<bool, string>(isReady => isReady ? "Ready" : "Not Downloaded");
+
+    /// <summary>
+    /// Converts IsModelReady boolean to status brush (green for ready, orange for not ready).
+    /// </summary>
+    public static readonly IValueConverter BoolToStatusBrush =
+        new FuncValueConverter<bool, IBrush>(isReady => isReady ? ReadyGreenBrush : NotReadyOrangeBrush);
+
+    #endregion
 }
