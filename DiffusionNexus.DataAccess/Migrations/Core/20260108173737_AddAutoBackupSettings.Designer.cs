@@ -3,6 +3,7 @@ using System;
 using DiffusionNexus.DataAccess.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DiffusionNexus.DataAccess.Migrations.Core
 {
     [DbContext(typeof(DiffusionNexusCoreDbContext))]
-    partial class DiffusionNexusCoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260108173737_AddAutoBackupSettings")]
+    partial class AddAutoBackupSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -49,9 +52,6 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<bool>("GenerateVideoThumbnails")
                         .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset?>("LastBackupAt")
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("LoraSortSourcePath")
                         .HasMaxLength(1000)

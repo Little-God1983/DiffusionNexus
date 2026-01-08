@@ -71,6 +71,46 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _datasetStoragePath;
 
     /// <summary>
+    /// Whether automatic backup is enabled.
+    /// </summary>
+    [ObservableProperty]
+    private bool _autoBackupEnabled;
+
+    /// <summary>
+    /// Days component of the backup interval (1-30).
+    /// </summary>
+    [ObservableProperty]
+    private int _autoBackupIntervalDays = 1;
+
+    /// <summary>
+    /// Hours component of the backup interval (0-23).
+    /// </summary>
+    [ObservableProperty]
+    private int _autoBackupIntervalHours;
+
+    /// <summary>
+    /// Folder path for automatic backups.
+    /// </summary>
+    [ObservableProperty]
+    private string? _autoBackupLocation;
+
+    /// <summary>
+    /// Validation error message for backup location.
+    /// </summary>
+    [ObservableProperty]
+    private string? _autoBackupLocationError;
+
+    /// <summary>
+    /// Available days for backup interval (1-30).
+    /// </summary>
+    public IReadOnlyList<int> AvailableBackupDays { get; } = Enumerable.Range(1, 30).ToList();
+
+    /// <summary>
+    /// Available hours for backup interval (0-23).
+    /// </summary>
+    public IReadOnlyList<int> AvailableBackupHours { get; } = Enumerable.Range(0, 24).ToList();
+
+    /// <summary>
     /// Collection of LoRA source folders.
     /// </summary>
     [ObservableProperty]
@@ -149,6 +189,10 @@ public partial class SettingsViewModel : BusyViewModelBase
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
             DatasetStoragePath = settings.DatasetStoragePath;
+            AutoBackupEnabled = settings.AutoBackupEnabled;
+            AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
+            AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
+            AutoBackupLocation = settings.AutoBackupLocation;
 
             // Map LoRA sources
             foreach (var existing in LoraSources)
@@ -218,6 +262,10 @@ public partial class SettingsViewModel : BusyViewModelBase
             settings.LoraSortSourcePath = LoraSortSourcePath;
             settings.LoraSortTargetPath = LoraSortTargetPath;
             settings.DatasetStoragePath = DatasetStoragePath;
+            settings.AutoBackupEnabled = AutoBackupEnabled;
+            settings.AutoBackupIntervalDays = AutoBackupIntervalDays;
+            settings.AutoBackupIntervalHours = AutoBackupIntervalHours;
+            settings.AutoBackupLocation = AutoBackupLocation;
 
             // Map LoRA sources (remove empty ones)
             settings.LoraSources.Clear();
@@ -365,7 +413,57 @@ public partial class SettingsViewModel : BusyViewModelBase
         if (!string.IsNullOrEmpty(path))
         {
             DatasetStoragePath = path;
+            ValidateAutoBackupLocation();
             HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for Auto Backup location folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseAutoBackupLocationAsync()
+    {
+        if (DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Backup Location Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            AutoBackupLocation = path;
+            ValidateAutoBackupLocation();
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Validates that the backup location is not the same as or a subfolder of the dataset storage path.
+    /// </summary>
+    private void ValidateAutoBackupLocation()
+    {
+        AutoBackupLocationError = null;
+
+        if (string.IsNullOrWhiteSpace(AutoBackupLocation) || string.IsNullOrWhiteSpace(DatasetStoragePath))
+        {
+            return;
+        }
+
+        var backupPath = Path.GetFullPath(AutoBackupLocation.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var storagePath = Path.GetFullPath(DatasetStoragePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        if (string.Equals(backupPath, storagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            AutoBackupLocationError = "Backup location cannot be the same as the Dataset Storage folder.";
+            return;
+        }
+
+        // Check if backup path is a subfolder of storage path
+        var storagePathWithSep = storagePath + Path.DirectorySeparatorChar;
+        if (backupPath.StartsWith(storagePathWithSep, StringComparison.OrdinalIgnoreCase))
+        {
+            AutoBackupLocationError = "Backup location cannot be a subfolder of the Dataset Storage folder.";
         }
     }
 
@@ -413,7 +511,19 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
-    partial void OnDatasetStoragePathChanged(string? value) => HasChanges = true;
+    partial void OnDatasetStoragePathChanged(string? value)
+    {
+        HasChanges = true;
+        ValidateAutoBackupLocation();
+    }
+    partial void OnAutoBackupEnabledChanged(bool value) => HasChanges = true;
+    partial void OnAutoBackupIntervalDaysChanged(int value) => HasChanges = true;
+    partial void OnAutoBackupIntervalHoursChanged(int value) => HasChanges = true;
+    partial void OnAutoBackupLocationChanged(string? value)
+    {
+        HasChanges = true;
+        ValidateAutoBackupLocation();
+    }
 }
 
 /// <summary>

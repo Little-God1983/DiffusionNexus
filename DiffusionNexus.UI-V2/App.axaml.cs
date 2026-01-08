@@ -118,6 +118,7 @@ public partial class App : Application
         // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();
         services.AddScoped<IModelSyncService, ModelFileSyncService>();
+        services.AddScoped<IDatasetBackupService, DatasetBackupService>();
         
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
         services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
@@ -162,10 +163,19 @@ public partial class App : Application
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
         var settingsView = new SettingsView { DataContext = settingsVm };
 
-        mainViewModel.RegisterModule(new ModuleItem(
+        var settingsModule = new ModuleItem(
             "Settings",
             "avares://DiffusionNexus.UI-V2/Assets/settings.png",
-            settingsView));
+            settingsView);
+
+        mainViewModel.RegisterModule(settingsModule);
+
+        // Subscribe to navigate to settings event
+        var eventAggregator = Services!.GetRequiredService<IDatasetEventAggregator>();
+        eventAggregator.NavigateToSettingsRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+        };
 
         // Load settings on startup
         settingsVm.LoadCommand.Execute(null);

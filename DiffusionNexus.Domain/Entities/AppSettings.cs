@@ -87,6 +87,32 @@ public class AppSettings
     /// </summary>
     public ICollection<DatasetCategory> DatasetCategories { get; set; } = new List<DatasetCategory>();
 
+    /// <summary>
+    /// Whether automatic backup is enabled for datasets.
+    /// </summary>
+    public bool AutoBackupEnabled { get; set; }
+
+    /// <summary>
+    /// Days component of the automatic backup interval (1-30).
+    /// </summary>
+    public int AutoBackupIntervalDays { get; set; } = 1;
+
+    /// <summary>
+    /// Hours component of the automatic backup interval (0-23).
+    /// </summary>
+    public int AutoBackupIntervalHours { get; set; }
+
+    /// <summary>
+    /// Folder path where automatic backups are stored.
+    /// Cannot be the same as or a subfolder of DatasetStoragePath.
+    /// </summary>
+    public string? AutoBackupLocation { get; set; }
+
+    /// <summary>
+    /// When the last automatic backup was performed.
+    /// </summary>
+    public DateTimeOffset? LastBackupAt { get; set; }
+
     #endregion
 
     #region Timestamps

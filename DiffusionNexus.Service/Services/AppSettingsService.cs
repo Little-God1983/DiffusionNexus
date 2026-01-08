@@ -54,8 +54,42 @@ public sealed class AppSettingsService : IAppSettingsService
                 .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
                 .FirstAsync(s => s.Id == 1, cancellationToken);
         }
+        else
+        {
+            // Clean up any duplicate categories (by name)
+            await RemoveDuplicateCategoriesAsync(settings, cancellationToken);
+        }
 
         return settings;
+    }
+
+    /// <summary>
+    /// Removes duplicate categories keeping only the first one of each name.
+    /// </summary>
+    private async Task RemoveDuplicateCategoriesAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        var categoriesByName = settings.DatasetCategories
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        if (categoriesByName.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var group in categoriesByName)
+        {
+            // Keep the first, remove the rest
+            var duplicates = group.Skip(1).ToList();
+            foreach (var duplicate in duplicates)
+            {
+                _dbContext.DatasetCategories.Remove(duplicate);
+                settings.DatasetCategories.Remove(duplicate);
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SeedDefaultCategoriesAsync(CancellationToken cancellationToken = default)
@@ -166,6 +200,10 @@ public sealed class AppSettingsService : IAppSettingsService
             existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
             existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
             existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
+            existingSettings.AutoBackupEnabled = settings.AutoBackupEnabled;
+            existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
+            existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
+            existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
             existingSettings.UpdatedAt = settings.UpdatedAt;
 
             // Handle LoRA sources (remove deleted, update existing, add new)

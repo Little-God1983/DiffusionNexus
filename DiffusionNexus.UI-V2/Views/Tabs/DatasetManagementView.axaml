@@ -116,7 +116,15 @@
                         ToolTip.Tip="Show individual cards for each version folder"/>
         </StackPanel>
         
-        <Border Grid.Column="6"/>
+        <!-- Backup Status Button -->
+        <Button Grid.Column="6"
+                Content="{Binding BackupStatusText}"
+                Command="{Binding GoToBackupSettingsCommand}"
+                IsVisible="{Binding !IsViewingDataset}"
+                Opacity="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToOpacity}}"
+                ToolTip.Tip="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToBackupTooltip}}"
+                HorizontalAlignment="Right"
+                Margin="8,0,0,0"/>
         
         <!-- Action Buttons -->
         <Button Grid.Column="7" Content="Open Folder"

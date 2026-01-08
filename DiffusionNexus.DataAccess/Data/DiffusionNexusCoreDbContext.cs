@@ -322,6 +322,7 @@ public class DiffusionNexusCoreDbContext : DbContext
             entity.Property(e => e.LoraSortSourcePath).HasMaxLength(1000);
             entity.Property(e => e.LoraSortTargetPath).HasMaxLength(1000);
             entity.Property(e => e.DatasetStoragePath).HasMaxLength(1000);
+            entity.Property(e => e.AutoBackupLocation).HasMaxLength(1000);
 
             // Relationships
             entity.HasMany(e => e.LoraSources)
