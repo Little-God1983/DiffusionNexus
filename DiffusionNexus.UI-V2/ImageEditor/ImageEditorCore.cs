@@ -1256,6 +1256,150 @@ public class ImageEditorCore : IDisposable
 
     #endregion Background Removal
 
+    #region Background Fill
+
+    /// <summary>
+    /// Fills transparent areas of the image with the specified solid color.
+    /// Uses alpha compositing to blend the fill color behind the existing image.
+    /// </summary>
+    /// <param name="settings">The background fill settings containing the fill color.</param>
+    /// <returns>True if the fill was applied successfully.</returns>
+    public bool ApplyBackgroundFill(BackgroundFillSettings settings)
+    {
+        if (_workingBitmap is null || settings is null)
+            return false;
+
+        try
+        {
+            var result = CreateBackgroundFillBitmap(_workingBitmap, settings);
+            if (result is null)
+                return false;
+
+            lock (_bitmapLock)
+            {
+                _workingBitmap.Dispose();
+                _workingBitmap = result;
+            }
+
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sets a preview with the background filled using the specified color.
+    /// Does not modify the working bitmap until ApplyPreview is called.
+    /// </summary>
+    /// <param name="settings">The background fill settings containing the fill color.</param>
+    /// <returns>True if the preview was set successfully.</returns>
+    public bool SetBackgroundFillPreview(BackgroundFillSettings settings)
+    {
+        if (settings is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            // Dispose old preview
+            var oldPreview = _previewBitmap;
+            _previewBitmap = null;
+
+            try
+            {
+                // Create new preview with background filled
+                var newPreview = CreateBackgroundFillBitmap(_workingBitmap, settings);
+
+                _previewBitmap = newPreview;
+                _isPreviewActive = _previewBitmap is not null;
+                oldPreview?.Dispose();
+            }
+            catch
+            {
+                oldPreview?.Dispose();
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return _isPreviewActive;
+    }
+
+    /// <summary>
+    /// Creates a new bitmap with transparent areas filled with the specified color.
+    /// Uses alpha compositing: result = foreground * alpha + background * (1 - alpha)
+    /// </summary>
+    private static SKBitmap? CreateBackgroundFillBitmap(SKBitmap source, BackgroundFillSettings settings)
+    {
+        if (source is null || settings is null)
+            return null;
+
+        try
+        {
+            var width = source.Width;
+            var height = source.Height;
+            
+            // Create result bitmap without alpha (opaque)
+            var result = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+
+            var srcPixels = source.Pixels;
+            var dstPixels = new SKColor[srcPixels.Length];
+
+            var fillR = settings.Red;
+            var fillG = settings.Green;
+            var fillB = settings.Blue;
+
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var pixel = srcPixels[i];
+                var alpha = pixel.Alpha / 255f;
+
+                // Alpha compositing: foreground * alpha + background * (1 - alpha)
+                var r = (byte)Math.Clamp((int)(pixel.Red * alpha + fillR * (1f - alpha)), 0, 255);
+                var g = (byte)Math.Clamp((int)(pixel.Green * alpha + fillG * (1f - alpha)), 0, 255);
+                var b = (byte)Math.Clamp((int)(pixel.Blue * alpha + fillB * (1f - alpha)), 0, 255);
+
+                dstPixels[i] = new SKColor(r, g, b, 255);
+            }
+
+            result.Pixels = dstPixels;
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Checks if the current working image has any transparency.
+    /// </summary>
+    /// <returns>True if the image contains transparent pixels.</returns>
+    public bool HasTransparency()
+    {
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            var pixels = _workingBitmap.Pixels;
+            for (var i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].Alpha < 255)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
+    #endregion Background Fill
+
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
 

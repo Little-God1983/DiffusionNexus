@@ -272,6 +272,33 @@ public partial class ImageEditView : UserControl
             }
         };
 
+        // Handle background fill preview requests (live preview)
+        imageEditor.BackgroundFillPreviewRequested += (_, settings) =>
+        {
+            _imageEditorCanvas.EditorCore.SetBackgroundFillPreview(settings);
+        };
+
+        // Handle background fill preview cancel
+        imageEditor.CancelBackgroundFillPreviewRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearPreview();
+        };
+
+        // Handle apply background fill
+        imageEditor.ApplyBackgroundFillRequested += (_, settings) =>
+        {
+            // Clear preview first, then apply to working bitmap
+            _imageEditorCanvas.EditorCore.ClearPreview();
+            if (_imageEditorCanvas.EditorCore.ApplyBackgroundFill(settings))
+            {
+                imageEditor.OnBackgroundFillApplied();
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to apply background fill";
+            }
+        };
+
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
         {
