@@ -104,15 +104,22 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             {
                 var dmlOptions = new SessionOptions();
                 
-                // Use basic optimization level for DirectML compatibility
-                // Some models have Resize nodes that fail with ORT_ENABLE_ALL on DirectML
+                // Compatibility parameters for DirectML on RMBG-1.4
+                // These settings prioritize stability over performance to fix the "Resize node" invalid parameter error.
                 dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
+                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
                 
-                // Disable certain optimizations that can cause DirectML issues
-                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
                 dmlOptions.EnableMemoryPattern = false;
+                dmlOptions.EnableCpuMemArena = false;
                 
+                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
+                dmlOptions.AddSessionConfigEntry("ep.dml.enable_graph_capture", "0");
+                
+                // Add DirectML as primary execution provider
                 dmlOptions.AppendExecutionProvider_DML(0);
+                
+                // Add CPU as fallback for operations DirectML doesn't support
+                dmlOptions.AppendExecutionProvider_CPU(0);
 
                 var session = new InferenceSession(modelPath, dmlOptions);
                 _isGpuAvailable = true;
@@ -201,7 +208,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         }
         catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
         {
-            Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
+            Log.Warning("GPU inference failed (likely driver/model incompatibility). Disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
 
             // Reset session
             await _sessionLock.WaitAsync(cancellationToken);

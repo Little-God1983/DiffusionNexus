@@ -19,7 +19,8 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     // Model parameters for 4x-UltraSharp (ESRGAN architecture)
     private const int ScaleFactor = 4;
     private const int TileSize = 192; // Tile size for processing (larger uses more VRAM)
-    private const int TileOverlap = 16; // Overlap between tiles to avoid seams
+    private const int TilePadding = 32; // Padding around tile (context) to avoid edge artifacts
+    private const int TileParseSize = TileSize - 2 * TilePadding; // The actual valid content size per tile
 
     private readonly OnnxModelManager _modelManager;
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
@@ -108,8 +109,23 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             try
             {
                 var dmlOptions = new SessionOptions();
+                
+                // Compatibility parameters for DirectML on 4x-UltraSharp
+                // These settings prioritize stability over performance to prevent known DirectML issues.
+                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
+                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
+                
+                dmlOptions.EnableMemoryPattern = false;
+                dmlOptions.EnableCpuMemArena = false;
+                
+                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
+                dmlOptions.AddSessionConfigEntry("ep.dml.enable_graph_capture", "0");
+                
+                // Add DirectML as primary execution provider
                 dmlOptions.AppendExecutionProvider_DML(0);
-                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+                
+                // Add CPU as fallback for operations DirectML doesn't support
+                dmlOptions.AppendExecutionProvider_CPU(0);
 
                 var session = new InferenceSession(modelPath, dmlOptions);
                 _isGpuAvailable = true;
@@ -261,71 +277,59 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         IProgress<UpscalingProgress>? progress,
         CancellationToken cancellationToken)
     {
-        try
+        // Step 1: Load image
+        progress?.Report(new UpscalingProgress(UpscalingPhase.Preparing, "Loading image...", 0));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+
+        // Step 2: Process through 4x upscaling model using tiles
+        progress?.Report(new UpscalingProgress(UpscalingPhase.ProcessingTiles, "Generating AI details...", 5));
+
+        using var upscaled4x = ProcessTiles(originalImage, progress, cancellationToken);
+
+        // Step 3: Resize to target scale if needed
+        var targetWidth = (int)Math.Round(width * targetScale);
+        var targetHeight = (int)Math.Round(height * targetScale);
+
+        Image<Rgba32> finalImage;
+        if (Math.Abs(targetScale - 4.0f) < 0.001f)
         {
-            // Step 1: Load image
-            progress?.Report(new UpscalingProgress(UpscalingPhase.Preparing, "Loading image...", 0));
-            cancellationToken.ThrowIfCancellationRequested();
-
-            using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
-
-            // Step 2: Process through 4x upscaling model using tiles
-            progress?.Report(new UpscalingProgress(UpscalingPhase.ProcessingTiles, "Generating AI details...", 5));
-
-            using var upscaled4x = ProcessTiles(originalImage, progress, cancellationToken);
-
-            // Step 3: Resize to target scale if needed
-            var targetWidth = (int)Math.Round(width * targetScale);
-            var targetHeight = (int)Math.Round(height * targetScale);
-
-            Image<Rgba32> finalImage;
-            if (Math.Abs(targetScale - 4.0f) < 0.001f)
-            {
-                // Target is 4x, no additional resize needed
-                progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Finalizing...", 95));
-                finalImage = upscaled4x.Clone();
-            }
-            else
-            {
-                // Downscale from 4x to target using high-quality Lanczos3
-                progress?.Report(new UpscalingProgress(
-                    UpscalingPhase.ResizingToTarget,
-                    $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...",
-                    90));
-
-                finalImage = upscaled4x.Clone(ctx =>
-                    ctx.Resize(new ResizeOptions
-                    {
-                        Size = new Size(targetWidth, targetHeight),
-                        Sampler = KnownResamplers.Lanczos3,
-                        Mode = ResizeMode.Stretch
-                    }));
-            }
-
-            // Step 4: Encode to PNG
-            progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Encoding result...", 98));
-            cancellationToken.ThrowIfCancellationRequested();
-
-            using var outputStream = new MemoryStream();
-            finalImage.SaveAsPng(outputStream);
-            finalImage.Dispose();
-
-            progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Complete!", 100));
-
-            return ImageUpscalingResult.Succeeded(
-                outputStream.ToArray(),
-                targetWidth,
-                targetHeight);
+            // Target is 4x, no additional resize needed
+            progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Finalizing...", 95));
+            finalImage = upscaled4x.Clone();
         }
-        catch (OperationCanceledException)
+        else
         {
-            throw;
+            // Downscale from 4x to target using high-quality Lanczos3
+            progress?.Report(new UpscalingProgress(
+                UpscalingPhase.ResizingToTarget,
+                $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...",
+                90));
+
+            finalImage = upscaled4x.Clone(ctx =>
+                ctx.Resize(new ResizeOptions
+                {
+                    Size = new Size(targetWidth, targetHeight),
+                    Sampler = KnownResamplers.Lanczos3,
+                    Mode = ResizeMode.Stretch
+                }));
         }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Image upscaling failed");
-            return ImageUpscalingResult.Failed($"Upscaling failed: {ex.Message}");
-        }
+
+        // Step 4: Encode to PNG
+        progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Encoding result...", 98));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var outputStream = new MemoryStream();
+        finalImage.SaveAsPng(outputStream);
+        finalImage.Dispose();
+
+        progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Complete!", 100));
+
+        return ImageUpscalingResult.Succeeded(
+            outputStream.ToArray(),
+            targetWidth,
+            targetHeight);
     }
 
     /// <summary>
@@ -341,14 +345,13 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         var outputWidth = inputWidth * ScaleFactor;
         var outputHeight = inputHeight * ScaleFactor;
 
-        // Calculate tile grid
-        var tileStep = TileSize - TileOverlap;
-        var tilesX = (int)Math.Ceiling((double)inputWidth / tileStep);
-        var tilesY = (int)Math.Ceiling((double)inputHeight / tileStep);
+        // Calculate tile grid using ParseSize (stride)
+        var tilesX = (int)Math.Ceiling((double)inputWidth / TileParseSize);
+        var tilesY = (int)Math.Ceiling((double)inputHeight / TileParseSize);
         var totalTiles = tilesX * tilesY;
 
-        Log.Information("Upscaling {Width}x{Height} -> {OutWidth}x{OutHeight} using {TileCount} tiles",
-            inputWidth, inputHeight, outputWidth, outputHeight, totalTiles);
+        Log.Information("Upscaling {Width}x{Height} -> {OutWidth}x{OutHeight} using {TileCount} tiles (Padding: {Padding})",
+            inputWidth, inputHeight, outputWidth, outputHeight, totalTiles, TilePadding);
 
         // Create output image
         var output = new Image<Rgba32>(outputWidth, outputHeight);
@@ -361,29 +364,33 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Calculate tile bounds in input space
-                var inputX = Math.Min(tx * tileStep, inputWidth - TileSize);
-                var inputY = Math.Min(ty * tileStep, inputHeight - TileSize);
-                inputX = Math.Max(0, inputX);
-                inputY = Math.Max(0, inputY);
+                // Determine the input window coordinates (center of the tile logic)
+                var inputStartX = tx * TileParseSize;
+                var inputStartY = ty * TileParseSize;
 
-                // Handle edge tiles that may be smaller
-                var actualTileWidth = Math.Min(TileSize, inputWidth - inputX);
-                var actualTileHeight = Math.Min(TileSize, inputHeight - inputY);
+                // Determine the tile extraction coordinates (including padding context)
+                // These can be negative (handled by ExtractTile via clamping)
+                var tileX = inputStartX - TilePadding;
+                var tileY = inputStartY - TilePadding;
 
-                // Extract tile (pad if necessary)
-                using var tile = ExtractTile(input, inputX, inputY, actualTileWidth, actualTileHeight);
+                // Extract tile with context
+                using var tile = ExtractTile(input, tileX, tileY);
 
                 // Process tile through model
                 using var upscaledTile = ProcessSingleTile(tile);
 
-                // Calculate output position
-                var outputX = inputX * ScaleFactor;
-                var outputY = inputY * ScaleFactor;
+                // Copy valid region to output
+                // We discard 'TilePadding' from all sides of the upscaled result to remove edge artifacts
+                var destX = inputStartX * ScaleFactor;
+                var destY = inputStartY * ScaleFactor;
+                
+                var srcCropX = TilePadding * ScaleFactor;
+                var srcCropY = TilePadding * ScaleFactor;
+                
+                var validWidth = TileParseSize * ScaleFactor;
+                var validHeight = TileParseSize * ScaleFactor;
 
-                // Blend tile into output (handle overlap blending)
-                BlendTileIntoOutput(output, upscaledTile, outputX, outputY,
-                    tx > 0, ty > 0, tx < tilesX - 1, ty < tilesY - 1);
+                CopyTileToOutput(output, upscaledTile, destX, destY, srcCropX, srcCropY, validWidth, validHeight);
 
                 tilesProcessed++;
                 var progressPct = 5 + (int)(85.0 * tilesProcessed / totalTiles);
@@ -398,9 +405,9 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     }
 
     /// <summary>
-    /// Extracts a tile from the input image, padding if necessary.
+    /// Extracts a tile from the input image, padding with edge replication if out of bounds.
     /// </summary>
-    private static Image<Rgba32> ExtractTile(Image<Rgba32> source, int x, int y, int width, int height)
+    private static Image<Rgba32> ExtractTile(Image<Rgba32> source, int x, int y)
     {
         var tile = new Image<Rgba32>(TileSize, TileSize);
 
@@ -408,13 +415,15 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         {
             for (var row = 0; row < TileSize; row++)
             {
-                var srcY = Math.Min(y + row, source.Height - 1);
+                // Clamp Y to valid source image range (Edge Replication)
+                var srcY = Math.Clamp(y + row, 0, source.Height - 1);
                 var srcRow = sourceAccessor.GetRowSpan(srcY);
                 var dstRow = tileAccessor.GetRowSpan(row);
 
                 for (var col = 0; col < TileSize; col++)
                 {
-                    var srcX = Math.Min(x + col, source.Width - 1);
+                    // Clamp X to valid source image range
+                    var srcX = Math.Clamp(x + col, 0, source.Width - 1);
                     dstRow[col] = srcRow[srcX];
                 }
             }
@@ -478,78 +487,33 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     }
 
     /// <summary>
-    /// Blends an upscaled tile into the output image with overlap handling.
+    /// Copies the valid central region of an upscaled tile to the output image.
     /// </summary>
-    private static void BlendTileIntoOutput(
+    private static void CopyTileToOutput(
         Image<Rgba32> output,
         Image<Rgba32> tile,
-        int outputX,
-        int outputY,
-        bool hasLeftNeighbor,
-        bool hasTopNeighbor,
-        bool hasRightNeighbor,
-        bool hasBottomNeighbor)
+        int destX,
+        int destY,
+        int srcX,
+        int srcY,
+        int width,
+        int height)
     {
-        var tileWidth = tile.Width;
-        var tileHeight = tile.Height;
-        var overlapScaled = TileOverlap * ScaleFactor;
-
         output.ProcessPixelRows(tile, (outputAccessor, tileAccessor) =>
         {
-            for (var ty = 0; ty < tileHeight; ty++)
+            for (var row = 0; row < height; row++)
             {
-                var oy = outputY + ty;
-                if (oy < 0 || oy >= output.Height) continue;
+                var dy = destY + row;
+                if (dy >= output.Height) break; // Clip bottom edge
 
-                var outputRow = outputAccessor.GetRowSpan(oy);
-                var tileRow = tileAccessor.GetRowSpan(ty);
+                var sy = srcY + row;
+                var outputRow = outputAccessor.GetRowSpan(dy);
+                var tileRow = tileAccessor.GetRowSpan(sy);
 
-                for (var tx = 0; tx < tileWidth; tx++)
-                {
-                    var ox = outputX + tx;
-                    if (ox < 0 || ox >= output.Width) continue;
+                var copyWidth = Math.Min(width, output.Width - destX); // Clip right edge
+                if (copyWidth <= 0) continue;
 
-                    var pixel = tileRow[tx];
-
-                    // Calculate blend weights for overlap regions
-                    var blendX = 1.0f;
-                    var blendY = 1.0f;
-
-                    if (hasLeftNeighbor && tx < overlapScaled)
-                    {
-                        blendX = (float)tx / overlapScaled;
-                    }
-                    else if (hasRightNeighbor && tx >= tileWidth - overlapScaled)
-                    {
-                        blendX = (float)(tileWidth - tx) / overlapScaled;
-                    }
-
-                    if (hasTopNeighbor && ty < overlapScaled)
-                    {
-                        blendY = (float)ty / overlapScaled;
-                    }
-                    else if (hasBottomNeighbor && ty >= tileHeight - overlapScaled)
-                    {
-                        blendY = (float)(tileHeight - ty) / overlapScaled;
-                    }
-
-                    var blend = blendX * blendY;
-
-                    if (blend >= 0.999f)
-                    {
-                        // No blending needed
-                        outputRow[ox] = pixel;
-                    }
-                    else
-                    {
-                        // Blend with existing pixel
-                        var existing = outputRow[ox];
-                        var r = (byte)(existing.R * (1 - blend) + pixel.R * blend);
-                        var g = (byte)(existing.G * (1 - blend) + pixel.G * blend);
-                        var b = (byte)(existing.B * (1 - blend) + pixel.B * blend);
-                        outputRow[ox] = new Rgba32(r, g, b, 255);
-                    }
-                }
+                tileRow.Slice(srcX, copyWidth).CopyTo(outputRow.Slice(destX, copyWidth));
             }
         });
     }
