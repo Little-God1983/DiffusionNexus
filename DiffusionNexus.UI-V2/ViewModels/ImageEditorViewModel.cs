@@ -1403,6 +1403,8 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteResetBrightnessContrast()
     {
         ResetBrightnessContrastSliders();
+        // Clear the preview to show the original image
+        CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
         StatusMessage = "Reset brightness and contrast";
     }
 
