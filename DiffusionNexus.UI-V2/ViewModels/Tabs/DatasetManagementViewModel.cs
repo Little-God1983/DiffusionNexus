@@ -62,6 +62,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private DateTimeOffset? _nextBackupTime;
     private bool _isBackupInProgress;
 
+    // Filter fields
+    private string _filterText = string.Empty;
+    private DatasetType? _filterType;
+
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
@@ -243,6 +247,50 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     #endregion
 
+    #region Filter Properties
+
+    /// <summary>
+    /// Text to filter datasets by name or description.
+    /// </summary>
+    public string FilterText
+    {
+        get => _filterText;
+        set
+        {
+            if (SetProperty(ref _filterText, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Type to filter datasets by. Null means show all types.
+    /// </summary>
+    public DatasetType? FilterType
+    {
+        get => _filterType;
+        set
+        {
+            if (SetProperty(ref _filterType, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether any filter is currently active.
+    /// </summary>
+    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue;
+
+    /// <summary>
+    /// Filtered collection of datasets grouped by category.
+    /// </summary>
+    public ObservableCollection<DatasetGroupViewModel> FilteredGroupedDatasets { get; } = [];
+
+    #endregion
+
     #region Collections (Delegated to State)
 
     /// <summary>
@@ -295,6 +343,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
     public IRelayCommand GoToBackupSettingsCommand { get; }
+    public IRelayCommand ClearFiltersCommand { get; }
+    public IAsyncRelayCommand BackupNowCommand { get; }
 
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -351,6 +401,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
         GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
+        ClearFiltersCommand = new RelayCommand(ClearFilters);
+        BackupNowCommand = new AsyncRelayCommand(BackupNowAsync, () => IsAutoBackupConfigured && !_isBackupInProgress);
 
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -565,6 +617,58 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Manually triggers a backup now.
+    /// </summary>
+    private async Task BackupNowAsync()
+    {
+        if (_backupService is null || _isBackupInProgress)
+        {
+            return;
+        }
+
+        _isBackupInProgress = true;
+        BackupStatusText = "Backup: Running...";
+        BackupNowCommand.NotifyCanExecuteChanged();
+
+        try
+        {
+            var progress = new Progress<BackupProgress>(p =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                });
+            });
+
+            var result = await _backupService.BackupDatasetsAsync(progress);
+
+            if (result.Success)
+            {
+                StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
+                
+                // Refresh backup status to show next backup time
+                var settings = await _settingsService.GetSettingsAsync();
+                UpdateBackupStatus(settings);
+            }
+            else
+            {
+                StatusMessage = $"Backup failed: {result.ErrorMessage}";
+                BackupStatusText = "Backup: Failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Backup error: {ex.Message}";
+            BackupStatusText = "Backup: Error";
+        }
+        finally
+        {
+            _isBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    /// <summary>
     /// Updates the backup countdown text based on remaining time.
     /// </summary>
     private void UpdateBackupCountdownText()
@@ -604,12 +708,34 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         else if (remaining.TotalMinutes >= 1)
         {
             var minutes = (int)remaining.TotalMinutes;
-            BackupStatusText = $"Backup in {minutes}m";
+            var seconds = remaining.Seconds;
+            BackupStatusText = seconds > 0
+                ? $"Backup in {minutes}m {seconds}s"
+                : $"Backup in {minutes}m";
         }
         else
         {
             var seconds = (int)remaining.TotalSeconds;
             BackupStatusText = $"Backup in {seconds}s";
+        }
+
+        // Adjust timer interval based on remaining time for more accurate updates
+        AdjustTimerInterval(remaining);
+    }
+
+    /// <summary>
+    /// Adjusts the backup countdown timer interval based on remaining time.
+    /// Updates every second when under 1 minute, every minute otherwise.
+    /// </summary>
+    private void AdjustTimerInterval(TimeSpan remaining)
+    {
+        if (_backupCountdownTimer is null) return;
+
+        var desiredInterval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
+
+        if (Math.Abs(_backupCountdownTimer.Interval - desiredInterval) > 1)
+        {
+            _backupCountdownTimer.Interval = desiredInterval;
         }
     }
 
@@ -618,7 +744,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     private void StartBackupCountdownTimer()
     {
-        _backupCountdownTimer = new Timer(60000); // Update every minute
+        // Determine initial interval based on remaining time
+        var remaining = _nextBackupTime.HasValue
+            ? _nextBackupTime.Value - DateTimeOffset.UtcNow
+            : TimeSpan.MaxValue;
+        
+        var interval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
+
+        _backupCountdownTimer = new Timer(interval);
         _backupCountdownTimer.Elapsed += OnBackupCountdownTimerElapsed;
         _backupCountdownTimer.AutoReset = true;
         _backupCountdownTimer.Start();
@@ -748,6 +881,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
                 GroupedDatasets.Add(uncategorized);
             }
+
+            // Apply filter to populate FilteredGroupedDatasets
+            ApplyFilter();
 
             StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";
         }
@@ -1586,6 +1722,87 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
 
         return exportedCount;
+    }
+
+    #endregion
+
+    #region Filter Methods
+
+    /// <summary>
+    /// Applies the current filter to the grouped datasets.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        FilteredGroupedDatasets.Clear();
+
+        var filterText = _filterText?.Trim() ?? string.Empty;
+        var hasTextFilter = !string.IsNullOrWhiteSpace(filterText);
+        var hasTypeFilter = _filterType.HasValue;
+
+        foreach (var group in GroupedDatasets)
+        {
+            var filteredDatasets = group.Datasets
+                .Where(dataset => MatchesFilter(dataset, filterText, hasTextFilter, hasTypeFilter))
+                .ToList();
+
+            if (filteredDatasets.Count > 0)
+            {
+                var filteredGroup = new DatasetGroupViewModel
+                {
+                    CategoryId = group.CategoryId,
+                    Name = group.Name,
+                    Description = group.Description,
+                    SortOrder = group.SortOrder
+                };
+
+                foreach (var dataset in filteredDatasets)
+                {
+                    filteredGroup.Datasets.Add(dataset);
+                }
+
+                FilteredGroupedDatasets.Add(filteredGroup);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasActiveFilter));
+    }
+
+    /// <summary>
+    /// Checks if a dataset matches the current filter criteria.
+    /// </summary>
+    private bool MatchesFilter(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
+    {
+        // Check type filter
+        if (hasTypeFilter && dataset.Type != _filterType)
+        {
+            return false;
+        }
+
+        // Check text filter (matches name or description)
+        if (hasTextFilter)
+        {
+            var matchesName = dataset.Name?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+            var matchesDescription = dataset.Description?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+
+            if (!matchesName && !matchesDescription)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Clears all active filters.
+    /// </summary>
+    public void ClearFilters()
+    {
+        _filterText = string.Empty;
+        _filterType = null;
+        OnPropertyChanged(nameof(FilterText));
+        OnPropertyChanged(nameof(FilterType));
+        ApplyFilter();
     }
 
     #endregion
