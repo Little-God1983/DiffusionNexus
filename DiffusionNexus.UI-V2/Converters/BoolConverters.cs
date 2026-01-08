@@ -185,4 +185,16 @@ public static class BoolConverters
         new FuncValueConverter<int, double>(percentage => Math.Max(0, Math.Min(100, percentage)) * 1.68);
 
     #endregion
+
+    #region Backup Status Converters
+
+    /// <summary>
+    /// Converts IsAutoBackupConfigured to tooltip text.
+    /// </summary>
+    public static readonly IValueConverter BoolToBackupTooltip =
+        new FuncValueConverter<bool, string>(isConfigured => 
+            isConfigured ? "Automatic backup is configured. Click to view settings." 
+                         : "Automatic backup is not configured. Click to set up backup.");
+
+    #endregion
 }

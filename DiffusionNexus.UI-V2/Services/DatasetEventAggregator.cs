@@ -251,6 +251,13 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when navigation to the Settings page is requested.
+/// </summary>
+public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
+{
+}
+
+/// <summary>
 /// Event raised when navigation to the Batch Crop/Scale tab is requested.
 /// </summary>
 public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
@@ -391,6 +398,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
 
+    /// <summary>
+    /// Raised when navigation to Settings is requested.
+    /// </summary>
+    event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
+
     #endregion
 
     #region Publish Methods
@@ -410,6 +422,7 @@ public interface IDatasetEventAggregator
     void PublishImageSelectionChanged(ImageSelectionChangedEventArgs args);
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
+    void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
 
     #endregion
 }
@@ -476,6 +489,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToBatchCropScaleEventArgs>? NavigateToBatchCropScaleRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
 
     #endregion
 
@@ -584,6 +600,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToBatchCropScaleRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToSettings(NavigateToSettingsEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToSettingsRequested, args);
     }
 
     #endregion

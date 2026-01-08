@@ -175,6 +175,58 @@
               <!-- Separator -->
               <Border Height="1" Background="#40FFFFFF" Margin="0,4"/>
 
+              <!-- Auto Backup Section -->
+              <StackPanel Spacing="8">
+                <TextBlock Text="Auto Backup" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Automatically backup your datasets at a regular interval. Backup location cannot be the same as or a subfolder of the Dataset Storage folder." 
+                           FontSize="12" 
+                           Opacity="0.7"
+                           TextWrapping="Wrap"/>
+                
+                <!-- Enable Checkbox -->
+                <CheckBox Content="Enable automatic backup"
+                          IsChecked="{Binding AutoBackupEnabled, Mode=TwoWay}"/>
+                
+                <!-- Backup Interval -->
+                <StackPanel Spacing="4" IsEnabled="{Binding AutoBackupEnabled}">
+                  <TextBlock Text="Backup Interval" FontWeight="SemiBold"/>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ComboBox ItemsSource="{Binding AvailableBackupDays}"
+                              SelectedItem="{Binding AutoBackupIntervalDays, Mode=TwoWay}"
+                              Width="80"/>
+                    <TextBlock Text="Days" VerticalAlignment="Center"/>
+                    <ComboBox ItemsSource="{Binding AvailableBackupHours}"
+                              SelectedItem="{Binding AutoBackupIntervalHours, Mode=TwoWay}"
+                              Width="80"
+                              Margin="16,0,0,0"/>
+                    <TextBlock Text="Hours" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </StackPanel>
+                
+                <!-- Backup Location -->
+                <StackPanel Spacing="4" IsEnabled="{Binding AutoBackupEnabled}">
+                  <TextBlock Text="Backup Location" FontWeight="SemiBold"/>
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0"
+                             Text="{Binding AutoBackupLocation, Mode=TwoWay}"
+                             Watermark="Select backup folder..."/>
+                    <Button Grid.Column="1"
+                            Content="Browse..."
+                            Command="{Binding BrowseAutoBackupLocationCommand}"
+                            Margin="8,0,0,0"/>
+                  </Grid>
+                  <!-- Validation Error -->
+                  <TextBlock Text="{Binding AutoBackupLocationError}"
+                             Foreground="#FF6B6B"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding AutoBackupLocationError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
+              </StackPanel>
+
+              <!-- Separator -->
+              <Border Height="1" Background="#40FFFFFF" Margin="0,4"/>
+
               <!-- Dataset Categories Section -->
               <StackPanel Spacing="8">
                 <TextBlock Text="Dataset Categories" FontWeight="SemiBold" FontSize="14"/>
