@@ -12,6 +12,8 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 /// </summary>
 public partial class SaveAsDialog : Window, INotifyPropertyChanged
 {
+    private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
+    
     private string _fileName = string.Empty;
     private string _originalFileName = string.Empty;
     private string _fileExtension = string.Empty;
@@ -45,6 +47,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanSave));
                 OnPropertyChanged(nameof(IsFilenameUnchanged));
                 OnPropertyChanged(nameof(IsFilenameExists));
+                OnPropertyChanged(nameof(HasInvalidCharacters));
+                OnPropertyChanged(nameof(InvalidCharactersFound));
                 OnPropertyChanged(nameof(ValidationMessage));
                 OnPropertyChanged(nameof(HasValidationError));
             }
@@ -107,6 +111,45 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         string.Equals(FileName.Trim(), OriginalFileName, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets whether the filename contains invalid characters.
+    /// </summary>
+    public bool HasInvalidCharacters =>
+        !string.IsNullOrWhiteSpace(FileName) &&
+        FileName.IndexOfAny(InvalidFileNameChars) >= 0;
+
+    /// <summary>
+    /// Gets the invalid characters found in the filename.
+    /// </summary>
+    public string InvalidCharactersFound
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(FileName))
+                return string.Empty;
+
+            var invalidChars = FileName
+                .Where(c => InvalidFileNameChars.Contains(c))
+                .Distinct()
+                .Select(c => c switch
+                {
+                    '<' => "<",
+                    '>' => ">",
+                    ':' => ":",
+                    '"' => "\"",
+                    '/' => "/",
+                    '\\' => "\\",
+                    '|' => "|",
+                    '?' => "?",
+                    '*' => "*",
+                    _ when char.IsControl(c) => $"[control char]",
+                    _ => c.ToString()
+                });
+
+            return string.Join(" ", invalidChars);
+        }
+    }
+
+    /// <summary>
     /// Gets whether the filename already exists in the directory.
     /// </summary>
     public bool IsFilenameExists
@@ -129,7 +172,11 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// <summary>
     /// Gets whether there's any validation error to display.
     /// </summary>
-    public bool HasValidationError => IsFilenameUnchanged || IsFilenameExists;
+    public bool HasValidationError => 
+        IsFilenameUnchanged || 
+        IsFilenameExists || 
+        HasInvalidCharacters ||
+        string.IsNullOrWhiteSpace(FileName);
 
     /// <summary>
     /// Gets the validation message to display.
@@ -138,6 +185,12 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     {
         get
         {
+            if (string.IsNullOrWhiteSpace(FileName))
+                return "Please enter a filename.";
+
+            if (HasInvalidCharacters)
+                return $"Filename contains invalid characters: {InvalidCharactersFound}";
+
             if (IsFilenameExists)
                 return $"A file named '{FileName.Trim()}{FileExtension}' already exists in this folder.";
             
@@ -150,10 +203,11 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
 
     /// <summary>
     /// Gets whether the Save button should be enabled.
-    /// Disabled when filename is empty, unchanged from original, or already exists.
+    /// Disabled when filename is empty, unchanged from original, contains invalid chars, or already exists.
     /// </summary>
     public bool CanSave =>
         !string.IsNullOrWhiteSpace(FileName) &&
+        !HasInvalidCharacters &&
         !IsFilenameUnchanged &&
         !IsFilenameExists;
 
