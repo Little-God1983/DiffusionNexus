@@ -107,10 +107,7 @@
             <Button Content="Rm BG" 
                     Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
                     Padding="12,6" 
-                    ToolTip.Tip="Remove Background using AI (RMBG-1.4)"
-                    Background="#5E35B1"
-                    Foreground="White"
-                    FontWeight="SemiBold"/>
+                    ToolTip.Tip="Remove Background using AI (RMBG-1.4)"/>
             <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.IsBackgroundFillPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Fill transparent background with solid color"/>
           </StackPanel>

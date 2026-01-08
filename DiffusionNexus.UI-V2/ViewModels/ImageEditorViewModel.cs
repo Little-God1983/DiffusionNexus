@@ -1399,11 +1399,18 @@ public partial class ImageEditorViewModel : ObservableObject
             return;
         }
 
+        // Close other tools when executing background removal
+        CloseAllTools();
+
         // Check if model is ready - if not, notify user to download
         if (!IsBackgroundRemovalModelReady)
         {
             StatusMessage = "Please download the RMBG-1.4 model first (see Background Removal panel)";
-            // Trigger the attention animation
+            // Toggle off then on to re-trigger animation if already showing
+            _showBackgroundRemovalAttention = false;
+            OnPropertyChanged(nameof(ShowBackgroundRemovalAttention));
+            // Small delay to allow animation to reset
+            await Task.Delay(50);
             ShowBackgroundRemovalAttention = true;
             return;
         }
