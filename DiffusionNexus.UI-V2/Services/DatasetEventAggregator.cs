@@ -153,6 +153,11 @@ public sealed class ImageSavedEventArgs : DatasetEventArgs
     /// Whether this was a new file or an overwrite.
     /// </summary>
     public bool IsNewFile => OriginalPath is not null;
+
+    /// <summary>
+    /// Rating to apply to the saved image.
+    /// </summary>
+    public ImageRatingStatus Rating { get; init; } = ImageRatingStatus.Unrated;
 }
 
 /// <summary>

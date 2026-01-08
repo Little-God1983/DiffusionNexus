@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.Views.Tabs;
@@ -237,13 +238,43 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.EditorCore.ClearPreview();
         };
 
-        // Handle save requests
-        imageEditor.SaveAsNewRequested += (_, _) =>
+        // Handle save as dialog request
+        imageEditor.SaveAsDialogRequested += async () =>
         {
-            var newPath = _imageEditorCanvas.EditorCore.SaveAsNew();
-            if (newPath is not null)
+            if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
             {
-                imageEditor.OnSaveAsNewCompleted(newPath);
+                return SaveAsResult.Cancelled();
+            }
+            return await vm.DialogService.ShowSaveAsDialogAsync(imageEditor.CurrentImagePath);
+        };
+
+        // Handle actual save after dialog confirmation
+        imageEditor.SaveAsRequested += (_, result) =>
+        {
+            if (result.IsCancelled || string.IsNullOrWhiteSpace(result.FileName) || imageEditor.CurrentImagePath is null)
+            {
+                return;
+            }
+
+            // Build the new file path
+            var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
+            var extension = Path.GetExtension(imageEditor.CurrentImagePath);
+            var newPath = Path.Combine(directory ?? string.Empty, result.FileName + extension);
+
+            // Safety check: file existence is validated in dialog, but check again for race conditions
+            if (File.Exists(newPath))
+            {
+                imageEditor.StatusMessage = $"File '{result.FileName}{extension}' already exists.";
+                return;
+            }
+
+            // Save the image
+            if (_imageEditorCanvas.EditorCore.SaveImage(newPath))
+            {
+                // Save rating to .rating file if not Unrated
+                SaveRatingToFile(newPath, result.Rating);
+                
+                imageEditor.OnSaveAsNewCompleted(newPath, result.Rating);
             }
             else
             {
@@ -286,6 +317,39 @@ public partial class ImageEditView : UserControl
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
+        }
+    }
+
+    /// <summary>
+    /// Saves the rating to a .rating file next to the image.
+    /// </summary>
+    private static void SaveRatingToFile(string imagePath, ImageRatingStatus rating)
+    {
+        try
+        {
+            var ratingFilePath = Path.ChangeExtension(imagePath, ".rating");
+            
+            if (rating == ImageRatingStatus.Unrated)
+            {
+                // Delete rating file if it exists and rating is Unrated
+                if (File.Exists(ratingFilePath))
+                {
+                    File.Delete(ratingFilePath);
+                }
+            }
+            else
+            {
+                // Write rating to file
+                File.WriteAllText(ratingFilePath, rating.ToString());
+            }
+        }
+        catch (IOException)
+        {
+            // File may be in use or read-only - rating will be lost on reload
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // No permission to write - rating will be lost on reload
         }
     }
 }

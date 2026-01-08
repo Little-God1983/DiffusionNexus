@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.RatingButtonsControl"
+             x:DataType="local:RatingButtonsControl">
+
+    <StackPanel Orientation="Horizontal" Spacing="8">
+        
+        <!-- Label -->
+        <TextBlock Text="Rating:"
+                   Foreground="#888"
+                   VerticalAlignment="Center"
+                   Margin="0,0,8,0"
+                   IsVisible="{Binding ShowLabel, RelativeSource={RelativeSource AncestorType=local:RatingButtonsControl}}"/>
+        
+        <!-- Mark Ready Button -->
+        <Button x:Name="MarkReadyButton"
+                Padding="16,10"
+                FontSize="14"
+                Background="{Binding IsApproved, RelativeSource={RelativeSource AncestorType=local:RatingButtonsControl}, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                Foreground="White"
+                CornerRadius="4"
+                Click="OnMarkReadyClick">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="+" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
+                <TextBlock Text="Mark Ready" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Button>
+        
+        <!-- Mark Trash Button -->
+        <Button x:Name="MarkTrashButton"
+                Padding="16,10"
+                FontSize="14"
+                Background="{Binding IsRejected, RelativeSource={RelativeSource AncestorType=local:RatingButtonsControl}, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                Foreground="White"
+                CornerRadius="4"
+                Click="OnMarkTrashClick">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="-" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
+                <TextBlock Text="Mark Trash" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Button>
+        
+        <!-- Clear Rating Button -->
+        <Button x:Name="ClearRatingButton"
+                Content="Clear Rating"
+                Padding="12,10"
+                FontSize="13"
+                Background="#80444444"
+                Foreground="White"
+                CornerRadius="4"
+                Click="OnClearRatingClick"/>
+        
+    </StackPanel>
+</UserControl>
