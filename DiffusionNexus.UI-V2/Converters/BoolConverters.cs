@@ -164,5 +164,19 @@ public static class BoolConverters
     public static readonly IValueConverter BoolToStatusBrush =
         new FuncValueConverter<bool, IBrush>(isReady => isReady ? ReadyGreenBrush : NotReadyOrangeBrush);
 
+    /// <summary>
+    /// Converts IsModelReady boolean to model path hint text.
+    /// </summary>
+    public static readonly IValueConverter BoolToModelPathText =
+        new FuncValueConverter<bool, string>(isReady => 
+            "Path: %LocalAppData%\\DiffusionNexus\\Models\\");
+
+    /// <summary>
+    /// Converts percentage (0-100) to width for custom progress bar.
+    /// Assumes parent container is ~168px (200px panel - 16px padding - 16px border padding).
+    /// </summary>
+    public static readonly IValueConverter PercentageToWidth =
+        new FuncValueConverter<int, double>(percentage => Math.Max(0, Math.Min(100, percentage)) * 1.68);
+
     #endregion
 }

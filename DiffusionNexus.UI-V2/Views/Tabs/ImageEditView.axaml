@@ -104,16 +104,13 @@
                           ToolTip.Tip="Color Balance"/>
             <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Brightness &amp; Contrast"/>
-            <Button Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
+            <Button Content="Rm BG" 
+                    Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
                     Padding="12,6" 
                     ToolTip.Tip="Remove Background using AI (RMBG-1.4)"
                     Background="#5E35B1"
-                    Foreground="White">
-              <StackPanel Orientation="Horizontal" Spacing="4">
-                <TextBlock Text="BG" FontWeight="Bold"/>
-                <TextBlock Text="Remove" Opacity="0.9"/>
-              </StackPanel>
-            </Button>
+                    Foreground="White"
+                    FontWeight="SemiBold"/>
           </StackPanel>
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
           <!-- Transform buttons -->
@@ -313,28 +310,32 @@
                   </StackPanel>
                 </StackPanel>
                 
-                <!-- Download Button (shown when model missing) -->
+                <!-- Download Button (shown when model missing and not busy) -->
                 <Button Content="Download Model (~176 MB)" 
                         Command="{Binding ImageEditor.DownloadBackgroundRemovalModelCommand}"
                         HorizontalAlignment="Stretch"
                         Background="#5E35B1"
                         Foreground="White"
-                        IsVisible="{Binding ImageEditor.IsBackgroundRemovalModelMissing}"/>
+                        IsVisible="{Binding ImageEditor.IsBackgroundRemovalModelMissing}"
+                        IsEnabled="{Binding !ImageEditor.IsBackgroundRemovalBusy}"/>
                 
                 <!-- Progress (shown when busy) -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsBackgroundRemovalBusy}">
                   <TextBlock Text="{Binding ImageEditor.BackgroundRemovalStatus}" 
                              FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
-                  <ProgressBar Minimum="0" Maximum="100" 
-                               Value="{Binding ImageEditor.BackgroundRemovalProgress}"
-                               Height="4"/>
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.BackgroundRemovalProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Instructions -->
-                <TextBlock Text="Uses RMBG-1.4 AI model to automatically remove image backgrounds. Runs locally on your GPU/CPU." 
+                <TextBlock Text="Uses RMBG-1.4 AI model to remove backgrounds. Runs locally on GPU/CPU." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
+                           FontSize="9" Opacity="0.4" TextWrapping="Wrap"/>
               </StackPanel>
             </Border>
           </StackPanel>
