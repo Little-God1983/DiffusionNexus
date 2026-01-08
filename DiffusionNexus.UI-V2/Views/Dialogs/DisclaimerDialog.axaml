@@ -1,0 +1,67 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.DisclaimerDialog"
+        x:DataType="local:DisclaimerDialog"
+        Title="Software Disclaimer"
+        Width="600"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False"
+        ShowInTaskbar="True"
+        Icon="avares://DiffusionNexus.UI-V2/Assets/AIKnowledgeIcon.ico">
+  
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+    
+    <!-- Title -->
+    <TextBlock Grid.Row="0" 
+               Text="SOFTWARE DISCLAIMER"
+               FontSize="20"
+               FontWeight="Bold"
+               HorizontalAlignment="Center"
+               Margin="0,0,0,20"/>
+    
+    <!-- Disclaimer Text -->
+    <Border Grid.Row="1" 
+            Background="#2D2D30"
+            CornerRadius="4"
+            Padding="16"
+            Margin="0,0,0,20">
+      <StackPanel Spacing="16">
+        <TextBlock TextWrapping="Wrap" FontSize="14" LineHeight="22">
+          This software is NOT for sale. It is provided as FREE and OPEN-SOURCE software. By using this software, you acknowledge that NO legal action of any kind can be taken against the developer(s). This software is provided "AS IS" without warranty of any kind, express or implied.
+        </TextBlock>
+        
+        <TextBlock TextWrapping="Wrap" FontSize="14" LineHeight="22">
+          This software itself does not intentionally collect or transmit any user data. However, the software may rely on third-party frameworks or libraries whose internal behavior is outside the control of the developer(s). No guarantees can be made regarding data handling by such third-party components.
+        </TextBlock>
+        
+        <TextBlock TextWrapping="Wrap" 
+                   FontSize="14" 
+                   FontWeight="Bold"
+                   Foreground="#FF6B6B">
+          Use at your own risk.
+        </TextBlock>
+      </StackPanel>
+    </Border>
+    
+    <!-- Checkbox -->
+    <CheckBox Grid.Row="2"
+              x:Name="AcceptCheckBox"
+              Content="I have read and accept the disclaimer above"
+              IsChecked="{Binding IsAccepted, Mode=TwoWay}"
+              FontSize="14"
+              Margin="0,0,0,20"/>
+    
+    <!-- Accept Button -->
+    <Button Grid.Row="3"
+            Content="Continue"
+            HorizontalAlignment="Center"
+            Width="150"
+            Height="40"
+            FontSize="14"
+            IsEnabled="{Binding #AcceptCheckBox.IsChecked}"
+            Click="OnAcceptClick"/>
+    
+  </Grid>
+</Window>

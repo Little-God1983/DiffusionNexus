@@ -713,6 +713,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 Datasets.Add(card);
             }
 
+            // Get valid category IDs
+            var validCategoryIds = AvailableCategories.Select(c => c.Id).ToHashSet();
+
             // Build category groups
             var sortOrder = 0;
             foreach (var category in AvailableCategories)
@@ -731,8 +734,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
             }
 
-            // Add uncategorized datasets
-            var uncategorizedDatasets = Datasets.Where(d => d.CategoryId is null).ToList();
+            // Add uncategorized datasets (including those with invalid/orphaned category IDs)
+            var uncategorizedDatasets = Datasets
+                .Where(d => d.CategoryId is null || !validCategoryIds.Contains(d.CategoryId.Value))
+                .ToList();
+                
             if (uncategorizedDatasets.Count > 0)
             {
                 var uncategorized = DatasetGroupViewModel.CreateUncategorized(sortOrder);
