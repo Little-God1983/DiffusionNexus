@@ -19,4 +19,9 @@
     <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Entities\" />
+    <Folder Include="Repositories\" />
+  </ItemGroup>
+
 </Project>

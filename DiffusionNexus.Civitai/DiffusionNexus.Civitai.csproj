@@ -5,8 +5,4 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>DiffusionNexus.Civitai</RootNamespace>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="System.Text.Json" Version="10.0.*" />
-  </ItemGroup>
 </Project>
