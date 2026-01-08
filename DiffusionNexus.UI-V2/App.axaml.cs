@@ -122,6 +122,9 @@ public partial class App : Application
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
         services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
 
+        // Background removal service (singleton - maintains ONNX session)
+        services.AddSingleton<IBackgroundRemovalService, BackgroundRemovalService>();
+
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();

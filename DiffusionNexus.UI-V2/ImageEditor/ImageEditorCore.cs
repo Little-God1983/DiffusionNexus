@@ -1115,6 +1115,147 @@ public class ImageEditorCore : IDisposable
 
     #endregion Brightness and Contrast
 
+    #region Background Removal
+
+    /// <summary>
+    /// Applies an alpha mask to the current working image for background removal.
+    /// The mask should be the same dimensions as the working bitmap.
+    /// </summary>
+    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
+    /// <param name="width">Width of the mask in pixels.</param>
+    /// <param name="height">Height of the mask in pixels.</param>
+    /// <returns>True if the mask was applied successfully.</returns>
+    public bool ApplyBackgroundMask(byte[] maskData, int width, int height)
+    {
+        if (maskData is null || _workingBitmap is null)
+            return false;
+
+        if (width != _workingBitmap.Width || height != _workingBitmap.Height)
+            return false;
+
+        if (maskData.Length != width * height)
+            return false;
+
+        try
+        {
+            lock (_bitmapLock)
+            {
+                var pixels = _workingBitmap.Pixels;
+                var newPixels = new SKColor[pixels.Length];
+
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var pixel = pixels[i];
+                    var maskValue = maskData[i];
+
+                    // Apply mask as alpha channel
+                    newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
+                }
+
+                _workingBitmap.Pixels = newPixels;
+            }
+
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sets a preview with background removed using the provided mask.
+    /// Does not modify the working bitmap until ApplyPreview is called.
+    /// </summary>
+    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
+    /// <param name="width">Width of the mask in pixels.</param>
+    /// <param name="height">Height of the mask in pixels.</param>
+    /// <returns>True if the preview was set successfully.</returns>
+    public bool SetBackgroundRemovalPreview(byte[] maskData, int width, int height)
+    {
+        if (maskData is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            if (width != _workingBitmap.Width || height != _workingBitmap.Height)
+                return false;
+
+            if (maskData.Length != width * height)
+                return false;
+
+            // Dispose old preview
+            var oldPreview = _previewBitmap;
+            _previewBitmap = null;
+
+            try
+            {
+                // Create new preview with alpha applied
+                var newPreview = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                var pixels = _workingBitmap.Pixels;
+                var newPixels = new SKColor[pixels.Length];
+
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var pixel = pixels[i];
+                    var maskValue = maskData[i];
+                    newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
+                }
+
+                newPreview.Pixels = newPixels;
+
+                _previewBitmap = newPreview;
+                _isPreviewActive = true;
+                oldPreview?.Dispose();
+            }
+            catch
+            {
+                oldPreview?.Dispose();
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the raw RGBA pixel data from the working bitmap.
+    /// Used for passing to background removal service.
+    /// </summary>
+    /// <returns>Tuple of (imageData, width, height) or null if no image is loaded.</returns>
+    public (byte[] Data, int Width, int Height)? GetWorkingBitmapData()
+    {
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return null;
+
+            var width = _workingBitmap.Width;
+            var height = _workingBitmap.Height;
+            var pixels = _workingBitmap.Pixels;
+            var data = new byte[width * height * 4]; // RGBA
+
+            for (var i = 0; i < pixels.Length; i++)
+            {
+                var pixel = pixels[i];
+                var offset = i * 4;
+                data[offset] = pixel.Red;
+                data[offset + 1] = pixel.Green;
+                data[offset + 2] = pixel.Blue;
+                data[offset + 3] = pixel.Alpha;
+            }
+
+            return (data, width, height);
+        }
+    }
+
+    #endregion Background Removal
+
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
 
