@@ -29,6 +29,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     private bool _isGpuAvailable;
     private bool _isProcessing;
     private bool _disposed;
+    private bool _disableGpu;
 
     /// <summary>
     /// Creates a new ImageUpscalingService.
@@ -101,38 +102,24 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             return null;
         }
 
-        // Try GPU first (CUDA for NVIDIA)
-        try
+        // Try DirectML first (only if not disabled)
+        if (!_disableGpu)
         {
-            var gpuOptions = new SessionOptions();
-            gpuOptions.AppendExecutionProvider_CUDA(0);
-            gpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+            try
+            {
+                var dmlOptions = new SessionOptions();
+                dmlOptions.AppendExecutionProvider_DML(0);
+                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
 
-            var session = new InferenceSession(modelPath, gpuOptions);
-            _isGpuAvailable = true;
-            Log.Information("4x-UltraSharp ONNX session created with GPU (CUDA) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "GPU (CUDA) not available for upscaling, trying DirectML");
-        }
-
-        // Try DirectML (for AMD/Intel GPUs on Windows)
-        try
-        {
-            var dmlOptions = new SessionOptions();
-            dmlOptions.AppendExecutionProvider_DML(0);
-            dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-
-            var session = new InferenceSession(modelPath, dmlOptions);
-            _isGpuAvailable = true;
-            Log.Information("4x-UltraSharp ONNX session created with GPU (DirectML) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DirectML not available, falling back to CPU");
+                var session = new InferenceSession(modelPath, dmlOptions);
+                _isGpuAvailable = true;
+                Log.Information("4x-UltraSharp ONNX session created with GPU (DirectML) acceleration");
+                return session;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
+            }
         }
 
         // Fall back to CPU
@@ -186,6 +173,48 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             return await Task.Run(() => 
                 ProcessImage(imageData, width, height, targetScale, progress, cancellationToken), 
                 cancellationToken);
+        }
+        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
+        {
+            Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
+            
+            // Reset session
+            await _sessionLock.WaitAsync(cancellationToken);
+            try
+            {
+                _session?.Dispose();
+                _session = null;
+                _disableGpu = true;
+                _isGpuAvailable = false;
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            // Retry initialization (will force CPU)
+            if (await InitializeAsync(cancellationToken))
+            {
+                try
+                {
+                    Log.Information("Retrying upscaling on CPU...");
+                    return await Task.Run(() => 
+                        ProcessImage(imageData, width, height, targetScale, progress, cancellationToken), 
+                        cancellationToken);
+                }
+                catch (Exception retryEx)
+                {
+                    Log.Error(retryEx, "Retry on CPU failed");
+                    return ImageUpscalingResult.Failed($"Upscaling failed (CPU retry): {retryEx.Message}");
+                }
+            }
+            
+            return ImageUpscalingResult.Failed($"Upscaling failed (GPU Error: {ex.Message})");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Image upscaling failed");
+            return ImageUpscalingResult.Failed($"Upscaling failed: {ex.Message}");
         }
         finally
         {

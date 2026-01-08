@@ -24,6 +24,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     private bool _isGpuAvailable;
     private bool _isProcessing;
     private bool _disposed;
+    private bool _disableGpu;
 
     /// <summary>
     /// Creates a new BackgroundRemovalService.
@@ -96,38 +97,24 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             return null;
         }
 
-        // Try GPU first
-        try
+        // Try DirectML first (only if not disabled)
+        if (!_disableGpu)
         {
-            var gpuOptions = new SessionOptions();
-            gpuOptions.AppendExecutionProvider_CUDA(0);
-            gpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+            try
+            {
+                var dmlOptions = new SessionOptions();
+                dmlOptions.AppendExecutionProvider_DML(0);
+                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
 
-            var session = new InferenceSession(modelPath, gpuOptions);
-            _isGpuAvailable = true;
-            Log.Information("RMBG-1.4 ONNX session created with GPU (CUDA) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "GPU (CUDA) not available, falling back to CPU");
-        }
-
-        // Try DirectML (for AMD/Intel GPUs on Windows)
-        try
-        {
-            var dmlOptions = new SessionOptions();
-            dmlOptions.AppendExecutionProvider_DML(0);
-            dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-
-            var session = new InferenceSession(modelPath, dmlOptions);
-            _isGpuAvailable = true;
-            Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DirectML not available, falling back to CPU");
+                var session = new InferenceSession(modelPath, dmlOptions);
+                _isGpuAvailable = true;
+                Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
+                return session;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
+            }
         }
 
         // Fall back to CPU
@@ -172,6 +159,46 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         try
         {
             return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
+        }
+        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
+        {
+            Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
+
+            // Reset session
+            await _sessionLock.WaitAsync(cancellationToken);
+            try
+            {
+                _session?.Dispose();
+                _session = null;
+                _disableGpu = true;
+                _isGpuAvailable = false;
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            // Retry initialization (will force CPU)
+            if (await InitializeAsync(cancellationToken))
+            {
+                try
+                {
+                    Log.Information("Retrying background removal on CPU...");
+                    return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
+                }
+                catch (Exception retryEx)
+                {
+                    Log.Error(retryEx, "Retry on CPU failed");
+                    return BackgroundRemovalResult.Failed($"Background removal failed (CPU retry): {retryEx.Message}");
+                }
+            }
+
+            return BackgroundRemovalResult.Failed($"Background removal failed (GPU Error: {ex.Message})");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Background removal failed");
+            return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
         }
         finally
         {
@@ -263,7 +290,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         // The output is typically [1, 1, H, W] or [1, H, W]
         var dimensions = outputTensor.Dimensions.ToArray();
         var isChannelFirst = dimensions.Length == 4;
-        
+
         maskImage.ProcessPixelRows(accessor =>
         {
             for (var y = 0; y < ModelInputSize; y++)
