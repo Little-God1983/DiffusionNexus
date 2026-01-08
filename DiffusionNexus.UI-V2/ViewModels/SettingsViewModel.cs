@@ -95,6 +95,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _autoBackupLocation;
 
     /// <summary>
+    /// Maximum number of backups to keep (oldest are deleted).
+    /// </summary>
+    [ObservableProperty]
+    private int _maxBackups = 10;
+
+    /// <summary>
     /// Validation error message for backup location.
     /// </summary>
     [ObservableProperty]
@@ -109,6 +115,11 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// Available hours for backup interval (0-23).
     /// </summary>
     public IReadOnlyList<int> AvailableBackupHours { get; } = Enumerable.Range(0, 24).ToList();
+
+    /// <summary>
+    /// Available options for maximum backups (1-50).
+    /// </summary>
+    public IReadOnlyList<int> AvailableMaxBackups { get; } = Enumerable.Range(1, 50).ToList();
 
     /// <summary>
     /// Collection of LoRA source folders.
@@ -193,6 +204,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
             AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
             AutoBackupLocation = settings.AutoBackupLocation;
+            MaxBackups = settings.MaxBackups;
 
             // Map LoRA sources
             foreach (var existing in LoraSources)
@@ -266,6 +278,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             settings.AutoBackupIntervalDays = AutoBackupIntervalDays;
             settings.AutoBackupIntervalHours = AutoBackupIntervalHours;
             settings.AutoBackupLocation = AutoBackupLocation;
+            settings.MaxBackups = MaxBackups;
 
             // Map LoRA sources (remove empty ones)
             settings.LoraSources.Clear();
@@ -524,6 +537,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         HasChanges = true;
         ValidateAutoBackupLocation();
     }
+    partial void OnMaxBackupsChanged(int value) => HasChanges = true;
 }
 
 /// <summary>

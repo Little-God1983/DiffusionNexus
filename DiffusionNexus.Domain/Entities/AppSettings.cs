@@ -113,6 +113,12 @@ public class AppSettings
     /// </summary>
     public DateTimeOffset? LastBackupAt { get; set; }
 
+    /// <summary>
+    /// Maximum number of backups to keep. Oldest backups are deleted when this limit is exceeded.
+    /// Default is 10.
+    /// </summary>
+    public int MaxBackups { get; set; } = 10;
+
     #endregion
 
     #region Timestamps

@@ -344,6 +344,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
     public IRelayCommand GoToBackupSettingsCommand { get; }
     public IRelayCommand ClearFiltersCommand { get; }
+    public IAsyncRelayCommand BackupNowCommand { get; }
 
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -401,6 +402,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
         GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
         ClearFiltersCommand = new RelayCommand(ClearFilters);
+        BackupNowCommand = new AsyncRelayCommand(BackupNowAsync, () => IsAutoBackupConfigured && !_isBackupInProgress);
 
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -615,6 +617,58 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Manually triggers a backup now.
+    /// </summary>
+    private async Task BackupNowAsync()
+    {
+        if (_backupService is null || _isBackupInProgress)
+        {
+            return;
+        }
+
+        _isBackupInProgress = true;
+        BackupStatusText = "Backup: Running...";
+        BackupNowCommand.NotifyCanExecuteChanged();
+
+        try
+        {
+            var progress = new Progress<BackupProgress>(p =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                });
+            });
+
+            var result = await _backupService.BackupDatasetsAsync(progress);
+
+            if (result.Success)
+            {
+                StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
+                
+                // Refresh backup status to show next backup time
+                var settings = await _settingsService.GetSettingsAsync();
+                UpdateBackupStatus(settings);
+            }
+            else
+            {
+                StatusMessage = $"Backup failed: {result.ErrorMessage}";
+                BackupStatusText = "Backup: Failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Backup error: {ex.Message}";
+            BackupStatusText = "Backup: Error";
+        }
+        finally
+        {
+            _isBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    /// <summary>
     /// Updates the backup countdown text based on remaining time.
     /// </summary>
     private void UpdateBackupCountdownText()
@@ -654,12 +708,34 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         else if (remaining.TotalMinutes >= 1)
         {
             var minutes = (int)remaining.TotalMinutes;
-            BackupStatusText = $"Backup in {minutes}m";
+            var seconds = remaining.Seconds;
+            BackupStatusText = seconds > 0
+                ? $"Backup in {minutes}m {seconds}s"
+                : $"Backup in {minutes}m";
         }
         else
         {
             var seconds = (int)remaining.TotalSeconds;
             BackupStatusText = $"Backup in {seconds}s";
+        }
+
+        // Adjust timer interval based on remaining time for more accurate updates
+        AdjustTimerInterval(remaining);
+    }
+
+    /// <summary>
+    /// Adjusts the backup countdown timer interval based on remaining time.
+    /// Updates every second when under 1 minute, every minute otherwise.
+    /// </summary>
+    private void AdjustTimerInterval(TimeSpan remaining)
+    {
+        if (_backupCountdownTimer is null) return;
+
+        var desiredInterval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
+
+        if (Math.Abs(_backupCountdownTimer.Interval - desiredInterval) > 1)
+        {
+            _backupCountdownTimer.Interval = desiredInterval;
         }
     }
 
@@ -668,7 +744,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     private void StartBackupCountdownTimer()
     {
-        _backupCountdownTimer = new Timer(60000); // Update every minute
+        // Determine initial interval based on remaining time
+        var remaining = _nextBackupTime.HasValue
+            ? _nextBackupTime.Value - DateTimeOffset.UtcNow
+            : TimeSpan.MaxValue;
+        
+        var interval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
+
+        _backupCountdownTimer = new Timer(interval);
         _backupCountdownTimer.Elapsed += OnBackupCountdownTimerElapsed;
         _backupCountdownTimer.AutoReset = true;
         _backupCountdownTimer.Start();

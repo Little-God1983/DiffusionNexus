@@ -203,6 +203,20 @@
                   </StackPanel>
                 </StackPanel>
                 
+                <!-- Max Backups -->
+                <StackPanel Spacing="4" IsEnabled="{Binding AutoBackupEnabled}">
+                  <TextBlock Text="Maximum Backups" FontWeight="SemiBold"/>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ComboBox ItemsSource="{Binding AvailableMaxBackups}"
+                              SelectedItem="{Binding MaxBackups, Mode=TwoWay}"
+                              Width="80"/>
+                    <TextBlock Text="(oldest backups will be deleted when exceeded)" 
+                               VerticalAlignment="Center" 
+                               Opacity="0.7"
+                               FontSize="12"/>
+                  </StackPanel>
+                </StackPanel>
+                
                 <!-- Backup Location -->
                 <StackPanel Spacing="4" IsEnabled="{Binding AutoBackupEnabled}">
                   <TextBlock Text="Backup Location" FontWeight="SemiBold"/>

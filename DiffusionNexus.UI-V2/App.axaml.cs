@@ -81,12 +81,23 @@ public partial class App : Application
 
         try
         {
+            // Get pending migrations
+            var pendingMigrations = dbContext.Database.GetPendingMigrations().ToList();
+            
+            if (pendingMigrations.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"Applying {pendingMigrations.Count} pending migrations...");
+                foreach (var migration in pendingMigrations)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {migration}");
+                }
+            }
+            
             dbContext.Database.Migrate();
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {
             // Table already exists - this is usually fine, just continue
-            // Don't delete the database as that would lose user settings
             System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
@@ -94,8 +105,54 @@ public partial class App : Application
             // Table already exists - this is usually fine, just continue
             System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
         }
+        catch (SqliteException ex) when (ex.Message.Contains("no such column"))
+        {
+            // Missing column - database schema is out of date
+            // Try to add the missing column manually as a fallback
+            System.Diagnostics.Debug.WriteLine($"Schema mismatch detected: {ex.Message}");
+            TryFixMissingColumns(dbContext);
+        }
 
         scope.Dispose();
+    }
+
+    /// <summary>
+    /// Attempts to add missing columns to AppSettings table.
+    /// This is a fallback for when migrations don't run properly.
+    /// </summary>
+    private static void TryFixMissingColumns(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            // Try to add MaxBackups column if missing
+            dbContext.Database.ExecuteSqlRaw(
+                "ALTER TABLE AppSettings ADD COLUMN MaxBackups INTEGER NOT NULL DEFAULT 10");
+            System.Diagnostics.Debug.WriteLine("Added missing MaxBackups column");
+        }
+        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
+        {
+            // Column already exists, ignore
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to add MaxBackups column: {ex.Message}");
+        }
+
+        try
+        {
+            // Try to add LastBackupAt column if missing
+            dbContext.Database.ExecuteSqlRaw(
+                "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT");
+            System.Diagnostics.Debug.WriteLine("Added missing LastBackupAt column");
+        }
+        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
+        {
+            // Column already exists, ignore
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to add LastBackupAt column: {ex.Message}");
+        }
     }
 
     private static void ResetDatabase()

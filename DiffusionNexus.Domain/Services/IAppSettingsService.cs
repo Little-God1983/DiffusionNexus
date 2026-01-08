@@ -23,6 +23,14 @@ public interface IAppSettingsService
     Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Updates only the LastBackupAt timestamp without affecting other settings or collections.
+    /// Use this instead of SaveSettingsAsync when only updating the backup timestamp.
+    /// </summary>
+    /// <param name="lastBackupAt">The timestamp of the last backup.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the decrypted Civitai API key.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

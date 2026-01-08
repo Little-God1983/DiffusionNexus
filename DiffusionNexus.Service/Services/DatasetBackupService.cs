@@ -12,6 +12,11 @@ public class DatasetBackupService : IDatasetBackupService
 {
     private readonly IAppSettingsService _settingsService;
 
+    /// <summary>
+    /// Pattern used to identify backup files created by this service.
+    /// </summary>
+    private const string BackupFilePattern = "DatasetBackup_*.zip";
+
     public DatasetBackupService(IAppSettingsService settingsService)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
@@ -122,9 +127,20 @@ public class DatasetBackupService : IDatasetBackupService
                 }
             }
 
-            // Update LastBackupAt timestamp
-            settings.LastBackupAt = DateTimeOffset.UtcNow;
-            await _settingsService.SaveSettingsAsync(settings, cancellationToken);
+            // Update only the LastBackupAt timestamp - don't use SaveSettingsAsync 
+            // which would trigger complex collection handling logic
+            await _settingsService.UpdateLastBackupAtAsync(DateTimeOffset.UtcNow, cancellationToken);
+
+            progress?.Report(new BackupProgress
+            {
+                Phase = "Cleaning up old backups",
+                ProgressPercent = 98,
+                FilesProcessed = processedFiles,
+                TotalFiles = totalFiles
+            });
+
+            // Delete oldest backups if we exceed MaxBackups
+            CleanupOldBackups(settings.AutoBackupLocation, settings.MaxBackups);
 
             progress?.Report(new BackupProgress
             {
@@ -159,6 +175,54 @@ public class DatasetBackupService : IDatasetBackupService
             }
             
             return BackupResult.Failed($"Backup failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Deletes oldest backup files if the total count exceeds maxBackups.
+    /// </summary>
+    /// <param name="backupLocation">The backup folder path.</param>
+    /// <param name="maxBackups">Maximum number of backups to keep.</param>
+    private void CleanupOldBackups(string backupLocation, int maxBackups)
+    {
+        if (maxBackups <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var backupFiles = Directory.GetFiles(backupLocation, BackupFilePattern)
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .ToList();
+
+            if (backupFiles.Count <= maxBackups)
+            {
+                return;
+            }
+
+            // Delete oldest files beyond the limit
+            var filesToDelete = backupFiles.Skip(maxBackups).ToList();
+            foreach (var file in filesToDelete)
+            {
+                try
+                {
+                    file.Delete();
+                    Log.Information("Deleted old backup: {FileName}", file.Name);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to delete old backup: {FileName}", file.Name);
+                }
+            }
+
+            Log.Information("Cleaned up {Count} old backups, keeping {MaxBackups} most recent", 
+                filesToDelete.Count, maxBackups);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to cleanup old backups");
         }
     }
 

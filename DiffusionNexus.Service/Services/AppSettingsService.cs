@@ -204,6 +204,8 @@ public sealed class AppSettingsService : IAppSettingsService
             existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
             existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
             existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
+            existingSettings.MaxBackups = settings.MaxBackups;
+            existingSettings.LastBackupAt = settings.LastBackupAt;
             existingSettings.UpdatedAt = settings.UpdatedAt;
 
             // Handle LoRA sources (remove deleted, update existing, add new)
@@ -370,6 +372,22 @@ public sealed class AppSettingsService : IAppSettingsService
             existingSource.IsEnabled = source.IsEnabled;
             existingSource.Order = source.Order;
 
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default)
+    {
+        // Simple, targeted update - only updates the LastBackupAt column
+        // Does NOT touch categories, LoRA sources, or any other collections
+        var settings = await _dbContext.AppSettings
+            .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
+
+        if (settings is not null)
+        {
+            settings.LastBackupAt = lastBackupAt;
+            settings.UpdatedAt = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
     }
