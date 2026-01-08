@@ -15,7 +15,6 @@ public static class IoServiceCollectionExtensions
         services.AddSingleton<DiskUtility>();
         services.AddSingleton<HashingService>();
         services.AddSingleton<IProgressReporter, ConsoleProgressReporter>();
-        services.AddTransient<FileControllerService>();
         return services;
     }
 }

@@ -1,4 +1,4 @@
-namespace DiffusionNexus.DataAccess.Interfaces;
+namespace DiffusionNexus.Legacy.DataAccess.Interfaces;
 
 public interface IConfigStore
 {

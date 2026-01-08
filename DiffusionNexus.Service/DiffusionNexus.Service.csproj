@@ -24,4 +24,8 @@
     <ProjectReference Include="..\DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Mapping\" />
+  </ItemGroup>
+
 </Project>
