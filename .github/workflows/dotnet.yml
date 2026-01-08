@@ -1,4 +1,4 @@
-name: .NET 9 Build & Test
+name: .NET 10 Build & Test
 
 on: [push, pull_request]
 
@@ -9,12 +9,12 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Setup .NET 9
+    - name: Setup .NET 10
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '9.0.x'  # Make sure this matches your target SDK version
+        dotnet-version: '10.0.x'
 
     - name: Restore dependencies
       run: dotnet restore

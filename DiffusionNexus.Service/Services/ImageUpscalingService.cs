@@ -20,12 +20,12 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     private const int ScaleFactor = 4;
     private const int TileSize = 192; // Tile size for processing (larger uses more VRAM)
     private const int TileOverlap = 16; // Overlap between tiles to avoid seams
-    private const string InputName = "input";
-    private const string OutputName = "output";
 
     private readonly OnnxModelManager _modelManager;
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private InferenceSession? _session;
+    private string? _inputName;
+    private string? _outputName;
     private bool _isGpuAvailable;
     private bool _isProcessing;
     private bool _disposed;
@@ -113,6 +113,10 @@ public sealed class ImageUpscalingService : IImageUpscalingService
 
                 var session = new InferenceSession(modelPath, dmlOptions);
                 _isGpuAvailable = true;
+
+                // Discover input/output names from model metadata
+                DiscoverTensorNames(session);
+
                 Log.Information("4x-UltraSharp ONNX session created with GPU (DirectML) acceleration");
                 return session;
             }
@@ -133,7 +137,11 @@ public sealed class ImageUpscalingService : IImageUpscalingService
 
             var session = new InferenceSession(modelPath, cpuOptions);
             _isGpuAvailable = false;
-            Log.Information("4x-UltraSharp ONNX session created with CPU execution ({Threads} threads)", 
+
+            // Discover input/output names from model metadata
+            DiscoverTensorNames(session);
+
+            Log.Information("4x-UltraSharp ONNX session created with CPU execution ({Threads} threads)",
                 Environment.ProcessorCount);
             return session;
         }
@@ -141,6 +149,29 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         {
             Log.Error(ex, "Failed to create ONNX session for upscaling");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Discovers the actual input and output tensor names from the model metadata.
+    /// </summary>
+    private void DiscoverTensorNames(InferenceSession session)
+    {
+        // Get input name from model metadata
+        _inputName = session.InputMetadata.Keys.FirstOrDefault();
+        _outputName = session.OutputMetadata.Keys.FirstOrDefault();
+
+        Log.Debug("4x-UltraSharp model input name: {InputName}, output name: {OutputName}",
+            _inputName, _outputName);
+
+        if (string.IsNullOrEmpty(_inputName))
+        {
+            throw new InvalidOperationException("Could not determine input tensor name from model metadata");
+        }
+
+        if (string.IsNullOrEmpty(_outputName))
+        {
+            throw new InvalidOperationException("Could not determine output tensor name from model metadata");
         }
     }
 
@@ -170,14 +201,14 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         _isProcessing = true;
         try
         {
-            return await Task.Run(() => 
-                ProcessImage(imageData, width, height, targetScale, progress, cancellationToken), 
+            return await Task.Run(() =>
+                ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
                 cancellationToken);
         }
         catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
         {
             Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
-            
+
             // Reset session
             await _sessionLock.WaitAsync(cancellationToken);
             try
@@ -198,8 +229,8 @@ public sealed class ImageUpscalingService : IImageUpscalingService
                 try
                 {
                     Log.Information("Retrying upscaling on CPU...");
-                    return await Task.Run(() => 
-                        ProcessImage(imageData, width, height, targetScale, progress, cancellationToken), 
+                    return await Task.Run(() =>
+                        ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
                         cancellationToken);
                 }
                 catch (Exception retryEx)
@@ -208,7 +239,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
                     return ImageUpscalingResult.Failed($"Upscaling failed (CPU retry): {retryEx.Message}");
                 }
             }
-            
+
             return ImageUpscalingResult.Failed($"Upscaling failed (GPU Error: {ex.Message})");
         }
         catch (Exception ex)
@@ -240,7 +271,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
 
             // Step 2: Process through 4x upscaling model using tiles
             progress?.Report(new UpscalingProgress(UpscalingPhase.ProcessingTiles, "Generating AI details...", 5));
-            
+
             using var upscaled4x = ProcessTiles(originalImage, progress, cancellationToken);
 
             // Step 3: Resize to target scale if needed
@@ -258,11 +289,11 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             {
                 // Downscale from 4x to target using high-quality Lanczos3
                 progress?.Report(new UpscalingProgress(
-                    UpscalingPhase.ResizingToTarget, 
-                    $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...", 
+                    UpscalingPhase.ResizingToTarget,
+                    $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...",
                     90));
 
-                finalImage = upscaled4x.Clone(ctx => 
+                finalImage = upscaled4x.Clone(ctx =>
                     ctx.Resize(new ResizeOptions
                     {
                         Size = new Size(targetWidth, targetHeight),
@@ -351,7 +382,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
                 var outputY = inputY * ScaleFactor;
 
                 // Blend tile into output (handle overlap blending)
-                BlendTileIntoOutput(output, upscaledTile, outputX, outputY, 
+                BlendTileIntoOutput(output, upscaledTile, outputX, outputY,
                     tx > 0, ty > 0, tx < tilesX - 1, ty < tilesY - 1);
 
                 tilesProcessed++;
@@ -415,10 +446,10 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             }
         });
 
-        // Run inference
+        // Run inference using discovered input name
         var inputs = new List<NamedOnnxValue>
         {
-            NamedOnnxValue.CreateFromTensor(InputName, tensor)
+            NamedOnnxValue.CreateFromTensor(_inputName!, tensor)
         };
 
         using var results = _session!.Run(inputs);
