@@ -15,12 +15,12 @@ namespace DiffusionNexus.Service.Services;
 public sealed class BackgroundRemovalService : IBackgroundRemovalService
 {
     private const int ModelInputSize = 1024;
-    private const string InputName = "input";
-    private const string OutputName = "output";
 
     private readonly OnnxModelManager _modelManager;
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private InferenceSession? _session;
+    private string? _inputName;
+    private string? _outputName;
     private bool _isGpuAvailable;
     private bool _isProcessing;
     private bool _disposed;
@@ -103,11 +103,23 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             try
             {
                 var dmlOptions = new SessionOptions();
+                
+                // Use basic optimization level for DirectML compatibility
+                // Some models have Resize nodes that fail with ORT_ENABLE_ALL on DirectML
+                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
+                
+                // Disable certain optimizations that can cause DirectML issues
+                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
+                dmlOptions.EnableMemoryPattern = false;
+                
                 dmlOptions.AppendExecutionProvider_DML(0);
-                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
 
                 var session = new InferenceSession(modelPath, dmlOptions);
                 _isGpuAvailable = true;
+                
+                // Discover input/output names from model metadata
+                DiscoverTensorNames(session);
+                
                 Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
                 return session;
             }
@@ -127,6 +139,10 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
 
             var session = new InferenceSession(modelPath, cpuOptions);
             _isGpuAvailable = false;
+            
+            // Discover input/output names from model metadata
+            DiscoverTensorNames(session);
+            
             Log.Information("RMBG-1.4 ONNX session created with CPU execution");
             return session;
         }
@@ -134,6 +150,29 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         {
             Log.Error(ex, "Failed to create ONNX session");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Discovers the actual input and output tensor names from the model metadata.
+    /// </summary>
+    private void DiscoverTensorNames(InferenceSession session)
+    {
+        // Get input name from model metadata
+        _inputName = session.InputMetadata.Keys.FirstOrDefault();
+        _outputName = session.OutputMetadata.Keys.FirstOrDefault();
+        
+        Log.Debug("RMBG-1.4 model input name: {InputName}, output name: {OutputName}", 
+            _inputName, _outputName);
+        
+        if (string.IsNullOrEmpty(_inputName))
+        {
+            throw new InvalidOperationException("Could not determine input tensor name from model metadata");
+        }
+        
+        if (string.IsNullOrEmpty(_outputName))
+        {
+            throw new InvalidOperationException("Could not determine output tensor name from model metadata");
         }
     }
 
@@ -212,43 +251,31 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         int height,
         CancellationToken cancellationToken)
     {
-        try
+        // Step 1: Load and preprocess image
+        cancellationToken.ThrowIfCancellationRequested();
+        using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+
+        // Step 2: Resize to model input size (1024x1024)
+        using var resizedImage = originalImage.Clone(ctx => ctx.Resize(ModelInputSize, ModelInputSize));
+
+        // Step 3: Create input tensor (planar format: [1, 3, 1024, 1024])
+        var inputTensor = PreprocessImage(resizedImage);
+
+        // Step 4: Run inference using discovered input name
+        cancellationToken.ThrowIfCancellationRequested();
+        var inputs = new List<NamedOnnxValue>
         {
-            // Step 1: Load and preprocess image
-            cancellationToken.ThrowIfCancellationRequested();
-            using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+            NamedOnnxValue.CreateFromTensor(_inputName!, inputTensor)
+        };
 
-            // Step 2: Resize to model input size (1024x1024)
-            using var resizedImage = originalImage.Clone(ctx => ctx.Resize(ModelInputSize, ModelInputSize));
+        using var results = _session!.Run(inputs);
+        var outputTensor = results.First().AsTensor<float>();
 
-            // Step 3: Create input tensor (planar format: [1, 3, 1024, 1024])
-            var inputTensor = PreprocessImage(resizedImage);
+        // Step 5: Postprocess - convert output to mask and resize
+        cancellationToken.ThrowIfCancellationRequested();
+        var maskData = PostprocessOutput(outputTensor, width, height);
 
-            // Step 4: Run inference
-            cancellationToken.ThrowIfCancellationRequested();
-            var inputs = new List<NamedOnnxValue>
-            {
-                NamedOnnxValue.CreateFromTensor(InputName, inputTensor)
-            };
-
-            using var results = _session!.Run(inputs);
-            var outputTensor = results.First().AsTensor<float>();
-
-            // Step 5: Postprocess - convert output to mask and resize
-            cancellationToken.ThrowIfCancellationRequested();
-            var maskData = PostprocessOutput(outputTensor, width, height);
-
-            return BackgroundRemovalResult.Succeeded(maskData, width, height);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Background removal failed");
-            return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
-        }
+        return BackgroundRemovalResult.Succeeded(maskData, width, height);
     }
 
     /// <summary>
