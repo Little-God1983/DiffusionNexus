@@ -146,4 +146,37 @@ public static class BoolConverters
         });
 
     #endregion
+
+    #region Model Status Converters
+
+    private static readonly IBrush ReadyGreenBrush = new SolidColorBrush(Color.Parse("#4CAF50"));
+    private static readonly IBrush NotReadyOrangeBrush = new SolidColorBrush(Color.Parse("#FF9800"));
+
+    /// <summary>
+    /// Converts IsModelReady boolean to status text ("Ready" or "Not Downloaded").
+    /// </summary>
+    public static readonly IValueConverter BoolToModelStatusText =
+        new FuncValueConverter<bool, string>(isReady => isReady ? "Ready" : "Not Downloaded");
+
+    /// <summary>
+    /// Converts IsModelReady boolean to status brush (green for ready, orange for not ready).
+    /// </summary>
+    public static readonly IValueConverter BoolToStatusBrush =
+        new FuncValueConverter<bool, IBrush>(isReady => isReady ? ReadyGreenBrush : NotReadyOrangeBrush);
+
+    /// <summary>
+    /// Converts IsModelReady boolean to model path hint text.
+    /// </summary>
+    public static readonly IValueConverter BoolToModelPathText =
+        new FuncValueConverter<bool, string>(isReady => 
+            "Path: %LocalAppData%\\DiffusionNexus\\Models\\");
+
+    /// <summary>
+    /// Converts percentage (0-100) to width for custom progress bar.
+    /// Assumes parent container is ~168px (200px panel - 16px padding - 16px border padding).
+    /// </summary>
+    public static readonly IValueConverter PercentageToWidth =
+        new FuncValueConverter<int, double>(percentage => Math.Max(0, Math.Min(100, percentage)) * 1.68);
+
+    #endregion
 }

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 
@@ -40,6 +41,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
+    private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private bool _disposed;
 
     private DatasetCardViewModel? _selectedEditorDataset;
@@ -152,13 +154,15 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// </summary>
     public ImageEditTabViewModel(
         IDatasetEventAggregator eventAggregator,
-        IDatasetState state)
+        IDatasetState state,
+        IBackgroundRemovalService? backgroundRemovalService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
+        _backgroundRemovalService = backgroundRemovalService;
 
-        // Create the image editor
-        ImageEditor = new ImageEditorViewModel(_eventAggregator);
+        // Create the image editor with background removal service
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService);
 
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;

@@ -104,6 +104,13 @@
                           ToolTip.Tip="Color Balance"/>
             <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Brightness &amp; Contrast"/>
+            <Button Content="Rm BG" 
+                    Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
+                    Padding="12,6" 
+                    ToolTip.Tip="Remove Background using AI (RMBG-1.4)"
+                    Background="#5E35B1"
+                    Foreground="White"
+                    FontWeight="SemiBold"/>
           </StackPanel>
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
           <!-- Transform buttons -->
@@ -283,6 +290,52 @@
                   <Button Grid.Column="0" Content="Reset" Command="{Binding ImageEditor.ResetBrightnessContrastCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
                   <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ApplyBrightnessContrastCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+          
+          <!-- Background Removal Panel -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="Background Removal" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+              <StackPanel Spacing="8">
+                <!-- Model Status -->
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Model Status" FontSize="11" Opacity="0.7"/>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Width="8" Height="8" CornerRadius="4"
+                            Background="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
+                    <TextBlock FontSize="12" Opacity="0.9"
+                               Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelStatusText}}"/>
+                  </StackPanel>
+                </StackPanel>
+                
+                <!-- Download Button (shown when model missing and not busy) -->
+                <Button Content="Download Model (~176 MB)" 
+                        Command="{Binding ImageEditor.DownloadBackgroundRemovalModelCommand}"
+                        HorizontalAlignment="Stretch"
+                        Background="#5E35B1"
+                        Foreground="White"
+                        IsVisible="{Binding ImageEditor.IsBackgroundRemovalModelMissing}"
+                        IsEnabled="{Binding !ImageEditor.IsBackgroundRemovalBusy}"/>
+                
+                <!-- Progress (shown when busy) -->
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsBackgroundRemovalBusy}">
+                  <TextBlock Text="{Binding ImageEditor.BackgroundRemovalStatus}" 
+                             FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.BackgroundRemovalProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
+                </StackPanel>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Instructions -->
+                <TextBlock Text="Uses RMBG-1.4 AI model to remove backgrounds. Runs locally on GPU/CPU." 
+                           FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
+                           FontSize="9" Opacity="0.4" TextWrapping="Wrap"/>
               </StackPanel>
             </Border>
           </StackPanel>

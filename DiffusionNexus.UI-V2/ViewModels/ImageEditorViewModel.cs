@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -21,6 +22,7 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class ImageEditorViewModel : ObservableObject
 {
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IBackgroundRemovalService? _backgroundRemovalService;
 
     private string? _currentImagePath;
     private string? _imageFileName;
@@ -55,6 +57,11 @@ public partial class ImageEditorViewModel : ObservableObject
     private bool _isBrightnessContrastPanelOpen;
     private float _brightness;
     private float _contrast;
+
+    // Background Removal fields
+    private bool _isBackgroundRemovalBusy;
+    private string? _backgroundRemovalStatus;
+    private int _backgroundRemovalProgress;
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -497,6 +504,64 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Background Removal Properties
+
+    /// <summary>Whether background removal is currently in progress.</summary>
+    public bool IsBackgroundRemovalBusy
+    {
+        get => _isBackgroundRemovalBusy;
+        private set
+        {
+            if (SetProperty(ref _isBackgroundRemovalBusy, value))
+            {
+                RemoveBackgroundCommand.NotifyCanExecuteChanged();
+                DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Status message for background removal operations.</summary>
+    public string? BackgroundRemovalStatus
+    {
+        get => _backgroundRemovalStatus;
+        private set => SetProperty(ref _backgroundRemovalStatus, value);
+    }
+
+    /// <summary>Progress percentage for model download (0-100).</summary>
+    public int BackgroundRemovalProgress
+    {
+        get => _backgroundRemovalProgress;
+        private set => SetProperty(ref _backgroundRemovalProgress, value);
+    }
+
+    /// <summary>Whether the background removal model is ready for use.</summary>
+    public bool IsBackgroundRemovalModelReady => 
+        _backgroundRemovalService?.GetModelStatus() == ModelStatus.Ready;
+
+    /// <summary>Whether the background removal model needs to be downloaded.</summary>
+    public bool IsBackgroundRemovalModelMissing
+    {
+        get
+        {
+            var status = _backgroundRemovalService?.GetModelStatus() ?? ModelStatus.NotDownloaded;
+            return status == ModelStatus.NotDownloaded || status == ModelStatus.Corrupted;
+        }
+    }
+
+    /// <summary>Whether GPU acceleration is available for background removal.</summary>
+    public bool IsBackgroundRemovalGpuAvailable => _backgroundRemovalService?.IsGpuAvailable ?? false;
+
+    /// <summary>Refreshes the background removal model status properties.</summary>
+    public void RefreshBackgroundRemovalModelStatus()
+    {
+        OnPropertyChanged(nameof(IsBackgroundRemovalModelReady));
+        OnPropertyChanged(nameof(IsBackgroundRemovalModelMissing));
+        RemoveBackgroundCommand.NotifyCanExecuteChanged();
+        DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -639,6 +704,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ToggleBrightnessContrastCommand { get; }
     public IRelayCommand ApplyBrightnessContrastCommand { get; }
     public IRelayCommand ResetBrightnessContrastCommand { get; }
+    public IAsyncRelayCommand RemoveBackgroundCommand { get; }
+    public IAsyncRelayCommand DownloadBackgroundRemovalModelCommand { get; }
 
     #endregion
 
@@ -680,6 +747,18 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<BrightnessContrastSettings>? ApplyBrightnessContrastRequested;
     public event EventHandler<BrightnessContrastSettings>? BrightnessContrastPreviewRequested;
     public event EventHandler? CancelBrightnessContrastPreviewRequested;
+
+    /// <summary>
+    /// Event raised to request image data for background removal.
+    /// The View should respond by calling ProcessBackgroundRemovalAsync with the image data.
+    /// </summary>
+    public event EventHandler? RemoveBackgroundRequested;
+
+    /// <summary>
+    /// Event raised when background removal completes with result.
+    /// The View should apply the mask to the image editor.
+    /// </summary>
+    public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalCompleted;
 
     /// <summary>
     /// Event raised when an image save completes successfully.
@@ -735,15 +814,21 @@ public partial class ImageEditorViewModel : ObservableObject
         ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
         ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+        RemoveBackgroundCommand.NotifyCanExecuteChanged();
+        DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
     /// Creates a new ImageEditorViewModel with event aggregator integration.
     /// </summary>
     /// <param name="eventAggregator">The event aggregator for publishing events.</param>
-    public ImageEditorViewModel(IDatasetEventAggregator? eventAggregator = null)
+    /// <param name="backgroundRemovalService">Optional background removal service.</param>
+    public ImageEditorViewModel(
+        IDatasetEventAggregator? eventAggregator = null,
+        IBackgroundRemovalService? backgroundRemovalService = null)
     {
         _eventAggregator = eventAggregator;
+        _backgroundRemovalService = backgroundRemovalService;
 
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
@@ -777,7 +862,17 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
         ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
         ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
+
+        // Background Removal commands
+        RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
+        DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
     }
+
+    private bool CanExecuteRemoveBackground() => 
+        HasImage && IsBackgroundRemovalModelReady && !IsBackgroundRemovalBusy;
+
+    private bool CanExecuteDownloadModel() => 
+        IsBackgroundRemovalModelMissing && !IsBackgroundRemovalBusy;
 
     /// <summary>Loads an image by path.</summary>
     public void LoadImage(string imagePath)
@@ -844,7 +939,7 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
         }
 
-        NotifyToolCommandsCanExecuteChanged();
+        // Add more tools here as they are added in the future
     }
 
     /// <summary>Updates image dimensions from the editor control.</summary>
@@ -1101,6 +1196,132 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Background Removal Command Implementations
+
+    private async Task ExecuteRemoveBackgroundAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Preparing image...";
+
+        try
+        {
+            // Request image data from the View
+            RemoveBackgroundRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+            BackgroundRemovalStatus = null;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Processes background removal with the provided image data.
+    /// Called by the View after responding to RemoveBackgroundRequested.
+    /// </summary>
+    /// <param name="imageData">Raw RGBA image data.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="height">Image height in pixels.</param>
+    public async Task ProcessBackgroundRemovalAsync(byte[] imageData, int width, int height)
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            IsBackgroundRemovalBusy = false;
+            return;
+        }
+
+        try
+        {
+            BackgroundRemovalStatus = "Removing background...";
+            
+            var result = await _backgroundRemovalService.RemoveBackgroundAsync(imageData, width, height);
+
+            if (result.Success)
+            {
+                StatusMessage = "Background removed successfully";
+                BackgroundRemovalCompleted?.Invoke(this, result);
+            }
+            else
+            {
+                StatusMessage = result.ErrorMessage ?? "Background removal failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    private async Task ExecuteDownloadBackgroundRemovalModelAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalProgress = 0;
+        BackgroundRemovalStatus = "Downloading model...";
+
+        try
+        {
+            var progress = new Progress<ModelDownloadProgress>(p =>
+            {
+                if (p.Percentage >= 0)
+                    BackgroundRemovalProgress = (int)p.Percentage;
+                BackgroundRemovalStatus = p.Status;
+            });
+
+            var success = await _backgroundRemovalService.DownloadModelAsync(progress);
+
+            if (success)
+            {
+                StatusMessage = "Background removal model downloaded successfully";
+                RefreshBackgroundRemovalModelStatus();
+            }
+            else
+            {
+                StatusMessage = "Failed to download background removal model";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Model download cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Model download failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    /// <summary>Called when background removal is successfully applied to the image.</summary>
+    public void OnBackgroundRemovalApplied()
+    {
+        StatusMessage = "Background removed";
+    }
+
+    #endregion
+
     #region Rating Command Implementations
 
     private void ExecuteMarkApproved()
@@ -1207,6 +1428,8 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleBrightnessContrastCommand.NotifyCanExecuteChanged();
         ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
+        RemoveBackgroundCommand.NotifyCanExecuteChanged();
+        DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 

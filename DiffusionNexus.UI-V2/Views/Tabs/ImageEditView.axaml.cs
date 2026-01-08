@@ -5,6 +5,7 @@ using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
+using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.Views.Tabs;
 
@@ -236,6 +237,39 @@ public partial class ImageEditView : UserControl
         imageEditor.CancelBrightnessContrastPreviewRequested += (_, _) =>
         {
             _imageEditorCanvas.EditorCore.ClearPreview();
+        };
+
+        // Handle background removal requests
+        imageEditor.RemoveBackgroundRequested += async (_, _) =>
+        {
+            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
+            if (imageData is null)
+            {
+                imageEditor.StatusMessage = "No image loaded";
+                return;
+            }
+
+            await imageEditor.ProcessBackgroundRemovalAsync(
+                imageData.Value.Data,
+                imageData.Value.Width,
+                imageData.Value.Height);
+        };
+
+        // Handle background removal completed
+        imageEditor.BackgroundRemovalCompleted += (_, result) =>
+        {
+            if (result.Success && result.MaskData is not null)
+            {
+                // Apply the mask directly to the working bitmap
+                if (_imageEditorCanvas.EditorCore.ApplyBackgroundMask(result.MaskData, result.Width, result.Height))
+                {
+                    imageEditor.OnBackgroundRemovalApplied();
+                }
+                else
+                {
+                    imageEditor.StatusMessage = "Failed to apply background removal mask";
+                }
+            }
         };
 
         // Handle save as dialog request
