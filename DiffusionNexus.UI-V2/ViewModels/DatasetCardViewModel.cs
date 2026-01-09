@@ -110,7 +110,41 @@ public class DatasetCardViewModel : ObservableObject
             {
                 // Also update the version NSFW flags dictionary
                 _versionNsfwFlags[_currentVersion] = value;
+                OnPropertyChanged(nameof(HasAnyNsfwVersion));
+                OnPropertyChanged(nameof(AreAllVersionsNsfw));
             }
+        }
+    }
+
+    /// <summary>
+    /// Whether any version of this dataset is marked as NSFW.
+    /// Used for filtering in flattened view.
+    /// </summary>
+    public bool HasAnyNsfwVersion => _versionNsfwFlags.Count > 0 && _versionNsfwFlags.Values.Any(v => v);
+
+    /// <summary>
+    /// Whether ALL versions of this dataset are marked as NSFW.
+    /// Used for filtering in collapsed (non-flattened) view - only hide if all versions are NSFW.
+    /// </summary>
+    public bool AreAllVersionsNsfw
+    {
+        get
+        {
+            // If no versions have NSFW flags set, not all are NSFW
+            if (_versionNsfwFlags.Count == 0)
+                return false;
+
+            // Get all version numbers that exist
+            var allVersions = GetAllVersionNumbers();
+            
+            // Check if every existing version is marked as NSFW
+            foreach (var version in allVersions)
+            {
+                if (!_versionNsfwFlags.TryGetValue(version, out var isNsfw) || !isNsfw)
+                    return false;
+            }
+            
+            return true;
         }
     }
 
@@ -1048,6 +1082,59 @@ public class DatasetCardViewModel : ObservableObject
         {
             ThumbnailPath = null;
         }
+    }
+
+    /// <summary>
+    /// Returns a version of this card safe for display in Safe Mode.
+    /// If the current card is already safe, returns this.
+    /// If the current card is NSFW but has safe versions (Mixed), returns a snapshot of the latest safe version.
+    /// If the card is completely NSFW (or is a version card that is NSFW), returns null.
+    /// </summary>
+    public DatasetCardViewModel? GetSafeSnapshot()
+    {
+        // 1. If this card is explicitly marked Safe, it is safe to show.
+        if (!IsNsfw) return this;
+
+        // 2. If it is a Version Card (Flattened View) and is NSFW, it must be hidden.
+        if (IsVersionCard) return null;
+
+        // 3. It is a Collapsed Card (Dataset View) and the CURRENT version is NSFW.
+        // We need to check if there is ANY safe version we can display instead.
+        
+        // Find the latest Safe version number
+        var safeVersion = VersionNsfwFlags
+            .Where(kvp => !kvp.Value) // IsNsfw == false
+            .OrderByDescending(kvp => kvp.Key)
+            .Select(kvp => (int?)kvp.Key)
+            .FirstOrDefault();
+            
+        // If we found no safe version explicitly, but V1 exists and isn't flagged NSFW in the dict (e.g. legacy/incomplete metadata), try V1.
+        // (Note: VersionNsfwFlags usually contains all keys, but simple safety check).
+        if (!safeVersion.HasValue && GetAllVersionNumbers().Contains(1))
+        {
+             if (!_versionNsfwFlags.ContainsKey(1) || !_versionNsfwFlags[1])
+             {
+                 safeVersion = 1;
+             }
+        }
+
+        // If still no safe version, the whole dataset is effectively NSFW for Safe Mode. Hide it.
+        if (!safeVersion.HasValue) return null;
+
+        // 4. Create a Safe Snapshot
+        // We create a card that represents the Safe Version but masquerades as the Dataset Card (preserving totals).
+        var snapshot = CreateVersionCard(safeVersion.Value);
+        
+        // Adjust to look like a Collapsed Card
+        snapshot.DisplayVersion = null; // Don't show "V1" badge, show "X Versions" badge logic
+        
+        // Copy Totals from 'this' (the main dataset tracker) so the badge says e.g. "3 Versions" / "150 Images"
+        snapshot.TotalVersions = TotalVersions; 
+        snapshot.TotalImageCountAllVersions = TotalImageCountAllVersions;
+        snapshot.TotalVideoCountAllVersions = TotalVideoCountAllVersions;
+        snapshot.TotalCaptionCountAllVersions = TotalCaptionCountAllVersions;
+
+        return snapshot;
     }
 
     /// <summary>

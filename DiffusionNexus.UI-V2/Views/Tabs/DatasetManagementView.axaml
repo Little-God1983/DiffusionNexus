@@ -131,7 +131,7 @@
                    CornerRadius="4"/>
           
           <!-- Filter by Type -->
-          <ComboBox ItemsSource="{Binding AvailableTypes}"
+          <ComboBox ItemsSource="{Binding AvailableFilterTypes}"
                     SelectedItem="{Binding FilterType, Mode=TwoWay}"
                     MinWidth="120"
                     PlaceholderText="All Types">
@@ -142,11 +142,18 @@
             </ComboBox.ItemTemplate>
           </ComboBox>
           
-          <!-- Show NSFW Toggle -->
-          <CheckBox IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
-                    Content="Show NSFW"
-                    VerticalAlignment="Center"
-                    ToolTip.Tip="Show datasets marked as NSFW"/>
+          <!-- Show NSFW Toggle with hidden count -->
+          <StackPanel Orientation="Vertical" VerticalAlignment="Center" Spacing="0">
+            <CheckBox IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
+                      Content="Show NSFW"
+                      ToolTip.Tip="Show datasets marked as NSFW"/>
+            <TextBlock Text="{Binding HiddenText}"
+                       FontSize="10"
+                       Foreground="#888"
+                       Opacity="0.9"
+                       IsVisible="{Binding HasHidden}"
+                       Margin="20,0,0,0"/>
+          </StackPanel>
           
           <!-- Clear Filters Button -->
           <Button Content="Clear"
@@ -275,6 +282,7 @@
                                 </Border>
                                 <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
                                        Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+                                
                                 <Border Background="#4CAF50" CornerRadius="4" Padding="6,3"
                                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
                                         IsVisible="{Binding ShowVersionBadge}">

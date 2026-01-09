@@ -6,6 +6,7 @@ namespace DiffusionNexus.UI.Converters;
 
 /// <summary>
 /// Converter to display DatasetType enum values as user-friendly strings.
+/// Handles nullable DatasetType for filter dropdowns (null = "All Types").
 /// </summary>
 public class DatasetTypeDisplayConverter : IValueConverter
 {
@@ -16,10 +17,17 @@ public class DatasetTypeDisplayConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
+        // Handle nullable DatasetType for filter dropdowns
+        if (value is null)
+        {
+            return "All Types";
+        }
+        
         if (value is DatasetType type)
         {
             return type.GetDisplayName();
         }
+        
         return value?.ToString();
     }
 
