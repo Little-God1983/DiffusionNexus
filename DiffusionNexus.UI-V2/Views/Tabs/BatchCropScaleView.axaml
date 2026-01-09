@@ -151,19 +151,23 @@
                     
                     <!-- Crop vs Pad Toggle - Side by Side -->
                     <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,8">
+                        <!-- Crop Option -->
                         <Border Grid.Column="0"
                                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
                                 CornerRadius="8"
                                 Padding="16"
                                 BorderThickness="2"
+                                VerticalAlignment="Top"
                                 BorderBrush="{Binding !UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
                             <RadioButton GroupName="FitMode"
                                          IsChecked="{Binding !UsePadding}"
                                          IsEnabled="{Binding !IsProcessing}">
                                 <StackPanel Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="??" FontSize="20"/>
-                                        <TextBlock Text="Crop" FontSize="16" FontWeight="Bold"/>
+                                        <Border Background="#E53935" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                            <TextBlock Text="CROP" FontSize="10" FontWeight="Bold" Foreground="White"/>
+                                        </Border>
+                                        <TextBlock Text="Crop" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                     <TextBlock Text="Remove pixels to fit aspect ratio. May cut off parts of the image." 
                                                Classes="SubText" 
@@ -172,61 +176,61 @@
                             </RadioButton>
                         </Border>
                         
-                        <Border Grid.Column="2"
-                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
-                                CornerRadius="8"
-                                Padding="16"
-                                BorderThickness="2"
-                                BorderBrush="{Binding UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
-                            <RadioButton GroupName="FitMode"
-                                         IsChecked="{Binding UsePadding}"
-                                         IsEnabled="{Binding !IsProcessing}">
-                                <StackPanel Spacing="4">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="???" FontSize="20"/>
-                                        <TextBlock Text="Pad (Letterbox)" FontSize="16" FontWeight="Bold"/>
+                        <!-- Pad Option with Inline Settings -->
+                        <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Top">
+                            <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                    CornerRadius="8"
+                                    Padding="16"
+                                    BorderThickness="2"
+                                    BorderBrush="{Binding UsePadding, Converter={StaticResource BoolToAccentBrushConverter}}">
+                                <RadioButton GroupName="FitMode"
+                                             IsChecked="{Binding UsePadding}"
+                                             IsEnabled="{Binding !IsProcessing}">
+                                    <StackPanel Spacing="4">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Border Background="#1E88E5" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                                <TextBlock Text="PAD" FontSize="10" FontWeight="Bold" Foreground="White"/>
+                                            </Border>
+                                            <TextBlock Text="Pad (Letterbox)" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Add canvas to preserve entire image. Nothing is lost." 
+                                                   Classes="SubText" 
+                                                   TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <TextBlock Text="Add canvas to preserve entire image. Nothing is lost." 
-                                               Classes="SubText" 
-                                               TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </RadioButton>
-                        </Border>
-                    </Grid>
+                                </RadioButton>
+                            </Border>
 
-                    <!-- Padding Fill Options (only visible when Pad is selected) -->
-                    <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
-                            CornerRadius="6"
-                            Padding="12"
-                            IsVisible="{Binding IsPadMode}">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                            <StackPanel Grid.Column="0" Spacing="8">
-                                <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
-                                <ComboBox ItemsSource="{Binding PaddingFillOptions}"
-                                          SelectedItem="{Binding SelectedPaddingFill}"
-                                          IsEnabled="{Binding !IsProcessing}"
-                                          MinWidth="160">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate DataType="vm:PaddingFillOption">
-                                            <TextBlock Text="{Binding DisplayName}"/>
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" 
-                                       Classes="SubText" 
-                                       TextWrapping="Wrap"
-                                       VerticalAlignment="Center">
-                                <TextBlock.Text>
-                                    <Binding Path="SelectedPaddingFill.Mode">
-                                        <Binding.Converter>
-                                            <vm:PaddingFillDescriptionConverter/>
-                                        </Binding.Converter>
-                                    </Binding>
-                                </TextBlock.Text>
-                            </TextBlock>
-                        </Grid>
-                    </Border>
+                            <!-- Padding Fill Options (directly below Pad option) -->
+                            <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                                    CornerRadius="6"
+                                    Padding="12"
+                                    IsVisible="{Binding IsPadMode}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Padding Fill Style" FontWeight="SemiBold"/>
+                                    <ComboBox ItemsSource="{Binding PaddingFillOptions}"
+                                              SelectedItem="{Binding SelectedPaddingFill}"
+                                              IsEnabled="{Binding !IsProcessing}"
+                                              HorizontalAlignment="Stretch">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate DataType="vm:PaddingFillOption">
+                                                <TextBlock Text="{Binding DisplayName}"/>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Classes="SubText" 
+                                               TextWrapping="Wrap">
+                                        <TextBlock.Text>
+                                            <Binding Path="SelectedPaddingFill.Mode">
+                                                <Binding.Converter>
+                                                    <vm:PaddingFillDescriptionConverter/>
+                                                </Binding.Converter>
+                                            </Binding>
+                                        </TextBlock.Text>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
                 </StackPanel>
             </Border>
 
@@ -379,9 +383,14 @@
                                 Margin="0,8,0,0"
                                 IsVisible="{Binding TargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="?? External Folder"
-                                           FontWeight="SemiBold"
-                                           Foreground="#fbbf24"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Border Background="#fbbf24" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                                        <TextBlock Text="!" FontSize="10" FontWeight="Bold" Foreground="#000"/>
+                                    </Border>
+                                    <TextBlock Text="External Folder"
+                                               FontWeight="SemiBold"
+                                               Foreground="#fbbf24"/>
+                                </StackPanel>
                                 <TextBlock Text="Files saved to this folder will not be tracked by DiffusionNexus. Consider using 'Create New Version' if working with a dataset."
                                            TextWrapping="Wrap"
                                            Opacity="0.9"
@@ -396,9 +405,14 @@
                             Padding="12"
                             IsVisible="{Binding IsOverwriteMode}">
                         <StackPanel Spacing="8">
-                            <TextBlock Text="?? Warning: Overwrite Mode"
-                                       FontWeight="SemiBold"
-                                       Foreground="#ff6666"/>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border Background="#ff6666" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                                    <TextBlock Text="!" FontSize="10" FontWeight="Bold" Foreground="#000"/>
+                                </Border>
+                                <TextBlock Text="Warning: Overwrite Mode"
+                                           FontWeight="SemiBold"
+                                           Foreground="#ff6666"/>
+                            </StackPanel>
                             <TextBlock Text="Images will be overwritten in place. This cannot be undone!"
                                        TextWrapping="Wrap"
                                        Opacity="0.9"/>
@@ -454,7 +468,7 @@
                         Spacing="16"
                         Margin="0,16">
                 <Button Classes="primary-btn"
-                        Content="?? Start Processing"
+                        Content="Start Processing"
                         Command="{Binding StartCommand}"
                         IsVisible="{Binding !IsProcessing}"/>
                 <Button Content="Cancel"
