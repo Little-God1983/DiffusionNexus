@@ -200,6 +200,20 @@ public static class BoolConverters
 
     #endregion
 
+    #region Caption Editor Converters
+
+    private static readonly IBrush UnsavedHighlightBrush = new SolidColorBrush(Color.Parse("#2D7D46")); // Green when unsaved
+    private static readonly IBrush SavedDefaultBrush = new SolidColorBrush(Color.Parse("#80444444")); // Gray when saved
+
+    /// <summary>
+    /// Converts HasUnsavedChanges to save button background.
+    /// Shows green when there are unsaved changes, gray otherwise.
+    /// </summary>
+    public static readonly IValueConverter BoolToUnsavedBackground =
+        new FuncValueConverter<bool, IBrush>(hasUnsaved => hasUnsaved ? UnsavedHighlightBrush : SavedDefaultBrush);
+
+    #endregion
+
     #region Backup Status Converters
 
     /// <summary>

@@ -58,6 +58,35 @@ public partial class ImageViewerDialog : Window
     {
         if (_viewModel is null) return;
 
+        // Check for Ctrl+S to save caption
+        if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            _viewModel.CurrentImage?.SaveCaptionCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+        
+        // Check for Ctrl+Z to revert caption
+        if (e.Key == Key.Z && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            _viewModel.CurrentImage?.RevertCaptionCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        // Skip navigation shortcuts when the caption TextBox has focus
+        var focusedElement = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        if (focusedElement is TextBox)
+        {
+            // Only allow Escape to close the dialog when TextBox is focused
+            if (e.Key == Key.Escape)
+            {
+                Close();
+                e.Handled = true;
+            }
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Left:
@@ -103,6 +132,12 @@ public partial class ImageViewerDialog : Window
             case Key.Space:
                 // Space advances to next image (common in image viewers)
                 _viewModel.NextCommand.Execute(null);
+                e.Handled = true;
+                break;
+                
+            case Key.C:
+                // C key clears rating
+                _viewModel.ClearRatingCommand.Execute(null);
                 e.Handled = true;
                 break;
         }

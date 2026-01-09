@@ -193,38 +193,74 @@
         
       </Grid>
       
-      <!-- Bottom toolbar with actions and caption preview -->
+      <!-- Bottom toolbar with actions and caption editor -->
       <Border Grid.Row="2"
               Background="#CC1A1A1A"
               Padding="16,12">
         <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
           
-          <!-- Caption preview (if available) -->
-          <Border Grid.Row="0" Grid.ColumnSpan="2"
-                  Background="#80333333"
-                  CornerRadius="6"
-                  Padding="12,8"
-                  Margin="0,0,0,12"
-                  IsVisible="{Binding HasCaption}"
-                  MaxHeight="80">
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
-              <TextBlock Text="{Binding Caption}"
-                         TextWrapping="Wrap"
-                         FontSize="13"
-                         Foreground="#CCC"
-                         MaxLines="3"/>
-            </ScrollViewer>
-          </Border>
-          
-          <!-- No caption indicator -->
-          <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                     Text="No caption"
-                     FontSize="12"
-                     Foreground="#666"
-                     FontStyle="Italic"
-                     Margin="0,0,0,12"
-                     IsVisible="{Binding !HasCaption}"/>
+          <!-- Caption editor (editable) -->
+          <Grid Grid.Row="0" Grid.ColumnSpan="2"
+                ColumnDefinitions="*,Auto"
+                Margin="0,0,0,12"
+                IsVisible="{Binding HasCurrentImage}">
+            
+            <!-- Caption TextBox -->
+            <Border Grid.Column="0"
+                    Background="#80333333"
+                    CornerRadius="6"
+                    Padding="4">
+              <TextBox x:Name="CaptionTextBox"
+                       Text="{Binding CurrentImage.Caption, Mode=TwoWay}"
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       MinHeight="60"
+                       MaxHeight="100"
+                       FontSize="13"
+                       Foreground="#CCC"
+                       Background="Transparent"
+                       BorderThickness="0"
+                       Watermark="Enter caption..."/>
+            </Border>
+            
+            <!-- Save/Revert buttons -->
+            <StackPanel Grid.Column="1" 
+                        Orientation="Vertical" 
+                        Spacing="4"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Top">
+              
+              <!-- Unsaved indicator + Save button -->
+              <Button Command="{Binding CurrentImage.SaveCaptionCommand}"
+                      Padding="12,8"
+                      FontSize="13"
+                      Background="{Binding CurrentImage.HasUnsavedChanges, Converter={x:Static converters:BoolConverters.BoolToUnsavedBackground}}"
+                      Foreground="White"
+                      CornerRadius="4"
+                      ToolTip.Placement="Left"
+                      ToolTip.Tip="Save caption (Ctrl+S)">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <TextBlock Text="*" 
+                             FontWeight="Bold" 
+                             Foreground="#FFD700"
+                             IsVisible="{Binding CurrentImage.HasUnsavedChanges}"/>
+                  <TextBlock Text="Save"/>
+                </StackPanel>
+              </Button>
+              
+              <!-- Revert button -->
+              <Button Content="Revert"
+                      Command="{Binding CurrentImage.RevertCaptionCommand}"
+                      Padding="12,8"
+                      FontSize="13"
+                      Background="#80444444"
+                      Foreground="White"
+                      CornerRadius="4"
+                      IsEnabled="{Binding CurrentImage.HasUnsavedChanges}"
+                      ToolTip.Placement="Left"
+                      ToolTip.Tip="Revert changes (Ctrl+Z)"/>
+            </StackPanel>
+          </Grid>
           
           <!-- Left side: Rating buttons -->
           <StackPanel Grid.Row="1" Grid.Column="0" 
