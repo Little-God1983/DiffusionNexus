@@ -120,8 +120,8 @@
               </ComboBox>
             </StackPanel>
           </StackPanel>
-          <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4"
-                  IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+          <!-- Separator - always visible -->
+          <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4"/>
           <!-- Tool toggles - always visible but disabled when no image -->
           <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
             <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"
@@ -142,6 +142,7 @@
                           ToolTip.Tip="AI Upscaling (4x-UltraSharp)"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
+          <!-- Separator - always visible -->
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4"/>
           <!-- Transform buttons - always visible but disabled when no image -->
           <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4">
@@ -162,6 +163,7 @@
             <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
           </StackPanel>
+          <!-- Separator before Reset/Clear - only visible when image is loaded -->
           <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
           <!-- Reset and Clear buttons - hidden until image is loaded -->
           <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"
