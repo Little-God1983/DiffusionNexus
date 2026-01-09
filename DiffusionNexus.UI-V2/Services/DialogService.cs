@@ -202,14 +202,13 @@ public class DialogService : IDialogService
 
     public async Task<CreateVersionResult> ShowCreateVersionDialogAsync(
         int currentVersion,
-        int nextVersion,
         IReadOnlyList<int> availableVersions,
         int imageCount,
         int videoCount,
         int captionCount)
     {
         var dialog = new CreateVersionDialog()
-            .WithVersionInfo(currentVersion, nextVersion, availableVersions, imageCount, videoCount, captionCount);
+            .WithVersionInfo(currentVersion, availableVersions, imageCount, videoCount, captionCount);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateVersionResult.Cancelled();

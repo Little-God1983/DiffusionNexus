@@ -18,14 +18,6 @@
                  FontSize="18"
                  FontWeight="SemiBold"
                  Foreground="#4CAF50"/>
-      <TextBlock Margin="0,8,0,0" Opacity="0.7">
-        <TextBlock.Text>
-          <MultiBinding StringFormat="Creating V{0} branching from V{1}">
-            <Binding Path="NextVersion"/>
-            <Binding Path="CurrentVersion"/>
-          </MultiBinding>
-        </TextBlock.Text>
-      </TextBlock>
     </StackPanel>
     
     <!-- Source Options -->
@@ -191,7 +183,7 @@
             IsVisible="{Binding IsStartFresh}">
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBlock Text="?" Foreground="#4FC3F7" FontSize="16"/>
-        <TextBlock Text="The new version will be empty. You can add training files after creation."
+        <TextBlock Text="The new version will be empty.&#x0a;You can add training files after creation."
                    Opacity="0.8"
                    FontSize="12"
                    TextWrapping="Wrap"
@@ -207,7 +199,7 @@
             IsVisible="{Binding IsCopyFromVersion}">
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBlock Text="?" Foreground="#4FC3F7" FontSize="16"/>
-        <TextBlock Text="Selected content will be copied to the new version. Original files remain unchanged."
+        <TextBlock Text="Selected content will be copied to the new version.&#x0a;Original files remain unchanged."
                    Opacity="0.8"
                    FontSize="12"
                    TextWrapping="Wrap"

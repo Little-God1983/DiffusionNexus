@@ -24,8 +24,6 @@ public enum VersionSourceOption
 /// </summary>
 public partial class CreateVersionDialogViewModel : ObservableObject
 {
-    private readonly int _currentVersion;
-    private readonly int _nextVersion;
     private readonly IReadOnlyList<int> _availableVersions;
 
     private VersionSourceOption _sourceOption = VersionSourceOption.StartFresh;
@@ -37,38 +35,24 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     /// <summary>
     /// Creates a new CreateVersionDialogViewModel.
     /// </summary>
-    /// <param name="currentVersion">The current version number.</param>
-    /// <param name="nextVersion">The next version number that will be created.</param>
+    /// <param name="currentVersion">The current version number (used as default source version).</param>
     /// <param name="availableVersions">All available source versions to copy from.</param>
     /// <param name="imageCount">Number of images in current version.</param>
     /// <param name="videoCount">Number of videos in current version.</param>
     /// <param name="captionCount">Number of captions in current version.</param>
     public CreateVersionDialogViewModel(
         int currentVersion,
-        int nextVersion,
         IReadOnlyList<int> availableVersions,
         int imageCount,
         int videoCount,
         int captionCount)
     {
-        _currentVersion = currentVersion;
-        _nextVersion = nextVersion;
         _availableVersions = availableVersions;
         _selectedSourceVersion = currentVersion;
         ImageCount = imageCount;
         VideoCount = videoCount;
         CaptionCount = captionCount;
     }
-
-    /// <summary>
-    /// The current version number (for display).
-    /// </summary>
-    public int CurrentVersion => _currentVersion;
-
-    /// <summary>
-    /// The next version number that will be created.
-    /// </summary>
-    public int NextVersion => _nextVersion;
 
     /// <summary>
     /// All available versions to copy from.

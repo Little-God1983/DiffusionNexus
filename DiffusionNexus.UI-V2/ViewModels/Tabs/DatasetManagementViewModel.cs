@@ -1685,7 +1685,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         var result = await DialogService.ShowCreateVersionDialogAsync(
             currentVersion,
-            nextVersion,
             availableVersions,
             imageCount,
             videoCount,

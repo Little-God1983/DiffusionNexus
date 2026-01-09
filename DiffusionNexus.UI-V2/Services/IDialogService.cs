@@ -148,8 +148,7 @@ public interface IDialogService
     /// <summary>
     /// Shows the create version dialog with content type selection options.
     /// </summary>
-    /// <param name="currentVersion">The current version number.</param>
-    /// <param name="nextVersion">The next version number that will be created.</param>
+    /// <param name="currentVersion">The current version number (used as default source version).</param>
     /// <param name="availableVersions">All available versions to copy from.</param>
     /// <param name="imageCount">Number of images in current version.</param>
     /// <param name="videoCount">Number of videos in current version.</param>
@@ -157,7 +156,6 @@ public interface IDialogService
     /// <returns>Create version result with selected options, or cancelled result.</returns>
     Task<CreateVersionResult> ShowCreateVersionDialogAsync(
         int currentVersion,
-        int nextVersion,
         IReadOnlyList<int> availableVersions,
         int imageCount,
         int videoCount,
