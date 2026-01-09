@@ -54,6 +54,10 @@ public partial class App : Application
 
             // Create main window with modules
             var mainViewModel = new DiffusionNexusMainWindowViewModel();
+            
+            // Initialize status bar with activity log service
+            mainViewModel.InitializeStatusBar();
+            
             RegisterModules(mainViewModel);
 
             // Check disclaimer status after services are ready

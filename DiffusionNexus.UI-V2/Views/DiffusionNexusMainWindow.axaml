@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
         x:Class="DiffusionNexus.UI.Views.DiffusionNexusMainWindow"
         x:DataType="vm:DiffusionNexusMainWindowViewModel"
         Title="Diffusion Nexus"
@@ -129,15 +130,9 @@
                 </SplitView.Content>
             </SplitView>
 
-            <!-- Status Bar / Log Area (placeholder for future implementation) -->
-            <Border Grid.Row="1" 
-                    Background="#007ACC" 
-                    Height="24">
-                <TextBlock Text="Ready" 
-                           Foreground="White" 
-                           VerticalAlignment="Center" 
-                           Margin="8,0"/>
-            </Border>
+            <!-- Status Bar / Activity Log -->
+            <controls:StatusBarControl Grid.Row="1" 
+                                        DataContext="{Binding StatusBar}"/>
         </Grid>
 
         <!-- Disclaimer Overlay - blocks interaction when not accepted -->

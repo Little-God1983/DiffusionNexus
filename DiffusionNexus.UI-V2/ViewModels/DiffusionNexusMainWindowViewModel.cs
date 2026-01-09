@@ -27,20 +27,20 @@ public partial class ModuleItem : ObservableObject
 
     public ModuleItem(string name, string iconPath, object? view = null)
     {
-        Name = name;
-        View = view;
+        _name = name;
+        _view = view;
         
         if (!string.IsNullOrEmpty(iconPath))
         {
             try
             {
                 using var stream = AssetLoader.Open(new Uri(iconPath));
-                Icon = new Bitmap(stream);
+                _icon = new Bitmap(stream);
             }
             catch
             {
                 // Fallback or log error if needed
-                Icon = null;
+                _icon = null;
             }
         }
     }
@@ -66,11 +66,27 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _disclaimerCheckboxChecked;
 
+    [ObservableProperty]
+    private StatusBarViewModel? _statusBar;
+
     public ObservableCollection<ModuleItem> Modules { get; } = new();
 
     public DiffusionNexusMainWindowViewModel()
     {
         // Disclaimer check is called externally after services are initialized
+    }
+
+    /// <summary>
+    /// Initializes the status bar after services are available.
+    /// </summary>
+    public void InitializeStatusBar()
+    {
+        var logService = App.Services?.GetService<IActivityLogService>();
+        if (logService is not null)
+        {
+            StatusBar = new StatusBarViewModel(logService);
+            logService.LogInfo("App", "Application started");
+        }
     }
 
     /// <summary>

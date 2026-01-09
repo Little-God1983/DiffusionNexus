@@ -33,6 +33,9 @@ public static class ServiceCollectionExtensions
         // Register SecureStorage
         services.AddSingleton<ISecureStorage, SecureStorageService>();
 
+        // Register ActivityLogService - singleton so all modules share the same log
+        services.AddSingleton<IActivityLogService, ActivityLogService>();
+
         return services;
     }
 

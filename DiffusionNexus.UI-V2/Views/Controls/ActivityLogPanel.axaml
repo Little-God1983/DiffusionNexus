@@ -1,0 +1,232 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:domain="using:DiffusionNexus.Domain.Services"
+             x:Class="DiffusionNexus.UI.Views.Controls.ActivityLogPanel"
+             x:DataType="vm:ActivityLogViewModel">
+
+    <UserControl.Styles>
+        <!-- Log entry severity colors -->
+        <Style Selector="Border.log-debug">
+            <Setter Property="Background" Value="#40808080"/>
+        </Style>
+        <Style Selector="Border.log-info">
+            <Setter Property="Background" Value="#40007ACC"/>
+        </Style>
+        <Style Selector="Border.log-success">
+            <Setter Property="Background" Value="#4028A745"/>
+        </Style>
+        <Style Selector="Border.log-warning">
+            <Setter Property="Background" Value="#40FFC107"/>
+        </Style>
+        <Style Selector="Border.log-error">
+            <Setter Property="Background" Value="#40DC3545"/>
+        </Style>
+        
+        <!-- Toggle button styles -->
+        <Style Selector="ToggleButton.filter-toggle">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="MinWidth" Value="60"/>
+        </Style>
+        <Style Selector="ToggleButton.filter-toggle:checked">
+            <Setter Property="Background" Value="#3C3C3C"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Border Background="#1E1E1E"
+            BorderBrush="#3C3C3C"
+            BorderThickness="0,1,0,0">
+        <Grid RowDefinitions="Auto,Auto,*">
+            
+            <!-- Header with filters -->
+            <Border Grid.Row="0" 
+                    Background="#252526"
+                    Padding="8,6">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    
+                    <!-- Title -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="Activity Log" 
+                                   FontWeight="SemiBold"
+                                   FontSize="13"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding TotalEntryCount, StringFormat='({0} entries)'}"
+                                   Foreground="#808080"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"/>
+                        
+                        <!-- Warning/Error counts -->
+                        <Border Background="#80FFC107"
+                                CornerRadius="10"
+                                Padding="6,2"
+                                IsVisible="{Binding WarningCount}"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding WarningCount, StringFormat='{}{0} ?'}"
+                                       FontSize="11"
+                                       Foreground="White"/>
+                        </Border>
+                        <Border Background="#80DC3545"
+                                CornerRadius="10"
+                                Padding="6,2"
+                                IsVisible="{Binding ErrorCount}"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding ErrorCount, StringFormat='{}{0} ?'}"
+                                       FontSize="11"
+                                       Foreground="White"/>
+                        </Border>
+                    </StackPanel>
+                    
+                    <!-- Severity Filters -->
+                    <StackPanel Grid.Column="1" 
+                                Orientation="Horizontal" 
+                                Spacing="4"
+                                HorizontalAlignment="Center">
+                        <ToggleButton Classes="filter-toggle"
+                                      Content="Debug"
+                                      IsChecked="{Binding ShowDebug}"/>
+                        <ToggleButton Classes="filter-toggle"
+                                      Content="Info"
+                                      IsChecked="{Binding ShowInfo}"/>
+                        <ToggleButton Classes="filter-toggle"
+                                      Content="Success"
+                                      IsChecked="{Binding ShowSuccess}"/>
+                        <ToggleButton Classes="filter-toggle"
+                                      Content="Warnings"
+                                      IsChecked="{Binding ShowWarnings}"/>
+                        <ToggleButton Classes="filter-toggle"
+                                      Content="Errors"
+                                      IsChecked="{Binding ShowErrors}"/>
+                        
+                        <Border Width="1" Background="#3C3C3C" Margin="8,0"/>
+                        
+                        <!-- Source filter dropdown -->
+                        <ComboBox ItemsSource="{Binding AvailableSources}"
+                                  SelectedItem="{Binding SourceFilter}"
+                                  PlaceholderText="All Sources"
+                                  MinWidth="120"
+                                  FontSize="12"/>
+                    </StackPanel>
+                    
+                    <!-- Actions -->
+                    <StackPanel Grid.Column="2" 
+                                Orientation="Horizontal" 
+                                Spacing="4">
+                        <Button Content="Errors Only"
+                                Command="{Binding ShowErrorsOnlyCommand}"
+                                Padding="8,4"
+                                FontSize="12"/>
+                        <Button Content="Show All"
+                                Command="{Binding ShowAllCommand}"
+                                Padding="8,4"
+                                FontSize="12"/>
+                        <Button Content="Clear"
+                                Command="{Binding ClearLogCommand}"
+                                Padding="8,4"
+                                FontSize="12"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+            
+            <!-- Active Progress Operations -->
+            <ItemsControl Grid.Row="1"
+                          ItemsSource="{Binding ActiveOperations}"
+                          IsVisible="{Binding HasActiveOperations}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Spacing="2"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="domain:ProgressOperation">
+                        <Border Background="#2D2D30"
+                                Padding="8,6"
+                                Margin="8,4,8,0"
+                                CornerRadius="4">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <StackPanel Grid.Column="0" Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Source}"
+                                                   Foreground="#007ACC"
+                                                   FontWeight="SemiBold"
+                                                   FontSize="12"/>
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontSize="12"/>
+                                    </StackPanel>
+                                    <ProgressBar Value="{Binding ProgressPercent}"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Height="4"
+                                                 IsIndeterminate="{Binding ProgressPercent, Converter={x:Static ObjectConverters.IsNull}}"/>
+                                    <TextBlock Text="{Binding StatusMessage}"
+                                               Foreground="#808080"
+                                               FontSize="11"
+                                               IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding ProgressPercent, StringFormat='{}{0}%'}"
+                                           FontSize="12"
+                                           Margin="12,0"
+                                           VerticalAlignment="Center"
+                                           IsVisible="{Binding ProgressPercent, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                <Button Grid.Column="2"
+                                        Content="Cancel"
+                                        Command="{Binding $parent[ItemsControl].DataContext.CancelOperationCommand}"
+                                        CommandParameter="{Binding}"
+                                        IsVisible="{Binding IsCancellable}"
+                                        Padding="8,4"
+                                        FontSize="11"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Log Entries List -->
+            <ListBox Grid.Row="2"
+                     ItemsSource="{Binding FilteredEntries}"
+                     Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="domain:ActivityLogEntry">
+                        <Border Padding="8,4"
+                                Margin="0,1"
+                                CornerRadius="2">
+                            <Grid ColumnDefinitions="80,80,*">
+                                <!-- Timestamp -->
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}"
+                                           Foreground="#808080"
+                                           FontSize="11"
+                                           FontFamily="Consolas,Menlo,monospace"/>
+                                
+                                <!-- Source -->
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Source}"
+                                           Foreground="#007ACC"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"/>
+                                
+                                <!-- Message -->
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Message}"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            
+            <!-- Empty state -->
+            <TextBlock Grid.Row="2"
+                       Text="No log entries"
+                       Foreground="#606060"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding !FilteredEntries.Count}"/>
+        </Grid>
+    </Border>
+</UserControl>
