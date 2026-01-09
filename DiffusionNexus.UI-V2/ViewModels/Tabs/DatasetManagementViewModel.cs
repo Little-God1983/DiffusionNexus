@@ -69,10 +69,32 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private bool _showNsfw;
     private bool _selectedNsfw;
 
+    // Sub-tab fields
+    private VersionSubTab _selectedSubTab = VersionSubTab.Training;
+
+    /// <summary>
+    /// Gets or sets the currently selected sub-tab within the version detail view.
+    /// </summary>
+    public VersionSubTab SelectedSubTab
+    {
+        get => _selectedSubTab;
+        set => SetProperty(ref _selectedSubTab, value);
+    }
+
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// ViewModel for the Epochs sub-tab.
+    /// </summary>
+    public EpochsTabViewModel EpochsTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Notes sub-tab.
+    /// </summary>
+    public NotesTabViewModel NotesTab { get; }
 
     #region Observable Properties (Delegated to State)
 
@@ -443,6 +465,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _videoThumbnailService = videoThumbnailService;
         _backupService = backupService;
         _activityLog = activityLog;
+
+        // Initialize sub-tab ViewModels
+        EpochsTab = new EpochsTabViewModel(_eventAggregator);
+        NotesTab = new NotesTabViewModel(_eventAggregator);
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -991,6 +1017,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _state.SetActiveDataset(dataset);
             DatasetImages.Clear();
 
+            // Reset to Training tab when opening a dataset
+            SelectedSubTab = VersionSubTab.Training;
+
             // Populate available versions
             AvailableVersions.Clear();
             if (dataset.IsVersionedStructure)
@@ -1009,9 +1038,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var mediaFolderPath = dataset.CurrentVersionFolderPath;
             if (!Directory.Exists(mediaFolderPath))
             {
-                StatusMessage = "Dataset folder no longer exists.";
-                return;
+                // Create the folder structure for new datasets
+                Directory.CreateDirectory(mediaFolderPath);
             }
+
+            // Initialize sub-tab ViewModels with the current version folder
+            EpochsTab.Initialize(dataset.CurrentVersionFolderPath);
+            NotesTab.Initialize(dataset.CurrentVersionFolderPath);
+
+            // Ensure sub-folders exist (Epochs, Notes, Presentation)
+            EnsureVersionSubfoldersExist(dataset.CurrentVersionFolderPath);
 
             // Load media files using the shared MediaFileExtensions utility
             var allFiles = Directory.EnumerateFiles(mediaFolderPath).ToList();
@@ -1075,6 +1111,23 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Ensures the sub-folders (Epochs, Notes, Presentation) exist within a version folder.
+    /// </summary>
+    private static void EnsureVersionSubfoldersExist(string versionFolderPath)
+    {
+        var epochsPath = Path.Combine(versionFolderPath, "Epochs");
+        var notesPath = Path.Combine(versionFolderPath, "Notes");
+        var presentationPath = Path.Combine(versionFolderPath, "Presentation");
+
+        if (!Directory.Exists(epochsPath))
+            Directory.CreateDirectory(epochsPath);
+        if (!Directory.Exists(notesPath))
+            Directory.CreateDirectory(notesPath);
+        if (!Directory.Exists(presentationPath))
+            Directory.CreateDirectory(presentationPath);
     }
 
     private async Task GenerateVideoThumbnailAsync(DatasetImageViewModel mediaVm)

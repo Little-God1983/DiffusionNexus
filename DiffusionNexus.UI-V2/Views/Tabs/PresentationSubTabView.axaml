@@ -1,0 +1,23 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.Tabs.PresentationSubTabView">
+  
+  <!-- Empty placeholder view for Presentation tab - reserved for future use -->
+  <Grid>
+    <Border Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" Margin="16" CornerRadius="12">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+        <Border Background="#333" CornerRadius="12" Padding="24">
+          <TextBlock Text="PRESENTATION" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+        </Border>
+        <TextBlock Text="Coming Soon" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+        <TextBlock Text="This tab is reserved for presentation data, showcase images, and demos" 
+                   FontSize="14" Foreground="#888" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400"/>
+        <TextBlock Text="The folder structure is ready and will be included in backups" 
+                   FontSize="12" Foreground="#666" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>
