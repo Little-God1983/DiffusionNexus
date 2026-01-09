@@ -95,6 +95,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Forward DialogService to sub-tab ViewModels
             EpochsTab.DialogService = value;
             NotesTab.DialogService = value;
+            PresentationTab.DialogService = value;
         }
     }
 
@@ -107,6 +108,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Notes sub-tab.
     /// </summary>
     public NotesTabViewModel NotesTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Presentation sub-tab.
+    /// </summary>
+    public PresentationTabViewModel PresentationTab { get; }
 
     #region Observable Properties (Delegated to State)
 
@@ -481,6 +487,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         // Initialize sub-tab ViewModels
         EpochsTab = new EpochsTabViewModel(_eventAggregator);
         NotesTab = new NotesTabViewModel(_eventAggregator);
+        PresentationTab = new PresentationTabViewModel(_eventAggregator);
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -1057,6 +1064,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Initialize sub-tab ViewModels with the current version folder
             EpochsTab.Initialize(dataset.CurrentVersionFolderPath);
             NotesTab.Initialize(dataset.CurrentVersionFolderPath);
+            PresentationTab.Initialize(dataset.CurrentVersionFolderPath);
 
             // Ensure sub-folders exist (Epochs, Notes, Presentation)
             EnsureVersionSubfoldersExist(dataset.CurrentVersionFolderPath);

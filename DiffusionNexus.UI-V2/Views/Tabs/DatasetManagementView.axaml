@@ -455,7 +455,7 @@
         
         <!-- Tab 4: Presentation -->
         <TabItem Header="Presentation">
-          <views:PresentationSubTabView/>
+          <views:PresentationSubTabView DataContext="{Binding PresentationTab}"/>
         </TabItem>
         
       </TabControl>
