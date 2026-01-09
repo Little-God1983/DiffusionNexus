@@ -11,12 +11,13 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// ViewModel for the Presentation sub-tab within dataset version detail view.
 /// Displays media gallery (images/videos) and document list for showcasing trained models.
 /// </summary>
-public partial class PresentationTabViewModel : ObservableObject, IDialogServiceAware
+public partial class PresentationTabViewModel : ObservableObject, IDialogServiceAware, IDisposable
 {
     private string _presentationFolderPath = string.Empty;
     private bool _isLoading;
     private string? _statusMessage;
     private readonly IDatasetEventAggregator _eventAggregator;
+    private bool _disposed;
 
     /// <summary>
     /// Gets or sets the dialog service for file operations.
@@ -129,6 +130,81 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         // Placeholder commands - show coming soon message
         UploadToCivitAICommand = new RelayCommand(ShowCivitAIComingSoon);
         UploadToHuggingFaceCommand = new RelayCommand(ShowHuggingFaceComingSoon);
+
+        // Subscribe to caption changes to refresh document list
+        _eventAggregator.CaptionChanged += OnCaptionChanged;
+    }
+
+    /// <summary>
+    /// Handles caption change events to refresh the document list when captions are saved.
+    /// </summary>
+    private void OnCaptionChanged(object? sender, CaptionChangedEventArgs e)
+    {
+        // Only react to saved captions (not just in-memory changes)
+        if (!e.WasSaved) return;
+
+        // Check if this caption file belongs to our presentation folder
+        var captionPath = e.Image.CaptionFilePath;
+        var captionDirectory = Path.GetDirectoryName(captionPath);
+        
+        if (string.Equals(captionDirectory, _presentationFolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // Refresh just the document list to show the new/updated caption file
+            RefreshDocumentList();
+        }
+    }
+
+    /// <summary>
+    /// Refreshes only the document list without reloading media files.
+    /// </summary>
+    private void RefreshDocumentList()
+    {
+        DocumentFiles.Clear();
+
+        if (!Directory.Exists(PresentationFolderPath))
+        {
+            NotifyCollectionChanged();
+            return;
+        }
+
+        try
+        {
+            var files = Directory.EnumerateFiles(PresentationFolderPath)
+                .Where(f => !Path.GetFileName(f).StartsWith("."))
+                .OrderBy(f => Path.GetFileName(f))
+                .ToList();
+
+            foreach (var filePath in files)
+            {
+                var category = PresentationFileItem.GetCategory(filePath);
+
+                switch (category)
+                {
+                    case PresentationFileCategory.Document:
+                    case PresentationFileCategory.RawDesign:
+                        var docItem = PresentationFileItem.FromFile(filePath);
+                        DocumentFiles.Add(new PresentationDocumentViewModel(docItem));
+                        break;
+
+                    case PresentationFileCategory.Image:
+                    case PresentationFileCategory.Video:
+                        // Skip media files - they're in the MediaFiles collection
+                        break;
+
+                    default:
+                        // Other files - treat as documents
+                        var otherItem = PresentationFileItem.FromFile(filePath);
+                        DocumentFiles.Add(new PresentationDocumentViewModel(otherItem));
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing documents: {ex.Message}";
+        }
+
+        NotifyCollectionChanged();
     }
 
     /// <summary>
@@ -338,7 +414,9 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
 
             MediaFiles.Remove(mediaVm);
             StatusMessage = $"Deleted '{mediaVm.FullFileName}'";
-            NotifyCollectionChanged();
+            
+            // Refresh document list to remove the deleted caption file entry
+            RefreshDocumentList();
         }
         catch (Exception ex)
         {
@@ -361,6 +439,10 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
 
         try
         {
+            // Check if this is a gallery metadata file before deleting
+            var wasGalleryMetadata = docVm.IsGalleryMetadata;
+            var deletedFilePath = docVm.FilePath;
+
             if (File.Exists(docVm.FilePath))
             {
                 File.Delete(docVm.FilePath);
@@ -368,6 +450,22 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
 
             DocumentFiles.Remove(docVm);
             StatusMessage = $"Deleted '{docVm.FileName}'";
+
+            // If we deleted a gallery metadata file, reload the corresponding image's caption
+            if (wasGalleryMetadata)
+            {
+                var baseName = Path.GetFileNameWithoutExtension(deletedFilePath);
+                var matchingMedia = MediaFiles.FirstOrDefault(m => 
+                    Path.GetFileNameWithoutExtension(m.ImagePath)
+                        .Equals(baseName, StringComparison.OrdinalIgnoreCase));
+                
+                if (matchingMedia is not null)
+                {
+                    // Reload the caption (will be empty since file was deleted)
+                    matchingMedia.LoadCaption();
+                }
+            }
+
             NotifyCollectionChanged();
         }
         catch (Exception ex)
@@ -440,6 +538,31 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         OnPropertyChanged(nameof(MediaCount));
         OnPropertyChanged(nameof(DocumentCount));
     }
+
+    /// <summary>
+    /// Disposes of resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes of managed resources.
+    /// </summary>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Unsubscribe from events
+            _eventAggregator.CaptionChanged -= OnCaptionChanged;
+        }
+
+        _disposed = true;
+    }
 }
 
 /// <summary>
@@ -472,8 +595,44 @@ public partial class PresentationDocumentViewModel : ObservableObject
         _ => "File"
     };
 
+    /// <summary>
+    /// Whether this is a caption/metadata file for a gallery image.
+    /// A .txt file is considered a caption if there's a matching image file with the same base name.
+    /// </summary>
+    public bool IsGalleryMetadata { get; }
+
     public PresentationDocumentViewModel(PresentationFileItem item)
     {
         Item = item ?? throw new ArgumentNullException(nameof(item));
+        IsGalleryMetadata = DetectIsGalleryMetadata();
+    }
+
+    /// <summary>
+    /// Checks if this .txt file has a corresponding image/video file in the same folder.
+    /// </summary>
+    private bool DetectIsGalleryMetadata()
+    {
+        // Only .txt files can be caption files
+        if (!Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var directory = Path.GetDirectoryName(FilePath);
+        if (string.IsNullOrEmpty(directory))
+            return false;
+
+        var baseName = Path.GetFileNameWithoutExtension(FilePath);
+
+        // Check if there's a matching media file
+        var mediaExtensions = PresentationFileItem.ImageExtensions
+            .Concat(PresentationFileItem.VideoExtensions);
+
+        foreach (var ext in mediaExtensions)
+        {
+            var mediaPath = Path.Combine(directory, baseName + ext);
+            if (File.Exists(mediaPath))
+                return true;
+        }
+
+        return false;
     }
 }

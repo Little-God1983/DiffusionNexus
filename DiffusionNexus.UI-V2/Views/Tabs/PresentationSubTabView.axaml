@@ -257,7 +257,7 @@
                 <DataTemplate x:DataType="vm:PresentationDocumentViewModel">
                   <Border Background="#2A2A2A" CornerRadius="6" Padding="12,8"
                           BorderThickness="2" BorderBrush="#333">
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                       <!-- Category Badge -->
                       <Border Grid.Column="0" 
                               Background="#333" 
@@ -273,10 +273,23 @@
                       
                       <!-- File Info -->
                       <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding FileName}" 
-                                   FontWeight="SemiBold" 
-                                   FontSize="14"
-                                   TextTrimming="CharacterEllipsis"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding FileName}" 
+                                     FontWeight="SemiBold" 
+                                     FontSize="14"
+                                     TextTrimming="CharacterEllipsis"/>
+                          <!-- Gallery Metadata Badge -->
+                          <Border IsVisible="{Binding IsGalleryMetadata}"
+                                  Background="#4CAF50" 
+                                  CornerRadius="3" 
+                                  Padding="5,1"
+                                  VerticalAlignment="Center">
+                            <TextBlock Text="Gallery Metadata" 
+                                       FontSize="9" 
+                                       FontWeight="Bold" 
+                                       Foreground="White"/>
+                          </Border>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
                           <TextBlock FontSize="12" Opacity="0.6">
                             <TextBlock.Text>

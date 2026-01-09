@@ -232,18 +232,21 @@ public class DatasetImageViewModel : ObservableObject
                 // File may be locked or inaccessible
                 _caption = string.Empty;
                 _originalCaption = string.Empty;
+                OnPropertyChanged(nameof(Caption));
             }
             catch (UnauthorizedAccessException)
             {
                 // No permission to read
                 _caption = string.Empty;
                 _originalCaption = string.Empty;
+                OnPropertyChanged(nameof(Caption));
             }
         }
         else
         {
             _caption = string.Empty;
             _originalCaption = string.Empty;
+            OnPropertyChanged(nameof(Caption));
         }
         HasUnsavedChanges = false;
     }
