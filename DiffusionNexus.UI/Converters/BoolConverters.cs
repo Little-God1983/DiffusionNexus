@@ -32,6 +32,12 @@ public class BoolToAccentBrushConverter : IValueConverter
 public static class BoolConverters
 {
     /// <summary>
+    /// Negates a boolean value.
+    /// </summary>
+    public static readonly IValueConverter Not =
+        new FuncValueConverter<bool, bool>(b => !b);
+
+    /// <summary>
     /// Converts a boolean to opacity (true = 1.0, false = 0.5).
     /// </summary>
     public static readonly IValueConverter BoolToOpacity =

@@ -132,6 +132,37 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public DatasetCardViewModel? ActiveDataset => _state.ActiveDataset;
 
     /// <summary>
+    /// Safe accessor for the active dataset's name.
+    /// </summary> 
+    public string DatasetName => ActiveDataset?.Name ?? string.Empty;
+
+    /// <summary>
+    /// Safe accessor for the active dataset's description.
+    /// </summary>
+    public string DatasetDescription
+    {
+        get => ActiveDataset?.Description ?? string.Empty;
+        set
+        {
+            if (ActiveDataset is not null && ActiveDataset.Description != value)
+            {
+                ActiveDataset.Description = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Safe accessor for checking if the active dataset has multiple versions.
+    /// </summary>
+    public bool DatasetHasMultipleVersions => ActiveDataset?.HasMultipleVersions ?? false;
+
+    /// <summary>
+    /// Safe accessor for checking if the active dataset supports version increment.
+    /// </summary>
+    public bool DatasetCanIncrementVersion => ActiveDataset?.CanIncrementVersion ?? false;
+
+    /// <summary>
     /// Whether images are currently loading.
     /// </summary>
     public bool IsLoading
@@ -555,6 +586,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 break;
             case nameof(IDatasetState.ActiveDataset):
                 OnPropertyChanged(nameof(ActiveDataset));
+                OnPropertyChanged(nameof(DatasetName));
+                OnPropertyChanged(nameof(DatasetDescription));
+                OnPropertyChanged(nameof(DatasetHasMultipleVersions));
+                OnPropertyChanged(nameof(DatasetCanIncrementVersion));
                 OnPropertyChanged(nameof(SelectedVersion));
                 OnPropertyChanged(nameof(SelectedNsfw));
                 break;
@@ -1036,6 +1071,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         try
         {
             _state.SetActiveDataset(dataset);
+            
+            // Force property change notifications for safe properties since SetActiveDataset might not trigger
+            // if the dataset reference is the same but its properties changed (e.g. after version switch)
+            OnPropertyChanged(nameof(DatasetName));
+            OnPropertyChanged(nameof(DatasetDescription));
+            OnPropertyChanged(nameof(DatasetHasMultipleVersions));
+            OnPropertyChanged(nameof(DatasetCanIncrementVersion));
+
             DatasetImages.Clear();
 
             // Reset to Training tab when opening a dataset
