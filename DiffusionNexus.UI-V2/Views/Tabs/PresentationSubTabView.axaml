@@ -55,20 +55,34 @@
         
         <!-- Coming Soon Upload Buttons -->
         <Button Grid.Column="4"
-                Content="Upload to CivitAI"
                 Command="{Binding UploadToCivitAICommand}"
                 Padding="8,6"
                 Margin="0,0,8,0"
                 Opacity="0.6"
-                ToolTip.Tip="Coming Soon: Upload model to CivitAI"/>
+                IsEnabled="False"
+                ToolTip.Tip="Coming Soon: Upload model to CivitAI">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Upload to CivitAI" VerticalAlignment="Center"/>
+            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
+              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
+          </StackPanel>
+        </Button>
         
         <Button Grid.Column="5"
-                Content="Upload to HuggingFace"
                 Command="{Binding UploadToHuggingFaceCommand}"
                 Padding="8,6"
                 Margin="0,0,8,0"
                 Opacity="0.6"
-                ToolTip.Tip="Coming Soon: Upload model to Hugging Face"/>
+                IsEnabled="False"
+                ToolTip.Tip="Coming Soon: Upload model to Hugging Face">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Upload to HuggingFace" VerticalAlignment="Center"/>
+            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
+              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
+          </StackPanel>
+        </Button>
         
         <Button Grid.Column="6" Content="Refresh" Command="{Binding RefreshCommand}" Padding="8,4"/>
       </Grid>
