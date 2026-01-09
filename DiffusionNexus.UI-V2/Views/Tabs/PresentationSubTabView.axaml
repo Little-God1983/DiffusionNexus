@@ -1,0 +1,329 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:vmBase="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.Tabs.PresentationSubTabView"
+             x:DataType="vm:PresentationTabViewModel">
+  
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+  </UserControl.Resources>
+  
+  <Design.DataContext>
+    <vm:PresentationTabViewModel/>
+  </Design.DataContext>
+  
+  <Grid RowDefinitions="Auto,*">
+    
+    <!-- Toolbar -->
+    <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
+        <Button Grid.Column="0"
+                Content="+ Add Media"
+                Command="{Binding AddMediaFilesCommand}"
+                Padding="12,6"
+                Background="#4CAF50"
+                Foreground="White"
+                ToolTip.Tip="Add images and videos for showcase"/>
+        
+        <Button Grid.Column="1"
+                Content="+ Add Documents"
+                Command="{Binding AddDocumentFilesCommand}"
+                Padding="12,6"
+                Margin="8,0,0,0"
+                Background="#2196F3"
+                Foreground="White"
+                ToolTip.Tip="Add documentation, model cards, design files"/>
+        
+        <Button Grid.Column="2"
+                Content="Open Folder"
+                Command="{Binding OpenFolderCommand}"
+                Padding="8,6"
+                Margin="8,0,0,0"
+                ToolTip.Tip="Open Presentation folder in file explorer"/>
+        
+        <TextBlock Grid.Column="3" 
+                   Text="{Binding StatusMessage}" 
+                   VerticalAlignment="Center"
+                   HorizontalAlignment="Right"
+                   Opacity="0.7"
+                   Margin="0,0,16,0"/>
+        
+        <!-- Coming Soon Upload Buttons -->
+        <Button Grid.Column="4"
+                Content="Upload to CivitAI"
+                Command="{Binding UploadToCivitAICommand}"
+                Padding="8,6"
+                Margin="0,0,8,0"
+                Opacity="0.6"
+                ToolTip.Tip="Coming Soon: Upload model to CivitAI"/>
+        
+        <Button Grid.Column="5"
+                Content="Upload to HuggingFace"
+                Command="{Binding UploadToHuggingFaceCommand}"
+                Padding="8,6"
+                Margin="0,0,8,0"
+                Opacity="0.6"
+                ToolTip.Tip="Coming Soon: Upload model to Hugging Face"/>
+        
+        <Button Grid.Column="6" Content="Refresh" Command="{Binding RefreshCommand}" Padding="8,4"/>
+      </Grid>
+    </Border>
+    
+    <!-- Content -->
+    <Grid Grid.Row="1">
+      
+      <!-- Loading Overlay -->
+      <Border IsVisible="{Binding IsLoading}" Background="#80000000" ZIndex="100">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <ProgressBar IsIndeterminate="True" Width="200"/>
+          <TextBlock Text="Loading..." Foreground="White" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+      
+      <!-- Empty State with Drop Zone - only shown when no files -->
+      <Border x:Name="PresentationDropZone" 
+              IsVisible="{Binding HasNoFiles}"
+              Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" Margin="16" CornerRadius="12"
+              DragDrop.AllowDrop="True">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+          <Border Background="#333" CornerRadius="12" Padding="24">
+            <TextBlock Text="PRESENTATION" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+          </Border>
+          <TextBlock Text="No presentation files yet" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+          <TextBlock Text="Drag and drop files here, or use the buttons above" 
+                     FontSize="14" Foreground="#888" HorizontalAlignment="Center"/>
+          <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+            <StackPanel Spacing="4">
+              <TextBlock Text="Gallery:" FontWeight="SemiBold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
+              <TextBlock Text=".png, .jpg, .webp, .mp4, .webm" 
+                         FontSize="12" Foreground="#666" HorizontalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel Spacing="4">
+              <TextBlock Text="Documents:" FontWeight="SemiBold" Foreground="#2196F3" HorizontalAlignment="Center"/>
+              <TextBlock Text=".md, .txt, .json, .pdf, .psd, .xcf" 
+                         FontSize="12" Foreground="#666" HorizontalAlignment="Center"/>
+            </StackPanel>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+            <Button Content="Add Media Files" 
+                    Command="{Binding AddMediaFilesCommand}" 
+                    Padding="16,10" 
+                    FontSize="14"
+                    Background="#4CAF50"
+                    Foreground="White"/>
+            <Button Content="Add Document Files" 
+                    Command="{Binding AddDocumentFilesCommand}" 
+                    Padding="16,10" 
+                    FontSize="14"
+                    Background="#2196F3"
+                    Foreground="White"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+      
+      <!-- Content with Files - only shown when has files -->
+      <ScrollViewer IsVisible="{Binding HasFiles}" Padding="16">
+        <StackPanel Spacing="24">
+          
+          <!-- Media Gallery Section -->
+          <StackPanel IsVisible="{Binding HasMediaFiles}" Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="[Gallery]" FontSize="18" FontWeight="SemiBold" Foreground="#4CAF50"/>
+              <Border Background="#4CAF50" CornerRadius="4" Padding="6,2">
+                <TextBlock Text="{Binding MediaCount}" FontSize="12" Foreground="White" FontWeight="SemiBold"/>
+              </Border>
+              <TextBlock Text="- Add prompts/metadata as captions for each image" 
+                         FontSize="12" Foreground="#666" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+            
+            <!-- Media Grid - Full cards with caption editing like main dataset -->
+            <ItemsControl ItemsSource="{Binding MediaFiles}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vmBase:DatasetImageViewModel">
+                  <Border Width="340" Margin="8" Background="#2A2A2A" CornerRadius="8" ClipToBounds="True"
+                          BorderBrush="#444" BorderThickness="2">
+                    <Grid RowDefinitions="220,Auto,Auto">
+                      <!-- Image Preview -->
+                      <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="6,6,0,0" ClipToBounds="True">
+                        <Grid>
+                          <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" 
+                                 Stretch="UniformToFill"/>
+                          
+                          <!-- Video Badge -->
+                          <Border IsVisible="{Binding IsVideo}"
+                                  Background="#80000000" CornerRadius="4" Padding="6,3"
+                                  HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8">
+                            <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
+                          </Border>
+                          
+                          <!-- Action Buttons Overlay -->
+                          <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
+                            <Grid ColumnDefinitions="*,Auto">
+                              <Border Grid.Column="0"/>
+                              <Button Grid.Column="1" 
+                                      Content="X" 
+                                      Command="{Binding $parent[ItemsControl].((vm:PresentationTabViewModel)DataContext).DeleteMediaFileCommand}"
+                                      CommandParameter="{Binding}"
+                                      Padding="12,6" 
+                                      FontSize="14"
+                                      Background="#80444444" 
+                                      CornerRadius="4" 
+                                      Foreground="#FF6B6B" 
+                                      FontWeight="Bold"
+                                      ToolTip.Tip="Delete this file"/>
+                            </Grid>
+                          </Border>
+                        </Grid>
+                      </Border>
+                      
+                      <!-- File Name -->
+                      <Border Grid.Row="1" Padding="10,6" Background="#222">
+                        <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.7" TextTrimming="CharacterEllipsis"/>
+                      </Border>
+                      
+                      <!-- Caption/Metadata Editor -->
+                      <Border Grid.Row="2" Padding="10">
+                        <Grid RowDefinitions="*,Auto">
+                          <TextBox Grid.Row="0" 
+                                   Text="{Binding Caption, Mode=TwoWay}" 
+                                   Watermark="Enter prompt, metadata, or description..."
+                                   TextWrapping="Wrap" 
+                                   AcceptsReturn="True" 
+                                   FontSize="13" 
+                                   MinHeight="80" 
+                                   MaxHeight="120"/>
+                          <StackPanel Grid.Row="1" 
+                                      Orientation="Horizontal" 
+                                      HorizontalAlignment="Right"
+                                      Margin="0,6,0,0" 
+                                      IsVisible="{Binding HasUnsavedChanges}">
+                            <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"/>
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+          
+          <!-- Separator -->
+          <Border IsVisible="{Binding HasMediaFiles}" 
+                  Height="1" Background="#333" Margin="0,8"/>
+          
+          <!-- Documents Section -->
+          <StackPanel IsVisible="{Binding HasDocumentFiles}" Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="[Documents &amp; Design Files]" FontSize="18" FontWeight="SemiBold" Foreground="#2196F3"/>
+              <Border Background="#2196F3" CornerRadius="4" Padding="6,2">
+                <TextBlock Text="{Binding DocumentCount}" FontSize="12" Foreground="White" FontWeight="SemiBold"/>
+              </Border>
+            </StackPanel>
+            
+            <!-- Document List -->
+            <ItemsControl ItemsSource="{Binding DocumentFiles}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Vertical" Spacing="4"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PresentationDocumentViewModel">
+                  <Border Background="#2A2A2A" CornerRadius="6" Padding="12,8"
+                          BorderThickness="2" BorderBrush="#333">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                      <!-- Category Badge -->
+                      <Border Grid.Column="0" 
+                              Background="#333" 
+                              CornerRadius="4" 
+                              Padding="6,4" 
+                              Margin="0,0,12,0"
+                              VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CategoryText}" 
+                                   FontSize="10" 
+                                   FontWeight="SemiBold" 
+                                   Foreground="#888"/>
+                      </Border>
+                      
+                      <!-- File Info -->
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding FileName}" 
+                                   FontWeight="SemiBold" 
+                                   FontSize="14"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+                          <TextBlock FontSize="12" Opacity="0.6">
+                            <TextBlock.Text>
+                              <MultiBinding StringFormat="Size: {0}">
+                                <Binding Path="FileSizeDisplay"/>
+                              </MultiBinding>
+                            </TextBlock.Text>
+                          </TextBlock>
+                          <TextBlock FontSize="12" Opacity="0.6">
+                            <TextBlock.Text>
+                              <MultiBinding StringFormat="Modified: {0:g}">
+                                <Binding Path="ModifiedAt"/>
+                              </MultiBinding>
+                            </TextBlock.Text>
+                          </TextBlock>
+                        </StackPanel>
+                      </StackPanel>
+                      
+                      <!-- Extension Badge -->
+                      <Border Grid.Column="2" 
+                              Background="#333" 
+                              CornerRadius="4" 
+                              Padding="8,4" 
+                              Margin="8,0"
+                              VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Extension}" 
+                                   FontSize="11" 
+                                   FontWeight="SemiBold" 
+                                   Foreground="#4FC3F7"/>
+                      </Border>
+                      
+                      <!-- Open Button -->
+                      <Button Grid.Column="3" 
+                              Content="Open"
+                              Command="{Binding $parent[ItemsControl].((vm:PresentationTabViewModel)DataContext).OpenDocumentCommand}"
+                              CommandParameter="{Binding}"
+                              Padding="8,4"
+                              Margin="4,0"
+                              ToolTip.Tip="Open with default application"/>
+                      
+                      <!-- Delete Button -->
+                      <Button Grid.Column="4" 
+                              Content="X"
+                              Command="{Binding $parent[ItemsControl].((vm:PresentationTabViewModel)DataContext).DeleteDocumentFileCommand}"
+                              CommandParameter="{Binding}"
+                              Padding="8,4"
+                              Background="#80444444"
+                              Foreground="#FF6B6B"
+                              FontWeight="Bold"
+                              CornerRadius="4"
+                              ToolTip.Tip="Delete this file"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+          
+        </StackPanel>
+      </ScrollViewer>
+      
+    </Grid>
+  </Grid>
+</UserControl>

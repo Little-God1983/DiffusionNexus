@@ -570,6 +570,30 @@ public class DatasetCardViewModel : ObservableObject
         : _folderPath;
 
     /// <summary>
+    /// Path to the Epochs subfolder within the current version folder.
+    /// Used to store trained model checkpoints (.safetensors, .pt, .pth, .gguf).
+    /// </summary>
+    public string EpochsFolderPath => Path.Combine(CurrentVersionFolderPath, "Epochs");
+
+    /// <summary>
+    /// Path to the Notes subfolder within the current version folder.
+    /// Used to store journal/text notes about training.
+    /// </summary>
+    public string NotesFolderPath => Path.Combine(CurrentVersionFolderPath, "Notes");
+
+    /// <summary>
+    /// Path to the Presentation subfolder within the current version folder.
+    /// Reserved for future use (showcase images, demos, etc.).
+    /// </summary>
+    public string PresentationFolderPath => Path.Combine(CurrentVersionFolderPath, "Presentation");
+
+    /// <summary>
+    /// Path to the Release subfolder within the current version folder.
+    /// Used to store release-ready files.
+    /// </summary>
+    public string ReleaseFolderPath => Path.Combine(CurrentVersionFolderPath, "Release");
+
+    /// <summary>
     /// Event raised when category changes.
     /// </summary>
     public event EventHandler? CategoryChanged;
