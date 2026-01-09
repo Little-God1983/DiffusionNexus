@@ -65,6 +65,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     // Filter fields
     private string _filterText = string.Empty;
     private DatasetType? _filterType;
+    private bool _showNsfw;
+    private bool _selectedNsfw;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -219,6 +221,31 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Whether the active dataset's current version is marked as NSFW.
+    /// </summary>
+    public bool SelectedNsfw
+    {
+        get => _selectedNsfw;
+        set
+        {
+            if (SetProperty(ref _selectedNsfw, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.IsNsfw = value;
+                ActiveDataset.SaveMetadata();
+                _state.StatusMessage = value
+                    ? "Marked as NSFW"
+                    : "NSFW marking removed";
+
+                _eventAggregator.PublishDatasetMetadataChanged(new DatasetMetadataChangedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ChangeType = DatasetMetadataChangeType.Nsfw
+                });
+            }
+        }
+    }
+
+    /// <summary>
     /// Status message to display to the user.
     /// </summary>
     public string? StatusMessage
@@ -280,9 +307,24 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Whether to show NSFW datasets in the overview. Default is false (hide NSFW).
+    /// </summary>
+    public bool ShowNsfw
+    {
+        get => _showNsfw;
+        set
+        {
+            if (SetProperty(ref _showNsfw, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether any filter is currently active.
     /// </summary>
-    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue;
+    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue || !_showNsfw;
 
     /// <summary>
     /// Filtered collection of datasets grouped by category.
@@ -442,6 +484,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             case nameof(IDatasetState.ActiveDataset):
                 OnPropertyChanged(nameof(ActiveDataset));
                 OnPropertyChanged(nameof(SelectedVersion));
+                OnPropertyChanged(nameof(SelectedNsfw));
                 break;
             case nameof(IDatasetState.IsLoading):
                 OnPropertyChanged(nameof(IsLoading));
@@ -964,12 +1007,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 DatasetImages.Add(mediaVm);
             }
 
-            // Set selected category and type
+            // Set selected category, type, and NSFW
             _selectedCategory = AvailableCategories.FirstOrDefault(c => c.Id == dataset.CategoryId);
             OnPropertyChanged(nameof(SelectedCategory));
 
             _selectedType = dataset.Type;
             OnPropertyChanged(nameof(SelectedType));
+
+            _selectedNsfw = dataset.IsNsfw;
+            OnPropertyChanged(nameof(SelectedNsfw));
 
             HasUnsavedChanges = false;
 
@@ -1097,8 +1143,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 VideoCount = 0,
                 CategoryId = result.CategoryId,
                 CategoryName = result.CategoryName,
-                Type = result.Type
+                Type = result.Type,
+                IsNsfw = result.IsNsfw
             };
+
+            // Set the NSFW flag for V1
+            newDataset.VersionNsfwFlags[1] = result.IsNsfw;
 
             newDataset.SaveMetadata();
             Datasets.Add(newDataset);
@@ -1558,6 +1608,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
             }
 
+            // Inherit NSFW flag from the parent version by default
+            var parentNsfw = ActiveDataset.VersionNsfwFlags.GetValueOrDefault(currentVersion, false);
+            ActiveDataset.VersionNsfwFlags[nextVersion] = parentNsfw;
+
             ActiveDataset.RecordBranch(nextVersion, currentVersion);
             ActiveDataset.CurrentVersion = nextVersion;
             ActiveDataset.IsVersionedStructure = true;
@@ -1772,6 +1826,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     private bool MatchesFilter(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
     {
+        // Check NSFW filter - hide NSFW datasets unless ShowNsfw is enabled
+        if (!_showNsfw && dataset.IsNsfw)
+        {
+            return false;
+        }
+
         // Check type filter
         if (hasTypeFilter && dataset.Type != _filterType)
         {
@@ -1800,8 +1860,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         _filterText = string.Empty;
         _filterType = null;
+        _showNsfw = false;
         OnPropertyChanged(nameof(FilterText));
         OnPropertyChanged(nameof(FilterType));
+        OnPropertyChanged(nameof(ShowNsfw));
         ApplyFilter();
     }
 

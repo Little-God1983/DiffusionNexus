@@ -5,7 +5,7 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the Create Dataset dialog.
-/// Handles validation and selection of name, category, and type.
+/// Handles validation and selection of name, category, type, and NSFW flag.
 /// </summary>
 public partial class CreateDatasetDialogViewModel : ObservableObject
 {
@@ -18,6 +18,7 @@ public partial class CreateDatasetDialogViewModel : ObservableObject
     private DatasetCategoryViewModel? _selectedCategory;
     private DatasetType? _selectedType;
     private string? _nameError;
+    private bool _isNsfw;
 
     /// <summary>
     /// Creates a new CreateDatasetDialogViewModel.
@@ -61,6 +62,15 @@ public partial class CreateDatasetDialogViewModel : ObservableObject
     {
         get => _selectedType;
         set => SetProperty(ref _selectedType, value);
+    }
+
+    /// <summary>
+    /// Whether this dataset contains NSFW content.
+    /// </summary>
+    public bool IsNsfw
+    {
+        get => _isNsfw;
+        set => SetProperty(ref _isNsfw, value);
     }
 
     /// <summary>
@@ -148,6 +158,11 @@ public class CreateDatasetResult
     /// The selected dataset type (optional).
     /// </summary>
     public DatasetType? Type { get; init; }
+
+    /// <summary>
+    /// Whether this dataset contains NSFW content.
+    /// </summary>
+    public bool IsNsfw { get; init; }
 
     /// <summary>
     /// Creates a cancelled result.

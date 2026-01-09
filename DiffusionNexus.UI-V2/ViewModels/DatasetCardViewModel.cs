@@ -34,6 +34,8 @@ public class DatasetCardViewModel : ObservableObject
     private int? _displayVersion;
     private Dictionary<int, int> _versionBranchedFrom = new();
     private Dictionary<int, string?> _versionDescriptions = new();
+    private Dictionary<int, bool> _versionNsfwFlags = new();
+    private bool _isNsfw;
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -83,6 +85,33 @@ public class DatasetCardViewModel : ObservableObject
     {
         get => _versionDescriptions;
         set => SetProperty(ref _versionDescriptions, value);
+    }
+
+    /// <summary>
+    /// Dictionary of NSFW flags for each version.
+    /// Key is version number, value is whether that version is NSFW.
+    /// </summary>
+    public Dictionary<int, bool> VersionNsfwFlags
+    {
+        get => _versionNsfwFlags;
+        set => SetProperty(ref _versionNsfwFlags, value);
+    }
+
+    /// <summary>
+    /// Whether the current version is marked as NSFW.
+    /// Getting/setting this property updates the NSFW flag for the current version.
+    /// </summary>
+    public bool IsNsfw
+    {
+        get => _isNsfw;
+        set
+        {
+            if (SetProperty(ref _isNsfw, value))
+            {
+                // Also update the version NSFW flags dictionary
+                _versionNsfwFlags[_currentVersion] = value;
+            }
+        }
     }
 
     /// <summary>
@@ -294,6 +323,10 @@ public class DatasetCardViewModel : ObservableObject
                 _currentVersionDescription = _versionDescriptions.GetValueOrDefault(value);
                 OnPropertyChanged(nameof(Description));
                 OnPropertyChanged(nameof(HasDescription));
+                
+                // Update the current version NSFW flag
+                _isNsfw = _versionNsfwFlags.GetValueOrDefault(value, false);
+                OnPropertyChanged(nameof(IsNsfw));
             }
         }
     }
@@ -605,11 +638,15 @@ public class DatasetCardViewModel : ObservableObject
             CurrentVersion = version,
             TotalVersions = TotalVersions,
             DisplayVersion = version,
-            VersionDescriptions = VersionDescriptions
+            VersionDescriptions = VersionDescriptions,
+            VersionNsfwFlags = VersionNsfwFlags
         };
         
         // Set the version-specific description
         card._currentVersionDescription = VersionDescriptions.GetValueOrDefault(version);
+        
+        // Set the version-specific NSFW flag
+        card._isNsfw = VersionNsfwFlags.GetValueOrDefault(version, false);
 
         // Load media files from this specific version folder
         if (Directory.Exists(versionPath))
@@ -826,6 +863,7 @@ public class DatasetCardViewModel : ObservableObject
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
                 VersionDescriptions = metadata.VersionDescriptions ?? new();
+                VersionNsfwFlags = metadata.VersionNsfwFlags ?? new();
                 
                 // Migrate old single Description to V1 if present and no version descriptions exist
                 if (!string.IsNullOrWhiteSpace(metadata.Description) && VersionDescriptions.Count == 0)
@@ -837,6 +875,10 @@ public class DatasetCardViewModel : ObservableObject
                 _currentVersionDescription = VersionDescriptions.GetValueOrDefault(CurrentVersion);
                 OnPropertyChanged(nameof(Description));
                 OnPropertyChanged(nameof(HasDescription));
+                
+                // Set the current version's NSFW flag
+                _isNsfw = VersionNsfwFlags.GetValueOrDefault(CurrentVersion, false);
+                OnPropertyChanged(nameof(IsNsfw));
             }
         }
         catch (IOException)
@@ -866,7 +908,8 @@ public class DatasetCardViewModel : ObservableObject
                 Type = Type,
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
-                VersionDescriptions = VersionDescriptions
+                VersionDescriptions = VersionDescriptions,
+                VersionNsfwFlags = VersionNsfwFlags
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -1050,4 +1093,10 @@ public class DatasetMetadata
     /// V1 has no entry (it's the original).
     /// </summary>
     public Dictionary<int, int> VersionBranchedFrom { get; set; } = new();
+
+    /// <summary>
+    /// NSFW flags for each version.
+    /// Key is version number, value is whether that version contains NSFW content.
+    /// </summary>
+    public Dictionary<int, bool> VersionNsfwFlags { get; set; } = new();
 }

@@ -58,7 +58,8 @@ public partial class CreateDatasetDialog : Window
             Name = _viewModel.GetSanitizedName(),
             CategoryId = _viewModel.SelectedCategory?.Id,
             CategoryName = _viewModel.SelectedCategory?.Name,
-            Type = _viewModel.SelectedType
+            Type = _viewModel.SelectedType,
+            IsNsfw = _viewModel.IsNsfw
         };
         Close(true);
     }

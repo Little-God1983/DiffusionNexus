@@ -11,7 +11,7 @@
         CanResize="False"
         Background="#252526">
   
-  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
     
     <!-- Title -->
     <TextBlock Grid.Row="0" 
@@ -57,7 +57,7 @@
     </StackPanel>
     
     <!-- Type Dropdown (Optional) -->
-    <StackPanel Grid.Row="3" Margin="0,0,0,20">
+    <StackPanel Grid.Row="3" Margin="0,0,0,16">
       <TextBlock Text="Type (Optional)"
                  FontWeight="SemiBold"
                  Margin="0,0,0,8"/>
@@ -73,8 +73,15 @@
       </ComboBox>
     </StackPanel>
     
+    <!-- NSFW Checkbox -->
+    <StackPanel Grid.Row="4" Margin="0,0,0,20">
+      <CheckBox IsChecked="{Binding IsNsfw, Mode=TwoWay}"
+                Content="Contains NSFW Content"
+                ToolTip.Tip="Mark this dataset as containing Not Safe For Work content"/>
+    </StackPanel>
+    
     <!-- Info Text -->
-    <Border Grid.Row="4" 
+    <Border Grid.Row="5" 
             Background="#1A1A1A" 
             CornerRadius="8" 
             Padding="12"
@@ -86,7 +93,7 @@
     </Border>
     
     <!-- Buttons -->
-    <StackPanel Grid.Row="5" 
+    <StackPanel Grid.Row="6" 
                 Orientation="Horizontal" 
                 HorizontalAlignment="Right" 
                 Spacing="8">
