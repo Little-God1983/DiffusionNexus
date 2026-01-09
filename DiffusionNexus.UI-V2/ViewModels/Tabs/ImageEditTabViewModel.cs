@@ -48,11 +48,80 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private DatasetCardViewModel? _selectedEditorDataset;
     private EditorVersionItem? _selectedEditorVersion;
     private DatasetImageViewModel? _selectedEditorImage;
+    
+    // Filter properties - all default to true (show all)
+    private bool _showReady = true;
+    private bool _showTrash = true;
+    private bool _showUnrated = true;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    #region Filter Properties
+
+    /// <summary>
+    /// Whether to show images marked as Ready/Production.
+    /// </summary>
+    public bool ShowReady
+    {
+        get => _showReady;
+        set
+        {
+            if (SetProperty(ref _showReady, value))
+            {
+                ApplyFilters();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether to show images marked as Trash/Rejected.
+    /// </summary>
+    public bool ShowTrash
+    {
+        get => _showTrash;
+        set
+        {
+            if (SetProperty(ref _showTrash, value))
+            {
+                ApplyFilters();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether to show unrated images.
+    /// </summary>
+    public bool ShowUnrated
+    {
+        get => _showUnrated;
+        set
+        {
+            if (SetProperty(ref _showUnrated, value))
+            {
+                ApplyFilters();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Text showing current filter status.
+    /// </summary>
+    public string FilterStatusText
+    {
+        get
+        {
+            var total = EditorDatasetImages.Count;
+            var filtered = FilteredEditorImages.Count;
+            if (total == filtered)
+                return $"{total} Images";
+            return $"{filtered} of {total} Images";
+        }
+    }
+
+    #endregion
 
     #region Observable Properties
 
@@ -131,9 +200,14 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     public ObservableCollection<EditorVersionItem> EditorVersionItems { get; } = [];
 
     /// <summary>
-    /// Images available in the Image Edit tab for the selected dataset/version.
+    /// All images available in the Image Edit tab for the selected dataset/version.
     /// </summary>
     public ObservableCollection<DatasetImageViewModel> EditorDatasetImages { get; } = [];
+
+    /// <summary>
+    /// Filtered images based on rating filter settings.
+    /// </summary>
+    public ObservableCollection<DatasetImageViewModel> FilteredEditorImages { get; } = [];
 
     #endregion
 
@@ -363,6 +437,38 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     #region Private Methods
 
     /// <summary>
+    /// Applies the current filter settings to update FilteredEditorImages.
+    /// </summary>
+    private void ApplyFilters()
+    {
+        FilteredEditorImages.Clear();
+
+        foreach (var image in EditorDatasetImages)
+        {
+            if (ShouldShowImage(image))
+            {
+                FilteredEditorImages.Add(image);
+            }
+        }
+
+        OnPropertyChanged(nameof(FilterStatusText));
+    }
+
+    /// <summary>
+    /// Determines if an image should be shown based on current filter settings.
+    /// </summary>
+    private bool ShouldShowImage(DatasetImageViewModel image)
+    {
+        return image.RatingStatus switch
+        {
+            ImageRatingStatus.Approved => _showReady,
+            ImageRatingStatus.Rejected => _showTrash,
+            ImageRatingStatus.Unrated => _showUnrated,
+            _ => true
+        };
+    }
+
+    /// <summary>
     /// Loads the specified image into the Image Editor.
     /// </summary>
     private void LoadEditorImage(DatasetImageViewModel? image)
@@ -401,8 +507,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     {
         EditorVersionItems.Clear();
         EditorDatasetImages.Clear();
+        FilteredEditorImages.Clear();
         _selectedEditorVersion = null;
         OnPropertyChanged(nameof(SelectedEditorVersion));
+        OnPropertyChanged(nameof(FilterStatusText));
 
         if (_selectedEditorDataset is null) return;
 
@@ -474,14 +582,23 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private Task LoadEditorDatasetImagesAsync()
     {
         EditorDatasetImages.Clear();
+        FilteredEditorImages.Clear();
 
-        if (_selectedEditorDataset is null || _selectedEditorVersion is null) return Task.CompletedTask;
+        if (_selectedEditorDataset is null || _selectedEditorVersion is null)
+        {
+            OnPropertyChanged(nameof(FilterStatusText));
+            return Task.CompletedTask;
+        }
 
         try
         {
             var versionPath = _selectedEditorDataset.GetVersionFolderPath(_selectedEditorVersion.Version);
 
-            if (!Directory.Exists(versionPath)) return Task.CompletedTask;
+            if (!Directory.Exists(versionPath))
+            {
+                OnPropertyChanged(nameof(FilterStatusText));
+                return Task.CompletedTask;
+            }
 
             // Load only image files (not videos) for the image editor
             var imageFiles = Directory.EnumerateFiles(versionPath)
@@ -494,6 +611,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 var imageVm = DatasetImageViewModel.FromFile(imagePath, _eventAggregator);
                 EditorDatasetImages.Add(imageVm);
             }
+
+            // Apply filters to populate FilteredEditorImages
+            ApplyFilters();
         }
         catch (Exception ex)
         {
