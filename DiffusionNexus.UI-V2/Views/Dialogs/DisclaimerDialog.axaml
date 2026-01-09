@@ -11,7 +11,7 @@
         ShowInTaskbar="True"
         Icon="avares://DiffusionNexus.UI-V2/Assets/AIKnowledgeIcon.ico">
   
-  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
     
     <!-- Title -->
     <TextBlock Grid.Row="0" 
@@ -21,8 +21,16 @@
                HorizontalAlignment="Center"
                Margin="0,0,0,20"/>
     
+    <!-- Banner Image -->
+    <Image Grid.Row="1"
+           Source="avares://DiffusionNexus.UI-V2/Assets/Banner-cut.png"
+           Stretch="Uniform"
+           MaxHeight="120"
+           HorizontalAlignment="Center"
+           Margin="0,0,0,20"/>
+    
     <!-- Disclaimer Text -->
-    <Border Grid.Row="1" 
+    <Border Grid.Row="2" 
             Background="#2D2D30"
             CornerRadius="4"
             Padding="16"
@@ -46,7 +54,7 @@
     </Border>
     
     <!-- Checkbox -->
-    <CheckBox Grid.Row="2"
+    <CheckBox Grid.Row="3"
               x:Name="AcceptCheckBox"
               Content="I have read and accept the disclaimer above"
               IsChecked="{Binding IsAccepted, Mode=TwoWay}"
@@ -54,7 +62,7 @@
               Margin="0,0,0,20"/>
     
     <!-- Accept Button -->
-    <Button Grid.Row="3"
+    <Button Grid.Row="4"
             Content="Continue"
             HorizontalAlignment="Center"
             Width="150"
