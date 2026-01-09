@@ -51,7 +51,7 @@
                                FontSize="11"
                                VerticalAlignment="Center"
                                Opacity="0.9"/>
-                    <ProgressBar Value="{Binding ActiveOperationProgress}"
+                    <ProgressBar Value="{Binding ActiveOperationProgress, TargetNullValue=0, FallbackValue=0}"
                                  Minimum="0"
                                  Maximum="100"
                                  Width="100"
