@@ -191,6 +191,34 @@
           </Border>
         </Grid>
         
+        <!-- Keyboard shortcuts help overlay -->
+        <Border Background="#99000000"
+                CornerRadius="8"
+                Padding="12,8"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,16,16"
+                Opacity="0.8">
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <Image Source="avares://DiffusionNexus.UI-V2/Assets/arrow-keys.png"
+                   Width="128"
+                   Height="128"
+                   VerticalAlignment="Center"/>
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+              <TextBlock Text="Use arrow keys:"
+                         FontSize="11"
+                         FontWeight="SemiBold"
+                         Foreground="White"/>
+              <TextBlock Text="Up/Down - Rate image"
+                         FontSize="10"
+                         Foreground="#CCC"/>
+              <TextBlock Text="Left/Right - Navigate dataset"
+                         FontSize="10"
+                         Foreground="#CCC"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+        
       </Grid>
       
       <!-- Bottom toolbar with actions and caption editor -->
