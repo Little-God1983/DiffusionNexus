@@ -146,11 +146,11 @@
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4"/>
           <!-- Transform buttons - always visible but disabled when no image -->
           <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4">
-            <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90°" FontSize="12" FontWeight="Bold"
+            <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90ï¿½" FontSize="12" FontWeight="Bold"
                     IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90°" FontSize="12" FontWeight="Bold"
+            <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90ï¿½" FontSize="12" FontWeight="Bold"
                     IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <Button Content="180" Command="{Binding ImageEditor.Rotate180Command}" Padding="8,6" ToolTip.Tip="Rotate 180°" FontSize="11"
+            <Button Content="180" Command="{Binding ImageEditor.Rotate180Command}" Padding="8,6" ToolTip.Tip="Rotate 180ï¿½" FontSize="11"
                     IsEnabled="{Binding ImageEditor.HasImage}"/>
             <Button Content="H" Command="{Binding ImageEditor.FlipHorizontalCommand}" Padding="10,6" ToolTip.Tip="Flip Horizontal" FontSize="12" FontWeight="Bold"
                     IsEnabled="{Binding ImageEditor.HasImage}"/>

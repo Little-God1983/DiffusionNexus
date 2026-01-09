@@ -225,7 +225,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(new ModuleItem(
             "LoRA Dataset Helper",
-            "avares://DiffusionNexus.UI-V2/Assets/LoraTrain.png",
+            "avares://DiffusionNexus.UI/Assets/LoraTrain.png",
             loraDatasetHelperView));
 
         // LoRA Viewer module
@@ -234,7 +234,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(new ModuleItem(
             "LoRA Viewer",
-            "avares://DiffusionNexus.UI-V2/Assets/LoraSort.png",
+            "avares://DiffusionNexus.UI/Assets/LoraSort.png",
             loraViewerView));
 
         // Settings module
@@ -243,7 +243,7 @@ public partial class App : Application
 
         var settingsModule = new ModuleItem(
             "Settings",
-            "avares://DiffusionNexus.UI-V2/Assets/settings.png",
+            "avares://DiffusionNexus.UI/Assets/settings.png",
             settingsView);
 
         mainViewModel.RegisterModule(settingsModule);

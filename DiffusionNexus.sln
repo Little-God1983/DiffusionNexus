@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.1.11312.151
@@ -11,7 +11,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.DataAccess.Infrastructure", "DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj", "{0EE07152-0BC2-4A4D-B1E7-A6B8E5C16123}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI-V2", "DiffusionNexus.UI-V2\DiffusionNexus.UI-V2.csproj", "{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.UI", "DiffusionNexus.UI\DiffusionNexus.UI.csproj", "{91DCA8E6-B86D-6FDD-012D-D941C5892ED6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffusionNexus.Civitai", "DiffusionNexus.Civitai\DiffusionNexus.Civitai.csproj", "{19156F37-106D-4082-8B5D-9CE52FF8E199}"
 EndProject

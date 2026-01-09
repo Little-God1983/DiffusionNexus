@@ -811,7 +811,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 return "N/A";
             var targetWidth = (int)Math.Round(ImageWidth * _upscaleTargetScale);
             var targetHeight = (int)Math.Round(ImageHeight * _upscaleTargetScale);
-            return $"{targetWidth} × {targetHeight} px";
+            return $"{targetWidth} ï¿½ {targetHeight} px";
         }
     }
 
@@ -867,7 +867,7 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Formatted image dimensions for display.</summary>
-    public string ImageDimensions => HasImage ? $"{ImageWidth} × {ImageHeight}" : string.Empty;
+    public string ImageDimensions => HasImage ? $"{ImageWidth} ï¿½ {ImageHeight}" : string.Empty;
 
     /// <summary>Whether the crop tool is currently active.</summary>
     public bool IsCropToolActive
@@ -956,7 +956,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Combined image info for display.</summary>
     public string ImageInfo => HasImage
-        ? $"Size: {ImageWidth} × {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
+        ? $"Size: {ImageWidth} ï¿½ {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
     #region Commands

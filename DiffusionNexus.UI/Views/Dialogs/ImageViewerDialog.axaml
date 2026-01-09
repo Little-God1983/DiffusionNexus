@@ -200,7 +200,7 @@
                 Margin="0,0,16,16"
                 Opacity="0.8">
           <StackPanel Orientation="Horizontal" Spacing="12">
-            <Image Source="avares://DiffusionNexus.UI-V2/Assets/arrow-keys.png"
+            <Image Source="avares://DiffusionNexus.UI/Assets/arrow-keys.png"
                    Width="128"
                    Height="128"
                    VerticalAlignment="Center"/>

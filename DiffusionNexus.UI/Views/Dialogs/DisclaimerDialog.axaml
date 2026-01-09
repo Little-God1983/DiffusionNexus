@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         ShowInTaskbar="True"
-        Icon="avares://DiffusionNexus.UI-V2/Assets/AIKnowledgeIcon.ico">
+        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico">
   
   <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
     
@@ -23,7 +23,7 @@
     
     <!-- Banner Image -->
     <Image Grid.Row="1"
-           Source="avares://DiffusionNexus.UI-V2/Assets/Banner-cut.png"
+           Source="avares://DiffusionNexus.UI/Assets/Banner-cut.png"
            Stretch="Uniform"
            MaxHeight="120"
            HorizontalAlignment="Center"
