@@ -1,0 +1,191 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.Tabs.NotesSubTabView"
+             x:DataType="vm:NotesTabViewModel">
+  
+  <Design.DataContext>
+    <vm:NotesTabViewModel/>
+  </Design.DataContext>
+  
+  <Grid RowDefinitions="Auto,*">
+    
+    <!-- Toolbar -->
+    <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+        <Button Grid.Column="0"
+                Content="+ New Note"
+                Command="{Binding CreateNoteCommand}"
+                Padding="12,6"
+                Background="#4CAF50"
+                Foreground="White"
+                ToolTip.Tip="Create a new note"/>
+        
+        <Button Grid.Column="1"
+                Content="Save"
+                Command="{Binding SaveCurrentNoteCommand}"
+                Padding="12,6"
+                Margin="8,0,0,0"
+                Background="#2D7D46"
+                Foreground="White"
+                IsVisible="{Binding SelectedNote.HasUnsavedChanges}"
+                ToolTip.Tip="Save current note"/>
+        
+        <TextBlock Grid.Column="2" 
+                   Text="{Binding StatusMessage}" 
+                   VerticalAlignment="Center"
+                   HorizontalAlignment="Right"
+                   Opacity="0.7"
+                   Margin="0,0,16,0"/>
+        
+        <Button Grid.Column="3" 
+                Content="Save All" 
+                Command="{Binding SaveAllNotesCommand}" 
+                Padding="8,4"
+                IsVisible="{Binding HasUnsavedChanges}"
+                Background="#2D7D46"
+                Foreground="White"
+                Margin="0,0,8,0"/>
+        
+        <Button Grid.Column="4" Content="Refresh" Command="{Binding RefreshCommand}" Padding="8,4"/>
+      </Grid>
+    </Border>
+    
+    <!-- Content -->
+    <Grid Grid.Row="1">
+      
+      <!-- Loading Overlay -->
+      <Border IsVisible="{Binding IsLoading}" Background="#80000000" ZIndex="100">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <ProgressBar IsIndeterminate="True" Width="200"/>
+          <TextBlock Text="Loading..." Foreground="White" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+      
+      <!-- Empty State -->
+      <Border IsVisible="{Binding HasNoNotes}"
+              Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" Margin="16" CornerRadius="12">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+          <Border Background="#333" CornerRadius="12" Padding="24">
+            <TextBlock Text="NOTES" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+          </Border>
+          <TextBlock Text="No notes yet" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+          <TextBlock Text="Create notes to document training parameters, remarks, and observations" 
+                     FontSize="14" Foreground="#888" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400"/>
+          <Button Content="Create First Note" 
+                  Command="{Binding CreateNoteCommand}" 
+                  HorizontalAlignment="Center" 
+                  Padding="16,10" 
+                  FontSize="14"
+                  Background="#4CAF50"
+                  Foreground="White"/>
+        </StackPanel>
+      </Border>
+      
+      <!-- Notes Panel (List + Editor) -->
+      <Grid IsVisible="{Binding HasNotes}" ColumnDefinitions="280,*">
+        
+        <!-- Notes List (Left Side) -->
+        <Border Grid.Column="0" Background="#1E1E1E" BorderBrush="#333" BorderThickness="0,0,1,0">
+          <Grid RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="Notes" FontWeight="SemiBold" FontSize="14" 
+                       Margin="12,12,12,8" Opacity="0.7"/>
+            
+            <ScrollViewer Grid.Row="1" Padding="8,0">
+              <ItemsControl ItemsSource="{Binding Notes}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Vertical" Spacing="4"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:NoteViewModel">
+                    <Border Padding="12,10" CornerRadius="6" Cursor="Hand"
+                            Background="#2A2A2A"
+                            PointerPressed="OnNoteItemPressed">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="4">
+                          <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="{Binding Title}" 
+                                       FontWeight="SemiBold" 
+                                       FontSize="13"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxLines="1"/>
+                            <TextBlock Text="*" 
+                                       FontWeight="Bold" 
+                                       Foreground="#FFA500"
+                                       IsVisible="{Binding HasUnsavedChanges}"
+                                       VerticalAlignment="Top"/>
+                          </StackPanel>
+                          <TextBlock Text="{Binding Preview}" 
+                                     FontSize="11" 
+                                     Opacity="0.6"
+                                     TextTrimming="CharacterEllipsis"
+                                     MaxLines="2"/>
+                          <TextBlock FontSize="10" Opacity="0.4">
+                            <TextBlock.Text>
+                              <MultiBinding StringFormat="{}{0:g}">
+                                <Binding Path="ModifiedAt"/>
+                              </MultiBinding>
+                            </TextBlock.Text>
+                          </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" 
+                                Content="X"
+                                Command="{Binding $parent[ItemsControl].((vm:NotesTabViewModel)DataContext).DeleteNoteCommand}"
+                                CommandParameter="{Binding}"
+                                Padding="4,2"
+                                Background="Transparent"
+                                Foreground="#FF6B6B"
+                                FontWeight="Bold"
+                                VerticalAlignment="Top"
+                                ToolTip.Tip="Delete this note"/>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+        
+        <!-- Text Editor (Right Side) -->
+        <Border Grid.Column="1" Background="#252526" Padding="16">
+          <Grid RowDefinitions="Auto,*">
+            <!-- Editor Header -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+              <TextBlock Text="{Binding SelectedNoteTitle}" 
+                         FontSize="16" 
+                         FontWeight="SemiBold" 
+                         VerticalAlignment="Center"/>
+              <TextBlock Text="(unsaved)" 
+                         FontSize="12" 
+                         Foreground="#FFA500"
+                         VerticalAlignment="Center"
+                         IsVisible="{Binding SelectedNote.HasUnsavedChanges}"/>
+            </StackPanel>
+            
+            <!-- Text Editor -->
+            <TextBox Grid.Row="1"
+                     Text="{Binding EditorContent, Mode=TwoWay}"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     FontFamily="Consolas, Courier New, monospace"
+                     FontSize="13"
+                     Background="#1A1A1A"
+                     BorderBrush="#444"
+                     BorderThickness="1"
+                     Padding="12"
+                     CornerRadius="6"
+                     IsEnabled="{Binding HasSelectedNote}"
+                     Watermark="Select or create a note to start writing..."/>
+          </Grid>
+        </Border>
+        
+      </Grid>
+    </Grid>
+  </Grid>
+</UserControl>

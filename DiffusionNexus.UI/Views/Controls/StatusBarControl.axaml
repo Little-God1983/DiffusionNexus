@@ -1,0 +1,124 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             x:Class="DiffusionNexus.UI.Views.Controls.StatusBarControl"
+             x:DataType="vm:StatusBarViewModel">
+
+    <UserControl.Styles>
+        <!-- Custom progress bar styling for status bar -->
+        <Style Selector="ProgressBar.status-progress">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="Background" Value="#00000033"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto">
+        
+        <!-- Expandable Log Panel -->
+        <Border Grid.Row="0"
+                Height="250"
+                IsVisible="{Binding IsLogPanelOpen}">
+            <controls:ActivityLogPanel DataContext="{Binding LogViewModel}"/>
+        </Border>
+        
+        <!-- Status Bar -->
+        <Border Grid.Row="1" 
+                Background="{Binding StatusBackground}"
+                Height="24">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                
+                <!-- Status Message -->
+                <StackPanel Grid.Column="0" 
+                            Orientation="Horizontal" 
+                            Spacing="8"
+                            Margin="8,0">
+                    <TextBlock Text="{Binding StatusMessage}" 
+                               Foreground="{Binding StatusForeground}"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                
+                <!-- Active Operation Progress -->
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Margin="0,0,16,0"
+                            IsVisible="{Binding HasActiveOperation}">
+                    <TextBlock Text="{Binding ActiveOperationName}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Opacity="0.9"/>
+                    <ProgressBar Value="{Binding ActiveOperationProgress, TargetNullValue=0, FallbackValue=0}"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Width="100"
+                                 Height="6"
+                                 VerticalAlignment="Center"
+                                 Classes="status-progress"
+                                 IsIndeterminate="{Binding ActiveOperationProgress, Converter={x:Static ObjectConverters.IsNull}}"/>
+                    <TextBlock Text="{Binding ActiveOperationProgress, StringFormat='{}{0}%'}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               IsVisible="{Binding ActiveOperationProgress, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                </StackPanel>
+                
+                <!-- Warning/Error Counts -->
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Margin="0,0,8,0"
+                            IsVisible="{Binding HasWarningsOrErrors}">
+                    <Button Padding="4,2"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Command="{Binding ShowLogPanelCommand}"
+                            IsVisible="{Binding WarningCount}">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock Text="?" FontSize="12" Foreground="#000000"/>
+                            <TextBlock Text="{Binding WarningCount}" 
+                                       FontSize="11" 
+                                       Foreground="#000000"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Padding="4,2"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Command="{Binding ShowLogPanelCommand}"
+                            IsVisible="{Binding ErrorCount}">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock Text="?" FontSize="12" Foreground="#FFFFFF" FontWeight="Bold"/>
+                            <TextBlock Text="{Binding ErrorCount}" 
+                                       FontSize="11" 
+                                       Foreground="#FFFFFF"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                
+                <!-- Toggle Log Panel Button -->
+                <Button Grid.Column="3"
+                        Command="{Binding ToggleLogPanelCommand}"
+                        Padding="8,0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{Binding StatusForeground}"
+                        FontSize="10"
+                        VerticalContentAlignment="Center"
+                        Cursor="Hand"
+                        ToolTip.Tip="Toggle Activity Log">
+                    <Panel>
+                        <TextBlock Text="?" IsVisible="{Binding IsLogPanelOpen}"/>
+                        <TextBlock Text="?" IsVisible="{Binding !IsLogPanelOpen}"/>
+                    </Panel>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

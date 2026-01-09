@@ -1,0 +1,473 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.Tabs.DatasetManagementView"
+             x:DataType="vmTabs:DatasetManagementViewModel">
+
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+  </UserControl.Resources>
+
+  <Design.DataContext>
+    <vmTabs:DatasetManagementViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*">
+    
+    <!-- Toolbar -->
+    <Border Grid.Row="0" 
+            Background="#1E1E1E" 
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+        
+        <!-- Back to Overview Button -->
+        <Button Grid.Column="0"
+                Content="← Overview"
+                Command="{Binding GoToOverviewCommand}"
+                IsVisible="{Binding IsViewingDataset}"
+                Margin="0,0,16,0"/>
+        
+        <!-- Dataset Title (when viewing) -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding IsViewingDataset}">
+          <TextBlock Text="{Binding DatasetName}"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center"/>
+          <TextBox Text="{Binding DatasetDescription, Mode=TwoWay}"
+                   x:Name="DescriptionTextBox"
+                   Watermark="Add description..."
+                   FontSize="12"
+                   MinWidth="200"
+                   MaxWidth="350"
+                   Padding="6,4"
+                   Background="#333"
+                   BorderBrush="#444"
+                   BorderThickness="1"
+                   CornerRadius="4"
+                   VerticalAlignment="Center"/>
+        </StackPanel>
+        
+        <!-- Version Dropdown -->
+        <StackPanel Grid.Column="2"
+                    Orientation="Horizontal"
+                    Spacing="6"
+                    Margin="8,0,0,0"
+                    IsVisible="{Binding IsViewingDataset}"
+                    VerticalAlignment="Center">
+          <TextBlock Text="Version:" VerticalAlignment="Center" Opacity="0.7"
+                     IsVisible="{Binding DatasetHasMultipleVersions}"/>
+          <ComboBox ItemsSource="{Binding AvailableVersions}"
+                    SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                    MinWidth="70"
+                    IsVisible="{Binding DatasetHasMultipleVersions}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding StringFormat='V{0}'}" Foreground="#4CAF50"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Border Background="#333" CornerRadius="4" Padding="8,4"
+                  IsVisible="{Binding DatasetHasMultipleVersions, Converter={x:Static converters:BoolConverters.Not}}">
+            <TextBlock Text="V1" FontSize="12" Foreground="#4CAF50" VerticalAlignment="Center"/>
+          </Border>
+        </StackPanel>
+        
+        <!-- Category Dropdown -->
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding IsViewingDataset}" Margin="16,0,0,0">
+          <TextBlock Text="Category:" VerticalAlignment="Center" Opacity="0.7"/>
+          <ComboBox ItemsSource="{Binding AvailableCategories}"
+                    SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                    DisplayMemberBinding="{Binding Name}"
+                    MinWidth="120" PlaceholderText="Select category..."/>
+        </StackPanel>
+        
+        <!-- Type Dropdown -->
+        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding IsViewingDataset}" Margin="8,0,0,0">
+          <TextBlock Text="Type:" VerticalAlignment="Center" Opacity="0.7"/>
+          <ComboBox ItemsSource="{Binding AvailableTypes}"
+                    SelectedItem="{Binding SelectedType, Mode=TwoWay}"
+                    MinWidth="100" PlaceholderText="Select type...">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+        
+        <!-- NSFW Checkbox (Detail View) -->
+        <CheckBox Grid.Column="5"
+                  IsChecked="{Binding SelectedNsfw, Mode=TwoWay}"
+                  Content="NSFW"
+                  IsVisible="{Binding IsViewingDataset}"
+                  Margin="12,0,0,0"
+                  VerticalAlignment="Center"
+                  ToolTip.Tip="Mark this version as containing NSFW content"/>
+        
+        <!-- Filter Controls (Overview Mode) -->
+        <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding !IsViewingDataset}" VerticalAlignment="Center">
+          <!-- Search by Name/Description -->
+          <TextBox Text="{Binding FilterText, Mode=TwoWay}"
+                   Watermark="Search by name or description..."
+                   Width="250"
+                   Padding="8,6"
+                   Background="#333"
+                   BorderBrush="#444"
+                   BorderThickness="1"
+                   CornerRadius="4"/>
+          
+          <!-- Filter by Type -->
+          <ComboBox ItemsSource="{Binding AvailableFilterTypes}"
+                    SelectedItem="{Binding FilterType, Mode=TwoWay}"
+                    MinWidth="120"
+                    PlaceholderText="All Types">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          
+          <!-- Show NSFW Toggle with hidden count -->
+          <StackPanel Orientation="Vertical" VerticalAlignment="Center" Spacing="0">
+            <CheckBox IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
+                      Content="Show NSFW"
+                      ToolTip.Tip="Show datasets marked as NSFW"/>
+            <TextBlock Text="{Binding HiddenText}"
+                       FontSize="10"
+                       Foreground="#888"
+                       Opacity="0.9"
+                       IsVisible="{Binding HasHidden}"
+                       Margin="20,0,0,0"/>
+          </StackPanel>
+          
+          <!-- Clear Filters Button -->
+          <Button Content="Clear"
+                  Command="{Binding ClearFiltersCommand}"
+                  IsVisible="{Binding HasActiveFilter}"
+                  Padding="8,6"
+                  ToolTip.Tip="Clear all filters"/>
+        </StackPanel>
+        
+        <!-- Flatten Versions Toggle -->
+        <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding !IsViewingDataset}" VerticalAlignment="Center" Margin="8,0,0,0">
+          <ToggleSwitch IsChecked="{Binding FlattenVersions, Mode=TwoWay}"
+                        OnContent="Flatten Versions" OffContent="Flatten Versions"
+                        ToolTip.Tip="Show individual cards for each version folder"/>
+        </StackPanel>
+        
+        <!-- Backup Status Button -->
+        <Button Grid.Column="8"
+                Content="{Binding BackupStatusText}"
+                Command="{Binding GoToBackupSettingsCommand}"
+                IsVisible="{Binding !IsViewingDataset}"
+                Opacity="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToOpacity}}"
+                ToolTip.Tip="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToBackupTooltip}}"
+                HorizontalAlignment="Right"
+                Margin="8,0,0,0"/>
+        
+        <!-- Action Buttons (Detail View) -->
+        <Button Grid.Column="9" Content="Open Folder"
+                Command="{Binding OpenContainingFolderCommand}"
+                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
+        <Button Grid.Column="10" Content="Batch Crop/Scale"
+                Command="{Binding SendToBatchCropScaleCommand}"
+                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
+                ToolTip.Tip="Send dataset to Batch Crop/Scale tab"/>
+        <Button Grid.Column="11" Content="Open Viewer"
+                Command="{Binding OpenViewerCommand}"
+                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
+        <Button Grid.Column="12" Content="Export"
+                Command="{Binding ExportDatasetCommand}"
+                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
+        <Button Grid.Column="13" Content="Save Captions"
+                Command="{Binding SaveAllCaptionsCommand}"
+                IsVisible="{Binding HasUnsavedChanges}" Margin="0,0,8,0" Background="#2D7D46"/>
+        <Button Grid.Column="14" Content="+ New Dataset" 
+                Command="{Binding CreateDatasetCommand}"
+                IsVisible="{Binding !IsViewingDataset}"/>
+      </Grid>
+    </Border>
+
+    <!-- Content Area -->
+    <Grid Grid.Row="1">
+      
+      <!-- Loading Overlay -->
+      <Border IsVisible="{Binding IsLoading}" Background="#80000000" ZIndex="100">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <ProgressBar IsIndeterminate="True" Width="200"/>
+          <TextBlock Text="Loading..." Foreground="White" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+      
+      <!-- Configuration Warning -->
+      <Border IsVisible="{Binding !IsStorageConfigured}"
+              Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="16" HorizontalAlignment="Center">
+          <TextBlock Text="!" FontSize="64" HorizontalAlignment="Center" Opacity="0.3" Foreground="#FFC107"/>
+          <TextBlock Text="Dataset Storage Not Configured" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Please configure the Dataset Storage Path in Settings." Opacity="0.6" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Dataset Overview -->
+      <ScrollViewer IsVisible="{Binding !IsViewingDataset}" Padding="16">
+        <ItemsControl ItemsSource="{Binding FilteredGroupedDatasets}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="Vertical" Spacing="8"/>
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:DatasetGroupViewModel">
+              <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,8,*,8,Auto" Margin="8,8,8,4">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" Foreground="#888"/>
+                  <Border Grid.Column="2" Height="1" Background="#444" VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="4" Text="{Binding DatasetCountText}" FontSize="12" Foreground="#666"/>
+                </Grid>
+                <ItemsControl ItemsSource="{Binding Datasets}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                      <Button Command="{Binding $parent[ScrollViewer].((vmTabs:DatasetManagementViewModel)DataContext).OpenDatasetCommand}"
+                              CommandParameter="{Binding}" Margin="8" Padding="0"
+                              Background="Transparent" BorderThickness="0" Cursor="Hand">
+                        <Border Width="200" Height="240" Background="#2A2A2A" CornerRadius="8"
+                                ClipToBounds="True" BorderBrush="#444" BorderThickness="1">
+                          <Grid RowDefinitions="*,Auto">
+                            <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="8,8,0,0" ClipToBounds="True">
+                              <Grid>
+                                <Border Background="#333" CornerRadius="8" Padding="16"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        IsVisible="{Binding !HasThumbnail}">
+                                  <TextBlock Text="[No Image]" FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
+                                </Border>
+                                <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                       Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+                                
+                                <Border Background="#4CAF50" CornerRadius="4" Padding="6,3"
+                                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                                        IsVisible="{Binding ShowVersionBadge}">
+                                  <TextBlock Text="{Binding VersionBadgeText}" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
+                                </Border>
+                                <Button Content="X"
+                                        Command="{Binding $parent[ScrollViewer].((vmTabs:DatasetManagementViewModel)DataContext).DeleteDatasetCommand}"
+                                        CommandParameter="{Binding}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Margin="8" Padding="8,4" Background="#80000000" CornerRadius="4" Opacity="0.7"
+                                        Foreground="#FF6B6B" FontWeight="Bold"/>
+                              </Grid>
+                            </Border>
+                            <Border Grid.Row="1" Padding="12,8" Background="#2A2A2A">
+                              <StackPanel>
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+                                <TextBlock Text="{Binding Description}" FontSize="11" Opacity="0.7" TextTrimming="CharacterEllipsis"
+                                           MaxLines="1" IsVisible="{Binding HasDescription}" Margin="0,2,0,0"/>
+                                <TextBlock Text="{Binding DetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding IsVersionCard}"/>
+                                <TextBlock Text="{Binding AllVersionsDetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding !IsVersionCard}"/>
+                              </StackPanel>
+                            </Border>
+                          </Grid>
+                        </Border>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <!-- Dataset Detail View with Tabs -->
+      <TabControl IsVisible="{Binding IsViewingDataset}" Padding="0" Margin="0">
+        
+        <!-- Tab 1: Training Data -->
+        <TabItem Header="Training Data">
+          <Grid>
+            <!-- Empty State with Drop Zone -->
+            <Border x:Name="EmptyDatasetDropZone" IsVisible="{Binding HasNoImages}"
+                    Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" Margin="16" CornerRadius="12"
+                    DragDrop.AllowDrop="True">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+                <Border Background="#333" CornerRadius="12" Padding="24">
+                  <TextBlock Text="TRAINING DATA" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+                </Border>
+                <TextBlock Text="This dataset is empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+                <TextBlock Text="Drag and drop images or videos here" FontSize="14" Foreground="#888" HorizontalAlignment="Center"/>
+                <Button Content="+ Add Training Files" Command="{Binding AddImagesCommand}" HorizontalAlignment="Center" 
+                        Padding="16,10" FontSize="14" Background="#4CAF50" Foreground="White"/>
+              </StackPanel>
+            </Border>
+            
+            <!-- Image Cards -->
+            <Grid IsVisible="{Binding !HasNoImages}" RowDefinitions="Auto,*">
+              <!-- Selection Toolbar -->
+              <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                  <!-- Add Files Button -->
+                  <Button Grid.Column="0" Content="+ Add Files"
+                          Command="{Binding AddImagesCommand}"
+                          Padding="12,6"
+                          Background="#4CAF50"
+                          Foreground="White"/>
+                  
+                  <!-- New Version Button -->
+                  <Button Grid.Column="1" Content="+ New Version"
+                          Command="{Binding IncrementVersionCommand}"
+                          IsEnabled="{Binding DatasetCanIncrementVersion}"
+                          Padding="12,6"
+                          Margin="8,0,0,0"
+                          Background="#2196F3"
+                          Foreground="White"
+                          ToolTip.Tip="Create a new version of this dataset"/>
+                  
+                  <Border Grid.Column="2" Background="#4CAF50" CornerRadius="4" Padding="8,4" Margin="16,0,0,0"
+                          IsVisible="{Binding HasSelection}">
+                    <TextBlock Text="{Binding SelectionText}" FontWeight="SemiBold" Foreground="White"/>
+                  </Border>
+                  <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" Margin="8,0,0,0"
+                              IsVisible="{Binding HasSelection}">
+                    <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4"/>
+                    <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" Margin="8,0,0,0"
+                              IsVisible="{Binding HasSelection}">
+                    <Border Width="1" Background="#444" Margin="4,4"/>
+                    <Button Content="Ready" Command="{Binding SelectApprovedCommand}" Padding="8,4" Background="#2D7D46"/>
+                    <Button Content="Trash" Command="{Binding SelectRejectedCommand}" Padding="8,4" Background="#D9534F"/>
+                  </StackPanel>
+                  <Border Grid.Column="5"/>
+                  <Button Grid.Column="6" Content="Mark Ready" Command="{Binding ApproveSelectedCommand}" 
+                          Background="#2D7D46" Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"/>
+                  <Button Grid.Column="7" Content="Mark Trash" Command="{Binding RejectSelectedCommand}" 
+                          Background="#D9534F" Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"/>
+                  <Button Grid.Column="8" Content="Clear Rating" Command="{Binding ClearRatingSelectedCommand}" 
+                          Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"/>
+                  <Border Grid.Column="9" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding HasSelection}"/>
+                  <Button Grid.Column="10" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}" 
+                          Background="#B22222" Padding="12,6" IsVisible="{Binding HasSelection}"/>
+                </Grid>
+              </Border>
+              
+              <!-- Image Grid -->
+              <ScrollViewer Grid.Row="1" Padding="16">
+                <ItemsControl ItemsSource="{Binding DatasetImages}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DatasetImageViewModel">
+                      <Border Width="340" Margin="8" Background="#2A2A2A" CornerRadius="8" ClipToBounds="True"
+                              BorderBrush="#444" BorderThickness="2" PointerPressed="OnImageCardPointerPressed">
+                        <Grid RowDefinitions="280,Auto,Auto">
+                          <Border Grid.RowSpan="3" CornerRadius="6" BorderBrush="#2196F3" BorderThickness="3" Margin="-1"
+                                  IsVisible="{Binding IsSelected}" IsHitTestVisible="False"/>
+                          <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="6,6,0,0" ClipToBounds="True"
+                                  DoubleTapped="OnImageDoubleTapped" Cursor="Hand">
+                            <Grid>
+                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" Stretch="UniformToFill"/>
+                              <Border Background="#80000000" CornerRadius="4" Padding="4" HorizontalAlignment="Left"
+                                      VerticalAlignment="Top" Margin="8">
+                                <CheckBox IsChecked="{Binding IsSelected}"/>
+                              </Border>
+                              <Border Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedBackground}}"
+                                      CornerRadius="4" Padding="8,4" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                      Margin="8" IsVisible="{Binding !IsUnrated}">
+                                <TextBlock Text="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedText}}"
+                                           FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                              </Border>
+                              <Border Background="#80000000" CornerRadius="4" Padding="6,3" HorizontalAlignment="Left"
+                                      VerticalAlignment="Bottom" Margin="8,0,0,44" IsVisible="{Binding IsVideo}">
+                                <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
+                              </Border>
+                              <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                                  <Button Grid.Column="0" Content="+" Command="{Binding MarkApprovedCommand}" Padding="12,6" FontSize="14"
+                                          Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
+                                          Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
+                                          CornerRadius="4" Margin="0,0,4,0" FontWeight="Bold"/>
+                                  <Button Grid.Column="1" Content="-" Command="{Binding MarkRejectedCommand}" Padding="12,6" FontSize="14"
+                                          Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
+                                          Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
+                                          CornerRadius="4" FontWeight="Bold"/>
+                                  <Border Grid.Column="2"/>
+                                  <Button Grid.Column="3" Content="Edit"
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
+                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,4,0"/>
+                                  <Button Grid.Column="4" Content="X" 
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
+                                          CommandParameter="{Binding}" 
+                                          Padding="12,6" FontSize="14"
+                                          Background="#80444444" CornerRadius="4" Foreground="#FF6B6B" FontWeight="Bold"/>
+                                </Grid>
+                              </Border>
+                            </Grid>
+                          </Border>
+                          <Border Grid.Row="1" Padding="10,6" Background="#222">
+                            <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.7" TextTrimming="CharacterEllipsis"/>
+                          </Border>
+                          <Border Grid.Row="2" Padding="10">
+                            <Grid RowDefinitions="*,Auto">
+                              <TextBox Grid.Row="0" Text="{Binding Caption, Mode=TwoWay}" Watermark="Enter caption..."
+                                       TextWrapping="Wrap" AcceptsReturn="True" FontSize="13" MinHeight="80" MaxHeight="120"/>
+                              <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                                      Margin="0,6,0,0" IsVisible="{Binding HasUnsavedChanges}">
+                                <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"/>
+                              </StackPanel>
+                            </Grid>
+                          </Border>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </Grid>
+          </Grid>
+        </TabItem>
+        
+        <!-- Tab 2: Epochs -->
+        <TabItem Header="Epochs">
+          <views:EpochsSubTabView DataContext="{Binding EpochsTab}"/>
+        </TabItem>
+        
+        <!-- Tab 3: Notes -->
+        <TabItem Header="Notes">
+          <views:NotesSubTabView DataContext="{Binding NotesTab}"/>
+        </TabItem>
+        
+        <!-- Tab 4: Presentation -->
+        <TabItem Header="Presentation">
+          <views:PresentationSubTabView DataContext="{Binding PresentationTab}"/>
+        </TabItem>
+        
+      </TabControl>
+    </Grid>
+  </Grid>
+</UserControl>

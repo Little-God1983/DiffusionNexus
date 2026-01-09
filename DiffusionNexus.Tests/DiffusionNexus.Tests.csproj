@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -30,7 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
-    <ProjectReference Include="..\DiffusionNexus.UI-V2\DiffusionNexus.UI-V2.csproj" />
+    <ProjectReference Include="..\DiffusionNexus.UI\DiffusionNexus.UI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

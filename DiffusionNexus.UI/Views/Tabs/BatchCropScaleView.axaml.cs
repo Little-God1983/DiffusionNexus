@@ -1,0 +1,76 @@
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.ViewModels.Tabs;
+
+namespace DiffusionNexus.UI.Views.Tabs;
+
+/// <summary>
+/// View for the Batch Crop/Scale tab. Handles folder browsing functionality.
+/// </summary>
+public partial class BatchCropScaleView : UserControl
+{
+    private bool _eventsWired;
+
+    public BatchCropScaleView()
+    {
+        InitializeComponent();
+    }
+
+    protected override void OnLoaded(RoutedEventArgs e)
+    {
+        base.OnLoaded(e);
+
+        // Only wire up events once to prevent multiple folder picker dialogs
+        if (_eventsWired) return;
+        _eventsWired = true;
+
+        // Wire up browse buttons
+        var browseSourceButton = this.FindControl<Button>("BrowseSourceButton");
+        var browseTargetButton = this.FindControl<Button>("BrowseTargetButton");
+
+        if (browseSourceButton != null)
+        {
+            browseSourceButton.Click += OnBrowseSourceClick;
+        }
+
+        if (browseTargetButton != null)
+        {
+            browseTargetButton.Click += OnBrowseTargetClick;
+        }
+    }
+
+    private async void OnBrowseSourceClick(object? sender, RoutedEventArgs e)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Source Folder",
+            AllowMultiple = false
+        });
+
+        if (folders.Count > 0 && DataContext is BatchCropScaleTabViewModel vm)
+        {
+            vm.SourceFolder = folders[0].Path.LocalPath;
+        }
+    }
+
+    private async void OnBrowseTargetClick(object? sender, RoutedEventArgs e)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Target Folder (Optional)",
+            AllowMultiple = false
+        });
+
+        if (folders.Count > 0 && DataContext is BatchCropScaleTabViewModel vm)
+        {
+            vm.TargetFolder = folders[0].Path.LocalPath;
+        }
+    }
+}
