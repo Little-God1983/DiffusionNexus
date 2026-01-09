@@ -1,0 +1,236 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.CreateVersionDialog"
+        x:DataType="vm:CreateVersionDialogViewModel"
+        Width="500"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+  
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+    
+    <!-- Title -->
+    <StackPanel Grid.Row="0" Margin="0,0,0,20">
+      <TextBlock Text="Create New Version"
+                 FontSize="18"
+                 FontWeight="SemiBold"
+                 Foreground="#4CAF50"/>
+      <TextBlock Margin="0,8,0,0" Opacity="0.7">
+        <TextBlock.Text>
+          <MultiBinding StringFormat="Creating V{0} branching from V{1}">
+            <Binding Path="NextVersion"/>
+            <Binding Path="CurrentVersion"/>
+          </MultiBinding>
+        </TextBlock.Text>
+      </TextBlock>
+    </StackPanel>
+    
+    <!-- Source Options -->
+    <StackPanel Grid.Row="1" Margin="0,0,0,20">
+      <TextBlock Text="How would you like to initialize the new version?"
+                 FontWeight="SemiBold"
+                 Margin="0,0,0,12"/>
+      
+      <!-- Start Fresh Option -->
+      <Border Background="#1A1A1A" 
+              CornerRadius="8" 
+              Padding="16,12" 
+              Margin="0,0,0,8"
+              BorderThickness="2"
+              BorderBrush="{Binding IsStartFresh, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+        <Grid ColumnDefinitions="Auto,*">
+          <RadioButton Grid.Column="0"
+                       GroupName="SourceOption"
+                       IsChecked="{Binding IsStartFresh, Mode=TwoWay}"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0"/>
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="Start Fresh (Empty)"
+                       FontWeight="SemiBold"
+                       FontSize="14"/>
+            <TextBlock Text="Create an empty version and add new content"
+                       Opacity="0.6"
+                       FontSize="12"
+                       Margin="0,4,0,0"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+      
+      <!-- Copy from Version Option -->
+      <Border Background="#1A1A1A" 
+              CornerRadius="8" 
+              Padding="16,12"
+              BorderThickness="2"
+              BorderBrush="{Binding IsCopyFromVersion, Converter={x:Static converters:BoolConverters.ToAccentBorder}}"
+              IsEnabled="{Binding HasAnyContent}">
+        <Grid ColumnDefinitions="Auto,*">
+          <RadioButton Grid.Column="0"
+                       GroupName="SourceOption"
+                       IsChecked="{Binding IsCopyFromVersion, Mode=TwoWay}"
+                       VerticalAlignment="Top"
+                       Margin="0,2,12,0"/>
+          <StackPanel Grid.Column="1">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Copy from Version"
+                         FontWeight="SemiBold"
+                         FontSize="14"
+                         VerticalAlignment="Center"/>
+              <ComboBox ItemsSource="{Binding AvailableVersions}"
+                        SelectedItem="{Binding SelectedSourceVersion}"
+                        MinWidth="70"
+                        IsEnabled="{Binding IsCopyFromVersion}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
+            <TextBlock Text="{Binding ContentSummary, StringFormat='Available: {0}'}"
+                       Opacity="0.6"
+                       FontSize="12"
+                       Margin="0,4,0,0"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </StackPanel>
+    
+    <!-- Content Type Selection (when Copy is selected) -->
+    <Border Grid.Row="2" 
+            Background="#1A1A1A" 
+            CornerRadius="8" 
+            Padding="16"
+            Margin="0,0,0,20"
+            IsVisible="{Binding IsCopyFromVersion}">
+      <StackPanel>
+        <TextBlock Text="Select content types to copy:"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,12"/>
+        
+        <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+          <!-- Images -->
+          <CheckBox Grid.Row="0" Grid.Column="0"
+                    IsChecked="{Binding CopyImages, Mode=TwoWay}"
+                    IsEnabled="{Binding HasImages}"
+                    Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Images" VerticalAlignment="Center"/>
+              <TextBlock Text="(.png, .jpg, .webp, .bmp, .gif)"
+                         Opacity="0.5"
+                         FontSize="11"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </CheckBox>
+          <Border Grid.Row="0" Grid.Column="1"
+                  Background="#333"
+                  CornerRadius="4"
+                  Padding="8,4"
+                  VerticalAlignment="Center">
+            <TextBlock Text="{Binding ImageCount}"
+                       FontWeight="SemiBold"
+                       Foreground="#4CAF50"/>
+          </Border>
+          
+          <!-- Videos -->
+          <CheckBox Grid.Row="1" Grid.Column="0"
+                    IsChecked="{Binding CopyVideos, Mode=TwoWay}"
+                    IsEnabled="{Binding HasVideos}"
+                    Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Videos" VerticalAlignment="Center"/>
+              <TextBlock Text="(.mp4, .mov, .webm, .avi)"
+                         Opacity="0.5"
+                         FontSize="11"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </CheckBox>
+          <Border Grid.Row="1" Grid.Column="1"
+                  Background="#333"
+                  CornerRadius="4"
+                  Padding="8,4"
+                  VerticalAlignment="Center">
+            <TextBlock Text="{Binding VideoCount}"
+                       FontWeight="SemiBold"
+                       Foreground="#2196F3"/>
+          </Border>
+          
+          <!-- Captions -->
+          <CheckBox Grid.Row="2" Grid.Column="0"
+                    IsChecked="{Binding CopyCaptions, Mode=TwoWay}"
+                    IsEnabled="{Binding HasCaptions}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Captions" VerticalAlignment="Center"/>
+              <TextBlock Text="(.txt text files)"
+                         Opacity="0.5"
+                         FontSize="11"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </CheckBox>
+          <Border Grid.Row="2" Grid.Column="1"
+                  Background="#333"
+                  CornerRadius="4"
+                  Padding="8,4"
+                  VerticalAlignment="Center">
+            <TextBlock Text="{Binding CaptionCount}"
+                       FontWeight="SemiBold"
+                       Foreground="#FFC107"/>
+          </Border>
+        </Grid>
+      </StackPanel>
+    </Border>
+    
+    <!-- Info Text -->
+    <Border Grid.Row="3" 
+            Background="#2A2A2A" 
+            CornerRadius="8" 
+            Padding="12"
+            Margin="0,0,0,20"
+            IsVisible="{Binding IsStartFresh}">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="?" Foreground="#4FC3F7" FontSize="16"/>
+        <TextBlock Text="The new version will be empty. You can add training files after creation."
+                   Opacity="0.8"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+    
+    <Border Grid.Row="4" 
+            Background="#2A2A2A" 
+            CornerRadius="8" 
+            Padding="12"
+            Margin="0,0,0,20"
+            IsVisible="{Binding IsCopyFromVersion}">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="?" Foreground="#4FC3F7" FontSize="16"/>
+        <TextBlock Text="Selected content will be copied to the new version. Original files remain unchanged."
+                   Opacity="0.8"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+    
+    <!-- Buttons -->
+    <StackPanel Grid.Row="5" 
+                Orientation="Horizontal" 
+                HorizontalAlignment="Right" 
+                Spacing="8">
+      <Button Content="Cancel" 
+              Width="100"
+              Click="OnCancelClick"/>
+      <Button Content="Create Version" 
+              MinWidth="120"
+              Background="#4CAF50"
+              Foreground="White"
+              FontWeight="SemiBold"
+              IsDefault="True"
+              Click="OnCreateClick"/>
+    </StackPanel>
+    
+  </Grid>
+</Window>
