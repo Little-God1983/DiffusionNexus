@@ -24,6 +24,9 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     private ActivitySeverity _statusSeverity = ActivitySeverity.Info;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusBackground))]
+    [NotifyPropertyChangedFor(nameof(StatusForeground))]
+    [NotifyPropertyChangedFor(nameof(ProgressBarBackground))]
     private bool _hasActiveOperation;
 
     [ObservableProperty]
@@ -50,24 +53,40 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     public ActivityLogViewModel LogViewModel => _logViewModel;
 
     /// <summary>
-    /// Background color based on status severity.
+    /// Background color based on status severity and active operation state.
+    /// Shows green when an operation is in progress.
     /// </summary>
-    public string StatusBackground => StatusSeverity switch
+    public string StatusBackground
     {
-        ActivitySeverity.Success => "#28A745",
-        ActivitySeverity.Warning => "#FFC107",
-        ActivitySeverity.Error => "#DC3545",
-        _ => "#007ACC"
-    };
+        get
+        {
+            // Show green when actively working
+            if (HasActiveOperation)
+                return "#28A745";
+            
+            return StatusSeverity switch
+            {
+                ActivitySeverity.Success => "#28A745",
+                ActivitySeverity.Warning => "#FFC107",
+                ActivitySeverity.Error => "#DC3545",
+                _ => "#007ACC"
+            };
+        }
+    }
 
     /// <summary>
     /// Foreground color based on status severity.
     /// </summary>
     public string StatusForeground => StatusSeverity switch
     {
-        ActivitySeverity.Warning => "#000000",
+        ActivitySeverity.Warning when !HasActiveOperation => "#000000",
         _ => "#FFFFFF"
     };
+
+    /// <summary>
+    /// Progress bar background color - green for visibility against status bar.
+    /// </summary>
+    public string ProgressBarBackground => "#1E7E34"; // Darker green for contrast
 
     public StatusBarViewModel(IActivityLogService logService)
     {

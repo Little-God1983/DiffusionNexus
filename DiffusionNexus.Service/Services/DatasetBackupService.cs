@@ -11,15 +11,17 @@ namespace DiffusionNexus.Service.Services;
 public class DatasetBackupService : IDatasetBackupService
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IActivityLogService? _activityLog;
 
     /// <summary>
     /// Pattern used to identify backup files created by this service.
     /// </summary>
     private const string BackupFilePattern = "DatasetBackup_*.zip";
 
-    public DatasetBackupService(IAppSettingsService settingsService)
+    public DatasetBackupService(IAppSettingsService settingsService, IActivityLogService? activityLog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _activityLog = activityLog;
     }
 
     /// <inheritdoc />
@@ -32,21 +34,25 @@ public class DatasetBackupService : IDatasetBackupService
         // Validate configuration
         if (!settings.AutoBackupEnabled)
         {
+            _activityLog?.LogWarning("Backup", "Automatic backup is not enabled");
             return BackupResult.Failed("Automatic backup is not enabled.");
         }
 
         if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
         {
+            _activityLog?.LogError("Backup", "Dataset storage path is not configured");
             return BackupResult.Failed("Dataset storage path is not configured.");
         }
 
         if (!Directory.Exists(settings.DatasetStoragePath))
         {
+            _activityLog?.LogError("Backup", $"Dataset storage path does not exist: {settings.DatasetStoragePath}");
             return BackupResult.Failed($"Dataset storage path does not exist: {settings.DatasetStoragePath}");
         }
 
         if (string.IsNullOrWhiteSpace(settings.AutoBackupLocation))
         {
+            _activityLog?.LogError("Backup", "Backup location is not configured");
             return BackupResult.Failed("Backup location is not configured.");
         }
 
@@ -57,6 +63,7 @@ public class DatasetBackupService : IDatasetBackupService
         }
         catch (Exception ex)
         {
+            _activityLog?.LogError("Backup", $"Failed to create backup directory", ex);
             return BackupResult.Failed($"Failed to create backup directory: {ex.Message}");
         }
 
@@ -66,6 +73,9 @@ public class DatasetBackupService : IDatasetBackupService
         var backupPath = Path.Combine(settings.AutoBackupLocation, backupFileName);
 
         Log.Information("Starting dataset backup to {BackupPath}", backupPath);
+        
+        // Start tracked operation for progress display
+        using var operation = _activityLog?.StartOperation("Backing up datasets", "Backup", isCancellable: false);
 
         progress?.Report(new BackupProgress
         {
@@ -82,6 +92,9 @@ public class DatasetBackupService : IDatasetBackupService
             var totalFiles = allFiles.Count;
             var processedFiles = 0;
             long totalSize = 0;
+
+            _activityLog?.LogInfo("Backup", $"Found {totalFiles} files to backup");
+            operation?.ReportProgress(5, $"Found {totalFiles} files");
 
             progress?.Report(new BackupProgress
             {
@@ -109,6 +122,7 @@ public class DatasetBackupService : IDatasetBackupService
                         if (processedFiles % 10 == 0 || processedFiles == totalFiles)
                         {
                             var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
+                            operation?.ReportProgress(percent, $"Backing up file {processedFiles} of {totalFiles}");
                             progress?.Report(new BackupProgress
                             {
                                 Phase = "Creating backup",
@@ -122,15 +136,16 @@ public class DatasetBackupService : IDatasetBackupService
                     catch (Exception ex)
                     {
                         Log.Warning(ex, "Failed to add file to backup: {FilePath}", filePath);
+                        _activityLog?.LogWarning("Backup", $"Skipped file: {Path.GetFileName(filePath)}");
                         // Continue with other files
                     }
                 }
             }
 
-            // Update only the LastBackupAt timestamp - don't use SaveSettingsAsync 
-            // which would trigger complex collection handling logic
+            // Update only the LastBackupAt timestamp
             await _settingsService.UpdateLastBackupAtAsync(DateTimeOffset.UtcNow, cancellationToken);
 
+            operation?.ReportProgress(98, "Cleaning up old backups");
             progress?.Report(new BackupProgress
             {
                 Phase = "Cleaning up old backups",
@@ -140,7 +155,11 @@ public class DatasetBackupService : IDatasetBackupService
             });
 
             // Delete oldest backups if we exceed MaxBackups
-            CleanupOldBackups(settings.AutoBackupLocation, settings.MaxBackups);
+            var deletedCount = CleanupOldBackups(settings.AutoBackupLocation, settings.MaxBackups);
+            if (deletedCount > 0)
+            {
+                _activityLog?.LogInfo("Backup", $"Removed {deletedCount} old backup(s)");
+            }
 
             progress?.Report(new BackupProgress
             {
@@ -150,8 +169,10 @@ public class DatasetBackupService : IDatasetBackupService
                 TotalFiles = totalFiles
             });
 
+            var sizeInMb = totalSize / 1024.0 / 1024.0;
             Log.Information("Dataset backup completed: {FilesCount} files, {Size:N0} bytes", 
                 processedFiles, totalSize);
+            _activityLog?.LogSuccess("Backup", $"Backup completed: {processedFiles} files ({sizeInMb:F1} MB)");
 
             return BackupResult.Succeeded(backupPath, processedFiles, totalSize);
         }
@@ -162,11 +183,13 @@ public class DatasetBackupService : IDatasetBackupService
             {
                 try { File.Delete(backupPath); } catch { }
             }
+            _activityLog?.LogWarning("Backup", "Backup was cancelled");
             return BackupResult.Failed("Backup was cancelled.");
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Dataset backup failed");
+            _activityLog?.LogError("Backup", "Backup failed", ex);
             
             // Clean up partial backup
             if (File.Exists(backupPath))
@@ -183,11 +206,12 @@ public class DatasetBackupService : IDatasetBackupService
     /// </summary>
     /// <param name="backupLocation">The backup folder path.</param>
     /// <param name="maxBackups">Maximum number of backups to keep.</param>
-    private void CleanupOldBackups(string backupLocation, int maxBackups)
+    /// <returns>Number of backups deleted.</returns>
+    private int CleanupOldBackups(string backupLocation, int maxBackups)
     {
         if (maxBackups <= 0)
         {
-            return;
+            return 0;
         }
 
         try
@@ -199,7 +223,7 @@ public class DatasetBackupService : IDatasetBackupService
 
             if (backupFiles.Count <= maxBackups)
             {
-                return;
+                return 0;
             }
 
             // Delete oldest files beyond the limit
@@ -219,10 +243,13 @@ public class DatasetBackupService : IDatasetBackupService
 
             Log.Information("Cleaned up {Count} old backups, keeping {MaxBackups} most recent", 
                 filesToDelete.Count, maxBackups);
+            
+            return filesToDelete.Count;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to cleanup old backups");
+            return 0;
         }
     }
 

@@ -50,6 +50,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
+    private readonly IActivityLogService? _activityLog;
     private bool _disposed;
 
     private DatasetCategoryViewModel? _selectedCategory;
@@ -433,13 +434,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IVideoThumbnailService? videoThumbnailService = null,
-        IDatasetBackupService? backupService = null)
+        IDatasetBackupService? backupService = null,
+        IActivityLogService? activityLog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _videoThumbnailService = videoThumbnailService;
         _backupService = backupService;
+        _activityLog = activityLog;
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -483,7 +486,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null, null, null)
     {
     }
 
@@ -1123,6 +1126,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
         {
             StatusMessage = "Please configure the Dataset Storage Path in Settings first.";
+            _activityLog?.LogWarning("Dataset", "Dataset storage path not configured");
             _state.SetStorageConfigured(false);
             return;
         }
@@ -1130,6 +1134,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (!Directory.Exists(settings.DatasetStoragePath))
         {
             StatusMessage = "The configured Dataset Storage Path does not exist. Please update it in Settings.";
+            _activityLog?.LogError("Dataset", $"Storage path does not exist: {settings.DatasetStoragePath}");
             _state.SetStorageConfigured(false);
             return;
         }
@@ -1145,6 +1150,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (Directory.Exists(datasetPath))
         {
             StatusMessage = $"A dataset named '{sanitizedName}' already exists.";
+            _activityLog?.LogWarning("Dataset", $"Dataset '{sanitizedName}' already exists");
             return;
         }
 
@@ -1176,6 +1182,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             Datasets.Add(newDataset);
 
             StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
+            _activityLog?.LogSuccess("Dataset", $"Created dataset '{sanitizedName}'");
 
             _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
             {
@@ -1187,6 +1194,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         catch (Exception ex)
         {
             StatusMessage = $"Failed to create dataset: {ex.Message}";
+            _activityLog?.LogError("Dataset", $"Failed to create dataset '{sanitizedName}'", ex);
         }
     }
 
@@ -1201,6 +1209,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
             if (files is null || files.Count == 0) return;
 
+            _activityLog?.LogInfo("Import", $"Importing {files.Count} files to '{ActiveDataset.Name}'");
+            
             IsLoading = true;
             try
             {
@@ -1236,6 +1246,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     ? $"Added {copied} files, skipped {skipped} duplicates"
                     : $"Added {copied} files to dataset";
 
+                if (copied > 0)
+                {
+                    _activityLog?.LogSuccess("Import", $"Imported {copied} files to '{ActiveDataset.Name}'" + (skipped > 0 ? $" ({skipped} duplicates skipped)" : ""));
+                }
+                else if (skipped > 0)
+                {
+                    _activityLog?.LogWarning("Import", $"All {skipped} files already exist in '{ActiveDataset.Name}'");
+                }
+
                 await OpenDatasetAsync(ActiveDataset);
 
                 if (addedImages.Count > 0)
@@ -1250,6 +1269,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             catch (Exception ex)
             {
                 StatusMessage = $"Error adding files: {ex.Message}";
+                _activityLog?.LogError("Import", "Failed to import files", ex);
             }
             finally
             {
@@ -1483,10 +1503,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 });
 
                 StatusMessage = $"Deleted dataset '{dataset.Name}'";
+                _activityLog?.LogSuccess("Dataset", $"Deleted dataset '{dataset.Name}'");
             }
             catch (Exception ex)
             {
                 StatusMessage = $"Error deleting dataset: {ex.Message}";
+                _activityLog?.LogError("Dataset", $"Failed to delete dataset '{dataset.Name}'", ex);
             }
         }
     }
@@ -1706,6 +1728,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (DatasetImages.Count == 0)
         {
             StatusMessage = "No files in dataset to export.";
+            _activityLog?.LogWarning("Export", "No files to export");
             return;
         }
 
@@ -1726,6 +1749,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         if (string.IsNullOrEmpty(destinationPath)) return;
 
+        _activityLog?.LogInfo("Export", $"Exporting '{ActiveDataset.Name}' ({result.FilesToExport.Count} files)");
+
         IsLoading = true;
         try
         {
@@ -1734,10 +1759,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 : ExportAsSingleFiles(result.FilesToExport, destinationPath);
 
             StatusMessage = $"Exported {exportedCount} files successfully.";
+            _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
         }
         catch (Exception ex)
         {
             StatusMessage = $"Export failed: {ex.Message}";
+            _activityLog?.LogError("Export", $"Export failed for '{ActiveDataset.Name}'", ex);
         }
         finally
         {

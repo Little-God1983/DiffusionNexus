@@ -5,6 +5,14 @@
              x:Class="DiffusionNexus.UI.Views.Controls.StatusBarControl"
              x:DataType="vm:StatusBarViewModel">
 
+    <UserControl.Styles>
+        <!-- Custom progress bar styling for status bar -->
+        <Style Selector="ProgressBar.status-progress">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="Background" Value="#00000033"/>
+        </Style>
+    </UserControl.Styles>
+
     <Grid RowDefinitions="Auto,Auto">
         
         <!-- Expandable Log Panel -->
@@ -49,6 +57,7 @@
                                  Width="100"
                                  Height="6"
                                  VerticalAlignment="Center"
+                                 Classes="status-progress"
                                  IsIndeterminate="{Binding ActiveOperationProgress, Converter={x:Static ObjectConverters.IsNull}}"/>
                     <TextBlock Text="{Binding ActiveOperationProgress, StringFormat='{}{0}%'}"
                                Foreground="{Binding StatusForeground}"

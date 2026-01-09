@@ -174,13 +174,18 @@ public partial class App : Application
         // Database
         services.AddDiffusionNexusCoreDatabase();
 
-        // Infrastructure services (secure storage, image caching)
+        // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
 
         // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();
         services.AddScoped<IModelSyncService, ModelFileSyncService>();
-        services.AddScoped<IDatasetBackupService, DatasetBackupService>();
+        
+        // DatasetBackupService - use factory to inject activity log service
+        services.AddScoped<IDatasetBackupService>(sp => new DatasetBackupService(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetService<IActivityLogService>()));
+        
         services.AddScoped<IDisclaimerService, DisclaimerService>();
 
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
@@ -199,7 +204,17 @@ public partial class App : Application
         // ViewModels (scoped to app lifetime)
         services.AddScoped<SettingsViewModel>();
         services.AddScoped<LoraViewerViewModel>();
-        services.AddScoped<LoraDatasetHelperViewModel>();
+        
+        // LoraDatasetHelperViewModel - use factory to inject all required services
+        services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<IDatasetEventAggregator>(),
+            sp.GetRequiredService<IDatasetState>(),
+            sp.GetService<IVideoThumbnailService>(),
+            sp.GetService<IBackgroundRemovalService>(),
+            sp.GetService<IImageUpscalingService>(),
+            sp.GetService<IDatasetBackupService>(),
+            sp.GetService<IActivityLogService>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
