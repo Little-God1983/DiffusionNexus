@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
@@ -15,7 +16,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// to ensure all components stay synchronized when ratings are modified in the viewer.
 /// </para>
 /// </summary>
-public partial class ImageViewerViewModel : ObservableObject
+public partial class ImageViewerViewModel : ObservableObject, IDisposable
 {
     private readonly ObservableCollection<DatasetImageViewModel> _allImages;
     private readonly IDatasetEventAggregator? _eventAggregator;
@@ -24,6 +25,7 @@ public partial class ImageViewerViewModel : ObservableObject
     
     private DatasetImageViewModel? _currentImage;
     private int _currentIndex;
+    private bool _disposed;
 
     /// <summary>Event raised when the dialog should close.</summary>
     public event EventHandler? CloseRequested;
@@ -49,6 +51,7 @@ public partial class ImageViewerViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsVideo));
                 OnPropertyChanged(nameof(IsImage));
                 OnPropertyChanged(nameof(PositionText));
+                OnPropertyChanged(nameof(TotalCount));
                 CurrentImageChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -70,7 +73,7 @@ public partial class ImageViewerViewModel : ObservableObject
     }
 
     public int TotalCount => _allImages.Count;
-    public string PositionText => $"{CurrentIndex + 1} / {TotalCount}";
+    public string PositionText => TotalCount > 0 ? $"{CurrentIndex + 1} / {TotalCount}" : "0 / 0";
     public bool HasCurrentImage => _currentImage is not null;
     public string? ImagePath => _currentImage?.ImagePath;
     public string? FileName => _currentImage?.FullFileName;
@@ -116,6 +119,9 @@ public partial class ImageViewerViewModel : ObservableObject
         _onSendToImageEditor = onSendToImageEditor;
         _onDeleteRequested = onDeleteRequested;
 
+        // Subscribe to collection changes to handle external deletions
+        _allImages.CollectionChanged += OnCollectionChanged;
+
         PreviousCommand = new RelayCommand(GoPrevious, () => CanGoPrevious);
         NextCommand = new RelayCommand(GoNext, () => CanGoNext);
         CloseCommand = new RelayCommand(Close);
@@ -133,9 +139,59 @@ public partial class ImageViewerViewModel : ObservableObject
     {
     }
 
+    /// <summary>
+    /// Handles collection changes to properly update navigation when images are deleted.
+    /// </summary>
+    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Remove)
+        {
+            // Collection has changed - update the UI
+            OnPropertyChanged(nameof(TotalCount));
+            OnPropertyChanged(nameof(PositionText));
+
+            if (_allImages.Count == 0)
+            {
+                // No more images - close the viewer
+                CurrentImage = null;
+                CurrentIndex = 0;
+                Close();
+                return;
+            }
+
+            // If the current image was removed, navigate to appropriate image
+            if (_currentImage is not null && !_allImages.Contains(_currentImage))
+            {
+                // Current image was deleted - navigate to next available
+                var newIndex = Math.Min(_currentIndex, _allImages.Count - 1);
+                NavigateTo(newIndex);
+            }
+            else if (_currentImage is not null)
+            {
+                // Current image still exists but index may have changed
+                var actualIndex = _allImages.IndexOf(_currentImage);
+                if (actualIndex >= 0 && actualIndex != _currentIndex)
+                {
+                    CurrentIndex = actualIndex;
+                }
+            }
+
+            // Update command states
+            ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
+            ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
+        }
+    }
+
     /// <summary>Navigates to a specific index in the collection.</summary>
     public void NavigateTo(int index)
     {
+        if (_allImages.Count == 0)
+        {
+            CurrentImage = null;
+            CurrentIndex = 0;
+            return;
+        }
+
         if (index < 0 || index >= _allImages.Count) return;
 
         CurrentIndex = index;
@@ -232,28 +288,9 @@ public partial class ImageViewerViewModel : ObservableObject
     {
         if (_currentImage is null) return;
         
-        var imageToDelete = _currentImage;
-        var deletedIndex = CurrentIndex;
-        
-        if (CanGoNext)
-        {
-            var nextIndex = CurrentIndex;
-            _onDeleteRequested?.Invoke(imageToDelete);
-            if (_allImages.Count > 0)
-                NavigateTo(Math.Min(nextIndex, _allImages.Count - 1));
-            else
-                Close();
-        }
-        else if (CanGoPrevious)
-        {
-            GoPrevious();
-            _onDeleteRequested?.Invoke(imageToDelete);
-        }
-        else
-        {
-            _onDeleteRequested?.Invoke(imageToDelete);
-            Close();
-        }
+        // Simply invoke the delete callback - the collection change handler
+        // will take care of navigation when the image is actually removed
+        _onDeleteRequested?.Invoke(_currentImage);
     }
 
     /// <summary>Refreshes the display after external changes.</summary>
@@ -263,5 +300,29 @@ public partial class ImageViewerViewModel : ObservableObject
         OnPropertyChanged(nameof(HasCaption));
         OnPropertyChanged(nameof(IsApproved));
         OnPropertyChanged(nameof(IsRejected));
+    }
+
+    /// <summary>
+    /// Disposes resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes resources.
+    /// </summary>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            _allImages.CollectionChanged -= OnCollectionChanged;
+        }
+
+        _disposed = true;
     }
 }

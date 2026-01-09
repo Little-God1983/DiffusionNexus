@@ -450,6 +450,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand GoToBackupSettingsCommand { get; }
     public IRelayCommand ClearFiltersCommand { get; }
     public IAsyncRelayCommand BackupNowCommand { get; }
+    public IAsyncRelayCommand<DatasetImageViewModel?> DeleteImageCommand { get; }
 
     // Selection commands
     public IRelayCommand<DatasetImageViewModel?> ToggleSelectionCommand { get; }
@@ -515,6 +516,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
         ClearFiltersCommand = new RelayCommand(ClearFilters);
         BackupNowCommand = new AsyncRelayCommand(BackupNowAsync, () => IsAutoBackupConfigured && !_isBackupInProgress);
+        DeleteImageCommand = new AsyncRelayCommand<DatasetImageViewModel?>(DeleteImageAsync);
 
         // Selection commands
         ToggleSelectionCommand = new RelayCommand<DatasetImageViewModel?>(ToggleSelection);
@@ -2235,6 +2237,59 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         catch (Exception ex)
         {
             StatusMessage = $"Error deleting selected media: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteImageAsync(DatasetImageViewModel? image)
+    {
+        if (image is null || DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Image",
+            $"Delete '{image.FullFileName}' and its caption?");
+
+        if (!confirm) return;
+
+        try
+        {
+            if (File.Exists(image.ImagePath))
+            {
+                File.Delete(image.ImagePath);
+            }
+
+            if (File.Exists(image.CaptionFilePath))
+            {
+                File.Delete(image.CaptionFilePath);
+            }
+
+            if (image.IsVideo)
+            {
+                var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
+                if (File.Exists(thumbnailPath))
+                {
+                    File.Delete(thumbnailPath);
+                }
+            }
+
+            DatasetImages.Remove(image);
+
+            if (ActiveDataset is not null)
+            {
+                ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+
+                _eventAggregator.PublishImageDeleted(new ImageDeletedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ImagePath = image.ImagePath
+                });
+            }
+
+            StatusMessage = $"Deleted '{image.FullFileName}'";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting image: {ex.Message}";
         }
     }
 

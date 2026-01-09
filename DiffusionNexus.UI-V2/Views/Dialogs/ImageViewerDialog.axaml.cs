@@ -22,6 +22,9 @@ public partial class ImageViewerDialog : Window
         
         // Handle keyboard navigation
         KeyDown += OnKeyDown;
+        
+        // Dispose ViewModel when dialog closes
+        Closed += OnClosed;
     }
 
     private void InitializeComponent()
@@ -49,6 +52,14 @@ public partial class ImageViewerDialog : Window
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
+    }
+
+    /// <summary>
+    /// Handles cleanup when the dialog closes.
+    /// </summary>
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _viewModel?.Dispose();
     }
 
     /// <summary>

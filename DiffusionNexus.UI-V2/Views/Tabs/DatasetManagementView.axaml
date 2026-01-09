@@ -419,7 +419,10 @@
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
                                           CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="4" Content="X" Command="{Binding DeleteCommand}" Padding="12,6" FontSize="14"
+                                  <Button Grid.Column="4" Content="X" 
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
+                                          CommandParameter="{Binding}" 
+                                          Padding="12,6" FontSize="14"
                                           Background="#80444444" CornerRadius="4" Foreground="#FF6B6B" FontWeight="Bold"/>
                                 </Grid>
                               </Border>
