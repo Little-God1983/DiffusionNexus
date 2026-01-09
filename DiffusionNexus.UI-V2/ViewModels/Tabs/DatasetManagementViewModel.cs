@@ -1676,23 +1676,28 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         var currentVersion = ActiveDataset.CurrentVersion;
         var nextVersion = ActiveDataset.GetNextVersionNumber();
+        var availableVersions = ActiveDataset.GetAllVersionNumbers();
 
-        var selectedOption = await DialogService.ShowOptionsAsync(
-            "Create New Version",
-            $"Create V{nextVersion} branching from V{currentVersion}.\n\nChoose how to initialize the new version:",
-            "Cancel",
-            "Start Fresh (Empty)",
-            $"Copy from V{currentVersion}");
+        // Count content in current version
+        var imageCount = DatasetImages.Count(m => m.IsImage);
+        var videoCount = DatasetImages.Count(m => m.IsVideo);
+        var captionCount = DatasetImages.Count(m => File.Exists(m.CaptionFilePath));
 
-        if (selectedOption == 0 || selectedOption == -1) return;
+        var result = await DialogService.ShowCreateVersionDialogAsync(
+            currentVersion,
+            availableVersions,
+            imageCount,
+            videoCount,
+            captionCount);
 
-        var copyFiles = selectedOption == 2;
+        if (!result.Confirmed) return;
 
-        if (copyFiles && ActiveDataset.ImageCount == 0)
+        var copyFiles = result.SourceOption == VersionSourceOption.CopyFromVersion;
+        var sourceVersion = result.SourceVersion;
+
+        // If copy is selected but no content types are checked, treat as start fresh
+        if (copyFiles && !result.CopyImages && !result.CopyVideos && !result.CopyCaptions)
         {
-            await DialogService.ShowMessageAsync(
-                "No Images",
-                "There are no images in the current version to copy. Creating an empty version instead.");
             copyFiles = false;
         }
 
@@ -1711,17 +1716,37 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var copied = 0;
             if (copyFiles)
             {
-                var sourcePath = ActiveDataset.GetVersionFolderPath(currentVersion);
+                var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
                 var files = Directory.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
 
                 foreach (var sourceFile in files)
                 {
-                    var fileName = Path.GetFileName(sourceFile);
-                    var destFile = Path.Combine(destPath, fileName);
-                    File.Copy(sourceFile, destFile, overwrite: false);
-                    copied++;
+                    var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
+                    var shouldCopy = false;
+
+                    // Check if this file type should be copied based on user selection
+                    if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
+                    {
+                        shouldCopy = true;
+                    }
+                    else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
+                    {
+                        shouldCopy = true;
+                    }
+                    else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
+                    {
+                        shouldCopy = true;
+                    }
+
+                    if (shouldCopy)
+                    {
+                        var fileName = Path.GetFileName(sourceFile);
+                        var destFile = Path.Combine(destPath, fileName);
+                        File.Copy(sourceFile, destFile, overwrite: false);
+                        copied++;
+                    }
                 }
             }
 

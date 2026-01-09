@@ -186,6 +186,20 @@ public static class BoolConverters
 
     #endregion
 
+    #region Accent Border Converters
+
+    private static readonly IBrush AccentGreenBrush = new SolidColorBrush(Color.Parse("#4CAF50"));
+    private static readonly IBrush InactiveBorderBrush = new SolidColorBrush(Color.Parse("#444"));
+
+    /// <summary>
+    /// Converts a boolean to accent border brush (green if true, gray otherwise).
+    /// Used for highlighting selected options in dialogs.
+    /// </summary>
+    public static readonly IValueConverter ToAccentBorder =
+        new FuncValueConverter<bool, IBrush>(b => b ? AccentGreenBrush : InactiveBorderBrush);
+
+    #endregion
+
     #region Backup Status Converters
 
     /// <summary>

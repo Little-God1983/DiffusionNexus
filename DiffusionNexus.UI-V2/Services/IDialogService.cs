@@ -144,6 +144,22 @@ public interface IDialogService
     /// <param name="backupStats">Analysis results from the selected backup.</param>
     /// <returns>True if the user chooses to restore, false if cancelled.</returns>
     Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats);
+
+    /// <summary>
+    /// Shows the create version dialog with content type selection options.
+    /// </summary>
+    /// <param name="currentVersion">The current version number (used as default source version).</param>
+    /// <param name="availableVersions">All available versions to copy from.</param>
+    /// <param name="imageCount">Number of images in current version.</param>
+    /// <param name="videoCount">Number of videos in current version.</param>
+    /// <param name="captionCount">Number of captions in current version.</param>
+    /// <returns>Create version result with selected options, or cancelled result.</returns>
+    Task<CreateVersionResult> ShowCreateVersionDialogAsync(
+        int currentVersion,
+        IReadOnlyList<int> availableVersions,
+        int imageCount,
+        int videoCount,
+        int captionCount);
 }
 
 /// <summary>
