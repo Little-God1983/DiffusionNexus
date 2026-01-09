@@ -704,7 +704,8 @@ public partial class SettingsViewModel : BusyViewModelBase
                     DatasetCount = currentStats.DatasetCount,
                     ImageCount = currentStats.ImageCount,
                     VideoCount = currentStats.VideoCount,
-                    CaptionCount = currentStats.CaptionCount
+                    CaptionCount = currentStats.CaptionCount,
+                    TotalSizeBytes = currentStats.TotalSizeBytes
                 };
 
                 var backupData = new Services.BackupCompareData
@@ -714,7 +715,8 @@ public partial class SettingsViewModel : BusyViewModelBase
                     DatasetCount = backupAnalysis.DatasetCount,
                     ImageCount = backupAnalysis.ImageCount,
                     VideoCount = backupAnalysis.VideoCount,
-                    CaptionCount = backupAnalysis.CaptionCount
+                    CaptionCount = backupAnalysis.CaptionCount,
+                    TotalSizeBytes = backupAnalysis.TotalSizeBytes
                 };
 
                 // Show comparison dialog

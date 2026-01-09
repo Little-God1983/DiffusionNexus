@@ -180,6 +180,11 @@ public class BackupCompareData
     /// Number of captions.
     /// </summary>
     public int CaptionCount { get; init; }
+
+    /// <summary>
+    /// Total size in bytes.
+    /// </summary>
+    public long TotalSizeBytes { get; init; }
 }
 
 /// <summary>

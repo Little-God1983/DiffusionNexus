@@ -397,12 +397,16 @@ public class DatasetBackupService : IDatasetBackupService
         var imageCount = 0;
         var videoCount = 0;
         var captionCount = 0;
+        long totalSize = 0;
 
         var allFiles = Directory.EnumerateFiles(settings.DatasetStoragePath, "*", SearchOption.AllDirectories);
         
         foreach (var file in allFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            var fileInfo = new FileInfo(file);
+            totalSize += fileInfo.Length;
 
             var ext = Path.GetExtension(file).ToLowerInvariant();
             
@@ -426,6 +430,7 @@ public class DatasetBackupService : IDatasetBackupService
             ImageCount = imageCount,
             VideoCount = videoCount,
             CaptionCount = captionCount,
+            TotalSizeBytes = totalSize,
             CurrentDate = DateTimeOffset.Now
         };
     }

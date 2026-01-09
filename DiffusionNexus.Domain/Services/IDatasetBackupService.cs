@@ -201,6 +201,11 @@ public class CurrentStorageStats
     public int CaptionCount { get; init; }
 
     /// <summary>
+    /// Total size of all files in bytes.
+    /// </summary>
+    public long TotalSizeBytes { get; init; }
+
+    /// <summary>
     /// Current date/time when the stats were gathered.
     /// </summary>
     public DateTimeOffset CurrentDate { get; init; } = DateTimeOffset.Now;
