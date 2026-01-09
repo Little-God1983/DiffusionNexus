@@ -65,6 +65,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     // Filter fields
     private string _filterText = string.Empty;
     private DatasetType? _filterType;
+    private bool _showNsfw;
+    private bool _selectedNsfw;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -219,6 +221,31 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Whether the active dataset's current version is marked as NSFW.
+    /// </summary>
+    public bool SelectedNsfw
+    {
+        get => _selectedNsfw;
+        set
+        {
+            if (SetProperty(ref _selectedNsfw, value) && ActiveDataset is not null)
+            {
+                ActiveDataset.IsNsfw = value;
+                ActiveDataset.SaveMetadata();
+                _state.StatusMessage = value
+                    ? "Marked as NSFW"
+                    : "NSFW marking removed";
+
+                _eventAggregator.PublishDatasetMetadataChanged(new DatasetMetadataChangedEventArgs
+                {
+                    Dataset = ActiveDataset,
+                    ChangeType = DatasetMetadataChangeType.Nsfw
+                });
+            }
+        }
+    }
+
+    /// <summary>
     /// Status message to display to the user.
     /// </summary>
     public string? StatusMessage
@@ -280,9 +307,41 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Whether to show NSFW datasets in the overview. Default is false (hide NSFW).
+    /// </summary>
+    public bool ShowNsfw
+    {
+        get => _showNsfw;
+        set
+        {
+            if (SetProperty(ref _showNsfw, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether any filter is currently active.
     /// </summary>
-    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue;
+    public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue || !_showNsfw;
+
+    /// <summary>
+    /// Number of datasets hidden by filters (search, type, NSFW combined).
+    /// </summary>
+    public int HiddenCount { get; private set; }
+
+    /// <summary>
+    /// Whether any datasets are hidden by filters.
+    /// </summary>
+    public bool HasHidden => HiddenCount > 0;
+
+    /// <summary>
+    /// Text describing how many datasets are hidden by filters.
+    /// </summary>
+    public string HiddenText => HiddenCount == 1 
+        ? "1 dataset hidden" 
+        : $"{HiddenCount} datasets hidden";
 
     /// <summary>
     /// Filtered collection of datasets grouped by category.
@@ -314,9 +373,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public ObservableCollection<DatasetCategoryViewModel> AvailableCategories => _state.AvailableCategories;
 
     /// <summary>
-    /// Available dataset types.
+    /// Available dataset types for assigning to a dataset.
     /// </summary>
     public IReadOnlyList<DatasetType> AvailableTypes { get; } = DatasetTypeExtensions.GetAll();
+
+    /// <summary>
+    /// Available dataset types for filtering, including "All Types" option (null).
+    /// </summary>
+    public IReadOnlyList<DatasetType?> AvailableFilterTypes { get; } = [null, .. DatasetTypeExtensions.GetAll().Cast<DatasetType?>()];
 
     /// <summary>
     /// Available versions for the active dataset.
@@ -442,6 +506,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             case nameof(IDatasetState.ActiveDataset):
                 OnPropertyChanged(nameof(ActiveDataset));
                 OnPropertyChanged(nameof(SelectedVersion));
+                OnPropertyChanged(nameof(SelectedNsfw));
                 break;
             case nameof(IDatasetState.IsLoading):
                 OnPropertyChanged(nameof(IsLoading));
@@ -964,12 +1029,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 DatasetImages.Add(mediaVm);
             }
 
-            // Set selected category and type
+            // Set selected category, type, and NSFW
             _selectedCategory = AvailableCategories.FirstOrDefault(c => c.Id == dataset.CategoryId);
             OnPropertyChanged(nameof(SelectedCategory));
 
             _selectedType = dataset.Type;
             OnPropertyChanged(nameof(SelectedType));
+
+            _selectedNsfw = dataset.IsNsfw;
+            OnPropertyChanged(nameof(SelectedNsfw));
 
             HasUnsavedChanges = false;
 
@@ -1097,8 +1165,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 VideoCount = 0,
                 CategoryId = result.CategoryId,
                 CategoryName = result.CategoryName,
-                Type = result.Type
+                Type = result.Type,
+                IsNsfw = result.IsNsfw
             };
+
+            // Set the NSFW flag for V1
+            newDataset.VersionNsfwFlags[1] = result.IsNsfw;
 
             newDataset.SaveMetadata();
             Datasets.Add(newDataset);
@@ -1558,6 +1630,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
             }
 
+            // Inherit NSFW flag from the parent version by default
+            var parentNsfw = ActiveDataset.VersionNsfwFlags.GetValueOrDefault(currentVersion, false);
+            ActiveDataset.VersionNsfwFlags[nextVersion] = parentNsfw;
+
             ActiveDataset.RecordBranch(nextVersion, currentVersion);
             ActiveDataset.CurrentVersion = nextVersion;
             ActiveDataset.IsVersionedStructure = true;
@@ -1739,11 +1815,46 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var hasTextFilter = !string.IsNullOrWhiteSpace(filterText);
         var hasTypeFilter = _filterType.HasValue;
 
+        // Count all hidden datasets
+        var hiddenCount = 0;
+
         foreach (var group in GroupedDatasets)
         {
-            var filteredDatasets = group.Datasets
-                .Where(dataset => MatchesFilter(dataset, filterText, hasTextFilter, hasTypeFilter))
-                .ToList();
+            var filteredDatasets = new List<DatasetCardViewModel>();
+
+            foreach (var dataset in group.Datasets)
+            {
+                // Step 1: Resolve the Safe Representation if in Safe Mode
+                DatasetCardViewModel? cardToShow = dataset;
+
+                if (!_showNsfw)
+                {
+                    // Get a safe snapshot. This returns:
+                    // - 'dataset' (this) if it's already safe
+                    // - A transient copy pointing to a safe version if it's Mixed but currently NSFW
+                    // - null if it's Pure NSFW
+                    cardToShow = dataset.GetSafeSnapshot();
+                }
+
+                // If card is null (Hidden by Safe Mode), count as hidden and skip
+                if (cardToShow is null)
+                {
+                    hiddenCount++;
+                    continue;
+                }
+
+                // Step 2: Apply Text and Type filters to the *resolved* card
+                // (We filter the snapshot to ensure Text/Description matches the displayed version if needed, 
+                // though typically Name is constant).
+                if (MatchesBasicFilters(cardToShow, filterText, hasTextFilter, hasTypeFilter))
+                {
+                    filteredDatasets.Add(cardToShow);
+                }
+                else
+                {
+                    hiddenCount++;
+                }
+            }
 
             if (filteredDatasets.Count > 0)
             {
@@ -1764,13 +1875,17 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
         }
 
+        HiddenCount = hiddenCount;
         OnPropertyChanged(nameof(HasActiveFilter));
+        OnPropertyChanged(nameof(HiddenCount));
+        OnPropertyChanged(nameof(HasHidden));
+        OnPropertyChanged(nameof(HiddenText));
     }
 
     /// <summary>
-    /// Checks if a dataset matches the current filter criteria.
+    /// Checks basic Text and Type filters (NSFW handled by GetSafeSnapshot in ApplyFilter).
     /// </summary>
-    private bool MatchesFilter(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
+    private bool MatchesBasicFilters(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
     {
         // Check type filter
         if (hasTypeFilter && dataset.Type != _filterType)
@@ -1800,8 +1915,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         _filterText = string.Empty;
         _filterType = null;
+        _showNsfw = false;
         OnPropertyChanged(nameof(FilterText));
         OnPropertyChanged(nameof(FilterType));
+        OnPropertyChanged(nameof(ShowNsfw));
         ApplyFilter();
     }
 
@@ -2024,7 +2141,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     public void Dispose()
     {
-        Dispose(disposing: true);
+        Dispose(true);
         GC.SuppressFinalize(this);
     }
 

@@ -34,6 +34,8 @@ public class DatasetCardViewModel : ObservableObject
     private int? _displayVersion;
     private Dictionary<int, int> _versionBranchedFrom = new();
     private Dictionary<int, string?> _versionDescriptions = new();
+    private Dictionary<int, bool> _versionNsfwFlags = new();
+    private bool _isNsfw;
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -83,6 +85,67 @@ public class DatasetCardViewModel : ObservableObject
     {
         get => _versionDescriptions;
         set => SetProperty(ref _versionDescriptions, value);
+    }
+
+    /// <summary>
+    /// Dictionary of NSFW flags for each version.
+    /// Key is version number, value is whether that version is NSFW.
+    /// </summary>
+    public Dictionary<int, bool> VersionNsfwFlags
+    {
+        get => _versionNsfwFlags;
+        set => SetProperty(ref _versionNsfwFlags, value);
+    }
+
+    /// <summary>
+    /// Whether the current version is marked as NSFW.
+    /// Getting/setting this property updates the NSFW flag for the current version.
+    /// </summary>
+    public bool IsNsfw
+    {
+        get => _isNsfw;
+        set
+        {
+            if (SetProperty(ref _isNsfw, value))
+            {
+                // Also update the version NSFW flags dictionary
+                _versionNsfwFlags[_currentVersion] = value;
+                OnPropertyChanged(nameof(HasAnyNsfwVersion));
+                OnPropertyChanged(nameof(AreAllVersionsNsfw));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether any version of this dataset is marked as NSFW.
+    /// Used for filtering in flattened view.
+    /// </summary>
+    public bool HasAnyNsfwVersion => _versionNsfwFlags.Count > 0 && _versionNsfwFlags.Values.Any(v => v);
+
+    /// <summary>
+    /// Whether ALL versions of this dataset are marked as NSFW.
+    /// Used for filtering in collapsed (non-flattened) view - only hide if all versions are NSFW.
+    /// </summary>
+    public bool AreAllVersionsNsfw
+    {
+        get
+        {
+            // If no versions have NSFW flags set, not all are NSFW
+            if (_versionNsfwFlags.Count == 0)
+                return false;
+
+            // Get all version numbers that exist
+            var allVersions = GetAllVersionNumbers();
+            
+            // Check if every existing version is marked as NSFW
+            foreach (var version in allVersions)
+            {
+                if (!_versionNsfwFlags.TryGetValue(version, out var isNsfw) || !isNsfw)
+                    return false;
+            }
+            
+            return true;
+        }
     }
 
     /// <summary>
@@ -294,6 +357,10 @@ public class DatasetCardViewModel : ObservableObject
                 _currentVersionDescription = _versionDescriptions.GetValueOrDefault(value);
                 OnPropertyChanged(nameof(Description));
                 OnPropertyChanged(nameof(HasDescription));
+                
+                // Update the current version NSFW flag
+                _isNsfw = _versionNsfwFlags.GetValueOrDefault(value, false);
+                OnPropertyChanged(nameof(IsNsfw));
             }
         }
     }
@@ -605,11 +672,15 @@ public class DatasetCardViewModel : ObservableObject
             CurrentVersion = version,
             TotalVersions = TotalVersions,
             DisplayVersion = version,
-            VersionDescriptions = VersionDescriptions
+            VersionDescriptions = VersionDescriptions,
+            VersionNsfwFlags = VersionNsfwFlags
         };
         
         // Set the version-specific description
         card._currentVersionDescription = VersionDescriptions.GetValueOrDefault(version);
+        
+        // Set the version-specific NSFW flag
+        card._isNsfw = VersionNsfwFlags.GetValueOrDefault(version, false);
 
         // Load media files from this specific version folder
         if (Directory.Exists(versionPath))
@@ -826,6 +897,7 @@ public class DatasetCardViewModel : ObservableObject
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
                 VersionDescriptions = metadata.VersionDescriptions ?? new();
+                VersionNsfwFlags = metadata.VersionNsfwFlags ?? new();
                 
                 // Migrate old single Description to V1 if present and no version descriptions exist
                 if (!string.IsNullOrWhiteSpace(metadata.Description) && VersionDescriptions.Count == 0)
@@ -837,6 +909,10 @@ public class DatasetCardViewModel : ObservableObject
                 _currentVersionDescription = VersionDescriptions.GetValueOrDefault(CurrentVersion);
                 OnPropertyChanged(nameof(Description));
                 OnPropertyChanged(nameof(HasDescription));
+                
+                // Set the current version's NSFW flag
+                _isNsfw = VersionNsfwFlags.GetValueOrDefault(CurrentVersion, false);
+                OnPropertyChanged(nameof(IsNsfw));
             }
         }
         catch (IOException)
@@ -866,7 +942,8 @@ public class DatasetCardViewModel : ObservableObject
                 Type = Type,
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
-                VersionDescriptions = VersionDescriptions
+                VersionDescriptions = VersionDescriptions,
+                VersionNsfwFlags = VersionNsfwFlags
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -1008,6 +1085,59 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Returns a version of this card safe for display in Safe Mode.
+    /// If the current card is already safe, returns this.
+    /// If the current card is NSFW but has safe versions (Mixed), returns a snapshot of the latest safe version.
+    /// If the card is completely NSFW (or is a version card that is NSFW), returns null.
+    /// </summary>
+    public DatasetCardViewModel? GetSafeSnapshot()
+    {
+        // 1. If this card is explicitly marked Safe, it is safe to show.
+        if (!IsNsfw) return this;
+
+        // 2. If it is a Version Card (Flattened View) and is NSFW, it must be hidden.
+        if (IsVersionCard) return null;
+
+        // 3. It is a Collapsed Card (Dataset View) and the CURRENT version is NSFW.
+        // We need to check if there is ANY safe version we can display instead.
+        
+        // Find the latest Safe version number
+        var safeVersion = VersionNsfwFlags
+            .Where(kvp => !kvp.Value) // IsNsfw == false
+            .OrderByDescending(kvp => kvp.Key)
+            .Select(kvp => (int?)kvp.Key)
+            .FirstOrDefault();
+            
+        // If we found no safe version explicitly, but V1 exists and isn't flagged NSFW in the dict (e.g. legacy/incomplete metadata), try V1.
+        // (Note: VersionNsfwFlags usually contains all keys, but simple safety check).
+        if (!safeVersion.HasValue && GetAllVersionNumbers().Contains(1))
+        {
+             if (!_versionNsfwFlags.ContainsKey(1) || !_versionNsfwFlags[1])
+             {
+                 safeVersion = 1;
+             }
+        }
+
+        // If still no safe version, the whole dataset is effectively NSFW for Safe Mode. Hide it.
+        if (!safeVersion.HasValue) return null;
+
+        // 4. Create a Safe Snapshot
+        // We create a card that represents the Safe Version but masquerades as the Dataset Card (preserving totals).
+        var snapshot = CreateVersionCard(safeVersion.Value);
+        
+        // Adjust to look like a Collapsed Card
+        snapshot.DisplayVersion = null; // Don't show "V1" badge, show "X Versions" badge logic
+        
+        // Copy Totals from 'this' (the main dataset tracker) so the badge says e.g. "3 Versions" / "150 Images"
+        snapshot.TotalVersions = TotalVersions; 
+        snapshot.TotalImageCountAllVersions = TotalImageCountAllVersions;
+        snapshot.TotalVideoCountAllVersions = TotalVideoCountAllVersions;
+        snapshot.TotalCaptionCountAllVersions = TotalCaptionCountAllVersions;
+
+        return snapshot;
+    }
+
+    /// <summary>
     /// Returns the dataset name for display in editable ComboBox controls.
     /// </summary>
     public override string ToString() => Name;
@@ -1050,4 +1180,10 @@ public class DatasetMetadata
     /// V1 has no entry (it's the original).
     /// </summary>
     public Dictionary<int, int> VersionBranchedFrom { get; set; } = new();
+
+    /// <summary>
+    /// NSFW flags for each version.
+    /// Key is version number, value is whether that version contains NSFW content.
+    /// </summary>
+    public Dictionary<int, bool> VersionNsfwFlags { get; set; } = new();
 }

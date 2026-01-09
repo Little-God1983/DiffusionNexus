@@ -83,6 +83,7 @@ public enum DatasetMetadataChangeType
     Type,
     Description,
     Version,
+    Nsfw,
     All
 }
 
