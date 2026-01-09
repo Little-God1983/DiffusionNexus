@@ -71,6 +71,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     // Sub-tab fields
     private VersionSubTab _selectedSubTab = VersionSubTab.Training;
+    private IDialogService? _dialogService;
 
     /// <summary>
     /// Gets or sets the currently selected sub-tab within the version detail view.
@@ -83,8 +84,19 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
+    /// Automatically forwards to sub-tab ViewModels.
     /// </summary>
-    public IDialogService? DialogService { get; set; }
+    public IDialogService? DialogService
+    {
+        get => _dialogService;
+        set
+        {
+            _dialogService = value;
+            // Forward DialogService to sub-tab ViewModels
+            EpochsTab.DialogService = value;
+            NotesTab.DialogService = value;
+        }
+    }
 
     /// <summary>
     /// ViewModel for the Epochs sub-tab.
