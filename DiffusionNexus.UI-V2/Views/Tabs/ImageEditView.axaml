@@ -16,15 +16,40 @@
 
   <Grid ColumnDefinitions="Auto,*,Auto">
     
-    <!-- Left Side Panel - Image Thumbnails -->
-    <Border Grid.Column="0" Width="120" Background="#1E1E1E" BorderBrush="#333" BorderThickness="0,0,1,0"
-            IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
-      <Grid RowDefinitions="Auto,*">
+    <!-- Left Side Panel - Image Thumbnails (Always visible) -->
+    <Border Grid.Column="0" Width="120" Background="#1E1E1E" BorderBrush="#333" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,Auto,*">
+        <!-- Header with image count -->
         <Border Grid.Row="0" Background="#2A2A2A" Padding="8,6" BorderBrush="#333" BorderThickness="0,0,0,1">
-          <TextBlock Text="{Binding EditorDatasetImages.Count, StringFormat='{}{0} Images'}" FontSize="11" Opacity="0.7" HorizontalAlignment="Center"/>
+          <StackPanel Spacing="2">
+            <TextBlock Text="{Binding FilterStatusText}" FontSize="11" Opacity="0.7" HorizontalAlignment="Center"/>
+            <!-- Show hint when no dataset selected -->
+            <TextBlock Text="Select Dataset" FontSize="9" Opacity="0.5" HorizontalAlignment="Center"
+                       IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNull}}"/>
+          </StackPanel>
         </Border>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <ItemsControl ItemsSource="{Binding EditorDatasetImages}">
+        
+        <!-- Rating Filters -->
+        <Border Grid.Row="1" Background="#252525" Padding="4" BorderBrush="#333" BorderThickness="0,0,0,1">
+          <StackPanel Orientation="Horizontal" Spacing="2" HorizontalAlignment="Center">
+            <ToggleButton Content="+" IsChecked="{Binding ShowReady, Mode=TwoWay}" 
+                          Padding="6,2" FontSize="11" FontWeight="Bold"
+                          ToolTip.Tip="Show Ready/Production images"
+                          Foreground="#4CAF50"/>
+            <ToggleButton Content="-" IsChecked="{Binding ShowTrash, Mode=TwoWay}" 
+                          Padding="6,2" FontSize="11" FontWeight="Bold"
+                          ToolTip.Tip="Show Trash/Rejected images"
+                          Foreground="#F44336"/>
+            <ToggleButton Content="?" IsChecked="{Binding ShowUnrated, Mode=TwoWay}" 
+                          Padding="6,2" FontSize="11" FontWeight="Bold"
+                          ToolTip.Tip="Show Unrated images"
+                          Foreground="#808080"/>
+          </StackPanel>
+        </Border>
+        
+        <!-- Image List -->
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ItemsControl ItemsSource="{Binding FilteredEditorImages}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate><StackPanel Orientation="Vertical"/></ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
@@ -83,10 +108,10 @@
                 </ComboBox.ItemTemplate>
               </ComboBox>
             </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8"
-                        IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="Version:" VerticalAlignment="Center" Opacity="0.7" MinWidth="50"/>
-              <ComboBox ItemsSource="{Binding EditorVersionItems}" SelectedItem="{Binding SelectedEditorVersion, Mode=TwoWay}" MinWidth="120">
+              <ComboBox ItemsSource="{Binding EditorVersionItems}" SelectedItem="{Binding SelectedEditorVersion, Mode=TwoWay}" MinWidth="120"
+                        IsEnabled="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:EditorVersionItem">
                     <TextBlock Text="{Binding DisplayText}" Foreground="#4CAF50"/>
@@ -97,38 +122,52 @@
           </StackPanel>
           <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4"
                   IsVisible="{Binding SelectedEditorDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-          <!-- Tool toggles -->
-          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"/>
+          <!-- Tool toggles - always visible but disabled when no image -->
+          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
+            <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Color" IsChecked="{Binding ImageEditor.IsColorBalancePanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="Color Balance"/>
+                          ToolTip.Tip="Color Balance"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="Brightness &amp; Contrast"/>
+                          ToolTip.Tip="Brightness &amp; Contrast"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Rm BG" IsChecked="{Binding ImageEditor.IsBackgroundRemovalPanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="Remove Background using AI (RMBG-1.4)"/>
+                          ToolTip.Tip="Remove Background using AI (RMBG-1.4)"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.IsBackgroundFillPanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="Fill transparent background with solid color"/>
+                          ToolTip.Tip="Fill transparent background with solid color"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Upscale" IsChecked="{Binding ImageEditor.IsUpscalingPanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="AI Upscaling (4x-UltraSharp)" Background="#5E35B1"/>
+                          ToolTip.Tip="AI Upscaling (4x-UltraSharp)"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
-          <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
-          <!-- Transform buttons -->
-          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
-            <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90°" FontSize="12" FontWeight="Bold"/>
-            <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90°" FontSize="12" FontWeight="Bold"/>
-            <Button Content="180" Command="{Binding ImageEditor.Rotate180Command}" Padding="8,6" ToolTip.Tip="Rotate 180°" FontSize="11"/>
-            <Button Content="H" Command="{Binding ImageEditor.FlipHorizontalCommand}" Padding="10,6" ToolTip.Tip="Flip Horizontal" FontSize="12" FontWeight="Bold"/>
-            <Button Content="V" Command="{Binding ImageEditor.FlipVerticalCommand}" Padding="10,6" ToolTip.Tip="Flip Vertical" FontSize="12" FontWeight="Bold"/>
+          <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4"/>
+          <!-- Transform buttons - always visible but disabled when no image -->
+          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4">
+            <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90°" FontSize="12" FontWeight="Bold"
+                    IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90°" FontSize="12" FontWeight="Bold"
+                    IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <Button Content="180" Command="{Binding ImageEditor.Rotate180Command}" Padding="8,6" ToolTip.Tip="Rotate 180°" FontSize="11"
+                    IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <Button Content="H" Command="{Binding ImageEditor.FlipHorizontalCommand}" Padding="10,6" ToolTip.Tip="Flip Horizontal" FontSize="12" FontWeight="Bold"
+                    IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <Button Content="V" Command="{Binding ImageEditor.FlipVerticalCommand}" Padding="10,6" ToolTip.Tip="Flip Vertical" FontSize="12" FontWeight="Bold"
+                    IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <Border Grid.Column="8"/>
-          <!-- Save buttons -->
+          <!-- Save buttons - hidden until image is loaded -->
           <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
             <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
           </StackPanel>
           <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
-          <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"/>
-          <Button Grid.Column="12" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"/>
+          <!-- Reset and Clear buttons - hidden until image is loaded -->
+          <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"
+                  IsVisible="{Binding ImageEditor.HasImage}"/>
+          <Button Grid.Column="12" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"
+                  IsVisible="{Binding ImageEditor.HasImage}"/>
         </Grid>
       </Border>
       
