@@ -13,6 +13,7 @@ public partial class SettingsViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService _settingsService;
     private readonly ISecureStorage _secureStorage;
+    private readonly IDatasetBackupService? _backupService;
 
     #region Observable Properties
 
@@ -107,6 +108,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _autoBackupLocationError;
 
     /// <summary>
+    /// Whether a backup or restore operation is currently in progress.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isBackupInProgress;
+
+    /// <summary>
     /// Available days for backup interval (1-30).
     /// </summary>
     public IReadOnlyList<int> AvailableBackupDays { get; } = Enumerable.Range(1, 30).ToList();
@@ -150,10 +157,14 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// <summary>
     /// Creates a new SettingsViewModel.
     /// </summary>
-    public SettingsViewModel(IAppSettingsService settingsService, ISecureStorage secureStorage)
+    public SettingsViewModel(
+        IAppSettingsService settingsService, 
+        ISecureStorage secureStorage,
+        IDatasetBackupService? backupService = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
+        _backupService = backupService;
     }
 
     /// <summary>
@@ -163,6 +174,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     {
         _settingsService = null!;
         _secureStorage = null!;
+        _backupService = null;
 
         // Design-time data
         LoraSources =
@@ -504,6 +516,252 @@ public partial class SettingsViewModel : BusyViewModelBase
         category.CategoryChanged -= OnCategoryChanged;
         DatasetCategories.Remove(category);
         HasChanges = true;
+    }
+
+    /// <summary>
+    /// Opens the Dataset Storage folder in the file explorer.
+    /// </summary>
+    [RelayCommand]
+    private void OpenDatasetStorageFolder()
+    {
+        if (string.IsNullOrWhiteSpace(DatasetStoragePath) || !Directory.Exists(DatasetStoragePath))
+        {
+            StatusMessage = "Dataset storage folder is not configured or does not exist.";
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = DatasetStoragePath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening folder: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Opens the Backup Location folder in the file explorer.
+    /// </summary>
+    [RelayCommand]
+    private void OpenBackupLocationFolder()
+    {
+        if (string.IsNullOrWhiteSpace(AutoBackupLocation) || !Directory.Exists(AutoBackupLocation))
+        {
+            StatusMessage = "Backup location is not configured or does not exist.";
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = AutoBackupLocation,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening folder: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Runs a backup immediately.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanExecuteBackup))]
+    private async Task BackupNowAsync()
+    {
+        if (_backupService is null)
+        {
+            StatusMessage = "Backup service is not available.";
+            return;
+        }
+
+        if (_backupService.IsOperationInProgress)
+        {
+            StatusMessage = "A backup or restore operation is already in progress.";
+            return;
+        }
+
+        IsBackupInProgress = true;
+        BackupNowCommand.NotifyCanExecuteChanged();
+        LoadBackupCommand.NotifyCanExecuteChanged();
+
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                var progress = new Progress<BackupProgress>(p =>
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    {
+                        BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
+                    });
+                });
+
+                var result = await _backupService.BackupDatasetsAsync(progress);
+
+                if (result.Success)
+                {
+                    StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
+                }
+                else
+                {
+                    StatusMessage = $"Backup failed: {result.ErrorMessage}";
+                }
+            }, "Running backup...");
+        }
+        finally
+        {
+            IsBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
+            LoadBackupCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private bool CanExecuteBackup()
+    {
+        return AutoBackupEnabled 
+            && !string.IsNullOrWhiteSpace(AutoBackupLocation)
+            && !string.IsNullOrWhiteSpace(DatasetStoragePath)
+            && !IsBackupInProgress;
+    }
+
+    /// <summary>
+    /// Opens a file picker to select a backup ZIP and shows the comparison dialog.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanExecuteLoadBackup))]
+    private async Task LoadBackupAsync()
+    {
+        if (DialogService is null || _backupService is null)
+        {
+            StatusMessage = "Dialog service or backup service is not available.";
+            return;
+        }
+
+        if (_backupService.IsOperationInProgress)
+        {
+            StatusMessage = "A backup or restore operation is already in progress.";
+            return;
+        }
+
+        // Determine starting folder - use configured backup location if available
+        var startFolder = !string.IsNullOrWhiteSpace(AutoBackupLocation) && Directory.Exists(AutoBackupLocation)
+            ? AutoBackupLocation
+            : null;
+
+        // Show file picker for ZIP files
+        var backupPath = await DialogService.ShowOpenFileDialogAsync(
+            "Select Backup to Restore",
+            startFolder ?? string.Empty,
+            "*.zip");
+
+        if (string.IsNullOrEmpty(backupPath))
+        {
+            return; // User cancelled
+        }
+
+        // If backup location wasn't set, set it to the folder containing the selected file
+        if (string.IsNullOrWhiteSpace(AutoBackupLocation))
+        {
+            var backupFolder = Path.GetDirectoryName(backupPath);
+            if (!string.IsNullOrEmpty(backupFolder))
+            {
+                AutoBackupLocation = backupFolder;
+                HasChanges = true;
+            }
+        }
+
+        IsBackupInProgress = true;
+        BackupNowCommand.NotifyCanExecuteChanged();
+        LoadBackupCommand.NotifyCanExecuteChanged();
+
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                // Analyze the backup
+                var backupAnalysis = await _backupService.AnalyzeBackupAsync(backupPath);
+                if (!backupAnalysis.Success)
+                {
+                    StatusMessage = $"Failed to analyze backup: {backupAnalysis.ErrorMessage}";
+                    return;
+                }
+
+                // Get current storage stats
+                var currentStats = await _backupService.GetCurrentStorageStatsAsync();
+
+                // Prepare comparison data
+                var currentData = new Services.BackupCompareData
+                {
+                    Label = "Current",
+                    Date = currentStats.CurrentDate,
+                    DatasetCount = currentStats.DatasetCount,
+                    ImageCount = currentStats.ImageCount,
+                    VideoCount = currentStats.VideoCount,
+                    CaptionCount = currentStats.CaptionCount,
+                    TotalSizeBytes = currentStats.TotalSizeBytes
+                };
+
+                var backupData = new Services.BackupCompareData
+                {
+                    Label = "Backup",
+                    Date = backupAnalysis.BackupDate ?? DateTimeOffset.MinValue,
+                    DatasetCount = backupAnalysis.DatasetCount,
+                    ImageCount = backupAnalysis.ImageCount,
+                    VideoCount = backupAnalysis.VideoCount,
+                    CaptionCount = backupAnalysis.CaptionCount,
+                    TotalSizeBytes = backupAnalysis.TotalSizeBytes
+                };
+
+                // Show comparison dialog
+                var shouldRestore = await DialogService.ShowBackupCompareDialogAsync(currentData, backupData);
+
+                if (!shouldRestore)
+                {
+                    StatusMessage = "Restore cancelled.";
+                    return;
+                }
+
+                // Perform the restore
+                BusyMessage = "Restoring backup...";
+
+                var progress = new Progress<BackupProgress>(p =>
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    {
+                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%)";
+                    });
+                });
+
+                var result = await _backupService.RestoreBackupAsync(backupPath, progress);
+
+                if (result.Success)
+                {
+                    StatusMessage = $"Restore completed: {result.FilesRestored} files restored.";
+                }
+                else
+                {
+                    StatusMessage = $"Restore failed: {result.ErrorMessage}";
+                }
+            }, "Analyzing backup...");
+        }
+        finally
+        {
+            IsBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
+            LoadBackupCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private bool CanExecuteLoadBackup()
+    {
+        return !string.IsNullOrWhiteSpace(DatasetStoragePath) && !IsBackupInProgress;
     }
 
     private void OnLoraSourceChanged(object? sender, EventArgs e)

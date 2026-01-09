@@ -27,6 +27,15 @@ public interface IDialogService
     Task<string?> ShowOpenFileDialogAsync(string title, string? filter = null);
 
     /// <summary>
+    /// Shows an open file dialog with an initial starting folder.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="startFolder">Initial folder to open the dialog in.</param>
+    /// <param name="filter">Optional file filter (e.g., "*.zip").</param>
+    /// <returns>Selected file path, or null if cancelled.</returns>
+    Task<string?> ShowOpenFileDialogAsync(string title, string startFolder, string? filter);
+
+    /// <summary>
     /// Shows a save file dialog.
     /// </summary>
     /// <param name="title">Dialog title.</param>
@@ -127,6 +136,55 @@ public interface IDialogService
     /// <param name="originalFilePath">Full path to the original file.</param>
     /// <returns>Save result with filename and rating, or cancelled result.</returns>
     Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath);
+
+    /// <summary>
+    /// Shows the backup comparison dialog for comparing current data with a backup.
+    /// </summary>
+    /// <param name="currentStats">Statistics about the current dataset storage.</param>
+    /// <param name="backupStats">Analysis results from the selected backup.</param>
+    /// <returns>True if the user chooses to restore, false if cancelled.</returns>
+    Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats);
+}
+
+/// <summary>
+/// Data for one side of the backup comparison (current or backup).
+/// </summary>
+public class BackupCompareData
+{
+    /// <summary>
+    /// Label for this data set (e.g., "Current" or "Backup").
+    /// </summary>
+    public string Label { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Date/time for this data set.
+    /// </summary>
+    public DateTimeOffset Date { get; init; }
+
+    /// <summary>
+    /// Number of datasets.
+    /// </summary>
+    public int DatasetCount { get; init; }
+
+    /// <summary>
+    /// Number of images.
+    /// </summary>
+    public int ImageCount { get; init; }
+
+    /// <summary>
+    /// Number of videos.
+    /// </summary>
+    public int VideoCount { get; init; }
+
+    /// <summary>
+    /// Number of captions.
+    /// </summary>
+    public int CaptionCount { get; init; }
+
+    /// <summary>
+    /// Total size in bytes.
+    /// </summary>
+    public long TotalSizeBytes { get; init; }
 }
 
 /// <summary>
