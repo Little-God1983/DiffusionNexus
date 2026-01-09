@@ -35,6 +35,29 @@ public class DialogService : IDialogService
         return result.FirstOrDefault()?.Path.LocalPath;
     }
 
+    public async Task<string?> ShowOpenFileDialogAsync(string title, string startFolder, string? filter)
+    {
+        var options = new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false
+        };
+
+        // Set starting folder if it exists
+        if (!string.IsNullOrEmpty(startFolder) && Directory.Exists(startFolder))
+        {
+            options.SuggestedStartLocation = await _window.StorageProvider.TryGetFolderFromPathAsync(startFolder);
+        }
+
+        if (!string.IsNullOrEmpty(filter))
+        {
+            options.FileTypeFilter = new[] { new FilePickerFileType(filter) { Patterns = new[] { filter } } };
+        }
+
+        var result = await _window.StorageProvider.OpenFilePickerAsync(options);
+        return result.FirstOrDefault()?.Path.LocalPath;
+    }
+
     public async Task<string?> ShowSaveFileDialogAsync(string title, string? defaultFileName = null, string? filter = null)
     {
         var options = new FilePickerSaveOptions
@@ -166,5 +189,14 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? SaveAsResult.Cancelled();
+    }
+
+    public async Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats)
+    {
+        var dialog = new BackupCompareDialog()
+            .WithData(currentStats, backupStats);
+
+        await dialog.ShowDialog(_window);
+        return dialog.ShouldRestore;
     }
 }

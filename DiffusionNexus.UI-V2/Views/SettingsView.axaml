@@ -161,7 +161,7 @@
                            FontSize="12" 
                            Opacity="0.7"
                            TextWrapping="Wrap"/>
-                <Grid ColumnDefinitions="*,Auto">
+                <Grid ColumnDefinitions="*,Auto,Auto">
                   <TextBox Grid.Column="0"
                            Text="{Binding DatasetStoragePath, Mode=TwoWay}"
                            Watermark="Select dataset storage folder..."/>
@@ -169,6 +169,11 @@
                           Content="Browse..."
                           Command="{Binding BrowseDatasetStorageCommand}"
                           Margin="8,0,0,0"/>
+                  <Button Grid.Column="2"
+                          Content="Open Folder"
+                          Command="{Binding OpenDatasetStorageFolderCommand}"
+                          Margin="4,0,0,0"
+                          ToolTip.Tip="Open the dataset storage folder in file explorer"/>
                 </Grid>
               </StackPanel>
 
@@ -220,7 +225,7 @@
                 <!-- Backup Location -->
                 <StackPanel Spacing="4" IsEnabled="{Binding AutoBackupEnabled}">
                   <TextBlock Text="Backup Location" FontWeight="SemiBold"/>
-                  <Grid ColumnDefinitions="*,Auto">
+                  <Grid ColumnDefinitions="*,Auto,Auto">
                     <TextBox Grid.Column="0"
                              Text="{Binding AutoBackupLocation, Mode=TwoWay}"
                              Watermark="Select backup folder..."/>
@@ -228,6 +233,11 @@
                             Content="Browse..."
                             Command="{Binding BrowseAutoBackupLocationCommand}"
                             Margin="8,0,0,0"/>
+                    <Button Grid.Column="2"
+                            Content="Open Folder"
+                            Command="{Binding OpenBackupLocationFolderCommand}"
+                            Margin="4,0,0,0"
+                            ToolTip.Tip="Open the backup location folder in file explorer"/>
                   </Grid>
                   <!-- Validation Error -->
                   <TextBlock Text="{Binding AutoBackupLocationError}"
@@ -235,6 +245,20 @@
                              FontSize="12"
                              TextWrapping="Wrap"
                              IsVisible="{Binding AutoBackupLocationError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
+                
+                <!-- Backup Actions -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                  <Button Content="Backup Now"
+                          Command="{Binding BackupNowCommand}"
+                          IsEnabled="{Binding !IsBackupInProgress}"
+                          Padding="12,8"
+                          ToolTip.Tip="Run a backup immediately"/>
+                  <Button Content="Load Backup"
+                          Command="{Binding LoadBackupCommand}"
+                          IsEnabled="{Binding !IsBackupInProgress}"
+                          Padding="12,8"
+                          ToolTip.Tip="Select and restore a backup file"/>
                 </StackPanel>
               </StackPanel>
 
