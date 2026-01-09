@@ -4,9 +4,14 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:vmBase="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.Tabs.PresentationSubTabView"
              x:DataType="vm:PresentationTabViewModel">
+  
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+  </UserControl.Resources>
   
   <Design.DataContext>
     <vm:PresentationTabViewModel/>
@@ -132,9 +137,11 @@
               <Border Background="#4CAF50" CornerRadius="4" Padding="6,2">
                 <TextBlock Text="{Binding MediaCount}" FontSize="12" Foreground="White" FontWeight="SemiBold"/>
               </Border>
+              <TextBlock Text="- Add prompts/metadata as captions for each image" 
+                         FontSize="12" Foreground="#666" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
             
-            <!-- Media Grid - reuses the same card style as main dataset view -->
+            <!-- Media Grid - Full cards with caption editing like main dataset -->
             <ItemsControl ItemsSource="{Binding MediaFiles}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -143,40 +150,68 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vmBase:DatasetImageViewModel">
-                  <Border Background="#2A2A2A" CornerRadius="8" Margin="4" Width="160" Height="180"
-                          BorderThickness="2" BorderBrush="#333">
-                    <Grid RowDefinitions="*,Auto">
-                      <!-- Thumbnail -->
+                  <Border Width="340" Margin="8" Background="#2A2A2A" CornerRadius="8" ClipToBounds="True"
+                          BorderBrush="#444" BorderThickness="2">
+                    <Grid RowDefinitions="220,Auto,Auto">
+                      <!-- Image Preview -->
                       <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="6,6,0,0" ClipToBounds="True">
-                        <Image Source="{Binding ThumbnailPath}" 
-                               Stretch="UniformToFill"/>
+                        <Grid>
+                          <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" 
+                                 Stretch="UniformToFill"/>
+                          
+                          <!-- Video Badge -->
+                          <Border IsVisible="{Binding IsVideo}"
+                                  Background="#80000000" CornerRadius="4" Padding="6,3"
+                                  HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8">
+                            <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
+                          </Border>
+                          
+                          <!-- Action Buttons Overlay -->
+                          <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
+                            <Grid ColumnDefinitions="*,Auto">
+                              <Border Grid.Column="0"/>
+                              <Button Grid.Column="1" 
+                                      Content="X" 
+                                      Command="{Binding $parent[ItemsControl].((vm:PresentationTabViewModel)DataContext).DeleteMediaFileCommand}"
+                                      CommandParameter="{Binding}"
+                                      Padding="12,6" 
+                                      FontSize="14"
+                                      Background="#80444444" 
+                                      CornerRadius="4" 
+                                      Foreground="#FF6B6B" 
+                                      FontWeight="Bold"
+                                      ToolTip.Tip="Delete this file"/>
+                            </Grid>
+                          </Border>
+                        </Grid>
                       </Border>
                       
-                      <!-- Video Badge -->
-                      <Border Grid.Row="0" IsVisible="{Binding IsVideo}"
-                              Background="#80000000" CornerRadius="4" Padding="4,2"
-                              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4">
-                        <TextBlock Text="VIDEO" FontSize="10" Foreground="#4FC3F7" FontWeight="Bold"/>
+                      <!-- File Name -->
+                      <Border Grid.Row="1" Padding="10,6" Background="#222">
+                        <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.7" TextTrimming="CharacterEllipsis"/>
                       </Border>
                       
-                      <!-- File Info & Delete -->
-                      <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Background="#252525" Margin="0">
-                        <TextBlock Grid.Column="0" Text="{Binding FileName}" 
-                                   FontSize="11" Margin="6,4"
-                                   TextTrimming="CharacterEllipsis"
-                                   VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" 
-                                Content="X"
-                                Command="{Binding $parent[ItemsControl].((vm:PresentationTabViewModel)DataContext).DeleteMediaFileCommand}"
-                                CommandParameter="{Binding}"
-                                Padding="6,2"
-                                Margin="2"
-                                Background="Transparent"
-                                Foreground="#FF6B6B"
-                                FontWeight="Bold"
-                                FontSize="10"
-                                ToolTip.Tip="Delete this file"/>
-                      </Grid>
+                      <!-- Caption/Metadata Editor -->
+                      <Border Grid.Row="2" Padding="10">
+                        <Grid RowDefinitions="*,Auto">
+                          <TextBox Grid.Row="0" 
+                                   Text="{Binding Caption, Mode=TwoWay}" 
+                                   Watermark="Enter prompt, metadata, or description..."
+                                   TextWrapping="Wrap" 
+                                   AcceptsReturn="True" 
+                                   FontSize="13" 
+                                   MinHeight="80" 
+                                   MaxHeight="120"/>
+                          <StackPanel Grid.Row="1" 
+                                      Orientation="Horizontal" 
+                                      HorizontalAlignment="Right"
+                                      Margin="0,6,0,0" 
+                                      IsVisible="{Binding HasUnsavedChanges}">
+                            <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"/>
+                          </StackPanel>
+                        </Grid>
+                      </Border>
                     </Grid>
                   </Border>
                 </DataTemplate>
