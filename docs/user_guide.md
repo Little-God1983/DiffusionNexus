@@ -1,15 +1,24 @@
 # DiffusionNexus User Guide
 
 ## Overview
-DiffusionNexus is a desktop tool for managing Stable Diffusion LoRA models. It automatically builds a searchable library of your models, fetches metadata from Civitai and generates thumbnail previews when needed. The application is built using Avalonia so it runs on Windows, macOS and Linux.
+DiffusionNexus is a desktop tool for managing Stable Diffusion LoRA models and datasets. It automatically builds a searchable library of your models, fetches metadata from Civitai, generates thumbnail previews, and provides tools for dataset management and image processing. The application is built using Avalonia so it runs on Windows, macOS and Linux.
 
 ## Installation
-1. [Install the .NET 8 Runtime](https://dotnet.microsoft.com/download) for your platform if you don't already have it.
+1. [Install the .NET 10 Runtime](https://dotnet.microsoft.com/download) for your platform if you don't already have it.
 2. Download the latest DiffusionNexus release from the GitHub **Releases** page and extract the archive.
 3. Launch the `DiffusionNexus.UI` executable (or `DiffusionNexus.UI.dll` using `dotnet` on Linux/macOS).
 
 ## Getting Started
-When the application starts you will see the main window with navigation tabs. Most functionality lives under **Lora Helper**. Before using it, open the **Settings** tab:
+When the application starts you will see the main window with navigation tabs:
+- **Dataset Management**: Manage training datasets, versions, and images.
+- **Image Edit**: AI-powered tools for background removal, upscaling, and basic editing.
+- **Captioning**: Edit captions for training images.
+- **Batch Crop/Scale**: Prepare images for training buckets.
+- **Lora Helper**: Organize and browse your LoRA collection.
+- **Settings**: Configuration.
+
+### Lora Helper Configuration
+Before using Lora Helper, open the **Settings** tab:
 
 1. **Civitai API Key** – optional but recommended. Allows downloading additional model metadata.
 2. **Lora Helper Folder Path** – choose the directory containing your LoRA models. All subfolders will be scanned.
