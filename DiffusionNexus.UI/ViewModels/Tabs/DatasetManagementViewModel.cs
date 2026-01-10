@@ -1615,6 +1615,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     GroupedDatasets.Remove(emptyGroup);
                 }
 
+                // Refresh the filtered view to update the UI
+                ApplyFilter();
+
                 _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
                 {
                     Dataset = dataset
@@ -1698,6 +1701,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 GroupedDatasets.Remove(emptyGroup);
             }
+
+            // Refresh the filtered view to update the UI
+            ApplyFilter();
 
             _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
             {
