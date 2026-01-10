@@ -22,9 +22,10 @@ $Configuration = "Release"
 $Runtime = "win-x64"
 $OutputDir = Join-Path $ScriptDir "publish"
 
-# Database paths
-$UserDbPath = Join-Path $env:LOCALAPPDATA "diffusion_nexus.db"
-$DbFilename = "diffusion_nexus.db"
+# Database paths - matches DiffusionNexusCoreDbContext.DatabaseFileName
+$DbFilename = "Diffusion_Nexus-core.db"
+$UserDbDir = Join-Path $env:LOCALAPPDATA "DiffusionNexus\Data"
+$UserDbPath = Join-Path $UserDbDir $DbFilename
 
 function Write-Header {
     param([string]$Text)
@@ -122,6 +123,38 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "BUILD SUCCESSFUL!" -ForegroundColor Green
+
+# Clean up unnecessary build artifacts
+Write-SubHeader "Cleaning Build Artifacts"
+$artifactsRemoved = 0
+
+# Remove EF Core design-time build hosts (not needed at runtime)
+$buildHost472 = Join-Path $OutputDir "BuildHost-net472"
+$buildHostNetcore = Join-Path $OutputDir "BuildHost-netcore"
+if (Test-Path $buildHost472) {
+    Remove-Item -Path $buildHost472 -Recurse -Force
+    Write-Host "Removed: BuildHost-net472" -ForegroundColor Gray
+    $artifactsRemoved++
+}
+if (Test-Path $buildHostNetcore) {
+    Remove-Item -Path $buildHostNetcore -Recurse -Force
+    Write-Host "Removed: BuildHost-netcore" -ForegroundColor Gray
+    $artifactsRemoved++
+}
+
+# Remove ONNX runtime static library stub (not needed at runtime)
+$onnxLib = Join-Path $OutputDir "onnxruntime.lib"
+if (Test-Path $onnxLib) {
+    Remove-Item -Path $onnxLib -Force
+    Write-Host "Removed: onnxruntime.lib" -ForegroundColor Gray
+    $artifactsRemoved++
+}
+
+if ($artifactsRemoved -gt 0) {
+    Write-Host "Cleaned up $artifactsRemoved unnecessary build artifacts." -ForegroundColor Green
+} else {
+    Write-Host "No build artifacts to clean." -ForegroundColor Gray
+}
 
 # Database handling
 Write-SubHeader "Portable Database Setup"
