@@ -4,7 +4,7 @@
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
         x:Class="DiffusionNexus.UI.Views.DiffusionNexusMainWindow"
         x:DataType="vm:DiffusionNexusMainWindowViewModel"
-        Title="Diffusion Nexus"
+        Title="{Binding AppVersion, StringFormat='Diffusion Nexus v{0}'}"
         MinWidth="1300" MinHeight="800"
         Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico"
         x:Name="MainWin">
