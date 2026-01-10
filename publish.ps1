@@ -9,7 +9,8 @@
 param(
     [switch]$SkipDatabasePrompt,
     [switch]$IncludeDatabase,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$ClearDisclaimerAcceptances  # Clear disclaimer acceptances for rollout
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,6 +105,10 @@ if (Test-Path $ZipPath) {
 # Build and publish
 Write-SubHeader "Building and Publishing"
 
+# Clean first to ensure fresh resource embedding
+Write-Host "Cleaning project artifacts..."
+& dotnet clean $Project --configuration $Configuration --verbosity quiet
+
 $publishResult = & dotnet publish $Project `
     --configuration $Configuration `
     --runtime $Runtime `
@@ -185,6 +190,69 @@ if (Test-Path $UserDbPath) {
         $destDbPath = Join-Path $OutputDir $DbFilename
         Copy-Item -Path $UserDbPath -Destination $destDbPath
         Write-Host "Database copied to publish folder." -ForegroundColor Green
+        
+        # Clear DisclaimerAcceptances table for rollout if requested
+        if ($ClearDisclaimerAcceptances) {
+            Write-SubHeader "Clearing Disclaimer Acceptances for Rollout"
+            
+            try {
+                # Create a temporary .NET project to execute the SQLite command
+                $tempDir = Join-Path $env:TEMP "DiffusionNexus_DbCleanup_$(Get-Random)"
+                New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+                
+                $csprojContent = @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+  </ItemGroup>
+</Project>
+"@
+                
+                $programContent = @"
+using Microsoft.Data.Sqlite;
+
+var dbPath = args[0];
+using var connection = new SqliteConnection(`$"Data Source={dbPath}");
+connection.Open();
+
+using var command = connection.CreateCommand();
+command.CommandText = "DELETE FROM [DisclaimerAcceptances];";
+var affected = command.ExecuteNonQuery();
+
+Console.WriteLine(`$"Cleared {affected} disclaimer acceptance record(s).");
+"@
+                
+                Set-Content -Path (Join-Path $tempDir "cleanup.csproj") -Value $csprojContent
+                Set-Content -Path (Join-Path $tempDir "Program.cs") -Value $programContent
+                
+                Push-Location $tempDir
+                try {
+                    Write-Host "Building SQLite cleanup tool..." -ForegroundColor Gray
+                    & dotnet build -c Release --verbosity quiet 2>&1 | Out-Null
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        $result = & dotnet run -c Release --no-build -- $destDbPath 2>&1
+                        Write-Host $result -ForegroundColor Green
+                    } else {
+                        Write-Host "WARNING: Could not build cleanup tool." -ForegroundColor Yellow
+                    }
+                }
+                finally {
+                    Pop-Location
+                }
+                
+                # Cleanup temp directory
+                Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Host "WARNING: Failed to clear DisclaimerAcceptances: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
     } else {
         Write-Host "Skipping database. Users will need existing configs in `$env:LOCALAPPDATA." -ForegroundColor Yellow
     }
