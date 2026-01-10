@@ -34,7 +34,7 @@
       <StackPanel Spacing="16" Width="700" HorizontalAlignment="Left">
         
         <!-- General Settings -->
-        <Expander Header="General" IsExpanded="True" HorizontalAlignment="Stretch">
+        <Expander Header="General" IsExpanded="False" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="12">
               
@@ -55,13 +55,31 @@
                           Margin="8,0,0,0"/>
                 </Grid>
               </StackPanel>
+
+              <!-- Huggingface API Key -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Huggingface API Key" FontWeight="SemiBold"/>
+                <TextBlock Text="Required for downloading models from Huggingface. Get your key from huggingface.co/settings/tokens" 
+                           FontSize="12" 
+                           Opacity="0.7"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Grid.Column="0"
+                           PasswordChar="*" 
+                           Watermark="Paste your API key here"
+                           Text="{Binding HuggingfaceApiKey, Mode=TwoWay}"/>
+                  <Button Grid.Column="1" 
+                          Content="Clear" 
+                          Command="{Binding DeleteHuggingfaceApiKeyCommand}"
+                          Margin="8,0,0,0"/>
+                </Grid>
+              </StackPanel>
               
             </StackPanel>
           </Border>
         </Expander>
 
         <!-- LoRA Viewer (renamed from LoRA Helper) -->
-        <Expander Header="LoRA Viewer" IsExpanded="True" HorizontalAlignment="Stretch">
+        <Expander Header="LoRA Viewer" IsExpanded="False" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="16">
               

@@ -24,6 +24,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _civitaiApiKey;
 
     /// <summary>
+    /// The Huggingface API key (decrypted, in memory only).
+    /// </summary>
+    [ObservableProperty]
+    private string? _huggingfaceApiKey;
+
+    /// <summary>
     /// Whether to show NSFW content by default.
     /// </summary>
     [ObservableProperty]
@@ -337,6 +343,16 @@ public partial class SettingsViewModel : BusyViewModelBase
     private void DeleteApiKey()
     {
         CivitaiApiKey = null;
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Deletes the Huggingface API key.
+    /// </summary>
+    [RelayCommand]
+    private void DeleteHuggingfaceApiKey()
+    {
+        HuggingfaceApiKey = null;
         HasChanges = true;
     }
 
@@ -775,6 +791,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     partial void OnCivitaiApiKeyChanged(string? value) => HasChanges = true;
+    partial void OnHuggingfaceApiKeyChanged(string? value) => HasChanges = true;
     partial void OnShowNsfwChanged(bool value) => HasChanges = true;
     partial void OnGenerateVideoThumbnailsChanged(bool value) => HasChanges = true;
     partial void OnShowVideoPreviewChanged(bool value) => HasChanges = true;

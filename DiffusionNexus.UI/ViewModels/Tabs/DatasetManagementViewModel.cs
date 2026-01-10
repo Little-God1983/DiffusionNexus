@@ -66,7 +66,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     // Filter fields
     private string _filterText = string.Empty;
     private DatasetType? _filterType;
-    private bool _showNsfw;
+    private bool _showNsfw = true;
     private bool _selectedNsfw;
 
     // Sub-tab fields

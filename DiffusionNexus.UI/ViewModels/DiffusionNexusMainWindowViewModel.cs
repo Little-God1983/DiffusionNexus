@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Reflection;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -68,6 +69,12 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private StatusBarViewModel? _statusBar;
+
+    /// <summary>
+    /// Gets the application version from assembly metadata.
+    /// </summary>
+    public string AppVersion { get; } = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     public ObservableCollection<ModuleItem> Modules { get; } = new();
 

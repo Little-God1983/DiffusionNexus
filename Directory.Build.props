@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Version: Major.Minor.Build.Revision -->
+    <Version>1.0.0.0</Version>
+    <AssemblyVersion>$(Version)</AssemblyVersion>
+    <FileVersion>$(Version)</FileVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <!-- Prevent Git commit hash from being appended to version -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>
