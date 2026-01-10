@@ -398,18 +398,71 @@ public class DiffusionNexusCoreDbContext : DbContext
 
     /// <summary>
     /// Gets the default connection string for the core database.
+    /// Checks for portable database (next to executable) first, then falls back to AppData.
     /// </summary>
-    /// <param name="directory">Directory to store the database. Uses app data if null.</param>
+    /// <param name="directory">Directory to store the database. Uses portable-first resolution if null.</param>
     public static string GetConnectionString(string? directory = null)
     {
-        var dir = directory ?? GetDefaultDatabaseDirectory();
+        var dir = directory ?? GetDatabaseDirectory();
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, DatabaseFileName);
         return $"Data Source={path}";
     }
 
     /// <summary>
-    /// Gets the default database directory.
+    /// Gets the database directory using portable-first resolution.
+    /// 1. First checks for database in executable folder (portable mode)
+    /// 2. Falls back to %LOCALAPPDATA%/DiffusionNexus/Data/
+    /// </summary>
+    public static string GetDatabaseDirectory()
+    {
+        // Check for portable database next to executable first
+        var exeDirectory = GetExecutableDirectory();
+        if (exeDirectory is not null)
+        {
+            var portableDbPath = Path.Combine(exeDirectory, DatabaseFileName);
+            if (File.Exists(portableDbPath))
+            {
+                return exeDirectory;
+            }
+        }
+
+        // Fall back to AppData location
+        return GetDefaultDatabaseDirectory();
+    }
+
+    /// <summary>
+    /// Gets the directory where the executable is located.
+    /// Returns null if it cannot be determined.
+    /// </summary>
+    private static string? GetExecutableDirectory()
+    {
+        try
+        {
+            // Get the directory of the main executable
+            var exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                return Path.GetDirectoryName(exePath);
+            }
+
+            // Fallback: try assembly location
+            var assemblyLocation = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            if (!string.IsNullOrEmpty(assemblyLocation))
+            {
+                return Path.GetDirectoryName(assemblyLocation);
+            }
+        }
+        catch
+        {
+            // Ignore errors and fall back to default
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the default database directory in AppData.
     /// </summary>
     public static string GetDefaultDatabaseDirectory()
     {
