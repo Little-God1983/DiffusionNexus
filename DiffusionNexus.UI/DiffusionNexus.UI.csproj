@@ -9,6 +9,8 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>DiffusionNexus.UI</RootNamespace>
     <ApplicationIcon>Assets\AIKnowledgeIcon.ico</ApplicationIcon>
+    <!-- Ensure all content (including Avalonia resources) is included in single-file publish -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
