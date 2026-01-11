@@ -138,7 +138,8 @@ public partial class DatasetManagementView : UserControl
                 var filePath = file.Path.LocalPath;
                 
                 // Use centralized MediaFileExtensions for file type detection
-                if (MediaFileExtensions.IsMediaFile(filePath))
+                // Accept both media files and caption files as valid
+                if (MediaFileExtensions.IsMediaFile(filePath) || MediaFileExtensions.IsCaptionFile(filePath))
                 {
                     hasValid = true;
                 }
@@ -178,7 +179,8 @@ public partial class DatasetManagementView : UserControl
             foreach (var file in Directory.EnumerateFiles(folderPath))
             {
                 // Use centralized MediaFileExtensions for file type detection
-                if (MediaFileExtensions.IsMediaFile(file))
+                // Accept both media files and caption files as valid
+                if (MediaFileExtensions.IsMediaFile(file) || MediaFileExtensions.IsCaptionFile(file))
                     hasValid = true;
                 else
                     hasInvalid = true;
@@ -212,8 +214,8 @@ public partial class DatasetManagementView : UserControl
         var files = e.Data.GetFiles();
         if (files is null) return;
 
-        var mediaFiles = new List<string>();
-        var extractedFromZip = new List<string>();
+        // Collect all file paths from dropped items (files, folders, ZIPs)
+        var allFilePaths = new List<string>();
 
         foreach (var item in files)
         {
@@ -221,49 +223,116 @@ public partial class DatasetManagementView : UserControl
             {
                 var filePath = file.Path.LocalPath;
 
-                // Use centralized MediaFileExtensions for file type detection
-                if (MediaFileExtensions.IsMediaFile(filePath))
+                if (IsZipFile(filePath))
                 {
-                    mediaFiles.Add(filePath);
-                }
-                else if (IsZipFile(filePath))
-                {
+                    // Extract media files from ZIP to temp directory
                     var extracted = ExtractMediaFromZip(filePath);
-                    extractedFromZip.AddRange(extracted);
+                    allFilePaths.AddRange(extracted);
+                }
+                else
+                {
+                    // Add individual file (dialog will filter by allowed extensions)
+                    allFilePaths.Add(filePath);
                 }
             }
             else if (item is IStorageFolder folder)
             {
-                AddMediaFromFolder(folder.Path.LocalPath, mediaFiles);
+                // Add all files from folder (dialog will filter by allowed extensions)
+                CollectFilesFromFolder(folder.Path.LocalPath, allFilePaths);
             }
         }
 
-        mediaFiles.AddRange(extractedFromZip);
-
-        if (mediaFiles.Count == 0)
+        if (allFilePaths.Count == 0)
         {
-            vm.StatusMessage = "No supported media files found in the dropped items.";
+            vm.StatusMessage = "No files found in the dropped items.";
             return;
         }
 
-        await CopyFilesToDatasetAsync(vm, mediaFiles);
-
-        // Cleanup temp files extracted from ZIP
-        foreach (var tempFile in extractedFromZip)
+        // Open the Add Files dialog pre-populated with the dropped files
+        if (vm.DialogService is null)
         {
-            try { if (File.Exists(tempFile)) File.Delete(tempFile); }
-            catch (IOException) { /* File in use, skip cleanup */ }
-            catch (UnauthorizedAccessException) { /* Permission denied, skip cleanup */ }
+            vm.StatusMessage = "Dialog service not available.";
+            return;
         }
-        
-        // Cleanup empty temp directories
-        foreach (var tempFile in extractedFromZip)
+
+        vm.IsFileDialogOpen = true;
+        try
+        {
+            var selectedFiles = await vm.DialogService.ShowFileDropDialogAsync(
+                $"Add Media to: {vm.ActiveDataset.Name}", 
+                allFilePaths);
+
+            if (selectedFiles is null || selectedFiles.Count == 0)
+            {
+                // User cancelled or removed all files - cleanup temp files from ZIP
+                CleanupTempFiles(allFilePaths);
+                return;
+            }
+
+            // Copy selected files to dataset
+            await CopyFilesToDatasetAsync(vm, selectedFiles);
+
+            // Cleanup temp files (those from ZIP extraction)
+            CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
+        }
+        finally
+        {
+            vm.IsFileDialogOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// Collects all file paths from a folder (non-recursive).
+    /// </summary>
+    private static void CollectFilesFromFolder(string folderPath, List<string> filePaths)
+    {
+        if (!Directory.Exists(folderPath)) return;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folderPath))
+            {
+                filePaths.Add(file);
+            }
+        }
+        catch (IOException) { /* Directory access error */ }
+        catch (UnauthorizedAccessException) { /* Permission denied */ }
+    }
+
+    /// <summary>
+    /// Cleans up temporary files extracted from ZIP archives.
+    /// </summary>
+    private static void CleanupTempFiles(IEnumerable<string> tempFiles)
+    {
+        var tempDirs = new HashSet<string>();
+
+        foreach (var tempFile in tempFiles)
         {
             try
             {
-                var dir = Path.GetDirectoryName(tempFile);
-                if (dir is not null && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                if (File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
+                    var dir = Path.GetDirectoryName(tempFile);
+                    if (dir is not null)
+                    {
+                        tempDirs.Add(dir);
+                    }
+                }
+            }
+            catch (IOException) { /* File in use */ }
+            catch (UnauthorizedAccessException) { /* Permission denied */ }
+        }
+
+        // Cleanup empty temp directories
+        foreach (var dir in tempDirs)
+        {
+            try
+            {
+                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                {
                     Directory.Delete(dir);
+                }
             }
             catch (IOException) { /* Directory in use or not empty */ }
             catch (UnauthorizedAccessException) { /* Permission denied */ }
@@ -356,7 +425,8 @@ public partial class DatasetManagementView : UserControl
                 if (string.IsNullOrEmpty(entry.Name)) continue;
 
                 // Use centralized MediaFileExtensions for file type detection
-                if (MediaFileExtensions.IsMediaFile(entry.Name))
+                // Accept both media files and caption files as valid
+                if (MediaFileExtensions.IsMediaFile(entry.Name) || MediaFileExtensions.IsCaptionFile(entry.Name))
                     hasValid = true;
                 else
                     hasInvalid = true;

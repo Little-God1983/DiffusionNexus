@@ -138,6 +138,21 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         return this;
     }
 
+    /// <summary>
+    /// Pre-populates the dialog with initial file paths.
+    /// Files are validated against allowed extensions before being added.
+    /// </summary>
+    /// <param name="filePaths">File paths to pre-populate.</param>
+    public FileDropDialog WithInitialFiles(IEnumerable<string> filePaths)
+    {
+        foreach (var filePath in filePaths)
+        {
+            AddFile(filePath);
+        }
+        NotifyPropertiesChanged();
+        return this;
+    }
+
     #endregion
 
     #region Drag and Drop Handlers
