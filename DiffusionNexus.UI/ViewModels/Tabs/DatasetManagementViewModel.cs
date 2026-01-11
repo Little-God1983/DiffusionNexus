@@ -122,6 +122,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public bool IsStorageConfigured => _state.IsStorageConfigured;
 
     /// <summary>
+    /// Indicates whether storage is configured but no datasets exist yet.
+    /// </summary>
+    public bool IsStorageConfiguredButEmpty => IsStorageConfigured && !IsViewingDataset && FilteredGroupedDatasets.Count == 0;
+
+    /// <summary>
+    /// Indicates whether there are datasets to display in the overview.
+    /// </summary>
+    public bool HasDatasetsToShow => IsStorageConfigured && !IsViewingDataset && FilteredGroupedDatasets.Count > 0;
+
+    /// <summary>
     /// Whether we are currently viewing a dataset's contents (vs overview).
     /// </summary>
     public bool IsViewingDataset => _state.IsViewingDataset;
@@ -527,6 +537,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         // Subscribe to events from other components
         _eventAggregator.ImageSaved += OnImageSaved;
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
+        _eventAggregator.SettingsSaved += OnSettingsSaved;
 
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
@@ -579,6 +590,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             case nameof(IDatasetState.IsStorageConfigured):
                 OnPropertyChanged(nameof(IsStorageConfigured));
+                OnPropertyChanged(nameof(IsStorageConfiguredButEmpty));
+                OnPropertyChanged(nameof(HasDatasetsToShow));
                 break;
             case nameof(IDatasetState.IsViewingDataset):
                 OnPropertyChanged(nameof(IsViewingDataset));
@@ -635,6 +648,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Update the rating on our instance to match - this triggers UI update via PropertyChanged
             matchingImage.RatingStatus = e.NewRating;
         }
+    }
+
+    private async void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
+    {
+        // Re-check storage configuration when settings are saved
+        // This handles the case where the user configures the Dataset Storage Path in Settings
+        await CheckStorageConfigurationAsync();
     }
 
     #endregion
@@ -2056,6 +2076,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         OnPropertyChanged(nameof(HiddenCount));
         OnPropertyChanged(nameof(HasHidden));
         OnPropertyChanged(nameof(HiddenText));
+        OnPropertyChanged(nameof(IsStorageConfiguredButEmpty));
+        OnPropertyChanged(nameof(HasDatasetsToShow));
     }
 
     /// <summary>
@@ -2391,6 +2413,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.ImageSaved -= OnImageSaved;
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
+            _eventAggregator.SettingsSaved -= OnSettingsSaved;
         }
 
         _disposed = true;

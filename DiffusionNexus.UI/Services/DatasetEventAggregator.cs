@@ -281,6 +281,13 @@ public sealed class RefreshDatasetsRequestedEventArgs : DatasetEventArgs
 {
 }
 
+/// <summary>
+/// Event raised when application settings are saved.
+/// </summary>
+public sealed class SettingsSavedEventArgs : DatasetEventArgs
+{
+}
+
 #endregion
 
 /// <summary>
@@ -350,6 +357,11 @@ public interface IDatasetEventAggregator
     /// Raised when the dataset list should be refreshed.
     /// </summary>
     event EventHandler<RefreshDatasetsRequestedEventArgs>? RefreshDatasetsRequested;
+
+    /// <summary>
+    /// Raised when application settings are saved.
+    /// </summary>
+    event EventHandler<SettingsSavedEventArgs>? SettingsSaved;
 
     #endregion
 
@@ -424,6 +436,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
+    void PublishSettingsSaved(SettingsSavedEventArgs args);
 
     #endregion
 }
@@ -458,6 +471,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<RefreshDatasetsRequestedEventArgs>? RefreshDatasetsRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<SettingsSavedEventArgs>? SettingsSaved;
 
     #endregion
 
@@ -608,6 +624,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToSettingsRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishSettingsSaved(SettingsSavedEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(SettingsSaved, args);
     }
 
     #endregion

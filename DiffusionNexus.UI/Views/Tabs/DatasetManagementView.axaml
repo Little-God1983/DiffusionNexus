@@ -223,12 +223,30 @@
         <StackPanel Spacing="16" HorizontalAlignment="Center">
           <TextBlock Text="!" FontSize="64" HorizontalAlignment="Center" Opacity="0.3" Foreground="#FFC107"/>
           <TextBlock Text="Dataset Storage Not Configured" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-          <TextBlock Text="Please configure the Dataset Storage Path in Settings." Opacity="0.6" HorizontalAlignment="Center"/>
+          <TextBlock Text="Please configure the Dataset Storage Path in Settings to get started." Opacity="0.6" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Empty Dataset Overview (storage configured but no datasets) -->
+      <Border IsVisible="{Binding IsStorageConfiguredButEmpty}"
+              Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="16" HorizontalAlignment="Center">
+          <TextBlock Text="📂" FontSize="64" HorizontalAlignment="Center" Opacity="0.4"/>
+          <TextBlock Text="Dataset Storage Ready" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Click '+ New Dataset' to create your first dataset" Opacity="0.6" HorizontalAlignment="Center"/>
+          <Button Content="+ New Dataset" 
+                  Command="{Binding CreateDatasetCommand}"
+                  HorizontalAlignment="Center" 
+                  Padding="16,10" 
+                  FontSize="14" 
+                  Background="#4CAF50" 
+                  Foreground="White"/>
         </StackPanel>
       </Border>
 
       <!-- Dataset Overview -->
-      <ScrollViewer IsVisible="{Binding !IsViewingDataset}" Padding="16">
+      <ScrollViewer IsVisible="{Binding HasDatasetsToShow}" Padding="16">
         <ItemsControl ItemsSource="{Binding FilteredGroupedDatasets}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
