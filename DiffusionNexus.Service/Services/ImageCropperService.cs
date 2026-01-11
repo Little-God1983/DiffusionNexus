@@ -354,11 +354,14 @@ public sealed class ImageCropperService : IImageCropperService
         // Left padding
         if (padResult.ImageX > 0)
         {
-            using var leftSlice = new SKBitmap(Math.Min(padResult.ImageX, originalBitmap.Width), originalBitmap.Height);
+            int sliceWidth = Math.Min(padResult.ImageX, originalBitmap.Width);
+            using var leftSlice = new SKBitmap(sliceWidth, originalBitmap.Height);
             using var leftCanvas = new SKCanvas(leftSlice);
-            leftCanvas.Scale(-1, 1);
-            leftCanvas.Translate(-Math.Min(padResult.ImageX, originalBitmap.Width), 0);
-            leftCanvas.DrawBitmap(originalBitmap, 0, 0);
+            
+            // Extract the left edge of the original image and flip horizontally
+            var sourceRect = SKRect.Create(0, 0, sliceWidth, originalBitmap.Height);
+            var destRect = SKRect.Create(sliceWidth, 0, -sliceWidth, originalBitmap.Height);
+            leftCanvas.DrawBitmap(originalBitmap, sourceRect, destRect);
             
             canvas.DrawBitmap(leftSlice, 0, padResult.ImageY);
         }
@@ -367,11 +370,14 @@ public sealed class ImageCropperService : IImageCropperService
         int rightPadding = padResult.CanvasWidth - padResult.ImageX - originalBitmap.Width;
         if (rightPadding > 0)
         {
-            using var rightSlice = new SKBitmap(Math.Min(rightPadding, originalBitmap.Width), originalBitmap.Height);
+            int sliceWidth = Math.Min(rightPadding, originalBitmap.Width);
+            using var rightSlice = new SKBitmap(sliceWidth, originalBitmap.Height);
             using var rightCanvas = new SKCanvas(rightSlice);
-            rightCanvas.Scale(-1, 1);
-            rightCanvas.Translate(-originalBitmap.Width, 0);
-            rightCanvas.DrawBitmap(originalBitmap, originalBitmap.Width - Math.Min(rightPadding, originalBitmap.Width), 0);
+            
+            // Extract the right edge of the original image and flip horizontally
+            var sourceRect = SKRect.Create(originalBitmap.Width - sliceWidth, 0, sliceWidth, originalBitmap.Height);
+            var destRect = SKRect.Create(sliceWidth, 0, -sliceWidth, originalBitmap.Height);
+            rightCanvas.DrawBitmap(originalBitmap, sourceRect, destRect);
             
             canvas.DrawBitmap(rightSlice, padResult.ImageX + originalBitmap.Width, padResult.ImageY);
         }
@@ -379,11 +385,19 @@ public sealed class ImageCropperService : IImageCropperService
         // Top padding
         if (padResult.ImageY > 0)
         {
-            using var topSlice = new SKBitmap(originalBitmap.Width, Math.Min(padResult.ImageY, originalBitmap.Height));
+            int sliceHeight = Math.Min(padResult.ImageY, originalBitmap.Height);
+            using var topSlice = new SKBitmap(originalBitmap.Width, sliceHeight);
             using var topCanvas = new SKCanvas(topSlice);
+            
+            // Extract the top edge of the original image and flip vertically
+            // Use canvas transform for reliable flipping
+            topCanvas.Save();
             topCanvas.Scale(1, -1);
-            topCanvas.Translate(0, -Math.Min(padResult.ImageY, originalBitmap.Height));
-            topCanvas.DrawBitmap(originalBitmap, 0, 0);
+            topCanvas.Translate(0, -sliceHeight);
+            var sourceRect = SKRect.Create(0, 0, originalBitmap.Width, sliceHeight);
+            var destRect = SKRect.Create(0, 0, originalBitmap.Width, sliceHeight);
+            topCanvas.DrawBitmap(originalBitmap, sourceRect, destRect);
+            topCanvas.Restore();
             
             canvas.DrawBitmap(topSlice, padResult.ImageX, 0);
         }
@@ -392,11 +406,19 @@ public sealed class ImageCropperService : IImageCropperService
         int bottomPadding = padResult.CanvasHeight - padResult.ImageY - originalBitmap.Height;
         if (bottomPadding > 0)
         {
-            using var bottomSlice = new SKBitmap(originalBitmap.Width, Math.Min(bottomPadding, originalBitmap.Height));
+            int sliceHeight = Math.Min(bottomPadding, originalBitmap.Height);
+            using var bottomSlice = new SKBitmap(originalBitmap.Width, sliceHeight);
             using var bottomCanvas = new SKCanvas(bottomSlice);
+            
+            // Extract the bottom edge of the original image and flip vertically
+            // Use canvas transform for reliable flipping
+            bottomCanvas.Save();
             bottomCanvas.Scale(1, -1);
-            bottomCanvas.Translate(0, -originalBitmap.Height);
-            bottomCanvas.DrawBitmap(originalBitmap, 0, originalBitmap.Height - Math.Min(bottomPadding, originalBitmap.Height));
+            bottomCanvas.Translate(0, -sliceHeight);
+            var sourceRect = SKRect.Create(0, originalBitmap.Height - sliceHeight, originalBitmap.Width, sliceHeight);
+            var destRect = SKRect.Create(0, 0, originalBitmap.Width, sliceHeight);
+            bottomCanvas.DrawBitmap(originalBitmap, sourceRect, destRect);
+            bottomCanvas.Restore();
             
             canvas.DrawBitmap(bottomSlice, padResult.ImageX, padResult.ImageY + originalBitmap.Height);
         }
