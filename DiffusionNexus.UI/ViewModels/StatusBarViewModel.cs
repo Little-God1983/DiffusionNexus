@@ -47,6 +47,23 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _hasWarningsOrErrors;
 
+    // Backup-specific progress properties
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusBackground))]
+    [NotifyPropertyChangedFor(nameof(ShowBackupProgress))]
+    private bool _isBackupInProgress;
+
+    [ObservableProperty]
+    private int _backupProgressPercent;
+
+    [ObservableProperty]
+    private string? _backupOperationName;
+
+    /// <summary>
+    /// Whether to show the backup progress bar (only when backup is in progress).
+    /// </summary>
+    public bool ShowBackupProgress => IsBackupInProgress;
+
     /// <summary>
     /// The activity log ViewModel for binding to the log panel.
     /// </summary>
@@ -60,6 +77,10 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     {
         get
         {
+            // Show green when backup is running
+            if (IsBackupInProgress)
+                return "#28A745";
+            
             // Show green when actively working
             if (HasActiveOperation)
                 return "#28A745";
@@ -79,7 +100,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string StatusForeground => StatusSeverity switch
     {
-        ActivitySeverity.Warning when !HasActiveOperation => "#000000",
+        ActivitySeverity.Warning when !HasActiveOperation && !IsBackupInProgress => "#000000",
         _ => "#FFFFFF"
     };
 
@@ -99,6 +120,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.OperationCompleted += OnOperationCompleted;
         _logService.EntryAdded += OnEntryAdded;
         _logService.LogCleared += OnLogCleared;
+        _logService.BackupProgressChanged += OnBackupProgressChanged;
 
         // Initialize counts
         UpdateCounts();
@@ -159,6 +181,17 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void OnBackupProgressChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            IsBackupInProgress = _logService.IsBackupInProgress;
+            BackupProgressPercent = _logService.BackupProgressPercent ?? 0;
+            BackupOperationName = _logService.BackupOperationName;
+            OnPropertyChanged(nameof(ShowBackupProgress));
+        });
+    }
+
     private void OnEntryAdded(object? sender, ActivityLogEntry entry)
     {
         Dispatcher.UIThread.Post(UpdateCounts);
@@ -201,6 +234,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.OperationCompleted -= OnOperationCompleted;
         _logService.EntryAdded -= OnEntryAdded;
         _logService.LogCleared -= OnLogCleared;
+        _logService.BackupProgressChanged -= OnBackupProgressChanged;
 
         _logViewModel.Dispose();
 

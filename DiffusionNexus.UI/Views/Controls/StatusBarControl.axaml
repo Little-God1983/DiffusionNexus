@@ -11,6 +11,28 @@
             <Setter Property="Foreground" Value="#FFFFFF"/>
             <Setter Property="Background" Value="#00000033"/>
         </Style>
+        <!-- Backup progress bar - more prominent -->
+        <Style Selector="ProgressBar.backup-progress">
+            <Setter Property="Foreground" Value="#4CAF50"/>
+            <Setter Property="Background" Value="#1E7E34"/>
+        </Style>
+        <!-- Spinning animation for backup indicator -->
+        <Style Selector="TextBlock.spinning">
+            <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
+            <Setter Property="RenderTransform">
+                <RotateTransform/>
+            </Setter>
+            <Style.Animations>
+                <Animation Duration="0:0:1" IterationCount="INFINITE">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="RotateTransform.Angle" Value="0"/>
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="RotateTransform.Angle" Value="360"/>
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="Auto,Auto">
@@ -26,13 +48,14 @@
         <Border Grid.Row="1" 
                 Background="{Binding StatusBackground}"
                 Height="24">
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
                 
-                <!-- Status Message -->
+                <!-- Status Message (hidden when backup in progress) -->
                 <StackPanel Grid.Column="0" 
                             Orientation="Horizontal" 
                             Spacing="8"
-                            Margin="8,0">
+                            Margin="8,0"
+                            IsVisible="{Binding !ShowBackupProgress}">
                     <TextBlock Text="{Binding StatusMessage}" 
                                Foreground="{Binding StatusForeground}"
                                VerticalAlignment="Center"
@@ -40,7 +63,55 @@
                                TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
                 
-                <!-- Active Operation Progress -->
+                <!-- Backup Progress Bar (shown when backup in progress) -->
+                <Grid Grid.Column="0"
+                      Margin="8,0"
+                      IsVisible="{Binding ShowBackupProgress}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- Spinning hourglass animation -->
+                    <TextBlock Grid.Column="0"
+                               Text="?"
+                               FontSize="14"
+                               VerticalAlignment="Center"
+                               Foreground="{Binding StatusForeground}"
+                               Margin="0,0,8,0"
+                               Classes="spinning"/>
+                    
+                    <!-- Backup operation name -->
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding BackupOperationName, FallbackValue='Backup running...'}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="0,0,12,0"/>
+                    
+                    <!-- Progress bar that fills available space -->
+                    <ProgressBar Grid.Column="2"
+                                 Value="{Binding BackupProgressPercent}"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Height="8"
+                                 VerticalAlignment="Center"
+                                 Classes="backup-progress"/>
+                    
+                    <!-- Percentage text -->
+                    <TextBlock Grid.Column="3"
+                               Text="{Binding BackupProgressPercent, StringFormat='{}{0}%'}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0"/>
+                </Grid>
+                
+                <!-- Active Operation Progress (when not backup) -->
                 <StackPanel Grid.Column="1"
                             Orientation="Horizontal"
                             Spacing="8"
@@ -103,7 +174,7 @@
                 </StackPanel>
                 
                 <!-- Toggle Log Panel Button -->
-                <Button Grid.Column="3"
+                <Button Grid.Column="4"
                         Command="{Binding ToggleLogPanelCommand}"
                         Padding="8,0"
                         Background="Transparent"

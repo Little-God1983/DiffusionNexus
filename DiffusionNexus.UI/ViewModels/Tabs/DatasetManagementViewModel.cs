@@ -346,12 +346,38 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
+    /// Whether a backup is currently in progress.
+    /// </summary>
+    public bool IsBackupInProgress
+    {
+        get => _isBackupInProgress;
+        private set
+        {
+            if (SetProperty(ref _isBackupInProgress, value))
+            {
+                OnPropertyChanged(nameof(BackupButtonContent));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Content for the backup button - shows hourglass when running.
+    /// </summary>
+    public string BackupButtonContent => _isBackupInProgress ? "? Backup Running..." : BackupStatusText;
+
+    /// <summary>
     /// Text to display on the backup status button.
     /// </summary>
     public string BackupStatusText
     {
         get => _backupStatusText;
-        private set => SetProperty(ref _backupStatusText, value);
+        private set
+        {
+            if (SetProperty(ref _backupStatusText, value))
+            {
+                OnPropertyChanged(nameof(BackupButtonContent));
+            }
+        }
     }
 
     #endregion
@@ -751,6 +777,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         _isBackupInProgress = true;
         BackupStatusText = "Backup: Running...";
+        BackupNowCommand.NotifyCanExecuteChanged();
+
+        // Start backup progress tracking in the status bar
+        _activityLog?.StartBackupProgress("Backing up datasets");
 
         try
         {
@@ -759,13 +789,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 {
                     BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
                 });
             });
 
-            var result = await _backupService.BackupDatasetsAsync(progress);
+            // Run backup on a background thread to avoid blocking UI
+            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
 
             if (result.Success)
             {
+                _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
                 
                 // Refresh backup status to show next backup time
@@ -774,18 +807,21 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
             else
             {
+                _activityLog?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
                 StatusMessage = $"Backup failed: {result.ErrorMessage}";
                 BackupStatusText = "Backup: Failed";
             }
         }
         catch (Exception ex)
         {
+            _activityLog?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
             StatusMessage = $"Backup error: {ex.Message}";
             BackupStatusText = "Backup: Error";
         }
         finally
         {
             _isBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -803,6 +839,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         BackupStatusText = "Backup: Running...";
         BackupNowCommand.NotifyCanExecuteChanged();
 
+        // Start backup progress tracking in the status bar
+        _activityLog?.StartBackupProgress("Backing up datasets");
+
         try
         {
             var progress = new Progress<BackupProgress>(p =>
@@ -810,13 +849,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 {
                     BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
                 });
             });
 
-            var result = await _backupService.BackupDatasetsAsync(progress);
+            // Run backup on a background thread to avoid blocking UI
+            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
 
             if (result.Success)
             {
+                _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
                 
                 // Refresh backup status to show next backup time
@@ -825,12 +867,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
             else
             {
+                _activityLog?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
                 StatusMessage = $"Backup failed: {result.ErrorMessage}";
                 BackupStatusText = "Backup: Failed";
             }
         }
         catch (Exception ex)
         {
+            _activityLog?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
             StatusMessage = $"Backup error: {ex.Message}";
             BackupStatusText = "Backup: Error";
         }

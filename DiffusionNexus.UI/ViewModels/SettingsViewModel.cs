@@ -16,6 +16,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly ISecureStorage _secureStorage;
     private readonly IDatasetBackupService? _backupService;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IActivityLogService? _activityLogService;
 
     #region Observable Properties
 
@@ -169,12 +170,14 @@ public partial class SettingsViewModel : BusyViewModelBase
         IAppSettingsService settingsService, 
         ISecureStorage secureStorage,
         IDatasetBackupService? backupService = null,
-        IDatasetEventAggregator? eventAggregator = null)
+        IDatasetEventAggregator? eventAggregator = null,
+        IActivityLogService? activityLogService = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
         _eventAggregator = eventAggregator;
+        _activityLogService = activityLogService;
     }
 
     /// <summary>
@@ -186,6 +189,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _secureStorage = null!;
         _backupService = null;
         _eventAggregator = null;
+        _activityLogService = null;
 
         // Design-time data
         LoraSources =
@@ -616,29 +620,38 @@ public partial class SettingsViewModel : BusyViewModelBase
         BackupNowCommand.NotifyCanExecuteChanged();
         LoadBackupCommand.NotifyCanExecuteChanged();
 
+        // Start backup progress tracking in the status bar
+        _activityLogService?.StartBackupProgress("Backing up datasets");
+
         try
         {
-            await RunBusyAsync(async () =>
+            var progress = new Progress<BackupProgress>(p =>
             {
-                var progress = new Progress<BackupProgress>(p =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 {
-                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    {
-                        BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
-                    });
+                    BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
+                    _activityLogService?.ReportBackupProgress(p.ProgressPercent, p.Phase);
                 });
+            });
 
-                var result = await _backupService.BackupDatasetsAsync(progress);
+            // Run backup on a background thread to avoid blocking UI
+            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
 
-                if (result.Success)
-                {
-                    StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
-                }
-                else
-                {
-                    StatusMessage = $"Backup failed: {result.ErrorMessage}";
-                }
-            }, "Running backup...");
+            if (result.Success)
+            {
+                _activityLogService?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
+                StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
+            }
+            else
+            {
+                _activityLogService?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
+                StatusMessage = $"Backup failed: {result.ErrorMessage}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _activityLogService?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
+            StatusMessage = $"Backup error: {ex.Message}";
         }
         finally
         {

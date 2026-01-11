@@ -16,10 +16,16 @@ public sealed class ActivityLogService : IActivityLogService
     private readonly ConcurrentQueue<ActivityLogEntry> _entries = new();
     private readonly ConcurrentDictionary<Guid, ProgressOperation> _activeOperations = new();
     private readonly object _statusLock = new();
+    private readonly object _backupLock = new();
     
     private int _entryCount;
     private string _currentStatus = DefaultStatus;
     private ActivitySeverity _currentStatusSeverity = ActivitySeverity.Info;
+    
+    // Backup progress tracking
+    private bool _isBackupInProgress;
+    private int? _backupProgressPercent;
+    private string? _backupOperationName;
 
     /// <inheritdoc />
     public int MaxEntries { get; set; } = DefaultMaxEntries;
@@ -49,6 +55,42 @@ public sealed class ActivityLogService : IActivityLogService
     }
 
     /// <inheritdoc />
+    public bool IsBackupInProgress
+    {
+        get
+        {
+            lock (_backupLock)
+            {
+                return _isBackupInProgress;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public int? BackupProgressPercent
+    {
+        get
+        {
+            lock (_backupLock)
+            {
+                return _backupProgressPercent;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public string? BackupOperationName
+    {
+        get
+        {
+            lock (_backupLock)
+            {
+                return _backupOperationName;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public event EventHandler<ActivityLogEntry>? EntryAdded;
 
     /// <inheritdoc />
@@ -62,6 +104,9 @@ public sealed class ActivityLogService : IActivityLogService
 
     /// <inheritdoc />
     public event EventHandler? StatusChanged;
+
+    /// <inheritdoc />
+    public event EventHandler? BackupProgressChanged;
 
     #region Logging
 
@@ -223,6 +268,62 @@ public sealed class ActivityLogService : IActivityLogService
         }
         
         StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    #endregion
+
+    #region Backup Progress
+
+    /// <inheritdoc />
+    public void StartBackupProgress(string operationName)
+    {
+        lock (_backupLock)
+        {
+            _isBackupInProgress = true;
+            _backupProgressPercent = 0;
+            _backupOperationName = operationName;
+        }
+        
+        LogInfo("Backup", $"Starting: {operationName}");
+        BackupProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void ReportBackupProgress(int percent, string? statusMessage = null)
+    {
+        lock (_backupLock)
+        {
+            _backupProgressPercent = Math.Clamp(percent, 0, 100);
+        }
+        
+        if (!string.IsNullOrEmpty(statusMessage))
+        {
+            SetStatus(statusMessage, ActivitySeverity.Info);
+        }
+        
+        BackupProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void CompleteBackupProgress(bool success, string message)
+    {
+        lock (_backupLock)
+        {
+            _isBackupInProgress = false;
+            _backupProgressPercent = null;
+            _backupOperationName = null;
+        }
+        
+        if (success)
+        {
+            LogSuccess("Backup", message);
+        }
+        else
+        {
+            LogError("Backup", message);
+        }
+        
+        BackupProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
     #endregion
