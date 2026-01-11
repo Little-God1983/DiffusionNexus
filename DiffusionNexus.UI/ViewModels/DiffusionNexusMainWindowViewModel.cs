@@ -4,6 +4,7 @@ using System.Reflection;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -52,6 +53,8 @@ public partial class ModuleItem : ObservableObject
 /// </summary>
 public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 {
+    private IActivityLogService? _activityLogService;
+
     [ObservableProperty]
     private bool _isMenuOpen = true;
 
@@ -69,6 +72,9 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private StatusBarViewModel? _statusBar;
+
+    [ObservableProperty]
+    private bool _isBackupInProgress;
 
     /// <summary>
     /// Gets the application version from assembly metadata.
@@ -88,12 +94,23 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     /// </summary>
     public void InitializeStatusBar()
     {
-        var logService = App.Services?.GetService<IActivityLogService>();
-        if (logService is not null)
+        _activityLogService = App.Services?.GetService<IActivityLogService>();
+        if (_activityLogService is not null)
         {
-            StatusBar = new StatusBarViewModel(logService);
-            logService.LogInfo("App", "Application started");
+            StatusBar = new StatusBarViewModel(_activityLogService);
+            _activityLogService.LogInfo("App", "Application started");
+            
+            // Subscribe to backup progress changes
+            _activityLogService.BackupProgressChanged += OnBackupProgressChanged;
         }
+    }
+
+    private void OnBackupProgressChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            IsBackupInProgress = _activityLogService?.IsBackupInProgress ?? false;
+        });
     }
 
     /// <summary>
