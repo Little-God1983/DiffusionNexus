@@ -2001,6 +2001,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             StatusMessage = $"Exported {exportedCount} files successfully.";
             _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+
+            // Open the export location in Explorer
+            OpenFolderInExplorer(destinationPath, result.ExportType == ExportType.Zip);
         }
         catch (Exception ex)
         {
@@ -2010,6 +2013,40 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the specified path in Windows Explorer.
+    /// If isFile is true, opens the containing folder and selects the file.
+    /// </summary>
+    private static void OpenFolderInExplorer(string path, bool isFile)
+    {
+        try
+        {
+            if (isFile && File.Exists(path))
+            {
+                // Open Explorer and select the file
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            else if (Directory.Exists(path))
+            {
+                // Open the folder
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch
+        {
+            // Ignore errors opening Explorer - not critical
         }
     }
 
