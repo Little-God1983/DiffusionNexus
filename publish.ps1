@@ -107,9 +107,9 @@ Write-SubHeader "Building and Publishing"
 
 # Clean first to ensure fresh resource embedding
 Write-Host "Cleaning project artifacts..."
-& dotnet clean $Project --configuration $Configuration --verbosity quiet
+& dotnet clean $Project --configuration $Configuration
 
-$publishResult = & dotnet publish $Project `
+& dotnet publish $Project `
     --configuration $Configuration `
     --runtime $Runtime `
     --self-contained true `

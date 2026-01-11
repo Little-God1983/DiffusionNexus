@@ -335,4 +335,48 @@ public interface IActivityLogService
     int MaxEntries { get; set; }
 
     #endregion
+
+    #region Backup Progress
+
+    /// <summary>
+    /// Starts tracking a backup operation with progress bar display.
+    /// </summary>
+    /// <param name="operationName">Display name of the backup operation.</param>
+    void StartBackupProgress(string operationName);
+
+    /// <summary>
+    /// Updates the current backup progress percentage.
+    /// </summary>
+    /// <param name="percent">Progress percentage (0-100).</param>
+    /// <param name="statusMessage">Optional status message to display.</param>
+    void ReportBackupProgress(int percent, string? statusMessage = null);
+
+    /// <summary>
+    /// Completes the current backup operation.
+    /// </summary>
+    /// <param name="success">Whether the backup completed successfully.</param>
+    /// <param name="message">Completion message.</param>
+    void CompleteBackupProgress(bool success, string message);
+
+    /// <summary>
+    /// Gets whether a backup operation is currently in progress.
+    /// </summary>
+    bool IsBackupInProgress { get; }
+
+    /// <summary>
+    /// Gets the current backup progress percentage (0-100), or null if no backup is running.
+    /// </summary>
+    int? BackupProgressPercent { get; }
+
+    /// <summary>
+    /// Gets the current backup operation name, or null if no backup is running.
+    /// </summary>
+    string? BackupOperationName { get; }
+
+    /// <summary>
+    /// Event raised when backup progress state changes (started, progress updated, or completed).
+    /// </summary>
+    event EventHandler? BackupProgressChanged;
+
+    #endregion
 }

@@ -224,6 +224,12 @@
                               Margin="16,0,0,0"/>
                     <TextBlock Text="Hours" VerticalAlignment="Center"/>
                   </StackPanel>
+                  <!-- Validation Error for Interval -->
+                  <TextBlock Text="{Binding AutoBackupIntervalError}"
+                             Foreground="#FF6B6B"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding AutoBackupIntervalError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                 </StackPanel>
                 
                 <!-- Max Backups -->

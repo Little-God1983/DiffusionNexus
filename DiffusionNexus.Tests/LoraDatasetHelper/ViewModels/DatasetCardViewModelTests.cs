@@ -952,7 +952,7 @@ public class DatasetCardViewModelTests : IDisposable
         var original = new DatasetCardViewModel
         {
             FolderPath = datasetPath,
-            CategoryId = 42,
+            CategoryOrder = 42,  // Use CategoryOrder (persisted to config.json) instead of CategoryId (resolved at runtime)
             Type = DatasetType.Instruction,
             CurrentVersion = 1
         };
@@ -965,7 +965,7 @@ public class DatasetCardViewModelTests : IDisposable
         loaded.LoadMetadata();
 
         // Assert
-        loaded.CategoryId.Should().Be(42);
+        loaded.CategoryOrder.Should().Be(42);  // Check CategoryOrder instead of CategoryId
         loaded.Type.Should().Be(DatasetType.Instruction);
         loaded.VersionDescriptions.Should().ContainKey(1);
         loaded.VersionDescriptions[1].Should().Be("First version");

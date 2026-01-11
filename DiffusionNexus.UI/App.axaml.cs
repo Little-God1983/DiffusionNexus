@@ -206,7 +206,14 @@ public partial class App : Application
         services.AddSingleton<IDatasetState, DatasetStateService>();
 
         // ViewModels (scoped to app lifetime)
-        services.AddScoped<SettingsViewModel>();
+        // SettingsViewModel - use factory to inject all required services including IActivityLogService
+        services.AddScoped<SettingsViewModel>(sp => new SettingsViewModel(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<ISecureStorage>(),
+            sp.GetService<IDatasetBackupService>(),
+            sp.GetService<IDatasetEventAggregator>(),
+            sp.GetService<IActivityLogService>()));
+        
         services.AddScoped<LoraViewerViewModel>();
         
         // LoraDatasetHelperViewModel - use factory to inject all required services

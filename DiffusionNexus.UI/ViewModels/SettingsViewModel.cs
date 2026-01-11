@@ -16,6 +16,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly ISecureStorage _secureStorage;
     private readonly IDatasetBackupService? _backupService;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IActivityLogService? _activityLogService;
 
     #region Observable Properties
 
@@ -116,15 +117,21 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _autoBackupLocationError;
 
     /// <summary>
+    /// Validation error message for backup interval.
+    /// </summary>
+    [ObservableProperty]
+    private string? _autoBackupIntervalError;
+
+    /// <summary>
     /// Whether a backup or restore operation is currently in progress.
     /// </summary>
     [ObservableProperty]
     private bool _isBackupInProgress;
 
     /// <summary>
-    /// Available days for backup interval (1-30).
+    /// Available days for backup interval (0-30).
     /// </summary>
-    public IReadOnlyList<int> AvailableBackupDays { get; } = Enumerable.Range(1, 30).ToList();
+    public IReadOnlyList<int> AvailableBackupDays { get; } = Enumerable.Range(0, 31).ToList();
 
     /// <summary>
     /// Available hours for backup interval (0-23).
@@ -169,12 +176,14 @@ public partial class SettingsViewModel : BusyViewModelBase
         IAppSettingsService settingsService, 
         ISecureStorage secureStorage,
         IDatasetBackupService? backupService = null,
-        IDatasetEventAggregator? eventAggregator = null)
+        IDatasetEventAggregator? eventAggregator = null,
+        IActivityLogService? activityLogService = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
         _eventAggregator = eventAggregator;
+        _activityLogService = activityLogService;
     }
 
     /// <summary>
@@ -186,6 +195,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _secureStorage = null!;
         _backupService = null;
         _eventAggregator = null;
+        _activityLogService = null;
 
         // Design-time data
         LoraSources =
@@ -279,6 +289,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     [RelayCommand]
     private async Task SaveAsync()
     {
+        // Validate backup settings before saving
+        if (!ValidateBackupSettings())
+        {
+            return;
+        }
+
         await RunBusyAsync(async () =>
         {
             var settings = await _settingsService.GetSettingsAsync();
@@ -311,7 +327,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 settings.LoraSources.Add(new LoraSource
                 {
                     Id = sourceVm.Id,
-                    AppSettingsId = 1, // Always link to the singleton settings
+                    AppSettingsId = 1,
                     FolderPath = sourceVm.FolderPath!,
                     IsEnabled = sourceVm.IsEnabled,
                     Order = order++
@@ -517,6 +533,54 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Validates backup settings when auto backup is enabled.
+    /// </summary>
+    /// <returns>True if valid, false otherwise.</returns>
+    private bool ValidateBackupSettings()
+    {
+        // Clear previous errors
+        AutoBackupLocationError = null;
+        AutoBackupIntervalError = null;
+
+        if (!AutoBackupEnabled)
+        {
+            return true;
+        }
+
+        var isValid = true;
+
+        // Check backup location is set
+        if (string.IsNullOrWhiteSpace(AutoBackupLocation))
+        {
+            AutoBackupLocationError = "Backup location is required when automatic backup is enabled.";
+            isValid = false;
+        }
+        else
+        {
+            // Run existing path validation
+            ValidateAutoBackupLocation();
+            if (!string.IsNullOrEmpty(AutoBackupLocationError))
+            {
+                isValid = false;
+            }
+        }
+
+        // Check that either days or hours is > 0
+        if (AutoBackupIntervalDays == 0 && AutoBackupIntervalHours == 0)
+        {
+            AutoBackupIntervalError = "Backup interval must be at least 1 hour or 1 day.";
+            isValid = false;
+        }
+
+        if (!isValid)
+        {
+            StatusMessage = "Please fix the validation errors before saving.";
+        }
+
+        return isValid;
+    }
+
+    /// <summary>
     /// Adds a new dataset category.
     /// </summary>
     [RelayCommand]
@@ -616,29 +680,38 @@ public partial class SettingsViewModel : BusyViewModelBase
         BackupNowCommand.NotifyCanExecuteChanged();
         LoadBackupCommand.NotifyCanExecuteChanged();
 
+        // Start backup progress tracking in the status bar
+        _activityLogService?.StartBackupProgress("Backing up datasets");
+
         try
         {
-            await RunBusyAsync(async () =>
+            var progress = new Progress<BackupProgress>(p =>
             {
-                var progress = new Progress<BackupProgress>(p =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 {
-                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    {
-                        BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
-                    });
+                    BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
+                    _activityLogService?.ReportBackupProgress(p.ProgressPercent, p.Phase);
                 });
+            });
 
-                var result = await _backupService.BackupDatasetsAsync(progress);
+            // Run backup on a background thread to avoid blocking UI
+            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
 
-                if (result.Success)
-                {
-                    StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
-                }
-                else
-                {
-                    StatusMessage = $"Backup failed: {result.ErrorMessage}";
-                }
-            }, "Running backup...");
+            if (result.Success)
+            {
+                _activityLogService?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
+                StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
+            }
+            else
+            {
+                _activityLogService?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
+                StatusMessage = $"Backup failed: {result.ErrorMessage}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _activityLogService?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
+            StatusMessage = $"Backup error: {ex.Message}";
         }
         finally
         {
@@ -812,9 +885,31 @@ public partial class SettingsViewModel : BusyViewModelBase
         HasChanges = true;
         ValidateAutoBackupLocation();
     }
-    partial void OnAutoBackupEnabledChanged(bool value) => HasChanges = true;
-    partial void OnAutoBackupIntervalDaysChanged(int value) => HasChanges = true;
-    partial void OnAutoBackupIntervalHoursChanged(int value) => HasChanges = true;
+    partial void OnAutoBackupEnabledChanged(bool value)
+    {
+        HasChanges = true;
+        // Clear errors when disabling auto backup
+        if (!value)
+        {
+            AutoBackupIntervalError = null;
+            AutoBackupLocationError = null;
+        }
+    }
+
+    partial void OnAutoBackupIntervalDaysChanged(int value)
+    {
+        HasChanges = true;
+        // Clear interval error when user changes value
+        AutoBackupIntervalError = null;
+    }
+
+    partial void OnAutoBackupIntervalHoursChanged(int value)
+    {
+        HasChanges = true;
+        // Clear interval error when user changes value
+        AutoBackupIntervalError = null;
+    }
+
     partial void OnAutoBackupLocationChanged(string? value)
     {
         HasChanges = true;
@@ -832,6 +927,12 @@ public partial class DatasetCategoryViewModel : ObservableObject
     /// Database ID (0 for new categories).
     /// </summary>
     public int Id { get; set; }
+
+    /// <summary>
+    /// Display order (stable across database recreations).
+    /// Default categories: Character=0, Style=1, Concept=2.
+    /// </summary>
+    public int Order { get; set; }
 
     /// <summary>
     /// Category name.

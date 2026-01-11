@@ -150,6 +150,11 @@ public class CreateDatasetResult
     public int? CategoryId { get; init; }
 
     /// <summary>
+    /// The selected category order (stable across database recreations).
+    /// </summary>
+    public int? CategoryOrder { get; init; }
+
+    /// <summary>
     /// The selected category name (optional).
     /// </summary>
     public string? CategoryName { get; init; }

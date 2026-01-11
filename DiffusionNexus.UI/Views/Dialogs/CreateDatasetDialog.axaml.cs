@@ -57,6 +57,7 @@ public partial class CreateDatasetDialog : Window
             Confirmed = true,
             Name = _viewModel.GetSanitizedName(),
             CategoryId = _viewModel.SelectedCategory?.Id,
+            CategoryOrder = _viewModel.SelectedCategory?.Order,
             CategoryName = _viewModel.SelectedCategory?.Name,
             Type = _viewModel.SelectedType,
             IsNsfw = _viewModel.IsNsfw
