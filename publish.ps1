@@ -192,8 +192,16 @@ if (Test-Path $UserDbPath) {
         Write-Host "Database copied to publish folder." -ForegroundColor Green
         
         # Clear DisclaimerAcceptances table for rollout if requested
-        if ($ClearDisclaimerAcceptances) {
-            Write-SubHeader "Clearing Disclaimer Acceptances for Rollout"
+        $shouldSanitize = $ClearDisclaimerAcceptances
+
+        if (-not $shouldSanitize -and -not $SkipDatabasePrompt) {
+            Write-Host ""
+            $resp = Read-Host "Sanitize database (clear personal paths, history, backups)? (Y/N)"
+            $shouldSanitize = $resp -eq "Y" -or $resp -eq "y"
+        }
+
+        if ($shouldSanitize) {
+            Write-SubHeader "Sanitizing Database for Release"
             
             try {
                 # Create a temporary .NET project to execute the SQLite command
@@ -221,10 +229,19 @@ using var connection = new SqliteConnection(`$"Data Source={dbPath}");
 connection.Open();
 
 using var command = connection.CreateCommand();
-command.CommandText = "DELETE FROM [DisclaimerAcceptances];";
-var affected = command.ExecuteNonQuery();
+command.CommandText = @"
+    DELETE FROM [DisclaimerAcceptances];
+    DELETE FROM [LoraSources];
+    UPDATE [AppSettings] 
+    SET AutoBackupEnabled = 0, 
+        AutoBackupLocation = NULL,
+        DatasetStoragePath = NULL,
+        LoraSortSourcePath = NULL,
+        LoraSortTargetPath = NULL;
+";
+var rows = command.ExecuteNonQuery();
 
-Console.WriteLine(`$"Cleared {affected} disclaimer acceptance record(s).");
+Console.WriteLine(`$"Sanitization complete. Database reset for rollout (Rows modified: {rows}).");
 "@
                 
                 Set-Content -Path (Join-Path $tempDir "cleanup.csproj") -Value $csprojContent

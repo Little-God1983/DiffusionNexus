@@ -138,6 +138,17 @@ public class DialogService : IDialogService
         return dialog.ResultFiles;
     }
 
+    public async Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles)
+    {
+        var dialog = new FileDropDialog()
+            .WithTitle(title)
+            .ForMediaAndText()
+            .WithInitialFiles(initialFiles);
+
+        await dialog.ShowDialog(_window);
+        return dialog.ResultFiles;
+    }
+
     public async Task<int> ShowOptionsAsync(string title, string message, params string[] options)
     {
         var dialog = new OptionsDialog

@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -14,6 +15,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IAppSettingsService _settingsService;
     private readonly ISecureStorage _secureStorage;
     private readonly IDatasetBackupService? _backupService;
+    private readonly IDatasetEventAggregator? _eventAggregator;
 
     #region Observable Properties
 
@@ -166,11 +168,13 @@ public partial class SettingsViewModel : BusyViewModelBase
     public SettingsViewModel(
         IAppSettingsService settingsService, 
         ISecureStorage secureStorage,
-        IDatasetBackupService? backupService = null)
+        IDatasetBackupService? backupService = null,
+        IDatasetEventAggregator? eventAggregator = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
+        _eventAggregator = eventAggregator;
     }
 
     /// <summary>
@@ -181,6 +185,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _settingsService = null!;
         _secureStorage = null!;
         _backupService = null;
+        _eventAggregator = null;
 
         // Design-time data
         LoraSources =
@@ -333,6 +338,9 @@ public partial class SettingsViewModel : BusyViewModelBase
 
             HasChanges = false;
             StatusMessage = "Settings saved successfully.";
+
+            // Notify other components that settings have changed
+            _eventAggregator?.PublishSettingsSaved(new SettingsSavedEventArgs());
         }, "Saving settings...");
     }
 

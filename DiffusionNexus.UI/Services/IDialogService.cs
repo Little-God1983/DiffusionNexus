@@ -91,6 +91,14 @@ public interface IDialogService
     Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
 
     /// <summary>
+    /// Shows a drag-and-drop file picker dialog pre-populated with initial files.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="initialFiles">Files to pre-populate the dialog with.</param>
+    /// <returns>List of selected file paths, or null if cancelled.</returns>
+    Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles);
+
+    /// <summary>
     /// Shows an option selection dialog with multiple choices.
     /// </summary>
     /// <param name="title">Dialog title.</param>
