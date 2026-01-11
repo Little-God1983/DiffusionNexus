@@ -97,6 +97,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="settingsService">The application settings service.</param>
     /// <param name="eventAggregator">The event aggregator for inter-component communication.</param>
     /// <param name="state">The shared dataset state service.</param>
+    /// <param name="captioningService">Optional captioning service for AI image captioning.</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service.</param>
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
     /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
@@ -106,6 +107,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IAppSettingsService settingsService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
+        ICaptioningService? captioningService = null, // New
         IVideoThumbnailService? videoThumbnailService = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IImageUpscalingService? upscalingService = null,
@@ -120,7 +122,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded");
 
         // Create tab ViewModels - pass activity log for comprehensive logging
-        DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, videoThumbnailService, backupService, activityLog);
+        DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, captioningService, videoThumbnailService, backupService, activityLog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
         BatchCropScale = new BatchCropScaleTabViewModel(state);
 
@@ -135,7 +137,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null, null, null, null, null, null)
     {
     }
 

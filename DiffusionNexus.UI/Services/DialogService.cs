@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
+using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.Services;
 
@@ -223,5 +224,16 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateVersionResult.Cancelled();
+    }
+
+    public async Task ShowCaptioningDialogAsync(
+        ICaptioningService captioningService,
+        IEnumerable<DatasetCardViewModel> availableDatasets,
+        IDatasetEventAggregator? eventAggregator = null)
+    {
+        var dialog = new CaptioningDialog()
+            .WithDependencies(captioningService, this, availableDatasets, eventAggregator);
+
+        await dialog.ShowDialog(_window);
     }
 }

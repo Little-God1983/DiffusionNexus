@@ -2,6 +2,7 @@ namespace DiffusionNexus.UI.Services;
 
 using DiffusionNexus.UI.ViewModels;
 using System.Collections.ObjectModel;
+using DiffusionNexus.Domain.Services;
 
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
@@ -168,6 +169,17 @@ public interface IDialogService
         int imageCount,
         int videoCount,
         int captionCount);
+
+    /// <summary>
+    /// Shows the auto-captioning dialog.
+    /// </summary>
+    /// <param name="captioningService">The captioning service instance.</param>
+    /// <param name="availableDatasets">List of available datasets to caption.</param>
+    /// <param name="eventAggregator">Event aggregator for updates.</param>
+    Task ShowCaptioningDialogAsync(
+        ICaptioningService captioningService,
+        IEnumerable<DatasetCardViewModel> availableDatasets,
+        IDatasetEventAggregator? eventAggregator = null);
 }
 
 /// <summary>
