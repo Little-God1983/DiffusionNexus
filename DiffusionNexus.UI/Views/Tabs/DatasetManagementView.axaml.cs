@@ -75,7 +75,7 @@ public partial class DatasetManagementView : UserControl
         if (_isInitialized) return;
         _isInitialized = true;
 
-        // Note: DialogService is injected by the parent LoraDatasetHelperView
+        // Note: DialogService is injected by the parent LoraDatasetHelper
         // and forwarded via OnDialogServiceSet()
         
         // Note: CheckStorageConfigurationCommand is called by the parent shell
@@ -264,8 +264,8 @@ public partial class DatasetManagementView : UserControl
 
             if (selectedFiles is null || selectedFiles.Count == 0)
             {
-                // User cancelled or removed all files - cleanup temp files from ZIP
-                CleanupTempFiles(allFilePaths);
+                // User cancelled or removed all files - cleanup only temp files from ZIP extraction
+                CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
                 return;
             }
 
