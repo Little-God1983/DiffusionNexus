@@ -596,6 +596,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             case nameof(IDatasetState.IsViewingDataset):
                 OnPropertyChanged(nameof(IsViewingDataset));
                 OnPropertyChanged(nameof(HasNoImages));
+                // Also notify derived properties that depend on IsViewingDataset
+                OnPropertyChanged(nameof(IsStorageConfiguredButEmpty));
+                OnPropertyChanged(nameof(HasDatasetsToShow));
                 break;
             case nameof(IDatasetState.ActiveDataset):
                 OnPropertyChanged(nameof(ActiveDataset));

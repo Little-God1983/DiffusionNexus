@@ -216,7 +216,7 @@
         </StackPanel>
       </Border>
       
-      <!-- Configuration Warning -->
+      <!-- Configuration Warning (only when NOT viewing dataset) -->
       <Border IsVisible="{Binding !IsStorageConfigured}"
               Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
               HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -227,7 +227,7 @@
         </StackPanel>
       </Border>
 
-      <!-- Empty Dataset Overview (storage configured but no datasets) -->
+      <!-- Empty Dataset Overview (storage configured but no datasets, only when NOT viewing dataset) -->
       <Border IsVisible="{Binding IsStorageConfiguredButEmpty}"
               Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
               HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -245,7 +245,7 @@
         </StackPanel>
       </Border>
 
-      <!-- Dataset Overview -->
+      <!-- Dataset Overview (only when NOT viewing dataset and has datasets) -->
       <ScrollViewer IsVisible="{Binding HasDatasetsToShow}" Padding="16">
         <ItemsControl ItemsSource="{Binding FilteredGroupedDatasets}">
           <ItemsControl.ItemsPanel>
@@ -318,7 +318,7 @@
         </ItemsControl>
       </ScrollViewer>
 
-      <!-- Dataset Detail View with Tabs -->
+      <!-- Dataset Detail View with Tabs (only when viewing dataset) -->
       <TabControl IsVisible="{Binding IsViewingDataset}" Padding="0" Margin="0">
         
         <!-- Tab 1: Training Data -->
