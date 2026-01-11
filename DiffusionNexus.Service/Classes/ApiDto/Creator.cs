@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System.Text.Json.Serialization;
 
@@ -8,10 +7,10 @@ namespace DiffusionNexus.Service.Classes
         public class Creator
         {
             [JsonPropertyName("username")]
-            public string Username { get; set; }
+            public string? Username { get; set; }
 
             [JsonPropertyName("image")]
-            public string Image { get; set; }
+            public string? Image { get; set; }
         }
     }
 }

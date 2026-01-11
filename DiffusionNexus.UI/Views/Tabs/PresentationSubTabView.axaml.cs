@@ -59,6 +59,7 @@ public partial class PresentationSubTabView : UserControl
         dropZone.BorderThickness = new Avalonia.Thickness(3);
     }
 
+#pragma warning disable CS0618 // Type or member is obsolete - Data property is still required for GetFiles extension
     private async void OnDrop(object? sender, DragEventArgs e)
     {
         OnDragLeave(sender, e);
@@ -118,6 +119,7 @@ public partial class PresentationSubTabView : UserControl
 
         return false;
     }
+#pragma warning restore CS0618
 
     private static bool HasSupportedFilesInFolder(string folderPath)
     {

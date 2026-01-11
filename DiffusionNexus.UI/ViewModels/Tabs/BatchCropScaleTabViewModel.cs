@@ -143,8 +143,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 // Clear source folder when dataset is selected
                 if (value is not null && !string.IsNullOrWhiteSpace(SourceFolder))
                 {
-                    _sourceFolder = string.Empty;
-                    OnPropertyChanged(nameof(SourceFolder));
+                    SourceFolder = string.Empty;
                 }
                 _ = LoadDatasetVersionsAsync();
                 UpdateNextVersionNumber();

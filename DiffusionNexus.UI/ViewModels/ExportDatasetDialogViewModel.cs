@@ -11,8 +11,9 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     private readonly List<DatasetImageViewModel> _allMediaFiles;
 
     private ExportType _exportType = ExportType.SingleFiles;
+    private bool _exportProductionReady = true;
     private bool _exportUnrated;
-    private bool _includeFailedImages;
+    private bool _exportTrash;
     private string _datasetName = string.Empty;
 
     /// <summary>
@@ -88,8 +89,26 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether to include unrated images in the export.
-    /// Default: false (only export production-ready images by default).
+    /// Whether to export production-ready (approved) images.
+    /// Default: true.
+    /// </summary>
+    public bool ExportProductionReady
+    {
+        get => _exportProductionReady;
+        set
+        {
+            if (SetProperty(ref _exportProductionReady, value))
+            {
+                OnPropertyChanged(nameof(ToExportCount));
+                OnPropertyChanged(nameof(ToExportText));
+                OnPropertyChanged(nameof(CanExport));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether to export unrated images.
+    /// Default: false.
     /// </summary>
     public bool ExportUnrated
     {
@@ -106,15 +125,15 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether to include failed/rejected images in the export.
+    /// Whether to export trash (rejected) images.
     /// Default: false.
     /// </summary>
-    public bool IncludeFailedImages
+    public bool ExportTrash
     {
-        get => _includeFailedImages;
+        get => _exportTrash;
         set
         {
-            if (SetProperty(ref _includeFailedImages, value))
+            if (SetProperty(ref _exportTrash, value))
             {
                 OnPropertyChanged(nameof(ToExportCount));
                 OnPropertyChanged(nameof(ToExportText));
@@ -154,15 +173,15 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     {
         get
         {
-            // Always start with production-ready files
-            var count = ProductionReadyCount;
+            var count = 0;
             
-            // Add unrated if checkbox is checked
+            if (_exportProductionReady)
+                count += ProductionReadyCount;
+            
             if (_exportUnrated)
                 count += UnratedCount;
             
-            // Add failed if checkbox is checked
-            if (_includeFailedImages)
+            if (_exportTrash)
                 count += TrashCount;
             
             return count;
@@ -205,19 +224,18 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
 
     /// <summary>
     /// Gets the list of files to export based on current settings.
-    /// Always includes production-ready files, optionally includes unrated and/or failed.
     /// </summary>
     public List<DatasetImageViewModel> GetFilesToExport()
     {
-        // Always include production-ready files
-        var files = _allMediaFiles.Where(m => m.IsApproved).ToList();
+        var files = new List<DatasetImageViewModel>();
         
-        // Add unrated if checkbox is checked
+        if (_exportProductionReady)
+            files.AddRange(_allMediaFiles.Where(m => m.IsApproved));
+        
         if (_exportUnrated)
             files.AddRange(_allMediaFiles.Where(m => m.IsUnrated));
         
-        // Add failed if checkbox is checked
-        if (_includeFailedImages)
+        if (_exportTrash)
             files.AddRange(_allMediaFiles.Where(m => m.IsRejected));
         
         return files;
@@ -263,14 +281,19 @@ public class ExportDatasetResult
     public ExportType ExportType { get; init; }
 
     /// <summary>
-    /// Whether to include unrated images in the export.
+    /// Whether to export production-ready images.
+    /// </summary>
+    public bool ExportProductionReady { get; init; }
+
+    /// <summary>
+    /// Whether to export unrated images.
     /// </summary>
     public bool ExportUnrated { get; init; }
 
     /// <summary>
-    /// Whether to include failed images in the export.
+    /// Whether to export trash images.
     /// </summary>
-    public bool IncludeFailedImages { get; init; }
+    public bool ExportTrash { get; init; }
 
     /// <summary>
     /// List of files to export.

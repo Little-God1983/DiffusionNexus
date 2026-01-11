@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System;
     using System.Text.Json.Serialization;
@@ -15,19 +14,19 @@ namespace DiffusionNexus.Service.Classes
             public double SizeKB { get; set; }
 
             [JsonPropertyName("name")]
-            public string Name { get; set; }
+            public string? Name { get; set; }
 
             [JsonPropertyName("type")]
-            public string Type { get; set; }
+            public string? Type { get; set; }
 
             [JsonPropertyName("pickleScanResult")]
-            public string PickleScanResult { get; set; }
+            public string? PickleScanResult { get; set; }
 
             [JsonPropertyName("pickleScanMessage")]
             public string? PickleScanMessage { get; set; }
 
             [JsonPropertyName("virusScanResult")]
-            public string VirusScanResult { get; set; }
+            public string? VirusScanResult { get; set; }
 
             [JsonPropertyName("virusScanMessage")]
             public string? VirusScanMessage { get; set; }
@@ -36,13 +35,13 @@ namespace DiffusionNexus.Service.Classes
             public DateTime ScannedAt { get; set; }
 
             [JsonPropertyName("metadata")]
-            public FileMetadata Metadata { get; set; }
+            public FileMetadata? Metadata { get; set; }
 
             [JsonPropertyName("hashes")]
-            public FileHashes Hashes { get; set; }
+            public FileHashes? Hashes { get; set; }
 
             [JsonPropertyName("downloadUrl")]
-            public string DownloadUrl { get; set; }
+            public string? DownloadUrl { get; set; }
 
             [JsonPropertyName("primary")]
             public bool Primary { get; set; }

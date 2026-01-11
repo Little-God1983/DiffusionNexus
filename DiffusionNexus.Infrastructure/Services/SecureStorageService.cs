@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using DiffusionNexus.Domain.Services;
@@ -71,6 +72,7 @@ public sealed class SecureStorageService : ISecureStorage
 
     #region Windows DPAPI
 
+    [SupportedOSPlatform("windows")]
     private static string EncryptWindows(string plainText)
     {
         var bytes = Encoding.UTF8.GetBytes(plainText);
@@ -78,6 +80,7 @@ public sealed class SecureStorageService : ISecureStorage
         return Convert.ToBase64String(protectedBytes);
     }
 
+    [SupportedOSPlatform("windows")]
     private static string DecryptWindows(byte[] cipherBytes)
     {
         var decrypted = ProtectedData.Unprotect(cipherBytes, null, DataProtectionScope.CurrentUser);
@@ -149,13 +152,13 @@ public sealed class SecureStorageService : ISecureStorage
         Array.Copy(salt, 0, combinedSalt, 0, salt.Length);
         Array.Copy(Pepper, 0, combinedSalt, salt.Length, Pepper.Length);
 
-        using var deriveBytes = new Rfc2898DeriveBytes(
+        // Use static Pbkdf2 method instead of obsolete Rfc2898DeriveBytes constructor
+        return Rfc2898DeriveBytes.Pbkdf2(
             Encoding.UTF8.GetBytes(userSpecific),
             combinedSalt,
             KeyDerivationIterations,
-            HashAlgorithmName.SHA256);
-
-        return deriveBytes.GetBytes(32); // 256 bits for AES-256
+            HashAlgorithmName.SHA256,
+            32); // 256 bits for AES-256
     }
 
     #endregion

@@ -54,8 +54,9 @@ public partial class ExportDatasetDialog : Window
         {
             Confirmed = true,
             ExportType = _viewModel.ExportType,
+            ExportProductionReady = _viewModel.ExportProductionReady,
             ExportUnrated = _viewModel.ExportUnrated,
-            IncludeFailedImages = _viewModel.IncludeFailedImages,
+            ExportTrash = _viewModel.ExportTrash,
             FilesToExport = _viewModel.GetFilesToExport()
         };
         Close(true);

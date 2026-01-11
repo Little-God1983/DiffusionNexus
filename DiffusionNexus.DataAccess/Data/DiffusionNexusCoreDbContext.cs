@@ -446,11 +446,11 @@ public class DiffusionNexusCoreDbContext : DbContext
                 return Path.GetDirectoryName(exePath);
             }
 
-            // Fallback: try assembly location
-            var assemblyLocation = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            if (!string.IsNullOrEmpty(assemblyLocation))
+            // Fallback: use AppContext.BaseDirectory (works with single-file apps)
+            var baseDir = AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(baseDir))
             {
-                return Path.GetDirectoryName(assemblyLocation);
+                return baseDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             }
         }
         catch

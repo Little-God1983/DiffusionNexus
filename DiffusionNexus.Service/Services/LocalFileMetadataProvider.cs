@@ -97,7 +97,7 @@ public class LocalFileMetadataProvider : IModelMetadataProvider
         var root = doc.RootElement;
 
         if (root.TryGetProperty("sd version", out var ver))
-            meta.DiffusionBaseModel = ver.GetString();
+            meta.DiffusionBaseModel = ver.GetString() ?? meta.DiffusionBaseModel;
         if (root.TryGetProperty("type", out var type))
             meta.ModelType = ModelMetadataUtils.ParseModelType(type.GetString());
         if (root.TryGetProperty("tags", out var tags))

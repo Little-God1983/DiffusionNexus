@@ -198,6 +198,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         dropZone.BorderThickness = new Avalonia.Thickness(2);
     }
 
+#pragma warning disable CS0618 // Type or member is obsolete - Data property is still required for GetFiles extension
     private void OnDrop(object? sender, DragEventArgs e)
     {
         // Reset border style
@@ -276,6 +277,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         return (hasValid, hasInvalid);
     }
+#pragma warning restore CS0618
 
     /// <summary>
     /// Analyzes a folder to determine if it contains valid files, invalid files, or both.

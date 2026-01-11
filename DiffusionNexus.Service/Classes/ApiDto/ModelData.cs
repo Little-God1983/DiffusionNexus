@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System.Collections.Generic;
     using System.Text.Json.Serialization;
@@ -12,16 +11,16 @@ namespace DiffusionNexus.Service.Classes
             public int Id { get; set; }
 
             [JsonPropertyName("name")]
-            public string Name { get; set; }
+            public string? Name { get; set; }
 
             [JsonPropertyName("description")]
-            public string Description { get; set; }
+            public string? Description { get; set; }
 
             [JsonPropertyName("allowNoCredit")]
             public bool AllowNoCredit { get; set; }
 
             [JsonPropertyName("allowCommercialUse")]
-            public string AllowCommercialUse { get; set; }
+            public string? AllowCommercialUse { get; set; }
 
             [JsonPropertyName("allowDerivatives")]
             public bool AllowDerivatives { get; set; }
@@ -30,7 +29,7 @@ namespace DiffusionNexus.Service.Classes
             public bool AllowDifferentLicense { get; set; }
 
             [JsonPropertyName("type")]
-            public string Type { get; set; }
+            public string? Type { get; set; }
 
             [JsonPropertyName("minor")]
             public bool Minor { get; set; }
@@ -48,7 +47,7 @@ namespace DiffusionNexus.Service.Classes
             public int NsfwLevel { get; set; }
 
             [JsonPropertyName("availability")]
-            public string Availability { get; set; }
+            public string? Availability { get; set; }
 
             [JsonPropertyName("userId")]
             public int UserId { get; set; }
@@ -60,16 +59,16 @@ namespace DiffusionNexus.Service.Classes
             public bool SupportsGeneration { get; set; }
 
             [JsonPropertyName("stats")]
-            public ModelStats Stats { get; set; }
+            public ModelStats? Stats { get; set; }
 
             [JsonPropertyName("creator")]
-            public Creator Creator { get; set; }
+            public Creator? Creator { get; set; }
 
             [JsonPropertyName("tags")]
-            public List<string> Tags { get; set; }
+            public List<string>? Tags { get; set; }
 
             [JsonPropertyName("modelVersions")]
-            public List<ModelVersion> ModelVersions { get; set; }
+            public List<ModelVersion>? ModelVersions { get; set; }
         }
     }
 }

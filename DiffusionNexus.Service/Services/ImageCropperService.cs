@@ -467,11 +467,13 @@ public sealed class ImageCropperService : IImageCropperService
         var scaledBitmap = new SKBitmap(scaledWidth, scaledHeight);
         using var canvas = new SKCanvas(scaledBitmap);
 
+#pragma warning disable CS0618 // Type or member is obsolete - FilterQuality is still functional for scaling
         using var paint = new SKPaint
         {
             FilterQuality = SKFilterQuality.High,
             IsAntialias = true
         };
+#pragma warning restore CS0618
 
         canvas.DrawBitmap(bitmap, SKRect.Create(0, 0, scaledWidth, scaledHeight), paint);
 

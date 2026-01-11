@@ -116,7 +116,9 @@ public sealed class ImagePreprocessor
                     originalBitmap.Height,
                     maxDimension);
 
+#pragma warning disable CS0618 // Type or member is obsolete - Resize with SKSamplingOptions has different behavior
                 processedBitmap = originalBitmap.Resize(new SKImageInfo(newWidth, newHeight), SKFilterQuality.High);
+#pragma warning restore CS0618
                 if (processedBitmap is null)
                     return ImagePreprocessResult.Failed("Failed to resize image.");
 
@@ -193,7 +195,9 @@ public sealed class ImagePreprocessor
                     originalBitmap.Height,
                     maxDimension);
 
+#pragma warning disable CS0618 // Type or member is obsolete - Resize with SKSamplingOptions has different behavior
                 processedBitmap = originalBitmap.Resize(new SKImageInfo(newWidth, newHeight), SKFilterQuality.High);
+#pragma warning restore CS0618
                 if (processedBitmap is null)
                     return ImagePreprocessResult.Failed("Failed to resize image.");
             }

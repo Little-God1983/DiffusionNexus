@@ -5,6 +5,7 @@ using System.Net;
 
 namespace DiffusionNexus.Service.Services;
 
+#pragma warning disable CS0618 // Type or member is obsolete - ICivitaiApiClient is still in use until migration to ICivitaiClient is complete
 public class LoraMetadataDownloadService
 {
     private readonly ICivitaiApiClient _apiClient;
@@ -88,15 +89,15 @@ public class LoraMetadataDownloadService
         var baseName = model.SafeTensorFileName;
         var CivitaiInfoPath = Path.Combine(folder, baseName + ".civitai.info");
 
-        string previewUrl = String.Empty;
-        string modelId = String.Empty;
+        string? previewUrl = null;
+        string? modelId = null;
 
         bool hasCivitaiInfo = false;
         if (File.Exists(CivitaiInfoPath))
         {
             hasCivitaiInfo = true;
             var CivitaiJson = await File.ReadAllTextAsync(CivitaiInfoPath);
-            (previewUrl, string id, List<string> words, bool? infoNsfw) = ParseInfoJson(CivitaiJson);
+            (previewUrl, string? id, List<string> words, bool? infoNsfw) = ParseInfoJson(CivitaiJson);
             if (!string.IsNullOrWhiteSpace(id))
             {
                 modelId = id;
@@ -147,9 +148,12 @@ public class LoraMetadataDownloadService
                 return new MetadataDownloadResult(MetadataDownloadResultType.Error, null, ex.Message);
             }
 
-            (previewUrl, modelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
-            if (!string.IsNullOrWhiteSpace(modelId))
-                model.ModelId = modelId;
+            (previewUrl, string? newModelId, List<string> words2, bool? nsfw2) = ParseInfoJson(CivitaiInfoJson);
+            if (!string.IsNullOrWhiteSpace(newModelId))
+            {
+                modelId = newModelId;
+                model.ModelId = newModelId;
+            }
             if (words2.Count > 0)
                 model.TrainedWords = words2;
             if (nsfw2.HasValue)
@@ -189,3 +193,4 @@ public class LoraMetadataDownloadService
         return new MetadataDownloadResult(MetadataDownloadResultType.Downloaded, modelId);
     }
 }
+#pragma warning restore CS0618

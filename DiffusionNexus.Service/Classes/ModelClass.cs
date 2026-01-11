@@ -92,7 +92,7 @@ namespace DiffusionNexus.Service.Classes
             }
         }
 
-        public List<FileInfo> AssociatedFilesInfo { get; set; }
+        public List<FileInfo> AssociatedFilesInfo { get; set; } = [];
         public List<string> Tags { get; set; } = new();
 
         private CivitaiBaseCategories _civitaiCategory = CivitaiBaseCategories.UNASSIGNED;

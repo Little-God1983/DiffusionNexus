@@ -712,8 +712,10 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Sets the fill color from a preset.</summary>
-    public void SetBackgroundFillPreset(string preset)
+    public void SetBackgroundFillPreset(string? preset)
     {
+        if (preset is null) return;
+        
         var settings = preset.ToUpperInvariant() switch
         {
             "WHITE" => ImageEditor.BackgroundFillSettings.Presets.White,
