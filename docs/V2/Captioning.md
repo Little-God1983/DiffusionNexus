@@ -38,22 +38,36 @@ The Captioning service enables automatic image caption generation using local vi
 
 | Model | Size | VRAM | Quality | Use Case |
 |-------|------|------|---------|----------|
-| **Qwen 2.5 VL 7B** | ~5 GB | ~8 GB | ????? | Recommended for most users |
+| **Qwen 3 VL 8B** | ~5.5 GB | ~8 GB | ????? | Recommended - Latest and most capable |
+| **Qwen 2.5 VL 7B** | ~5 GB | ~8 GB | ????? | Good alternative with proven stability |
 | **LLaVA v1.6 34B** | ~20 GB | ~24 GB | ????? | Maximum quality, requires high-end GPU |
 
 ### Model Details
+
+#### Qwen 3 VL 8B (Q4_K_M) - Recommended
+- **Architecture**: Qwen3-VL (Latest)
+- **Prompt Format**: ChatML (`<|im_start|>`, `<|im_end|>`)
+- **GGUF Source**: [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF)
+- **Key Features**:
+  - 256K native context (expandable to 1M)
+  - Visual Agent capabilities (operates PC/mobile GUIs)
+  - 3D grounding for spatial reasoning
+  - 32-language OCR support
+  - Hours-long video understanding
+  - Enhanced STEM/Math reasoning
+- **Best for**: Most users - best balance of quality, features, and resource usage
 
 #### Qwen 2.5 VL 7B (Q4_K_M)
 - **Architecture**: Qwen2.5-VL
 - **Prompt Format**: ChatML (`<|im_start|>`, `<|im_end|>`)
 - **GGUF Source**: [bartowski/Qwen2.5-VL-7B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF)
-- **Best for**: General purpose captioning with reasonable resource usage
+- **Best for**: Proven stability, fallback option if Qwen 3 has compatibility issues
 
 #### LLaVA v1.6 34B (Q4_K_M)
 - **Architecture**: LLaVA-NeXT (34B parameter)
 - **Prompt Format**: Vicuna (`USER:`, `ASSISTANT:`)
 - **GGUF Source**: [cjpais/llava-v1.6-34b-gguf](https://huggingface.co/cjpais/llava-v1.6-34b-gguf)
-- **Best for**: Highest quality captions, detailed descriptions
+- **Best for**: Highest quality captions when you have 24GB+ VRAM
 
 ## Requirements
 
@@ -90,10 +104,12 @@ Models are stored in:
 Example structure:
 ```
 CaptioningModels/
-??? Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf          (~5 GB)
-??? Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf      (~1.5 GB)
-??? llava-v1.6-34b.Q4_K_M.gguf                   (~20 GB)
-??? mmproj-model-f16.gguf                        (~600 MB)
+??? Qwen3-VL-8B-Instruct-Q4_K_M.gguf              (~5.5 GB)
+??? Qwen3-VL-8B-Instruct-mmproj-f16.gguf          (~1.6 GB)
+??? Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf            (~5 GB)
+??? Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf        (~1.5 GB)
+??? llava-v1.6-34b.Q4_K_M.gguf                    (~20 GB)
+??? mmproj-model-f16.gguf                         (~600 MB)
 ```
 
 ## Usage
@@ -120,7 +136,7 @@ if (!_captioningService.IsGpuAvailable)
     Console.WriteLine("Warning: GPU not available, captioning will be slow!");
 }
 
-// Download a model (one-time)
+// Download a model (one-time) - Qwen 3 VL recommended
 await _captioningService.DownloadModelAsync(
     CaptioningModelType.Qwen3_VL_8B,
     new Progress<ModelDownloadProgress>(p => 
@@ -305,7 +321,10 @@ The service handles errors gracefully:
 1. **Batch Size**: Process images in batches to avoid repeated model loading
 2. **Image Size**: Smaller images (< 2048px) process faster
 3. **GPU Memory**: Close other GPU-intensive apps before captioning
-4. **Model Choice**: Use Qwen 2.5 VL 7B for speed, LLaVA 34B for quality
+4. **Model Choice**: 
+   - Use **Qwen 3 VL 8B** for best quality/speed ratio (recommended)
+   - Use **Qwen 2.5 VL 7B** for proven stability
+   - Use **LLaVA 34B** only if you have 24GB+ VRAM and need maximum quality
 5. **Temperature**: Lower values (0.3-0.5) are faster than higher values
 
 ## Troubleshooting

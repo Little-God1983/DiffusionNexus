@@ -22,15 +22,25 @@ public sealed class CaptioningModelManager
     private const string LLaVaClipProjectorUrl = "https://huggingface.co/cjpais/llava-v1.6-34b-gguf/resolve/main/mmproj-model-f16.gguf";
     private const long ExpectedLLaVaClipSizeBytes = 600_000_000; // ~600MB
 
-    // Qwen 3 VL 8B Model
-    private const string Qwen3VLModelFileName = "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
-    private const string Qwen3VLModelUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
-    private const long ExpectedQwen3VLSizeBytes = 5_000_000_000; // ~5GB
+    // Qwen 2.5 VL 7B Model
+    private const string Qwen25VLModelFileName = "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
+    private const string Qwen25VLModelUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
+    private const long ExpectedQwen25VLSizeBytes = 5_000_000_000; // ~5GB
 
-    // Qwen CLIP Projector (required for vision)
-    private const string Qwen3VLClipProjectorFileName = "Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
-    private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
-    private const long ExpectedQwen3VLClipSizeBytes = 1_500_000_000; // ~1.5GB
+    // Qwen 2.5 VL CLIP Projector
+    private const string Qwen25VLClipProjectorFileName = "Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
+    private const string Qwen25VLClipProjectorUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
+    private const long ExpectedQwen25VLClipSizeBytes = 1_500_000_000; // ~1.5GB
+
+    // Qwen 3 VL 8B Model (Official Qwen repo)
+    private const string Qwen3VLModelFileName = "Qwen3-VL-8B-Instruct-Q4_K_M.gguf";
+    private const string Qwen3VLModelUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf";
+    private const long ExpectedQwen3VLSizeBytes = 5_500_000_000; // ~5.5GB
+
+    // Qwen 3 VL CLIP Projector (mmproj)
+    private const string Qwen3VLClipProjectorFileName = "Qwen3-VL-8B-Instruct-mmproj-f16.gguf";
+    private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-mmproj-f16.gguf";
+    private const long ExpectedQwen3VLClipSizeBytes = 1_600_000_000; // ~1.6GB
 
     private readonly string _modelsBasePath;
     private readonly HttpClient _httpClient;
@@ -66,6 +76,7 @@ public sealed class CaptioningModelManager
     public string GetModelPath(CaptioningModelType modelType) => modelType switch
     {
         CaptioningModelType.LLaVA_v1_6_34B => Path.Combine(_modelsBasePath, LLaVaModelFileName),
+        CaptioningModelType.Qwen2_5_VL_7B => Path.Combine(_modelsBasePath, Qwen25VLModelFileName),
         CaptioningModelType.Qwen3_VL_8B => Path.Combine(_modelsBasePath, Qwen3VLModelFileName),
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
@@ -76,6 +87,7 @@ public sealed class CaptioningModelManager
     public string GetClipProjectorPath(CaptioningModelType modelType) => modelType switch
     {
         CaptioningModelType.LLaVA_v1_6_34B => Path.Combine(_modelsBasePath, LLaVaClipProjectorFileName),
+        CaptioningModelType.Qwen2_5_VL_7B => Path.Combine(_modelsBasePath, Qwen25VLClipProjectorFileName),
         CaptioningModelType.Qwen3_VL_8B => Path.Combine(_modelsBasePath, Qwen3VLClipProjectorFileName),
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
@@ -86,6 +98,7 @@ public sealed class CaptioningModelManager
     public long GetExpectedModelSize(CaptioningModelType modelType) => modelType switch
     {
         CaptioningModelType.LLaVA_v1_6_34B => ExpectedLLaVaSizeBytes,
+        CaptioningModelType.Qwen2_5_VL_7B => ExpectedQwen25VLSizeBytes,
         CaptioningModelType.Qwen3_VL_8B => ExpectedQwen3VLSizeBytes,
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
@@ -96,7 +109,8 @@ public sealed class CaptioningModelManager
     public static string GetDisplayName(CaptioningModelType modelType) => modelType switch
     {
         CaptioningModelType.LLaVA_v1_6_34B => "LLaVA v1.6 34B",
-        CaptioningModelType.Qwen3_VL_8B => "Qwen 2.5 VL 7B",
+        CaptioningModelType.Qwen2_5_VL_7B => "Qwen 2.5 VL 7B",
+        CaptioningModelType.Qwen3_VL_8B => "Qwen 3 VL 8B",
         _ => modelType.ToString()
     };
 
@@ -106,7 +120,8 @@ public sealed class CaptioningModelManager
     public static string GetDescription(CaptioningModelType modelType) => modelType switch
     {
         CaptioningModelType.LLaVA_v1_6_34B => "High quality vision-language model. Excellent for detailed descriptions. Requires ~20GB disk space and significant GPU VRAM.",
-        CaptioningModelType.Qwen3_VL_8B => "Efficient vision-language model with strong performance. Good balance of quality and resource usage. Requires ~5GB disk space.",
+        CaptioningModelType.Qwen2_5_VL_7B => "Efficient vision-language model with strong performance. Good balance of quality and resource usage. Requires ~5GB disk space.",
+        CaptioningModelType.Qwen3_VL_8B => "Most powerful Qwen VLM. Features 256K context, visual agent capabilities, 3D grounding, and 32-language OCR. Requires ~5.5GB disk space.",
         _ => "Unknown model."
     };
 
@@ -190,6 +205,7 @@ public sealed class CaptioningModelManager
             var (modelUrl, modelPath, modelSize) = modelType switch
             {
                 CaptioningModelType.LLaVA_v1_6_34B => (LLaVaModelUrl, GetModelPath(modelType), ExpectedLLaVaSizeBytes),
+                CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLModelUrl, GetModelPath(modelType), ExpectedQwen25VLSizeBytes),
                 CaptioningModelType.Qwen3_VL_8B => (Qwen3VLModelUrl, GetModelPath(modelType), ExpectedQwen3VLSizeBytes),
                 _ => throw new ArgumentOutOfRangeException(nameof(modelType))
             };
@@ -197,6 +213,7 @@ public sealed class CaptioningModelManager
             var (clipUrl, clipPath, clipSize) = modelType switch
             {
                 CaptioningModelType.LLaVA_v1_6_34B => (LLaVaClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedLLaVaClipSizeBytes),
+                CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedQwen25VLClipSizeBytes),
                 CaptioningModelType.Qwen3_VL_8B => (Qwen3VLClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedQwen3VLClipSizeBytes),
                 _ => throw new ArgumentOutOfRangeException(nameof(modelType))
             };

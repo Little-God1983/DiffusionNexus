@@ -430,7 +430,17 @@ public sealed class CaptioningService : ICaptioningService
                 ASSISTANT:
                 """,
 
-            // Qwen uses ChatML format
+            // Qwen 2.5 VL uses ChatML format
+            CaptioningModelType.Qwen2_5_VL_7B => $"""
+                <|im_start|>system
+                You are a helpful assistant.<|im_end|>
+                <|im_start|>user
+                <image>
+                {systemPrompt}<|im_end|>
+                <|im_start|>assistant
+                """,
+
+            // Qwen 3 VL uses ChatML format (same as 2.5)
             CaptioningModelType.Qwen3_VL_8B => $"""
                 <|im_start|>system
                 You are a helpful assistant.<|im_end|>
@@ -452,6 +462,7 @@ public sealed class CaptioningService : ICaptioningService
         return modelType switch
         {
             CaptioningModelType.LLaVA_v1_6_34B => ["USER:", "</s>"],
+            CaptioningModelType.Qwen2_5_VL_7B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             CaptioningModelType.Qwen3_VL_8B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             _ => []
         };

@@ -8,12 +8,20 @@ This project provides automatic image caption generation using local VLM (Vision
 
 ## Features
 
-- ??? **Vision-Language Models**: LLaVA v1.6 34B and Qwen 2.5 VL 7B support
+- ??? **Vision-Language Models**: Qwen 3 VL 8B, Qwen 2.5 VL 7B, and LLaVA v1.6 34B support
 - ?? **GPU Accelerated**: NVIDIA CUDA 12 backend (supports RTX 50XX with CUDA 12.8)
 - ?? **Model Management**: Automatic download, status tracking, file validation
 - ?? **Batch Processing**: Process entire datasets with progress reporting
 - ? **Image Preprocessing**: Automatic validation and resizing (max 2048px)
 - ?? **Configurable**: Trigger words, blacklisted words, temperature control
+
+## Supported Models
+
+| Model | Size | Recommended For |
+|-------|------|-----------------|
+| **Qwen 3 VL 8B** ? | ~5.5 GB | Most users (best quality/speed) |
+| **Qwen 2.5 VL 7B** | ~5 GB | Proven stability |
+| **LLaVA v1.6 34B** | ~20 GB | Maximum quality (24GB+ VRAM) |
 
 ## Dependencies
 
