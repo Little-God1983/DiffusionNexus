@@ -262,6 +262,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             if (SetProperty(ref _selectedCategory, value) && ActiveDataset is not null)
             {
                 ActiveDataset.CategoryId = value?.Id;
+                ActiveDataset.CategoryOrder = value?.Order;
                 ActiveDataset.CategoryName = value?.Name;
                 ActiveDataset.SaveMetadata();
                 _state.StatusMessage = value is not null
@@ -1028,6 +1029,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             AvailableCategories.Add(new DatasetCategoryViewModel
             {
                 Id = category.Id,
+                Order = category.Order,
                 Name = category.Name,
                 Description = category.Description,
                 IsDefault = category.IsDefault
@@ -1056,10 +1058,26 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             Datasets.Clear();
             GroupedDatasets.Clear();
 
+            // Build lookup from Order to Category for resolving CategoryId from CategoryOrder
+            var categoryByOrder = AvailableCategories.ToDictionary(c => c.Order);
+
             var folders = Directory.GetDirectories(settings.DatasetStoragePath);
             foreach (var folder in folders.OrderBy(f => Path.GetFileName(f)))
             {
                 var card = DatasetCardViewModel.FromFolder(folder);
+                
+                // Resolve CategoryId from CategoryOrder
+                if (card.CategoryOrder.HasValue && categoryByOrder.TryGetValue(card.CategoryOrder.Value, out var category))
+                {
+                    card.CategoryId = category.Id;
+                    card.CategoryName = category.Name;
+                }
+                else
+                {
+                    card.CategoryId = null;
+                    card.CategoryName = null;
+                }
+                
                 Datasets.Add(card);
             }
 
@@ -1084,9 +1102,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
             }
 
-            // Add uncategorized datasets (including those with invalid/orphaned category IDs)
+            // Add uncategorized datasets (including those with invalid/orphaned category orders)
             var uncategorizedDatasets = Datasets
-                .Where(d => d.CategoryId is null || !validCategoryIds.Contains(d.CategoryId.Value))
+                .Where(d => d.CategoryId is null)
                 .ToList();
                 
             if (uncategorizedDatasets.Count > 0)
@@ -1355,6 +1373,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 ImageCount = 0,
                 VideoCount = 0,
                 CategoryId = result.CategoryId,
+                CategoryOrder = result.CategoryOrder,
                 CategoryName = result.CategoryName,
                 Type = result.Type,
                 IsNsfw = result.IsNsfw

@@ -26,6 +26,7 @@ public class DatasetCardViewModel : ObservableObject
     private string? _thumbnailPath;
     private bool _isSelected;
     private int? _categoryId;
+    private int? _categoryOrder;
     private string? _categoryName;
     private DatasetType? _type;
     private int _currentVersion = 1;
@@ -289,7 +290,7 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Category ID for this dataset.
+    /// Category ID for this dataset (resolved from database at runtime).
     /// </summary>
     public int? CategoryId
     {
@@ -302,6 +303,16 @@ public class DatasetCardViewModel : ObservableObject
                 CategoryChanged?.Invoke(this, EventArgs.Empty);
             }
         }
+    }
+
+    /// <summary>
+    /// Category order for this dataset (stable across database recreations).
+    /// This is what gets persisted to config.json.
+    /// </summary>
+    public int? CategoryOrder
+    {
+        get => _categoryOrder;
+        set => SetProperty(ref _categoryOrder, value);
     }
 
     /// <summary>
@@ -690,6 +701,7 @@ public class DatasetCardViewModel : ObservableObject
             Name = Name,
             FolderPath = FolderPath,
             CategoryId = CategoryId,
+            CategoryOrder = CategoryOrder,
             CategoryName = CategoryName,
             Type = Type,
             IsVersionedStructure = true,
@@ -916,7 +928,8 @@ public class DatasetCardViewModel : ObservableObject
             var metadata = System.Text.Json.JsonSerializer.Deserialize<DatasetMetadata>(json);
             if (metadata is not null)
             {
-                CategoryId = metadata.CategoryId;
+                // Use CategoryOrder (stable), fallback to legacy CategoryId for migration
+                CategoryOrder = metadata.CategoryOrder ?? metadata.CategoryId;
                 Type = metadata.Type;
                 CurrentVersion = metadata.CurrentVersion > 0 ? metadata.CurrentVersion : 1;
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
@@ -962,7 +975,7 @@ public class DatasetCardViewModel : ObservableObject
 
             var metadata = new DatasetMetadata
             {
-                CategoryId = CategoryId,
+                CategoryOrder = CategoryOrder,
                 Type = Type,
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
@@ -1173,9 +1186,11 @@ public class DatasetCardViewModel : ObservableObject
 public class DatasetMetadata
 {
     /// <summary>
-    /// Category ID for this dataset.
+    /// Category order for this dataset.
+    /// This is the stable identifier that persists across database recreations.
+    /// Default categories: Character=0, Style=1, Concept=2.
     /// </summary>
-    public int? CategoryId { get; set; }
+    public int? CategoryOrder { get; set; }
 
     /// <summary>
     /// Optional description for this dataset.
@@ -1210,4 +1225,15 @@ public class DatasetMetadata
     /// Key is version number, value is whether that version contains NSFW content.
     /// </summary>
     public Dictionary<int, bool> VersionNsfwFlags { get; set; } = new();
+
+    #region Legacy Properties (for migration)
+
+    /// <summary>
+    /// Legacy: Category ID. Kept for backward compatibility during migration.
+    /// New code should use CategoryOrder.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? CategoryId { get; set; }
+
+    #endregion
 }
