@@ -91,7 +91,7 @@
           <ComboBox ItemsSource="{Binding AvailableCategories}"
                     SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
                     DisplayMemberBinding="{Binding Name}"
-                    MinWidth="120" PlaceholderText="Select category..."/>
+                    MinWidth="140" PlaceholderText="Select category..."/>
         </StackPanel>
         
         <!-- Type Dropdown -->
@@ -100,10 +100,10 @@
           <TextBlock Text="Type:" VerticalAlignment="Center" Opacity="0.7"/>
           <ComboBox ItemsSource="{Binding AvailableTypes}"
                     SelectedItem="{Binding SelectedType, Mode=TwoWay}"
-                    MinWidth="100" PlaceholderText="Select type...">
+                    MinWidth="140" PlaceholderText="Select type...">
             <ComboBox.ItemTemplate>
               <DataTemplate>
-                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}" VerticalAlignment="Center"/>
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
@@ -138,7 +138,7 @@
                     PlaceholderText="All Types">
             <ComboBox.ItemTemplate>
               <DataTemplate>
-                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}}"/>
+                <TextBlock Text="{Binding Converter={x:Static converters:DatasetTypeDisplayConverter.Instance}, ConverterParameter='Filter'}"/>
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>

@@ -20,7 +20,11 @@ public class DatasetTypeDisplayConverter : IValueConverter
         // Handle nullable DatasetType for filter dropdowns
         if (value is null)
         {
-            return "All Types";
+            if (parameter is "Filter")
+            {
+                return "All Types";
+            }
+            return null;
         }
         
         if (value is DatasetType type)
