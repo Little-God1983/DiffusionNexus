@@ -403,6 +403,35 @@ public partial class ImageEditView : UserControl
             }
         };
 
+        // Handle export requests
+        imageEditor.ExportRequested += async (_, args) =>
+        {
+            if (vm.DialogService is null)
+            {
+                imageEditor.StatusMessage = "Export not available";
+                return;
+            }
+
+            var exportPath = await vm.DialogService.ShowSaveFileDialogAsync(
+                "Export Image",
+                args.SuggestedFileName,
+                $"*{args.FileExtension}");
+
+            if (string.IsNullOrEmpty(exportPath))
+            {
+                return; // User cancelled
+            }
+
+            if (_imageEditorCanvas.EditorCore.SaveImage(exportPath))
+            {
+                imageEditor.OnExportCompleted(exportPath);
+            }
+            else
+            {
+                imageEditor.StatusMessage = "Failed to export image.";
+            }
+        };
+
         // Wire up zoom slider
         var zoomSlider = this.FindControl<Slider>("ZoomSlider");
         if (zoomSlider is not null)

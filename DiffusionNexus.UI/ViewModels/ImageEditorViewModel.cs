@@ -970,6 +970,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand CancelCropCommand { get; }
     public IAsyncRelayCommand SaveAsNewCommand { get; }
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
+    public IAsyncRelayCommand ExportCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ZoomToFitCommand { get; }
@@ -1083,6 +1084,11 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler<ImageUpscalingResult>? UpscalingCompleted;
 
+    /// <summary>
+    /// Event raised to request export of the current image to an external location.
+    /// </summary>
+    public event EventHandler<ExportEventArgs>? ExportRequested;
+
     #endregion
 
     /// <summary>
@@ -1156,6 +1162,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+        ExportCommand.NotifyCanExecuteChanged();
     }
 
     #region Rating Command Implementations
@@ -1255,6 +1262,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyCropCommand.NotifyCanExecuteChanged();
         SaveAsNewCommand.NotifyCanExecuteChanged();
         SaveOverwriteCommand.NotifyCanExecuteChanged();
+        ExportCommand.NotifyCanExecuteChanged();
         ZoomInCommand.NotifyCanExecuteChanged();
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
@@ -1321,6 +1329,7 @@ public partial class ImageEditorViewModel : ObservableObject
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
         SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
+        ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
         ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
@@ -1492,6 +1501,15 @@ public partial class ImageEditorViewModel : ObservableObject
                 OriginalPath = null
             });
         }
+    }
+
+    /// <summary>
+    /// Called when export completes successfully.
+    /// </summary>
+    /// <param name="exportPath">The path where the image was exported.</param>
+    public void OnExportCompleted(string exportPath)
+    {
+        StatusMessage = $"Exported to: {Path.GetFileName(exportPath)}";
     }
 
     /// <summary>
@@ -1671,11 +1689,27 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    private Task ExecuteExportAsync()
+    {
+        if (CurrentImagePath is null) return Task.CompletedTask;
+
+        var extension = Path.GetExtension(CurrentImagePath);
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedFileName = $"{fileName}_export{extension}";
+
+        ExportRequested?.Invoke(this, new ExportEventArgs
+        {
+            SuggestedFileName = suggestedFileName,
+            FileExtension = extension
+        });
+
+        return Task.CompletedTask;
+    }
+
     private void ExecuteZoomIn() => ZoomInRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
-
     private void ExecuteRotateLeft() => RotateLeftRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteRotateRight() => RotateRightRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteRotate180() => Rotate180Requested?.Invoke(this, EventArgs.Empty);
@@ -1947,8 +1981,24 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsUpscalingPanelOpen));
         }
 
-        NotifyToolCommandsCanExecuteChanged();
+        // Add more tools here as they are added in the future
     }
 
     #endregion
+}
+
+/// <summary>
+/// Event arguments for the export request.
+/// </summary>
+public class ExportEventArgs : EventArgs
+{
+    /// <summary>
+    /// Suggested filename for the export (with extension).
+    /// </summary>
+    public string SuggestedFileName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The file extension (e.g., ".png").
+    /// </summary>
+    public string FileExtension { get; init; } = ".png";
 }

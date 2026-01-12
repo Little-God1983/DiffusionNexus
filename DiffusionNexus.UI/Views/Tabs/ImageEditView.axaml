@@ -162,6 +162,7 @@
           <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
             <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
+            <Button Content="Export" Command="{Binding ImageEditor.ExportCommand}" Padding="12,6" ToolTip.Tip="Export image to external location"/>
           </StackPanel>
           <!-- Separator before Reset/Clear - only visible when image is loaded -->
           <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
