@@ -1791,6 +1791,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             await DeleteVersionAsync(dataset, dataset.DisplayVersion.Value);
         }
+        else if (!FlattenVersions && dataset.HasMultipleVersions)
+        {
+            // In stacked/unflatten view with multiple versions - show version selection dialog
+            var result = await DialogService.ShowSelectVersionsToDeleteDialogAsync(dataset);
+            if (!result.Confirmed) return;
+
+            await DeleteSelectedVersionsAsync(dataset, result.SelectedVersions, result.DeleteEntireDataset);
+        }
         else
         {
             var confirm = await DialogService.ShowConfirmAsync(
@@ -1831,6 +1839,113 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 StatusMessage = $"Error deleting dataset: {ex.Message}";
                 _activityLog?.LogError("Dataset", $"Failed to delete dataset '{dataset.Name}'", ex);
             }
+        }
+    }
+
+    /// <summary>
+    /// Deletes selected versions from a dataset based on user selection from the version selection dialog.
+    /// </summary>
+    private async Task DeleteSelectedVersionsAsync(DatasetCardViewModel dataset, List<int> versionsToDelete, bool deleteEntireDataset)
+    {
+        if (deleteEntireDataset)
+        {
+            // Delete the entire dataset
+            try
+            {
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                Datasets.Remove(dataset);
+
+                foreach (var group in GroupedDatasets)
+                {
+                    group.Datasets.Remove(dataset);
+                }
+
+                var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+                foreach (var emptyGroup in emptyGroups)
+                {
+                    GroupedDatasets.Remove(emptyGroup);
+                }
+
+                ApplyFilter();
+
+                _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+                {
+                    Dataset = dataset
+                });
+
+                StatusMessage = $"Deleted dataset '{dataset.Name}' (all {versionsToDelete.Count} versions)";
+                _activityLog?.LogSuccess("Dataset", $"Deleted dataset '{dataset.Name}' with all versions");
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error deleting dataset: {ex.Message}";
+                _activityLog?.LogError("Dataset", $"Failed to delete dataset '{dataset.Name}'", ex);
+            }
+        }
+        else
+        {
+            // Delete selected versions one by one
+            var deletedCount = 0;
+            var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+
+            foreach (var version in versionsToDelete)
+            {
+                try
+                {
+                    var versionPath = dataset.GetVersionFolderPath(version);
+                    if (Directory.Exists(versionPath))
+                    {
+                        Directory.Delete(versionPath, recursive: true);
+                    }
+
+                    // Clean up metadata
+                    dataset.VersionBranchedFrom.Remove(version);
+                    dataset.VersionDescriptions.Remove(version);
+                    dataset.VersionNsfwFlags.Remove(version);
+
+                    if (parentDataset is not null && parentDataset != dataset)
+                    {
+                        parentDataset.VersionBranchedFrom.Remove(version);
+                        parentDataset.VersionDescriptions.Remove(version);
+                        parentDataset.VersionNsfwFlags.Remove(version);
+                    }
+
+                    _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+                    {
+                        Dataset = dataset,
+                        DeletedVersion = version
+                    });
+
+                    deletedCount++;
+                }
+                catch (Exception ex)
+                {
+                    StatusMessage = $"Error deleting V{version}: {ex.Message}";
+                    _activityLog?.LogError("Dataset", $"Failed to delete V{version} of '{dataset.Name}'", ex);
+                }
+            }
+
+            // Update the current version if it was deleted
+            if (parentDataset is not null)
+            {
+                if (versionsToDelete.Contains(parentDataset.CurrentVersion))
+                {
+                    var remainingVersions = parentDataset.GetAllVersionNumbers();
+                    parentDataset.CurrentVersion = remainingVersions.FirstOrDefault();
+                }
+
+                parentDataset.RefreshImageInfo();
+                parentDataset.SaveMetadata();
+            }
+
+            // Reload datasets to refresh the UI
+            await LoadDatasetsAsync();
+
+            StatusMessage = deletedCount == 1
+                ? $"Deleted V{versionsToDelete[0]} of '{dataset.Name}'"
+                : $"Deleted {deletedCount} versions of '{dataset.Name}'";
+            
+            _activityLog?.LogSuccess("Dataset", $"Deleted {deletedCount} versions of '{dataset.Name}'");
         }
     }
 

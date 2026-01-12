@@ -1,6 +1,7 @@
 namespace DiffusionNexus.UI.Services;
 
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
 using DiffusionNexus.Domain.Services;
 
@@ -183,6 +184,14 @@ public interface IDialogService
     /// <param name="conflicts">The list of file conflicts to resolve.</param>
     /// <returns>Resolution result with user selections, or cancelled result.</returns>
     Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts);
+
+    /// <summary>
+    /// Shows a dialog for selecting which versions of a multi-version dataset to delete.
+    /// Used in stacked/unflatten view when deleting a dataset with multiple versions.
+    /// </summary>
+    /// <param name="dataset">The dataset with multiple versions to delete from.</param>
+    /// <returns>Result containing selected versions to delete, or cancelled result.</returns>
+    Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset);
 }
 
 /// <summary>

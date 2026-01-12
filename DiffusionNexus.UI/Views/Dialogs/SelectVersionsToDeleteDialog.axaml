@@ -1,0 +1,102 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SelectVersionsToDeleteDialog"
+        x:DataType="local:SelectVersionsToDeleteDialog"
+        Width="450"
+        MinHeight="200"
+        MaxHeight="500"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+  
+  <Grid Margin="20" RowDefinitions="Auto,Auto,*,Auto,Auto">
+    
+    <!-- Title Message -->
+    <TextBlock Grid.Row="0" 
+               Text="{Binding Message}"
+               TextWrapping="Wrap"
+               FontSize="14"
+               Margin="0,0,0,16"/>
+    
+    <!-- Selection Actions -->
+    <StackPanel Grid.Row="1" 
+                Orientation="Horizontal" 
+                Spacing="8"
+                Margin="0,0,0,12">
+      <Button Content="Select All" 
+              Click="OnSelectAllClick"
+              Padding="12,6"/>
+      <Button Content="Clear Selection" 
+              Click="OnClearSelectionClick"
+              Padding="12,6"/>
+    </StackPanel>
+    
+    <!-- Versions List -->
+    <Border Grid.Row="2" 
+            Background="#1E1E1E"
+            CornerRadius="4"
+            Padding="8"
+            Margin="0,0,0,16">
+      <ScrollViewer MaxHeight="250"
+                    VerticalScrollBarVisibility="Auto">
+        <ItemsControl ItemsSource="{Binding VersionItems}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Background="{Binding Background}"
+                      CornerRadius="4"
+                      Padding="12,8"
+                      Margin="0,0,0,4">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <CheckBox Grid.Column="0"
+                            IsChecked="{Binding IsSelected}"
+                            Margin="0,0,12,0"
+                            VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" 
+                              VerticalAlignment="Center">
+                    <TextBlock Text="{Binding VersionLabel}"
+                               FontWeight="SemiBold"
+                               FontSize="14"/>
+                    <TextBlock Text="{Binding MediaCountText}"
+                               FontSize="12"
+                               Opacity="0.7"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding NsfwIndicator}"
+                             Foreground="#E74C3C"
+                             FontSize="11"
+                             FontWeight="Bold"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding IsNsfw}"/>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+    
+    <!-- Selection Summary -->
+    <TextBlock Grid.Row="3"
+               Text="{Binding SelectionSummary}"
+               FontSize="12"
+               Opacity="0.8"
+               Margin="0,0,0,16"/>
+    
+    <!-- Buttons -->
+    <StackPanel Grid.Row="4" 
+                Orientation="Horizontal" 
+                HorizontalAlignment="Right" 
+                Spacing="8">
+      <Button Content="Cancel" 
+              Width="80"
+              Click="OnCancelClick"/>
+      <Button Content="Delete" 
+              Width="100"
+              IsEnabled="{Binding HasSelection}"
+              Background="#D9534F"
+              Click="OnDeleteClick"/>
+    </StackPanel>
+    
+  </Grid>
+</Window>

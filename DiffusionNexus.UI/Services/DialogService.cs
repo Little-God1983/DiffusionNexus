@@ -243,4 +243,13 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? FileConflictResolutionResult.Cancelled();
     }
+
+    public async Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset)
+    {
+        var dialog = new SelectVersionsToDeleteDialog()
+            .WithDataset(dataset);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? SelectVersionsToDeleteResult.Cancelled();
+    }
 }
