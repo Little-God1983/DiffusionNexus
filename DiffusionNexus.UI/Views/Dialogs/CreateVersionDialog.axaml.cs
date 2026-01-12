@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
+using System;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
 
