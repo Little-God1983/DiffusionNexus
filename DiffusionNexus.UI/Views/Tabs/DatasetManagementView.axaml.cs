@@ -30,6 +30,7 @@ public partial class DatasetManagementView : UserControl
     private static readonly string[] ArchiveExtensions = [".zip"];
 
     private Border? _emptyDatasetDropZone;
+    private Grid? _imageGridArea;
     private TextBox? _descriptionTextBox;
     private bool _isInitialized;
 
@@ -44,14 +45,23 @@ public partial class DatasetManagementView : UserControl
     {
         AvaloniaXamlLoader.Load(this);
         _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
+        _imageGridArea = this.FindControl<Grid>("ImageGridArea");
         _descriptionTextBox = this.FindControl<TextBox>("DescriptionTextBox");
 
-        // Set up drag-drop handlers
+        // Set up drag-drop handlers for empty dataset drop zone
         if (_emptyDatasetDropZone is not null)
         {
             _emptyDatasetDropZone.AddHandler(DragDrop.DropEvent, OnEmptyDatasetDrop);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragEnterEvent, OnEmptyDatasetDragEnter);
             _emptyDatasetDropZone.AddHandler(DragDrop.DragLeaveEvent, OnEmptyDatasetDragLeave);
+        }
+
+        // Set up drag-drop handlers for image grid area (when dataset has images)
+        if (_imageGridArea is not null)
+        {
+            _imageGridArea.AddHandler(DragDrop.DropEvent, OnEmptyDatasetDrop);
+            _imageGridArea.AddHandler(DragDrop.DragEnterEvent, OnImageGridDragEnter);
+            _imageGridArea.AddHandler(DragDrop.DragLeaveEvent, OnImageGridDragLeave);
         }
 
         // Set up auto-save for description TextBox
@@ -120,6 +130,38 @@ public partial class DatasetManagementView : UserControl
         {
             _emptyDatasetDropZone.BorderBrush = new SolidColorBrush(Color.Parse("#444"));
             _emptyDatasetDropZone.BorderThickness = new Thickness(3);
+        }
+    }
+
+    private void OnImageGridDragEnter(object? sender, DragEventArgs e)
+    {
+        if (DataContext is DatasetManagementViewModel vm && vm.IsFileDialogOpen)
+        {
+            e.DragEffects = DragDropEffects.None;
+            return;
+        }
+
+        if (_imageGridArea is null) return;
+
+        var (hasValidFiles, _) = AnalyzeMediaFilesInDrag(e);
+
+        if (hasValidFiles)
+        {
+            // Show a visual indicator that drop is allowed
+            _imageGridArea.Background = new SolidColorBrush(Color.Parse("#1A4CAF50")); // Slight green tint
+            e.DragEffects = DragDropEffects.Copy;
+        }
+        else
+        {
+            e.DragEffects = DragDropEffects.None;
+        }
+    }
+
+    private void OnImageGridDragLeave(object? sender, DragEventArgs e)
+    {
+        if (_imageGridArea is not null)
+        {
+            _imageGridArea.Background = Brushes.Transparent; // Reset to transparent
         }
     }
 
@@ -249,29 +291,164 @@ public partial class DatasetManagementView : UserControl
             return;
         }
 
-        // Open the Add Files dialog pre-populated with the dropped files
+        // Filter to only allowed extensions
+        var filteredFiles = allFilePaths
+            .Where(f => MediaFileExtensions.IsMediaFile(f) || MediaFileExtensions.IsCaptionFile(f))
+            .ToList();
+
+        if (filteredFiles.Count == 0)
+        {
+            vm.StatusMessage = "No valid media files found in the dropped items.";
+            CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
+            return;
+        }
+
         if (vm.DialogService is null)
         {
             vm.StatusMessage = "Dialog service not available.";
             return;
         }
 
+        var destFolderPath = vm.ActiveDataset.CurrentVersionFolderPath;
+        Directory.CreateDirectory(destFolderPath);
+
+        // Get existing base names (without extension) in the destination folder
+        var existingBaseNames = Directory.Exists(destFolderPath)
+            ? Directory.EnumerateFiles(destFolderPath)
+                .Select(f => Path.GetFileNameWithoutExtension(f))
+                .Where(n => n is not null)
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Group incoming files by base name to detect pairs (image + caption)
+        var filesByBaseName = filteredFiles
+            .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        // Detect conflicts based on base name (not full filename)
+        // If base name conflicts, all files with that base name are considered conflicting
+        var conflicts = new List<FileConflictItem>();
+        var nonConflictingFiles = new List<string>();
+        var processedBaseNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var kvp in filesByBaseName)
+        {
+            var baseName = kvp.Key;
+            var filesInGroup = kvp.Value;
+            
+            // Find the media file (image/video) in this group - it's the primary file
+            var mediaFile = filesInGroup.FirstOrDefault(MediaFileExtensions.IsMediaFile);
+            var captionFile = filesInGroup.FirstOrDefault(MediaFileExtensions.IsCaptionFile);
+            
+            // Check if this base name exists in destination
+            if (existingBaseNames.Contains(baseName))
+            {
+                // This base name conflicts - create a conflict item for the media file
+                if (mediaFile is not null)
+                {
+                    var fileName = Path.GetFileName(mediaFile);
+                    var existingPath = Path.Combine(destFolderPath, fileName);
+                    var newInfo = new FileInfo(mediaFile);
+                    
+                    long existingSize = 0;
+                    DateTime existingDate = DateTime.Now;
+                    if (File.Exists(existingPath))
+                    {
+                        var existingInfo = new FileInfo(existingPath);
+                        existingSize = existingInfo.Length;
+                        existingDate = existingInfo.CreationTime;
+                    }
+
+                    // Check for existing caption in destination
+                    string? existingCaptionPath = null;
+                    var possibleCaptionExts = new[] { ".txt", ".caption" };
+                    foreach (var ext in possibleCaptionExts)
+                    {
+                        var testPath = Path.Combine(destFolderPath, baseName + ext);
+                        if (File.Exists(testPath))
+                        {
+                            existingCaptionPath = testPath;
+                            break;
+                        }
+                    }
+                    
+                    conflicts.Add(new FileConflictItem
+                    {
+                        ConflictingName = fileName,
+                        ExistingFilePath = existingPath,
+                        NewFilePath = mediaFile,
+                        ExistingFileSize = existingSize,
+                        NewFileSize = newInfo.Length,
+                        ExistingCreationDate = existingDate,
+                        NewCreationDate = newInfo.CreationTime,
+                        IsImage = MediaFileExtensions.IsImageFile(mediaFile),
+                        PairedCaptionPath = captionFile,
+                        ExistingCaptionPath = existingCaptionPath
+                    });
+                }
+                else if (captionFile is not null)
+                {
+                    // Only a caption file, no media - still conflicts if base name exists
+                    // This is a rare case, but handle it
+                    var fileName = Path.GetFileName(captionFile);
+                    var existingPath = Path.Combine(destFolderPath, fileName);
+                    var newInfo = new FileInfo(captionFile);
+                    
+                    long existingSize = 0;
+                    DateTime existingDate = DateTime.Now;
+                    if (File.Exists(existingPath))
+                    {
+                        var existingInfo = new FileInfo(existingPath);
+                        existingSize = existingInfo.Length;
+                        existingDate = existingInfo.CreationTime;
+                    }
+                    
+                    conflicts.Add(new FileConflictItem
+                    {
+                        ConflictingName = fileName,
+                        ExistingFilePath = existingPath,
+                        NewFilePath = captionFile,
+                        ExistingFileSize = existingSize,
+                        NewFileSize = newInfo.Length,
+                        ExistingCreationDate = existingDate,
+                        NewCreationDate = newInfo.CreationTime,
+                        IsImage = false
+                    });
+                }
+            }
+            else
+            {
+                // No conflict - add all files in this group
+                nonConflictingFiles.AddRange(filesInGroup);
+            }
+            
+            processedBaseNames.Add(baseName);
+        }
+
         vm.IsFileDialogOpen = true;
         try
         {
-            var selectedFiles = await vm.DialogService.ShowFileDropDialogAsync(
-                $"Add Media to: {vm.ActiveDataset.Name}", 
-                allFilePaths);
-
-            if (selectedFiles is null || selectedFiles.Count == 0)
+            // If there are conflicts OR non-conflicting files, show conflict resolution dialog immediately
+            if (conflicts.Count > 0 || nonConflictingFiles.Count > 0)
             {
-                // User cancelled or removed all files - cleanup only temp files from ZIP extraction
-                CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
-                return;
-            }
+                var result = await vm.DialogService.ShowFileConflictDialogAsync(conflicts, nonConflictingFiles);
+                
+                if (!result.Confirmed)
+                {
+                    // User cancelled
+                    CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
+                    return;
+                }
 
-            // Copy selected files to dataset
-            await CopyFilesToDatasetAsync(vm, selectedFiles);
+                // Process based on user selections
+                await ProcessConflictResolutionAsync(vm, result, nonConflictingFiles, destFolderPath);
+            }
+            else
+            {
+                // No files to add (shouldn't happen, but handle gracefully)
+                vm.StatusMessage = "No files to add.";
+            }
 
             // Cleanup temp files (those from ZIP extraction)
             CleanupTempFiles(allFilePaths.Where(f => f.Contains("DiffusionNexus_ZipExtract_")));
@@ -280,6 +457,166 @@ public partial class DatasetManagementView : UserControl
         {
             vm.IsFileDialogOpen = false;
         }
+    }
+
+    /// <summary>
+    /// Processes the conflict resolution result and copies files to the dataset.
+    /// Handles paired files (image + caption) to ensure they get the same base name when renamed.
+    /// </summary>
+    private async Task ProcessConflictResolutionAsync(
+        DatasetManagementViewModel vm,
+        FileConflictResolutionResult result,
+        List<string> nonConflictingFiles,
+        string destFolderPath)
+    {
+        if (vm.ActiveDataset is null) return;
+
+        vm.IsLoading = true;
+        try
+        {
+            var copied = 0;
+            var overridden = 0;
+            var renamed = 0;
+            var ignored = 0;
+
+            // Copy non-conflicting files
+            foreach (var sourceFile in nonConflictingFiles)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destPath = Path.Combine(destFolderPath, fileName);
+                File.Copy(sourceFile, destPath);
+                copied++;
+            }
+
+            // Process conflicts based on user selections
+            foreach (var conflict in result.Conflicts)
+            {
+                switch (conflict.Resolution)
+                {
+                    case FileConflictResolution.Override:
+                        // Delete existing media file and copy new one
+                        if (File.Exists(conflict.ExistingFilePath))
+                        {
+                            File.Delete(conflict.ExistingFilePath);
+                        }
+                        File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
+                        
+                        // Handle paired caption - override it too
+                        if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)
+                        {
+                            var captionFileName = Path.GetFileName(conflict.PairedCaptionPath);
+                            var destCaptionPath = Path.Combine(destFolderPath, captionFileName);
+                            
+                            if (File.Exists(destCaptionPath))
+                            {
+                                File.Delete(destCaptionPath);
+                            }
+                            File.Copy(conflict.PairedCaptionPath, destCaptionPath);
+                        }
+                        
+                        overridden++;
+                        break;
+
+                    case FileConflictResolution.Rename:
+                        // Generate unique base name for both media and caption
+                        var originalBaseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
+                        var mediaExtension = Path.GetExtension(conflict.NewFilePath);
+                        var newBaseName = GenerateUniqueBaseName(destFolderPath, originalBaseName);
+                        
+                        // Copy media file with new name
+                        var newMediaPath = Path.Combine(destFolderPath, newBaseName + mediaExtension);
+                        File.Copy(conflict.NewFilePath, newMediaPath);
+                        
+                        // Copy paired caption with same new base name
+                        if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)
+                        {
+                            var captionExtension = Path.GetExtension(conflict.PairedCaptionPath);
+                            var newCaptionPath = Path.Combine(destFolderPath, newBaseName + captionExtension);
+                            File.Copy(conflict.PairedCaptionPath, newCaptionPath);
+                        }
+                        
+                        renamed++;
+                        break;
+
+                    case FileConflictResolution.Ignore:
+                        ignored++;
+                        break;
+                }
+            }
+
+            // Build status message
+            var totalAdded = copied + overridden + renamed;
+            var statusParts = new List<string>();
+            if (copied > 0) statusParts.Add($"{copied} new");
+            if (overridden > 0) statusParts.Add($"{overridden} overridden");
+            if (renamed > 0) statusParts.Add($"{renamed} renamed");
+            if (ignored > 0) statusParts.Add($"{ignored} ignored");
+
+            vm.StatusMessage = statusParts.Count > 0
+                ? $"Added {totalAdded} files: " + string.Join(", ", statusParts)
+                : "No files added";
+
+            await vm.RefreshActiveDatasetAsync();
+        }
+        catch (IOException ex)
+        {
+            vm.StatusMessage = $"Error adding files: {ex.Message}";
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            vm.StatusMessage = $"Permission denied: {ex.Message}";
+        }
+        finally
+        {
+            vm.IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Generates a unique base name (without extension) by appending a number suffix.
+    /// Checks all possible extensions to ensure the base name is truly unique.
+    /// </summary>
+    private static string GenerateUniqueBaseName(string folderPath, string baseName)
+    {
+        var counter = 1;
+        string newBaseName;
+
+        // Get all existing base names in the folder
+        var existingBaseNames = Directory.Exists(folderPath)
+            ? Directory.EnumerateFiles(folderPath)
+                .Select(f => Path.GetFileNameWithoutExtension(f))
+                .Where(n => n is not null)
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        do
+        {
+            newBaseName = $"{baseName}_{counter}";
+            counter++;
+        } while (existingBaseNames.Contains(newBaseName));
+
+        return newBaseName;
+    }
+
+    /// <summary>
+    /// Generates a unique file name by appending a number suffix.
+    /// </summary>
+    private static string GenerateUniqueFileName(string folderPath, string fileName)
+    {
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        var counter = 1;
+        string newPath;
+
+        do
+        {
+            var newName = $"{nameWithoutExt}_{counter}{extension}";
+            newPath = Path.Combine(folderPath, newName);
+            counter++;
+        } while (File.Exists(newPath));
+
+        return newPath;
     }
 #pragma warning restore CS0618
 

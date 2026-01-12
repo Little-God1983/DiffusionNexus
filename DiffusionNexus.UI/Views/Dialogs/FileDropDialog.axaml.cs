@@ -7,12 +7,15 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
 
 /// <summary>
 /// A reusable drag-and-drop file picker dialog.
 /// Supports dragging files onto the dialog or clicking to browse.
+/// Can detect conflicts with existing files and trigger immediate conflict resolution.
 /// </summary>
 public partial class FileDropDialog : Window, INotifyPropertyChanged
 {
@@ -23,6 +26,9 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private static readonly string[] DefaultMediaExtensions = [..DefaultImageExtensions, ..DefaultVideoExtensions];
     
     private string[] _allowedExtensions = [];
+    private HashSet<string>? _existingFileNames;
+    private Func<IEnumerable<FileConflictItem>, IEnumerable<string>, Task<FileConflictResolutionResult?>>? _onConflictsDetected;
+    private string? _destinationFolder;
 
     public FileDropDialog()
     {
@@ -153,6 +159,24 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         return this;
     }
 
+    /// <summary>
+    /// Configures the dialog with existing file names for conflict detection.
+    /// When files are dropped that conflict with these names, the conflict callback is invoked immediately.
+    /// </summary>
+    /// <param name="existingFileNames">Set of existing file names (just the filename, not full path).</param>
+    /// <param name="destinationFolder">The destination folder path for building conflict items.</param>
+    /// <param name="onConflictsDetected">Callback invoked when conflicts are detected. Returns resolution result or null if cancelled.</param>
+    public FileDropDialog WithConflictDetection(
+        IEnumerable<string> existingFileNames,
+        string destinationFolder,
+        Func<IEnumerable<FileConflictItem>, IEnumerable<string>, Task<FileConflictResolutionResult?>> onConflictsDetected)
+    {
+        _existingFileNames = new HashSet<string>(existingFileNames, StringComparer.OrdinalIgnoreCase);
+        _destinationFolder = destinationFolder;
+        _onConflictsDetected = onConflictsDetected;
+        return this;
+    }
+
     #endregion
 
     #region Drag and Drop Handlers
@@ -199,7 +223,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     }
 
 #pragma warning disable CS0618 // Type or member is obsolete - Data property is still required for GetFiles extension
-    private void OnDrop(object? sender, DragEventArgs e)
+    private async void OnDrop(object? sender, DragEventArgs e)
     {
         // Reset border style
         OnDragLeave(sender, e);
@@ -207,6 +231,9 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         var files = e.Data.GetFiles();
         if (files is null) return;
 
+        // Collect all dropped files
+        var droppedFiles = new List<string>();
+        
         foreach (var item in files)
         {
             if (item is IStorageFile file)
@@ -216,19 +243,114 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 {
                     // Extract and add media files from ZIP
                     AddFilesFromZip(filePath);
+                    // Get the extracted files from SelectedFiles (they were added by AddFilesFromZip)
                 }
                 else
                 {
-                    AddFile(filePath);
+                    droppedFiles.Add(filePath);
                 }
             }
             else if (item is IStorageFolder folder)
             {
-                AddFilesFromFolder(folder.Path.LocalPath);
+                CollectFilesFromFolder(folder.Path.LocalPath, droppedFiles);
+            }
+        }
+
+        // Filter by allowed extensions
+        var filteredFiles = droppedFiles.Where(IsFileAllowed).ToList();
+
+        // Check for conflicts if conflict detection is enabled
+        if (_existingFileNames is not null && _onConflictsDetected is not null && _destinationFolder is not null)
+        {
+            var conflictResult = FileConflictDetector.DetectConflicts(
+                filteredFiles,
+                _existingFileNames,
+                _destinationFolder);
+
+            // If there are any conflicts OR non-conflicting files, invoke the callback
+            if (conflictResult.Conflicts.Count > 0 || conflictResult.NonConflictingFiles.Count > 0)
+            {
+                var result = await _onConflictsDetected(conflictResult.Conflicts, conflictResult.NonConflictingFiles);
+                
+                if (result is null || !result.Confirmed)
+                {
+                    // User cancelled - don't add any files
+                    return;
+                }
+
+                // Process based on user selections - close this dialog and return
+                ResultFiles = ProcessConflictResolution(result, conflictResult.NonConflictingFiles);
+                Close(true);
+                return;
+            }
+        }
+        else
+        {
+            // No conflict detection - add files normally
+            foreach (var filePath in filteredFiles)
+            {
+                AddFile(filePath);
             }
         }
 
         NotifyPropertiesChanged();
+    }
+#pragma warning restore CS0618
+
+    /// <summary>
+    /// Processes the conflict resolution result and returns the final list of files to import.
+    /// </summary>
+    private List<string> ProcessConflictResolution(FileConflictResolutionResult result, List<string> nonConflictingFiles)
+    {
+        var filesToReturn = new List<string>();
+
+        // Add all non-conflicting files
+        filesToReturn.AddRange(nonConflictingFiles);
+
+        // Add conflicting files based on resolution
+        foreach (var conflict in result.Conflicts)
+        {
+            switch (conflict.Resolution)
+            {
+                case FileConflictResolution.Override:
+                case FileConflictResolution.Rename:
+                    // These files will be handled by the caller
+                    filesToReturn.Add(conflict.NewFilePath);
+                    break;
+                case FileConflictResolution.Ignore:
+                    // Skip this file
+                    break;
+            }
+        }
+
+        return filesToReturn;
+    }
+
+    /// <summary>
+    /// Collects all files from a folder.
+    /// </summary>
+    private static void CollectFilesFromFolder(string folderPath, List<string> files)
+    {
+        if (!Directory.Exists(folderPath)) return;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folderPath))
+            {
+                files.Add(file);
+            }
+        }
+        catch (IOException) { /* Directory access error */ }
+        catch (UnauthorizedAccessException) { /* Permission denied */ }
+    }
+
+    /// <summary>
+    /// Checks if a file is an image file.
+    /// </summary>
+    private static bool IsImageFile(string filePath)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return DefaultImageExtensions.Contains(ext);
     }
 
     /// <summary>
@@ -277,7 +399,6 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         return (hasValid, hasInvalid);
     }
-#pragma warning restore CS0618
 
     /// <summary>
     /// Analyzes a folder to determine if it contains valid files, invalid files, or both.

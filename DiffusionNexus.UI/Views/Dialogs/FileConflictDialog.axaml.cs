@@ -10,6 +10,7 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 /// <summary>
 /// Dialog for resolving file naming conflicts when adding files to a dataset.
 /// Shows a side-by-side comparison of existing and new files with resolution options.
+/// Also displays non-conflicting files that will be added.
 /// </summary>
 public partial class FileConflictDialog : Window
 {
@@ -32,6 +33,12 @@ public partial class FileConflictDialog : Window
     public FileConflictResolutionResult? Result { get; private set; }
 
     /// <summary>
+    /// Gets the list of non-conflicting file paths that were displayed.
+    /// </summary>
+    public IReadOnlyList<string> NonConflictingFilePaths => 
+        _viewModel?.NonConflictingFiles.Select(f => f.FilePath).ToList() ?? [];
+
+    /// <summary>
     /// Initializes the dialog with conflict information.
     /// </summary>
     /// <param name="conflicts">The list of file conflicts to resolve.</param>
@@ -39,6 +46,25 @@ public partial class FileConflictDialog : Window
     public FileConflictDialog WithConflicts(IEnumerable<FileConflictItem> conflicts)
     {
         _viewModel = new FileConflictDialogViewModel(conflicts);
+        DataContext = _viewModel;
+
+        // Load previews asynchronously
+        _ = LoadPreviewsAsync();
+
+        return this;
+    }
+
+    /// <summary>
+    /// Initializes the dialog with conflict information and non-conflicting files.
+    /// </summary>
+    /// <param name="conflicts">The list of file conflicts to resolve.</param>
+    /// <param name="nonConflictingFilePaths">Paths to files that don't conflict and will be added.</param>
+    /// <returns>The dialog instance for fluent chaining.</returns>
+    public FileConflictDialog WithConflictsAndNonConflicting(
+        IEnumerable<FileConflictItem> conflicts,
+        IEnumerable<string> nonConflictingFilePaths)
+    {
+        _viewModel = new FileConflictDialogViewModel(conflicts, nonConflictingFilePaths);
         DataContext = _viewModel;
 
         // Load previews asynchronously

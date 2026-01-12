@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -30,6 +31,7 @@ public enum FileConflictResolution
 
 /// <summary>
 /// Represents a single file conflict between an existing file and a new file.
+/// Can optionally include a paired caption file that should be renamed together.
 /// </summary>
 public sealed class FileConflictItem : INotifyPropertyChanged
 {
@@ -51,6 +53,22 @@ public sealed class FileConflictItem : INotifyPropertyChanged
     /// Full path to the new file being added.
     /// </summary>
     public string NewFilePath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Full path to the new caption file paired with this media file.
+    /// Null if no paired caption exists in the source.
+    /// </summary>
+    public string? PairedCaptionPath { get; init; }
+
+    /// <summary>
+    /// Full path to the existing caption file in the destination (if any).
+    /// </summary>
+    public string? ExistingCaptionPath { get; init; }
+
+    /// <summary>
+    /// Whether this file has a paired caption that needs to be handled together.
+    /// </summary>
+    public bool HasPairedCaption => !string.IsNullOrEmpty(PairedCaptionPath);
 
     /// <summary>
     /// Size of the existing file in bytes.
@@ -216,6 +234,48 @@ public sealed class FileConflictResolutionResult
 }
 
 /// <summary>
+/// Represents a non-conflicting file being added (for display purposes in the conflict dialog).
+/// </summary>
+public sealed class NonConflictingFileItem
+{
+    /// <summary>
+    /// The file name.
+    /// </summary>
+    public string FileName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Full path to the file.
+    /// </summary>
+    public string FilePath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Size of the file in bytes.
+    /// </summary>
+    public long FileSize { get; init; }
+
+    /// <summary>
+    /// Whether this file is an image (supports preview).
+    /// </summary>
+    public bool IsImage { get; init; }
+
+    /// <summary>
+    /// Formatted file size for display.
+    /// </summary>
+    public string FileSizeText => FormatFileSize(FileSize);
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} B";
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024)
+            return $"{bytes / (1024.0 * 1024.0):F1} MB";
+        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F2} GB";
+    }
+}
+
+/// <summary>
 /// ViewModel for the file conflict resolution dialog.
 /// </summary>
 public sealed partial class FileConflictDialogViewModel : ObservableObject
@@ -226,16 +286,54 @@ public sealed partial class FileConflictDialogViewModel : ObservableObject
     public ObservableCollection<FileConflictItem> Conflicts { get; } = [];
 
     /// <summary>
+    /// Collection of non-conflicting files that will be added.
+    /// </summary>
+    public ObservableCollection<NonConflictingFileItem> NonConflictingFiles { get; } = [];
+
+    /// <summary>
     /// Number of conflicts.
     /// </summary>
     public int ConflictCount => Conflicts.Count;
 
     /// <summary>
+    /// Number of non-conflicting files.
+    /// </summary>
+    public int NonConflictingCount => NonConflictingFiles.Count;
+
+    /// <summary>
+    /// Total number of files being processed (conflicts + non-conflicting).
+    /// </summary>
+    public int TotalFileCount => ConflictCount + NonConflictingCount;
+
+    /// <summary>
+    /// Whether there are non-conflicting files to display.
+    /// </summary>
+    public bool HasNonConflictingFiles => NonConflictingFiles.Count > 0;
+
+    /// <summary>
+    /// Whether there are conflicts to resolve.
+    /// </summary>
+    public bool HasConflicts => Conflicts.Count > 0;
+
+    /// <summary>
     /// Header text describing the conflicts.
     /// </summary>
-    public string HeaderText => ConflictCount == 1
-        ? "1 file already exists in the dataset"
-        : $"{ConflictCount} files already exist in the dataset";
+    public string HeaderText
+    {
+        get
+        {
+            if (ConflictCount == 0)
+            {
+                return NonConflictingCount == 1
+                    ? "1 file ready to add"
+                    : $"{NonConflictingCount} files ready to add";
+            }
+            
+            return ConflictCount == 1
+                ? "1 file already exists in the dataset"
+                : $"{ConflictCount} files already exist in the dataset";
+        }
+    }
 
     /// <summary>
     /// Number of files set to Override.
@@ -263,23 +361,47 @@ public sealed partial class FileConflictDialogViewModel : ObservableObject
         get
         {
             var parts = new List<string>();
+            if (NonConflictingCount > 0) parts.Add($"{NonConflictingCount} new");
             if (OverrideCount > 0) parts.Add($"{OverrideCount} override");
             if (RenameCount > 0) parts.Add($"{RenameCount} rename");
             if (IgnoreCount > 0) parts.Add($"{IgnoreCount} ignore");
-            return parts.Count > 0 ? string.Join(", ", parts) : "No actions selected";
+            
+            if (parts.Count == 0) return "No actions selected";
+            
+            var totalToAdd = NonConflictingCount + OverrideCount + RenameCount;
+            return $"{totalToAdd} images: " + string.Join(", ", parts);
         }
     }
 
     /// <summary>
-    /// Creates a new instance with the specified conflicts.
+    /// Creates a new instance with the specified conflicts and non-conflicting files.
     /// </summary>
-    public FileConflictDialogViewModel(IEnumerable<FileConflictItem> conflicts)
+    public FileConflictDialogViewModel(IEnumerable<FileConflictItem> conflicts, IEnumerable<string>? nonConflictingFilePaths = null)
     {
         foreach (var conflict in conflicts)
         {
             conflict.PropertyChanged += OnConflictPropertyChanged;
             Conflicts.Add(conflict);
         }
+
+        if (nonConflictingFilePaths is not null)
+        {
+            foreach (var filePath in nonConflictingFilePaths)
+            {
+                var fileInfo = new FileInfo(filePath);
+                var ext = Path.GetExtension(filePath).ToLowerInvariant();
+                var isImage = ext is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp" or ".gif";
+                
+                NonConflictingFiles.Add(new NonConflictingFileItem
+                {
+                    FileName = Path.GetFileName(filePath),
+                    FilePath = filePath,
+                    FileSize = fileInfo.Exists ? fileInfo.Length : 0,
+                    IsImage = isImage
+                });
+            }
+        }
+
         UpdateCounts();
     }
 
@@ -294,7 +416,40 @@ public sealed partial class FileConflictDialogViewModel : ObservableObject
     {
         if (e.PropertyName == nameof(FileConflictItem.Resolution))
         {
+            if (sender is FileConflictItem changedItem)
+            {
+                // Sync resolution with other items sharing the same base name
+                // This handles syncing image + caption pairs
+                SyncResolutionWithPairs(changedItem);
+            }
+
             UpdateCounts();
+        }
+    }
+
+    private void SyncResolutionWithPairs(FileConflictItem changedItem)
+    {
+        // Prevent recursive updates if we update other items
+        // Since we are iterating and updating directly, and UpdateCounts is called after,
+        // we simple need to avoid infinite loops if the property change event fires back.
+        // However, FileConflictItem just raises event, logic is here.
+        // We can temporarily detach event handler or just check if value is different.
+
+        var baseName = Path.GetFileNameWithoutExtension(changedItem.ConflictingName);
+        var targetResolution = changedItem.Resolution;
+
+        foreach (var conflict in Conflicts)
+        {
+            if (conflict == changedItem) continue;
+
+            var otherBaseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
+            if (string.Equals(baseName, otherBaseName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (conflict.Resolution != targetResolution)
+                {
+                    conflict.Resolution = targetResolution;
+                }
+            }
         }
     }
 
@@ -304,6 +459,9 @@ public sealed partial class FileConflictDialogViewModel : ObservableObject
         RenameCount = Conflicts.Count(c => c.Resolution == FileConflictResolution.Rename);
         IgnoreCount = Conflicts.Count(c => c.Resolution == FileConflictResolution.Ignore);
         OnPropertyChanged(nameof(SummaryText));
+        OnPropertyChanged(nameof(TotalFileCount));
+        OnPropertyChanged(nameof(HasNonConflictingFiles));
+        OnPropertyChanged(nameof(HasConflicts));
     }
 
     /// <summary>
