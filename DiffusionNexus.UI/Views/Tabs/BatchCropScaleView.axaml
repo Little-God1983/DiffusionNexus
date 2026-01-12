@@ -344,6 +344,14 @@
                         <TextBlock Text="Creates a new version in the selected dataset with the processed images."
                                    Classes="SubText"
                                    Margin="28,0,0,0"/>
+                        
+                        <!-- Copy Captions Checkbox (only visible when increment version is checked) -->
+                        <CheckBox Content="Copy captions with new version"
+                                  IsChecked="{Binding CopyCaptionsWithNewVersion}"
+                                  IsEnabled="{Binding !IsProcessing}"
+                                  IsVisible="{Binding UseIncrementVersion}"
+                                  Margin="28,4,0,0"
+                                  ToolTip.Tip="Copies existing caption files (.txt) to the new version to keep LoRA training data together."/>
                     </StackPanel>
 
                     <!-- OR Separator (only when dataset is selected) -->
