@@ -125,6 +125,21 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     public int TrashCount => _allMediaFiles.Count(m => m.IsRejected);
 
     /// <summary>
+    /// Number of production ready files that will be copied (based on rating filter selection).
+    /// </summary>
+    public int FilteredProductionReadyCount => _includeProductionReady ? ProductionReadyCount : 0;
+
+    /// <summary>
+    /// Number of unrated files that will be copied (based on rating filter selection).
+    /// </summary>
+    public int FilteredUnratedCount => _includeUnrated ? UnratedCount : 0;
+
+    /// <summary>
+    /// Number of trash files that will be copied (based on rating filter selection).
+    /// </summary>
+    public int FilteredTrashCount => _includeTrash ? TrashCount : 0;
+
+    /// <summary>
     /// Number of media files that will be copied based on current rating selections.
     /// </summary>
     public int FilteredMediaCount
@@ -148,9 +163,9 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     public bool HasRatingSelection => _includeProductionReady || _includeUnrated || _includeTrash;
 
     /// <summary>
-    /// Whether there are any rated media files (non-unrated).
+    /// Whether there are any filtered rated media files to copy (production ready or trash).
     /// </summary>
-    public bool HasRatedMedia => ProductionReadyCount > 0 || TrashCount > 0;
+    public bool HasFilteredRatedMedia => FilteredProductionReadyCount > 0 || FilteredTrashCount > 0;
 
     #endregion
 
@@ -269,6 +284,8 @@ public partial class CreateVersionDialogViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(FilteredMediaCount));
                 OnPropertyChanged(nameof(HasRatingSelection));
+                OnPropertyChanged(nameof(FilteredProductionReadyCount));
+                OnPropertyChanged(nameof(HasFilteredRatedMedia));
             }
         }
     }
@@ -286,6 +303,7 @@ public partial class CreateVersionDialogViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(FilteredMediaCount));
                 OnPropertyChanged(nameof(HasRatingSelection));
+                OnPropertyChanged(nameof(FilteredUnratedCount));
             }
         }
     }
@@ -303,6 +321,8 @@ public partial class CreateVersionDialogViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(FilteredMediaCount));
                 OnPropertyChanged(nameof(HasRatingSelection));
+                OnPropertyChanged(nameof(FilteredTrashCount));
+                OnPropertyChanged(nameof(HasFilteredRatedMedia));
             }
         }
     }

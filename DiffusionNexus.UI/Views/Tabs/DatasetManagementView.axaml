@@ -12,6 +12,7 @@
 
   <UserControl.Resources>
     <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+    <converters:ThumbnailMultiConverter x:Key="ThumbnailMultiConverter"/>
   </UserControl.Resources>
 
   <UserControl.Styles>
@@ -466,7 +467,9 @@
                           <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="6,6,0,0" ClipToBounds="True"
                                   DoubleTapped="OnImageDoubleTapped" Cursor="Hand">
                             <Grid>
-                              <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" Stretch="UniformToFill"/>
+                              <!-- Bind directly to Thumbnail property for async loading with PropertyChanged notification -->
+                              <Image Source="{Binding Thumbnail}"
+                                     Stretch="UniformToFill"/>
                               <Border Background="#80000000" CornerRadius="4" Padding="4" HorizontalAlignment="Left"
                                       VerticalAlignment="Top" Margin="8">
                                 <CheckBox IsChecked="{Binding IsSelected}"/>
