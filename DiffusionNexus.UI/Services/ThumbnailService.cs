@@ -50,6 +50,12 @@ public record ThumbnailCacheStats(int CachedCount, int MaxSize, long EstimatedMe
 
 /// <summary>
 /// Implementation of IThumbnailService with LRU eviction and async loading.
+/// 
+/// <para>
+/// <b>Important:</b> This service does NOT dispose evicted bitmaps because they may still be
+/// bound to UI elements. Bitmaps are garbage collected when no longer referenced.
+/// Only ClearCache() and Dispose() attempt to dispose bitmaps (when the application is shutting down).
+/// </para>
 /// </summary>
 public sealed class ThumbnailService : IThumbnailService, IDisposable
 {
@@ -126,13 +132,14 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
     /// <inheritdoc />
     public void Invalidate(string imagePath)
     {
-        if (_cache.TryRemove(imagePath, out var entry))
+        if (_cache.TryRemove(imagePath, out _))
         {
             lock (_evictionLock)
             {
                 _accessOrder.Remove(imagePath);
             }
-            entry.Bitmap?.Dispose();
+            // NOTE: Don't dispose the bitmap - it may still be bound to a UI element.
+            // The bitmap will be garbage collected when no longer referenced.
         }
     }
 
@@ -141,9 +148,21 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
     {
         lock (_evictionLock)
         {
-            foreach (var entry in _cache.Values)
+            // Only dispose bitmaps during explicit cache clear (shutdown scenario)
+            // Even then, be cautious - only dispose if we're disposed (app shutting down)
+            if (_disposed)
             {
-                entry.Bitmap?.Dispose();
+                foreach (var entry in _cache.Values)
+                {
+                    try
+                    {
+                        entry.Bitmap?.Dispose();
+                    }
+                    catch
+                    {
+                        // Ignore disposal errors during shutdown
+                    }
+                }
             }
             _cache.Clear();
             _accessOrder.Clear();
@@ -201,9 +220,12 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
                 var oldestKey = _accessOrder.First.Value;
                 _accessOrder.RemoveFirst();
                 
-                if (_cache.TryRemove(oldestKey, out var evicted))
+                if (_cache.TryRemove(oldestKey, out _))
                 {
-                    evicted.Bitmap?.Dispose();
+                    // NOTE: Don't dispose evicted bitmaps - they may still be bound to UI elements.
+                    // The bitmaps will be garbage collected when no longer referenced by ViewModels.
+                    // This prevents NullReferenceException in Avalonia.Controls.Image.MeasureOverride
+                    // when a disposed bitmap is still bound to an Image control.
                 }
             }
         }

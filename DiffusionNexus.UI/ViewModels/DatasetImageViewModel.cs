@@ -139,13 +139,32 @@ public class DatasetImageViewModel : ObservableObject
             
             if (bitmap is not null)
             {
-                // Update on UI thread
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                // Update on UI thread - check if dispatcher is available
+                if (Dispatcher.UIThread.CheckAccess())
                 {
+                    // Already on UI thread
                     _thumbnail = bitmap;
                     _isThumbnailLoading = false;
                     OnPropertyChanged(nameof(Thumbnail));
-                });
+                }
+                else
+                {
+                    // Post to UI thread, don't wait
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            _thumbnail = bitmap;
+                            _isThumbnailLoading = false;
+                            OnPropertyChanged(nameof(Thumbnail));
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            // Control might be disposed, ignore
+                            _isThumbnailLoading = false;
+                        }
+                    });
+                }
             }
             else
             {
