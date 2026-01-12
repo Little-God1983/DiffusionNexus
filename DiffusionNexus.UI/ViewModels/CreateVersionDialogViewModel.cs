@@ -33,6 +33,7 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     private bool _copyImages = true;
     private bool _copyVideos = true;
     private bool _copyCaptions = true;
+    private bool _copyRatings = true;
     
     // Rating filter options - default: only Production Ready is selected
     private bool _includeProductionReady = true;
@@ -146,6 +147,11 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     /// </summary>
     public bool HasRatingSelection => _includeProductionReady || _includeUnrated || _includeTrash;
 
+    /// <summary>
+    /// Whether there are any rated media files (non-unrated).
+    /// </summary>
+    public bool HasRatedMedia => ProductionReadyCount > 0 || TrashCount > 0;
+
     #endregion
 
     #region Source Option Properties
@@ -234,6 +240,16 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     {
         get => _copyCaptions;
         set => SetProperty(ref _copyCaptions, value);
+    }
+
+    /// <summary>
+    /// Whether to copy ratings (production ready/trash status) to the new version.
+    /// Default: true.
+    /// </summary>
+    public bool CopyRatings
+    {
+        get => _copyRatings;
+        set => SetProperty(ref _copyRatings, value);
     }
 
     #endregion
@@ -351,6 +367,11 @@ public sealed record CreateVersionResult
     /// Whether to copy captions.
     /// </summary>
     public bool CopyCaptions { get; init; }
+
+    /// <summary>
+    /// Whether to copy ratings (production ready/trash status) to the new version.
+    /// </summary>
+    public bool CopyRatings { get; init; }
 
     /// <summary>
     /// Whether to include production ready (approved) media.

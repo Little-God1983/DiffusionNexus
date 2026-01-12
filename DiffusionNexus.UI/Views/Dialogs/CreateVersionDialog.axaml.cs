@@ -65,6 +65,7 @@ public partial class CreateVersionDialog : Window
             CopyImages = _viewModel.CopyImages,
             CopyVideos = _viewModel.CopyVideos,
             CopyCaptions = _viewModel.CopyCaptions,
+            CopyRatings = _viewModel.CopyRatings,
             IncludeProductionReady = _viewModel.IncludeProductionReady,
             IncludeUnrated = _viewModel.IncludeUnrated,
             IncludeTrash = _viewModel.IncludeTrash

@@ -1859,9 +1859,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
                 
-                // Build a set of file base names that match the rating filter
+                // Build a dictionary of file base names with their ratings that match the rating filter
                 // (based on DatasetImages which has the rating info)
-                var allowedBaseNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allowedFiles = new Dictionary<string, ImageRatingStatus>(StringComparer.OrdinalIgnoreCase);
                 foreach (var img in DatasetImages)
                 {
                     var shouldInclude = 
@@ -1872,7 +1872,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     if (shouldInclude)
                     {
                         // Add the base name (without extension) for matching media and caption files
-                        allowedBaseNames.Add(Path.GetFileNameWithoutExtension(img.ImagePath));
+                        var baseName = Path.GetFileNameWithoutExtension(img.ImagePath);
+                        allowedFiles[baseName] = img.RatingStatus;
                     }
                 }
 
@@ -1883,23 +1884,29 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 foreach (var sourceFile in files)
                 {
                     var baseName = Path.GetFileNameWithoutExtension(sourceFile);
+                    var extension = Path.GetExtension(sourceFile).ToLowerInvariant();
                     var shouldCopy = false;
 
                     // Check if this file type should be copied based on user selection
                     if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
                     {
                         // For images, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedBaseNames.Contains(baseName);
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
                     }
                     else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
                     {
                         // For videos, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedBaseNames.Contains(baseName);
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
                     }
                     else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
                     {
                         // For captions, only copy if the corresponding media file is being copied
-                        shouldCopy = allowedBaseNames.Contains(baseName);
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                    }
+                    else if (extension == ".rating")
+                    {
+                        // Skip .rating files in the main loop - we handle them separately below
+                        continue;
                     }
 
                     if (shouldCopy)
@@ -1908,6 +1915,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         var destFile = Path.Combine(destPath, fileName);
                         File.Copy(sourceFile, destFile, overwrite: false);
                         copied++;
+                    }
+                }
+
+                // Copy ratings if the option is selected
+                if (result.CopyRatings)
+                {
+                    foreach (var (baseName, rating) in allowedFiles)
+                    {
+                        // Only copy rating if it's not Unrated (Unrated means no .rating file)
+                        if (rating != ImageRatingStatus.Unrated)
+                        {
+                            var sourceRatingFile = Path.Combine(sourcePath, baseName + ".rating");
+                            var destRatingFile = Path.Combine(destPath, baseName + ".rating");
+                            
+                            if (File.Exists(sourceRatingFile) && !File.Exists(destRatingFile))
+                            {
+                                File.Copy(sourceRatingFile, destRatingFile, overwrite: false);
+                            }
+                        }
                     }
                 }
             }
