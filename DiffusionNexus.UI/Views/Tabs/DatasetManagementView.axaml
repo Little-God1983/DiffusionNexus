@@ -221,10 +221,19 @@
                 Command="{Binding SendToBatchCropScaleCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
                 ToolTip.Tip="Send dataset to Batch Crop/Scale tab"/>
-        <Button Grid.Column="11" Content="Auto Caption"
+        <Button Grid.Column="11"
                 Command="{Binding OpenCaptioningToolCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
-                ToolTip.Tip="Generate captions with AI"/>
+                Opacity="0.6"
+                IsEnabled="False"
+                ToolTip.Tip="Coming Soon: Generate captions with AI">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Auto Caption" VerticalAlignment="Center"/>
+            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
+              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
+          </StackPanel>
+        </Button>
         <Button Grid.Column="12" Content="Open Viewer"
                 Command="{Binding OpenViewerCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
@@ -236,9 +245,19 @@
                 IsVisible="{Binding HasUnsavedChanges}" Margin="0,0,8,0" Background="#2D7D46"/>
                 
         <!-- Action Buttons (Overview View) -->
-        <Button Grid.Column="15" Content="Auto Caption" 
+        <Button Grid.Column="15"
                 Command="{Binding OpenCaptioningToolCommand}"
-                IsVisible="{Binding !IsViewingDataset}" Margin="0,0,8,0"/>
+                IsVisible="{Binding !IsViewingDataset}" Margin="0,0,8,0"
+                Opacity="0.6"
+                IsEnabled="False"
+                ToolTip.Tip="Coming Soon: Generate captions with AI">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Auto Caption" VerticalAlignment="Center"/>
+            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
+              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
+          </StackPanel>
+        </Button>
         <Button Grid.Column="16" Content="+ New Dataset" 
                 Command="{Binding CreateDatasetCommand}"
                 IsVisible="{Binding !IsViewingDataset}"/>
