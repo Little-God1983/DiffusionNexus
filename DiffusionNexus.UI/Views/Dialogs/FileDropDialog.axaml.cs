@@ -266,8 +266,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 _existingFileNames,
                 _destinationFolder);
 
-            // If there are any conflicts OR non-conflicting files, invoke the callback
-            if (conflictResult.Conflicts.Count > 0 || conflictResult.NonConflictingFiles.Count > 0)
+            // If there are any conflicts, invoke the callback
+            if (conflictResult.Conflicts.Count > 0)
             {
                 var result = await _onConflictsDetected(conflictResult.Conflicts, conflictResult.NonConflictingFiles);
                 
@@ -281,6 +281,14 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 ResultFiles = ProcessConflictResolution(result, conflictResult.NonConflictingFiles);
                 Close(true);
                 return;
+            }
+            else
+            {
+                // No conflicts detection - add files normally
+                foreach (var filePath in filteredFiles)
+                {
+                    AddFile(filePath);
+                }
             }
         }
         else
