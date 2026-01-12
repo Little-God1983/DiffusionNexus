@@ -1,6 +1,7 @@
 namespace DiffusionNexus.UI.Services;
 
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
 using DiffusionNexus.Domain.Services;
 
@@ -155,20 +156,16 @@ public interface IDialogService
     Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats);
 
     /// <summary>
-    /// Shows the create version dialog with content type selection options.
+    /// Shows the create version dialog with content type and rating selection options.
     /// </summary>
     /// <param name="currentVersion">The current version number (used as default source version).</param>
     /// <param name="availableVersions">All available versions to copy from.</param>
-    /// <param name="imageCount">Number of images in current version.</param>
-    /// <param name="videoCount">Number of videos in current version.</param>
-    /// <param name="captionCount">Number of captions in current version.</param>
+    /// <param name="mediaFiles">All media files in the current version.</param>
     /// <returns>Create version result with selected options, or cancelled result.</returns>
     Task<CreateVersionResult> ShowCreateVersionDialogAsync(
         int currentVersion,
         IReadOnlyList<int> availableVersions,
-        int imageCount,
-        int videoCount,
-        int captionCount);
+        IEnumerable<DatasetImageViewModel> mediaFiles);
 
     /// <summary>
     /// Shows the auto-captioning dialog.
@@ -180,6 +177,21 @@ public interface IDialogService
         ICaptioningService captioningService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
         IDatasetEventAggregator? eventAggregator = null);
+
+    /// <summary>
+    /// Shows the file conflict resolution dialog for handling duplicate filenames.
+    /// </summary>
+    /// <param name="conflicts">The list of file conflicts to resolve.</param>
+    /// <returns>Resolution result with user selections, or cancelled result.</returns>
+    Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts);
+
+    /// <summary>
+    /// Shows a dialog for selecting which versions of a multi-version dataset to delete.
+    /// Used in stacked/unflatten view when deleting a dataset with multiple versions.
+    /// </summary>
+    /// <param name="dataset">The dataset with multiple versions to delete from.</param>
+    /// <returns>Result containing selected versions to delete, or cancelled result.</returns>
+    Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset);
 }
 
 /// <summary>

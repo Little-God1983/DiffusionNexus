@@ -1,5 +1,8 @@
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 
@@ -37,6 +40,8 @@ public class DatasetImageViewModel : ObservableObject
     private string? _thumbnailPath;
     private bool _isEditorSelected;
     private bool _isVideo;
+    private Bitmap? _thumbnail;
+    private bool _isThumbnailLoading;
 
     /// <summary>Full path to the media file (image or video).</summary>
     public string ImagePath
@@ -52,6 +57,10 @@ public class DatasetImageViewModel : ObservableObject
                 OnPropertyChanged(nameof(FileName));
                 OnPropertyChanged(nameof(FullFileName));
                 OnPropertyChanged(nameof(FileExtension));
+                OnPropertyChanged(nameof(HasThumbnail));
+                // Reset thumbnail when path changes
+                _thumbnail = null;
+                OnPropertyChanged(nameof(Thumbnail));
             }
         }
     }
@@ -64,7 +73,108 @@ public class DatasetImageViewModel : ObservableObject
     public string? ThumbnailPath
     {
         get => _thumbnailPath ?? (_isVideo ? GetVideoThumbnailPath() : _imagePath);
-        set => SetProperty(ref _thumbnailPath, value);
+        set
+        {
+            if (SetProperty(ref _thumbnailPath, value))
+            {
+                OnPropertyChanged(nameof(HasThumbnail));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether this media item has a thumbnail to display.
+    /// </summary>
+    public bool HasThumbnail => !string.IsNullOrEmpty(ThumbnailPath);
+
+    /// <summary>
+    /// The loaded thumbnail bitmap. Loads asynchronously on first access.
+    /// Bind to this property for efficient async thumbnail display.
+    /// </summary>
+    public Bitmap? Thumbnail
+    {
+        get
+        {
+            if (_thumbnail is not null)
+                return _thumbnail;
+
+            // Try to get from cache synchronously
+            var path = ThumbnailPath;
+            if (string.IsNullOrEmpty(path))
+                return null;
+
+            var thumbnailService = PathToBitmapConverter.ThumbnailService;
+            if (thumbnailService?.TryGetCached(path, out var cached) == true)
+            {
+                _thumbnail = cached;
+                return _thumbnail;
+            }
+
+            // Start async load if not already loading
+            if (!_isThumbnailLoading)
+            {
+                _isThumbnailLoading = true;
+                _ = LoadThumbnailAsync(path);
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Loads the thumbnail asynchronously and notifies when ready.
+    /// </summary>
+    private async Task LoadThumbnailAsync(string path)
+    {
+        var thumbnailService = PathToBitmapConverter.ThumbnailService;
+        if (thumbnailService is null)
+        {
+            _isThumbnailLoading = false;
+            return;
+        }
+
+        try
+        {
+            var bitmap = await thumbnailService.LoadThumbnailAsync(path);
+            
+            if (bitmap is not null)
+            {
+                // Update on UI thread - check if dispatcher is available
+                if (Dispatcher.UIThread.CheckAccess())
+                {
+                    // Already on UI thread
+                    _thumbnail = bitmap;
+                    _isThumbnailLoading = false;
+                    OnPropertyChanged(nameof(Thumbnail));
+                }
+                else
+                {
+                    // Post to UI thread, don't wait
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            _thumbnail = bitmap;
+                            _isThumbnailLoading = false;
+                            OnPropertyChanged(nameof(Thumbnail));
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            // Control might be disposed, ignore
+                            _isThumbnailLoading = false;
+                        }
+                    });
+                }
+            }
+            else
+            {
+                _isThumbnailLoading = false;
+            }
+        }
+        catch
+        {
+            _isThumbnailLoading = false;
+        }
     }
 
     /// <summary>Whether this media item is a video file.</summary>

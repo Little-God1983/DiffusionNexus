@@ -569,6 +569,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _eventAggregator.ImageSaved += OnImageSaved;
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
         _eventAggregator.SettingsSaved += OnSettingsSaved;
+        _eventAggregator.ImageSelectionChanged += OnImageSelectionChanged;
 
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
@@ -660,6 +661,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 OnPropertyChanged(nameof(HasNoImages));
                 break;
         }
+    }
+
+    /// <summary>
+    /// Handles selection changes from individual image checkboxes.
+    /// </summary>
+    private void OnImageSelectionChanged(object? sender, ImageSelectionChangedEventArgs e)
+    {
+        _state.UpdateSelectionCount();
     }
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
@@ -1424,55 +1433,134 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             IsLoading = true;
             try
             {
-                var copied = 0;
-                var skipped = 0;
                 var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
                 Directory.CreateDirectory(destFolderPath);
 
-                var addedImages = new List<DatasetImageViewModel>();
+                // Detect conflicts
+                var conflicts = new List<FileConflictItem>();
+                var nonConflictingFiles = new List<string>();
 
                 foreach (var sourceFile in files)
                 {
                     var fileName = Path.GetFileName(sourceFile);
                     var destPath = Path.Combine(destFolderPath, fileName);
 
-                    if (!File.Exists(destPath))
+                    if (File.Exists(destPath))
                     {
-                        File.Copy(sourceFile, destPath);
-                        copied++;
-
-                        if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                        // This file conflicts with an existing file
+                        var existingInfo = new FileInfo(destPath);
+                        var newInfo = new FileInfo(sourceFile);
+                        
+                        conflicts.Add(new FileConflictItem
                         {
-                            await _videoThumbnailService.GenerateThumbnailAsync(destPath);
-                        }
+                            ConflictingName = fileName,
+                            ExistingFilePath = destPath,
+                            NewFilePath = sourceFile,
+                            ExistingFileSize = existingInfo.Length,
+                            NewFileSize = newInfo.Length,
+                            ExistingCreationDate = existingInfo.CreationTime,
+                            NewCreationDate = newInfo.CreationTime,
+                            IsImage = MediaFileExtensions.IsImageFile(sourceFile)
+                        });
                     }
                     else
                     {
-                        skipped++;
+                        nonConflictingFiles.Add(sourceFile);
                     }
                 }
 
-                StatusMessage = skipped > 0
-                    ? $"Added {copied} files, skipped {skipped} duplicates"
-                    : $"Added {copied} files to dataset";
+                // If there are conflicts, show the resolution dialog
+                if (conflicts.Count > 0)
+                {
+                    var result = await DialogService.ShowFileConflictDialogAsync(conflicts);
+                    if (!result.Confirmed)
+                    {
+                        StatusMessage = "Import cancelled";
+                        return;
+                    }
 
-                if (copied > 0)
-                {
-                    _activityLog?.LogSuccess("Import", $"Imported {copied} files to '{ActiveDataset.Name}'" + (skipped > 0 ? $" ({skipped} duplicates skipped)" : ""));
+                    // Process conflicts based on user selections
+                    foreach (var conflict in result.Conflicts)
+                    {
+                        switch (conflict.Resolution)
+                        {
+                            case FileConflictResolution.Override:
+                                // Delete existing and copy new
+                                File.Delete(conflict.ExistingFilePath);
+                                File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(conflict.ExistingFilePath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(conflict.ExistingFilePath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Rename:
+                                // Generate a unique name
+                                var renamedPath = GenerateUniqueFileName(destFolderPath, conflict.ConflictingName);
+                                File.Copy(conflict.NewFilePath, renamedPath);
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(renamedPath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(renamedPath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Ignore:
+                                // Skip this file
+                                break;
+                        }
+                    }
                 }
-                else if (skipped > 0)
+
+                // Copy non-conflicting files
+                var copied = 0;
+                foreach (var sourceFile in nonConflictingFiles)
                 {
-                    _activityLog?.LogWarning("Import", $"All {skipped} files already exist in '{ActiveDataset.Name}'");
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destPath = Path.Combine(destFolderPath, fileName);
+                    File.Copy(sourceFile, destPath);
+                    copied++;
+
+                    if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                    {
+                        await _videoThumbnailService.GenerateThumbnailAsync(destPath);
+                    }
+                }
+
+                // Calculate totals for status message
+                var overridden = conflicts.Count(c => c.Resolution == FileConflictResolution.Override);
+                var renamed = conflicts.Count(c => c.Resolution == FileConflictResolution.Rename);
+                var ignored = conflicts.Count(c => c.Resolution == FileConflictResolution.Ignore);
+                var totalAdded = copied + overridden + renamed;
+
+                // Build status message
+                var statusParts = new List<string>();
+                if (copied > 0) statusParts.Add($"{copied} new");
+                if (overridden > 0) statusParts.Add($"{overridden} overridden");
+                if (renamed > 0) statusParts.Add($"{renamed} renamed");
+                if (ignored > 0) statusParts.Add($"{ignored} ignored");
+
+                StatusMessage = statusParts.Count > 0
+                    ? $"Added {totalAdded} files: " + string.Join(", ", statusParts)
+                    : "No files added";
+
+                if (totalAdded > 0)
+                {
+                    _activityLog?.LogSuccess("Import", $"Imported {totalAdded} files to '{ActiveDataset.Name}'" + 
+                        (ignored > 0 ? $" ({ignored} conflicts ignored)" : ""));
+                }
+                else if (ignored > 0)
+                {
+                    _activityLog?.LogWarning("Import", $"All {ignored} conflicting files were ignored");
                 }
 
                 await OpenDatasetAsync(ActiveDataset);
 
-                if (addedImages.Count > 0)
+                if (totalAdded > 0)
                 {
                     _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
                     {
                         Dataset = ActiveDataset,
-                        AddedImages = addedImages
+                        AddedImages = []
                     });
                 }
             }
@@ -1490,6 +1578,26 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsFileDialogOpen = false;
         }
+    }
+
+    /// <summary>
+    /// Generates a unique file name by appending a number suffix.
+    /// </summary>
+    private static string GenerateUniqueFileName(string folderPath, string fileName)
+    {
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        var counter = 1;
+        string newPath;
+
+        do
+        {
+            var newName = $"{nameWithoutExt}_{counter}{extension}";
+            newPath = Path.Combine(folderPath, newName);
+            counter++;
+        } while (File.Exists(newPath));
+
+        return newPath;
     }
 
     private void SaveAllCaptions()
@@ -1683,6 +1791,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             await DeleteVersionAsync(dataset, dataset.DisplayVersion.Value);
         }
+        else if (!FlattenVersions && dataset.HasMultipleVersions)
+        {
+            // In stacked/unflatten view with multiple versions - show version selection dialog
+            var result = await DialogService.ShowSelectVersionsToDeleteDialogAsync(dataset);
+            if (!result.Confirmed) return;
+
+            await DeleteSelectedVersionsAsync(dataset, result.SelectedVersions, result.DeleteEntireDataset);
+        }
         else
         {
             var confirm = await DialogService.ShowConfirmAsync(
@@ -1723,6 +1839,113 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 StatusMessage = $"Error deleting dataset: {ex.Message}";
                 _activityLog?.LogError("Dataset", $"Failed to delete dataset '{dataset.Name}'", ex);
             }
+        }
+    }
+
+    /// <summary>
+    /// Deletes selected versions from a dataset based on user selection from the version selection dialog.
+    /// </summary>
+    private async Task DeleteSelectedVersionsAsync(DatasetCardViewModel dataset, List<int> versionsToDelete, bool deleteEntireDataset)
+    {
+        if (deleteEntireDataset)
+        {
+            // Delete the entire dataset
+            try
+            {
+                Directory.Delete(dataset.FolderPath, recursive: true);
+                Datasets.Remove(dataset);
+
+                foreach (var group in GroupedDatasets)
+                {
+                    group.Datasets.Remove(dataset);
+                }
+
+                var emptyGroups = GroupedDatasets.Where(g => !g.HasDatasets).ToList();
+                foreach (var emptyGroup in emptyGroups)
+                {
+                    GroupedDatasets.Remove(emptyGroup);
+                }
+
+                ApplyFilter();
+
+                _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+                {
+                    Dataset = dataset
+                });
+
+                StatusMessage = $"Deleted dataset '{dataset.Name}' (all {versionsToDelete.Count} versions)";
+                _activityLog?.LogSuccess("Dataset", $"Deleted dataset '{dataset.Name}' with all versions");
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Error deleting dataset: {ex.Message}";
+                _activityLog?.LogError("Dataset", $"Failed to delete dataset '{dataset.Name}'", ex);
+            }
+        }
+        else
+        {
+            // Delete selected versions one by one
+            var deletedCount = 0;
+            var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
+
+            foreach (var version in versionsToDelete)
+            {
+                try
+                {
+                    var versionPath = dataset.GetVersionFolderPath(version);
+                    if (Directory.Exists(versionPath))
+                    {
+                        Directory.Delete(versionPath, recursive: true);
+                    }
+
+                    // Clean up metadata
+                    dataset.VersionBranchedFrom.Remove(version);
+                    dataset.VersionDescriptions.Remove(version);
+                    dataset.VersionNsfwFlags.Remove(version);
+
+                    if (parentDataset is not null && parentDataset != dataset)
+                    {
+                        parentDataset.VersionBranchedFrom.Remove(version);
+                        parentDataset.VersionDescriptions.Remove(version);
+                        parentDataset.VersionNsfwFlags.Remove(version);
+                    }
+
+                    _eventAggregator.PublishDatasetDeleted(new DatasetDeletedEventArgs
+                    {
+                        Dataset = dataset,
+                        DeletedVersion = version
+                    });
+
+                    deletedCount++;
+                }
+                catch (Exception ex)
+                {
+                    StatusMessage = $"Error deleting V{version}: {ex.Message}";
+                    _activityLog?.LogError("Dataset", $"Failed to delete V{version} of '{dataset.Name}'", ex);
+                }
+            }
+
+            // Update the current version if it was deleted
+            if (parentDataset is not null)
+            {
+                if (versionsToDelete.Contains(parentDataset.CurrentVersion))
+                {
+                    var remainingVersions = parentDataset.GetAllVersionNumbers();
+                    parentDataset.CurrentVersion = remainingVersions.FirstOrDefault();
+                }
+
+                parentDataset.RefreshImageInfo();
+                parentDataset.SaveMetadata();
+            }
+
+            // Reload datasets to refresh the UI
+            await LoadDatasetsAsync();
+
+            StatusMessage = deletedCount == 1
+                ? $"Deleted V{versionsToDelete[0]} of '{dataset.Name}'"
+                : $"Deleted {deletedCount} versions of '{dataset.Name}'";
+            
+            _activityLog?.LogSuccess("Dataset", $"Deleted {deletedCount} versions of '{dataset.Name}'");
         }
     }
 
@@ -1821,25 +2044,23 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var nextVersion = ActiveDataset.GetNextVersionNumber();
         var availableVersions = ActiveDataset.GetAllVersionNumbers();
 
-        // Count content in current version
-        var imageCount = DatasetImages.Count(m => m.IsImage);
-        var videoCount = DatasetImages.Count(m => m.IsVideo);
-        var captionCount = DatasetImages.Count(m => File.Exists(m.CaptionFilePath));
-
+        // Pass current version's media files for rating-based filtering
         var result = await DialogService.ShowCreateVersionDialogAsync(
             currentVersion,
             availableVersions,
-            imageCount,
-            videoCount,
-            captionCount);
+            DatasetImages);
 
         if (!result.Confirmed) return;
 
         var copyFiles = result.SourceOption == VersionSourceOption.CopyFromVersion;
         var sourceVersion = result.SourceVersion;
 
-        // If copy is selected but no content types are checked, treat as start fresh
-        if (copyFiles && !result.CopyImages && !result.CopyVideos && !result.CopyCaptions)
+        // If copy is selected but no content types or no rating categories are checked, treat as start fresh
+        if (copyFiles && (!result.CopyImages && !result.CopyVideos && !result.CopyCaptions))
+        {
+            copyFiles = false;
+        }
+        if (copyFiles && (!result.IncludeProductionReady && !result.IncludeUnrated && !result.IncludeTrash))
         {
             copyFiles = false;
         }
@@ -1860,27 +2081,55 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             if (copyFiles)
             {
                 var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
+                
+                // Build a dictionary of file base names with their ratings that match the rating filter
+                // (based on DatasetImages which has the rating info)
+                var allowedFiles = new Dictionary<string, ImageRatingStatus>(StringComparer.OrdinalIgnoreCase);
+                foreach (var img in DatasetImages)
+                {
+                    var shouldInclude = 
+                        (result.IncludeProductionReady && img.IsApproved) ||
+                        (result.IncludeUnrated && img.IsUnrated) ||
+                        (result.IncludeTrash && img.IsRejected);
+                    
+                    if (shouldInclude)
+                    {
+                        // Add the base name (without extension) for matching media and caption files
+                        var baseName = Path.GetFileNameWithoutExtension(img.ImagePath);
+                        allowedFiles[baseName] = img.RatingStatus;
+                    }
+                }
+
                 var files = Directory.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
 
                 foreach (var sourceFile in files)
                 {
-                    var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
+                    var baseName = Path.GetFileNameWithoutExtension(sourceFile);
+                    var extension = Path.GetExtension(sourceFile).ToLowerInvariant();
                     var shouldCopy = false;
 
                     // Check if this file type should be copied based on user selection
                     if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For images, check if base name is in allowed set (rating filter)
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
                     }
                     else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For videos, check if base name is in allowed set (rating filter)
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
                     }
                     else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For captions, only copy if the corresponding media file is being copied
+                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                    }
+                    else if (extension == ".rating")
+                    {
+                        // Skip .rating files in the main loop - we handle them separately below
+                        continue;
                     }
 
                     if (shouldCopy)
@@ -1889,6 +2138,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         var destFile = Path.Combine(destPath, fileName);
                         File.Copy(sourceFile, destFile, overwrite: false);
                         copied++;
+                    }
+                }
+
+                // Copy ratings if the option is selected
+                if (result.CopyRatings)
+                {
+                    foreach (var (baseName, rating) in allowedFiles)
+                    {
+                        // Only copy rating if it's not Unrated (Unrated means no .rating file)
+                        if (rating != ImageRatingStatus.Unrated)
+                        {
+                            var sourceRatingFile = Path.Combine(sourcePath, baseName + ".rating");
+                            var destRatingFile = Path.Combine(destPath, baseName + ".rating");
+                            
+                            if (File.Exists(sourceRatingFile) && !File.Exists(destRatingFile))
+                            {
+                                File.Copy(sourceRatingFile, destRatingFile, overwrite: false);
+                            }
+                        }
                     }
                 }
             }
@@ -2537,6 +2805,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _eventAggregator.ImageSaved -= OnImageSaved;
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _eventAggregator.SettingsSaved -= OnSettingsSaved;
+            _eventAggregator.ImageSelectionChanged -= OnImageSelectionChanged;
         }
 
         _disposed = true;

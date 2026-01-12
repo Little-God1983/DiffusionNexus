@@ -145,9 +145,9 @@
                 ToolTip.Tip="Next (Right Arrow)"
                 ZIndex="10"/>
         
-        <!-- Centered image -->
+        <!-- Centered image - load full resolution for viewer -->
         <Image x:Name="ViewerImage"
-               Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}"
+               Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}, ConverterParameter=full}"
                Stretch="Uniform"
                HorizontalAlignment="Center"
                VerticalAlignment="Center"

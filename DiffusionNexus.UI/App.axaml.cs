@@ -8,6 +8,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
@@ -50,6 +51,9 @@ public partial class App : Application
             _appScope = rootProvider.CreateScope();
             Services = _appScope.ServiceProvider;
 
+            // Initialize ThumbnailService for converters
+            InitializeThumbnailService();
+
             // Ensure database is migrated
             InitializeDatabase();
 
@@ -77,6 +81,15 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Initializes the ThumbnailService and wires it to the converters.
+    /// </summary>
+    private static void InitializeThumbnailService()
+    {
+        var thumbnailService = Services!.GetRequiredService<IThumbnailService>();
+        PathToBitmapConverter.ThumbnailService = thumbnailService;
     }
 
     private static void InitializeDatabase()
@@ -177,6 +190,9 @@ public partial class App : Application
 
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
+
+        // Thumbnail service for async image loading with LRU cache (singleton)
+        services.AddSingleton<IThumbnailService, ThumbnailService>();
 
         // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();

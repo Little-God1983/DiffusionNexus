@@ -215,12 +215,10 @@ public class DialogService : IDialogService
     public async Task<CreateVersionResult> ShowCreateVersionDialogAsync(
         int currentVersion,
         IReadOnlyList<int> availableVersions,
-        int imageCount,
-        int videoCount,
-        int captionCount)
+        IEnumerable<DatasetImageViewModel> mediaFiles)
     {
         var dialog = new CreateVersionDialog()
-            .WithVersionInfo(currentVersion, availableVersions, imageCount, videoCount, captionCount);
+            .WithVersionInfo(currentVersion, availableVersions, mediaFiles);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateVersionResult.Cancelled();
@@ -235,5 +233,23 @@ public class DialogService : IDialogService
             .WithDependencies(captioningService, this, availableDatasets, eventAggregator);
 
         await dialog.ShowDialog(_window);
+    }
+
+    public async Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts)
+    {
+        var dialog = new FileConflictDialog()
+            .WithConflicts(conflicts);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? FileConflictResolutionResult.Cancelled();
+    }
+
+    public async Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset)
+    {
+        var dialog = new SelectVersionsToDeleteDialog()
+            .WithDataset(dataset);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? SelectVersionsToDeleteResult.Cancelled();
     }
 }

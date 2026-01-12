@@ -6,7 +6,7 @@ using DiffusionNexus.UI.ViewModels;
 namespace DiffusionNexus.UI.Views.Dialogs;
 
 /// <summary>
-/// Dialog for creating a new version with content type selection options.
+/// Dialog for creating a new version with content type and rating selection options.
 /// </summary>
 public partial class CreateVersionDialog : Window
 {
@@ -29,27 +29,21 @@ public partial class CreateVersionDialog : Window
     public CreateVersionResult? Result { get; private set; }
 
     /// <summary>
-    /// Initializes the dialog with version information and content counts.
+    /// Initializes the dialog with version information and media files.
     /// </summary>
     /// <param name="currentVersion">The current version number (used as default source version).</param>
     /// <param name="availableVersions">All available versions to copy from.</param>
-    /// <param name="imageCount">Number of images in current version.</param>
-    /// <param name="videoCount">Number of videos in current version.</param>
-    /// <param name="captionCount">Number of captions in current version.</param>
+    /// <param name="mediaFiles">All media files in the current version.</param>
     /// <returns>The dialog instance for fluent chaining.</returns>
     public CreateVersionDialog WithVersionInfo(
         int currentVersion,
         IReadOnlyList<int> availableVersions,
-        int imageCount,
-        int videoCount,
-        int captionCount)
+        IEnumerable<DatasetImageViewModel> mediaFiles)
     {
         _viewModel = new CreateVersionDialogViewModel(
             currentVersion,
             availableVersions,
-            imageCount,
-            videoCount,
-            captionCount);
+            mediaFiles);
         DataContext = _viewModel;
         return this;
     }
@@ -70,7 +64,11 @@ public partial class CreateVersionDialog : Window
             SourceVersion = _viewModel.SelectedSourceVersion,
             CopyImages = _viewModel.CopyImages,
             CopyVideos = _viewModel.CopyVideos,
-            CopyCaptions = _viewModel.CopyCaptions
+            CopyCaptions = _viewModel.CopyCaptions,
+            CopyRatings = _viewModel.CopyRatings,
+            IncludeProductionReady = _viewModel.IncludeProductionReady,
+            IncludeUnrated = _viewModel.IncludeUnrated,
+            IncludeTrash = _viewModel.IncludeTrash
         };
         Close(true);
     }
