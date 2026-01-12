@@ -569,6 +569,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _eventAggregator.ImageSaved += OnImageSaved;
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
         _eventAggregator.SettingsSaved += OnSettingsSaved;
+        _eventAggregator.ImageSelectionChanged += OnImageSelectionChanged;
 
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
@@ -660,6 +661,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 OnPropertyChanged(nameof(HasNoImages));
                 break;
         }
+    }
+
+    /// <summary>
+    /// Handles selection changes from individual image checkboxes.
+    /// </summary>
+    private void OnImageSelectionChanged(object? sender, ImageSelectionChangedEventArgs e)
+    {
+        _state.UpdateSelectionCount();
     }
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
@@ -2582,6 +2591,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _eventAggregator.ImageSaved -= OnImageSaved;
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _eventAggregator.SettingsSaved -= OnSettingsSaved;
+            _eventAggregator.ImageSelectionChanged -= OnImageSelectionChanged;
         }
 
         _disposed = true;
