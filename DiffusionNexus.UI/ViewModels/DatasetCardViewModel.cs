@@ -1,5 +1,8 @@
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -37,6 +40,8 @@ public class DatasetCardViewModel : ObservableObject
     private Dictionary<int, string?> _versionDescriptions = new();
     private Dictionary<int, bool> _versionNsfwFlags = new();
     private bool _isNsfw;
+    private Bitmap? _thumbnail;
+    private bool _isThumbnailLoading;
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -276,7 +281,82 @@ public class DatasetCardViewModel : ObservableObject
             if (SetProperty(ref _thumbnailPath, value))
             {
                 OnPropertyChanged(nameof(HasThumbnail));
+                // Reset thumbnail when path changes
+                _thumbnail = null;
+                _isThumbnailLoading = false;
+                OnPropertyChanged(nameof(Thumbnail));
             }
+        }
+    }
+
+    /// <summary>
+    /// The loaded thumbnail bitmap. Loads asynchronously on first access.
+    /// Bind to this property for efficient async thumbnail display.
+    /// </summary>
+    public Bitmap? Thumbnail
+    {
+        get
+        {
+            if (_thumbnail is not null)
+                return _thumbnail;
+
+            // Try to get from cache synchronously
+            var path = ThumbnailPath;
+            if (string.IsNullOrEmpty(path))
+                return null;
+
+            var thumbnailService = PathToBitmapConverter.ThumbnailService;
+            if (thumbnailService?.TryGetCached(path, out var cached) == true)
+            {
+                _thumbnail = cached;
+                return _thumbnail;
+            }
+
+            // Start async load if not already loading
+            if (!_isThumbnailLoading)
+            {
+                _isThumbnailLoading = true;
+                _ = LoadThumbnailAsync(path);
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Loads the thumbnail asynchronously and notifies when ready.
+    /// </summary>
+    private async Task LoadThumbnailAsync(string path)
+    {
+        var thumbnailService = PathToBitmapConverter.ThumbnailService;
+        if (thumbnailService is null)
+        {
+            _isThumbnailLoading = false;
+            return;
+        }
+
+        try
+        {
+            var bitmap = await thumbnailService.LoadThumbnailAsync(path);
+            
+            if (bitmap is not null)
+            {
+                // Update on UI thread
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _thumbnail = bitmap;
+                    _isThumbnailLoading = false;
+                    OnPropertyChanged(nameof(Thumbnail));
+                });
+            }
+            else
+            {
+                _isThumbnailLoading = false;
+            }
+        }
+        catch
+        {
+            _isThumbnailLoading = false;
         }
     }
 

@@ -342,7 +342,8 @@
                                         IsVisible="{Binding !HasThumbnail}">
                                   <TextBlock Text="[No Image]" FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
                                 </Border>
-                                <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+                                <!-- Bind directly to Thumbnail property for async loading -->
+                                <Image Source="{Binding Thumbnail}"
                                        Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
                                 
                                 <Border Background="#4CAF50" CornerRadius="4" Padding="6,3"
