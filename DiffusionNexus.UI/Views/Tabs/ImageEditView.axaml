@@ -70,7 +70,7 @@
                     <Border Background="#2A2A2A" CornerRadius="4" ClipToBounds="True"
                             BorderBrush="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionBorder}}"
                             BorderThickness="{Binding IsEditorSelected, Converter={x:Static converters:BoolConverters.BoolToSelectionThickness}}">
-                      <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" Stretch="UniformToFill"/>
+                      <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
                     </Border>
                     <!-- Rating Badge Overlay -->
                     <Border Width="18" Height="18" CornerRadius="2"

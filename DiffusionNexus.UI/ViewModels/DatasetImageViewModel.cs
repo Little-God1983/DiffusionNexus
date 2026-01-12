@@ -57,6 +57,7 @@ public class DatasetImageViewModel : ObservableObject
                 OnPropertyChanged(nameof(FileName));
                 OnPropertyChanged(nameof(FullFileName));
                 OnPropertyChanged(nameof(FileExtension));
+                OnPropertyChanged(nameof(HasThumbnail));
                 // Reset thumbnail when path changes
                 _thumbnail = null;
                 OnPropertyChanged(nameof(Thumbnail));
@@ -72,8 +73,19 @@ public class DatasetImageViewModel : ObservableObject
     public string? ThumbnailPath
     {
         get => _thumbnailPath ?? (_isVideo ? GetVideoThumbnailPath() : _imagePath);
-        set => SetProperty(ref _thumbnailPath, value);
+        set
+        {
+            if (SetProperty(ref _thumbnailPath, value))
+            {
+                OnPropertyChanged(nameof(HasThumbnail));
+            }
+        }
     }
+
+    /// <summary>
+    /// Whether this media item has a thumbnail to display.
+    /// </summary>
+    public bool HasThumbnail => !string.IsNullOrEmpty(ThumbnailPath);
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
