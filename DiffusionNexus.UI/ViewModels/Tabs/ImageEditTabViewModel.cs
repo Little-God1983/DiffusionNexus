@@ -248,6 +248,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
         _eventAggregator.DatasetCreated += OnDatasetCreated;
         _eventAggregator.VersionCreated += OnVersionCreated;
+        _eventAggregator.ImageAdded += OnImageAdded;
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -455,6 +456,27 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         {
             var currentVersion = _selectedEditorVersion?.Version ?? e.NewVersion;
             await RefreshVersionItemsAsync(currentVersion);
+        }
+    }
+
+    /// <summary>
+    /// Handles image added events - refreshes version dropdown and image list when images are added.
+    /// </summary>
+    private async void OnImageAdded(object? sender, ImageAddedEventArgs e)
+    {
+        // If we're currently viewing this dataset, refresh the version list and images
+        if (_selectedEditorDataset is not null &&
+            string.Equals(_selectedEditorDataset.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentVersion = _selectedEditorVersion?.Version;
+            if (currentVersion.HasValue)
+            {
+                // Refresh version items for updated image counts
+                await RefreshVersionItemsAsync(currentVersion.Value);
+                
+                // Reload images for the current version
+                await LoadEditorDatasetImagesAsync();
+            }
         }
     }
 
@@ -679,6 +701,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _eventAggregator.DatasetCreated -= OnDatasetCreated;
             _eventAggregator.VersionCreated -= OnVersionCreated;
+            _eventAggregator.ImageAdded -= OnImageAdded;
             _state.StateChanged -= OnStateChanged;
         }
 

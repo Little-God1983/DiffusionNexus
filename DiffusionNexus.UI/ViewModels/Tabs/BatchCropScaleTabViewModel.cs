@@ -411,6 +411,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         {
             _eventAggregator.DatasetCreated += OnDatasetCreated;
             _eventAggregator.VersionCreated += OnVersionCreated;
+            _eventAggregator.ImageAdded += OnImageAdded;
         }
 
         // Load default buckets
@@ -534,6 +535,33 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         {
             await LoadDatasetVersionsAsync();
             UpdateNextVersionNumber();
+        }
+    }
+
+    /// <summary>
+    /// Handles image added events - refreshes version dropdown and image count when images are added.
+    /// </summary>
+    private async void OnImageAdded(object? sender, ImageAddedEventArgs e)
+    {
+        // If we're currently viewing this dataset, refresh the version list for updated counts
+        if (_selectedDataset is not null &&
+            string.Equals(_selectedDataset.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentVersion = _selectedVersion?.Version;
+            await LoadDatasetVersionsAsync();
+            
+            // Re-select the version if one was selected
+            if (currentVersion.HasValue)
+            {
+                var versionToReselect = VersionItems.FirstOrDefault(v => v.Version == currentVersion.Value);
+                if (versionToReselect is not null)
+                {
+                    _selectedVersion = versionToReselect;
+                    OnPropertyChanged(nameof(SelectedVersion));
+                }
+            }
+            
+            UpdateDatasetImageCount();
         }
     }
 
@@ -911,6 +939,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
             {
                 _eventAggregator.DatasetCreated -= OnDatasetCreated;
                 _eventAggregator.VersionCreated -= OnVersionCreated;
+                _eventAggregator.ImageAdded -= OnImageAdded;
             }
 
             _cancellationTokenSource?.Cancel();
