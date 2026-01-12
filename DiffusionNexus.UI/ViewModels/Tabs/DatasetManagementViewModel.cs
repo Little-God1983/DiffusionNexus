@@ -1433,55 +1433,134 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             IsLoading = true;
             try
             {
-                var copied = 0;
-                var skipped = 0;
                 var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
                 Directory.CreateDirectory(destFolderPath);
 
-                var addedImages = new List<DatasetImageViewModel>();
+                // Detect conflicts
+                var conflicts = new List<FileConflictItem>();
+                var nonConflictingFiles = new List<string>();
 
                 foreach (var sourceFile in files)
                 {
                     var fileName = Path.GetFileName(sourceFile);
                     var destPath = Path.Combine(destFolderPath, fileName);
 
-                    if (!File.Exists(destPath))
+                    if (File.Exists(destPath))
                     {
-                        File.Copy(sourceFile, destPath);
-                        copied++;
-
-                        if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                        // This file conflicts with an existing file
+                        var existingInfo = new FileInfo(destPath);
+                        var newInfo = new FileInfo(sourceFile);
+                        
+                        conflicts.Add(new FileConflictItem
                         {
-                            await _videoThumbnailService.GenerateThumbnailAsync(destPath);
-                        }
+                            ConflictingName = fileName,
+                            ExistingFilePath = destPath,
+                            NewFilePath = sourceFile,
+                            ExistingFileSize = existingInfo.Length,
+                            NewFileSize = newInfo.Length,
+                            ExistingCreationDate = existingInfo.CreationTime,
+                            NewCreationDate = newInfo.CreationTime,
+                            IsImage = MediaFileExtensions.IsImageFile(sourceFile)
+                        });
                     }
                     else
                     {
-                        skipped++;
+                        nonConflictingFiles.Add(sourceFile);
                     }
                 }
 
-                StatusMessage = skipped > 0
-                    ? $"Added {copied} files, skipped {skipped} duplicates"
-                    : $"Added {copied} files to dataset";
+                // If there are conflicts, show the resolution dialog
+                if (conflicts.Count > 0)
+                {
+                    var result = await DialogService.ShowFileConflictDialogAsync(conflicts);
+                    if (!result.Confirmed)
+                    {
+                        StatusMessage = "Import cancelled";
+                        return;
+                    }
 
-                if (copied > 0)
-                {
-                    _activityLog?.LogSuccess("Import", $"Imported {copied} files to '{ActiveDataset.Name}'" + (skipped > 0 ? $" ({skipped} duplicates skipped)" : ""));
+                    // Process conflicts based on user selections
+                    foreach (var conflict in result.Conflicts)
+                    {
+                        switch (conflict.Resolution)
+                        {
+                            case FileConflictResolution.Override:
+                                // Delete existing and copy new
+                                File.Delete(conflict.ExistingFilePath);
+                                File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(conflict.ExistingFilePath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(conflict.ExistingFilePath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Rename:
+                                // Generate a unique name
+                                var renamedPath = GenerateUniqueFileName(destFolderPath, conflict.ConflictingName);
+                                File.Copy(conflict.NewFilePath, renamedPath);
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(renamedPath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(renamedPath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Ignore:
+                                // Skip this file
+                                break;
+                        }
+                    }
                 }
-                else if (skipped > 0)
+
+                // Copy non-conflicting files
+                var copied = 0;
+                foreach (var sourceFile in nonConflictingFiles)
                 {
-                    _activityLog?.LogWarning("Import", $"All {skipped} files already exist in '{ActiveDataset.Name}'");
+                    var fileName = Path.GetFileName(sourceFile);
+                    var destPath = Path.Combine(destFolderPath, fileName);
+                    File.Copy(sourceFile, destPath);
+                    copied++;
+
+                    if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
+                    {
+                        await _videoThumbnailService.GenerateThumbnailAsync(destPath);
+                    }
+                }
+
+                // Calculate totals for status message
+                var overridden = conflicts.Count(c => c.Resolution == FileConflictResolution.Override);
+                var renamed = conflicts.Count(c => c.Resolution == FileConflictResolution.Rename);
+                var ignored = conflicts.Count(c => c.Resolution == FileConflictResolution.Ignore);
+                var totalAdded = copied + overridden + renamed;
+
+                // Build status message
+                var statusParts = new List<string>();
+                if (copied > 0) statusParts.Add($"{copied} new");
+                if (overridden > 0) statusParts.Add($"{overridden} overridden");
+                if (renamed > 0) statusParts.Add($"{renamed} renamed");
+                if (ignored > 0) statusParts.Add($"{ignored} ignored");
+
+                StatusMessage = statusParts.Count > 0
+                    ? $"Added {totalAdded} files: " + string.Join(", ", statusParts)
+                    : "No files added";
+
+                if (totalAdded > 0)
+                {
+                    _activityLog?.LogSuccess("Import", $"Imported {totalAdded} files to '{ActiveDataset.Name}'" + 
+                        (ignored > 0 ? $" ({ignored} conflicts ignored)" : ""));
+                }
+                else if (ignored > 0)
+                {
+                    _activityLog?.LogWarning("Import", $"All {ignored} conflicting files were ignored");
                 }
 
                 await OpenDatasetAsync(ActiveDataset);
 
-                if (addedImages.Count > 0)
+                if (totalAdded > 0)
                 {
                     _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
                     {
                         Dataset = ActiveDataset,
-                        AddedImages = addedImages
+                        AddedImages = []
                     });
                 }
             }
@@ -1499,6 +1578,26 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsFileDialogOpen = false;
         }
+    }
+
+    /// <summary>
+    /// Generates a unique file name by appending a number suffix.
+    /// </summary>
+    private static string GenerateUniqueFileName(string folderPath, string fileName)
+    {
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        var counter = 1;
+        string newPath;
+
+        do
+        {
+            var newName = $"{nameWithoutExt}_{counter}{extension}";
+            newPath = Path.Combine(folderPath, newName);
+            counter++;
+        } while (File.Exists(newPath));
+
+        return newPath;
     }
 
     private void SaveAllCaptions()

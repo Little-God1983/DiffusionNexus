@@ -176,6 +176,13 @@ public interface IDialogService
         ICaptioningService captioningService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
         IDatasetEventAggregator? eventAggregator = null);
+
+    /// <summary>
+    /// Shows the file conflict resolution dialog for handling duplicate filenames.
+    /// </summary>
+    /// <param name="conflicts">The list of file conflicts to resolve.</param>
+    /// <returns>Resolution result with user selections, or cancelled result.</returns>
+    Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts);
 }
 
 /// <summary>

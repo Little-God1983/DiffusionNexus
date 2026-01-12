@@ -234,4 +234,13 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
     }
+
+    public async Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts)
+    {
+        var dialog = new FileConflictDialog()
+            .WithConflicts(conflicts);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? FileConflictResolutionResult.Cancelled();
+    }
 }
