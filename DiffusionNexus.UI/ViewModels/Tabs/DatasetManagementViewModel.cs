@@ -1821,25 +1821,23 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var nextVersion = ActiveDataset.GetNextVersionNumber();
         var availableVersions = ActiveDataset.GetAllVersionNumbers();
 
-        // Count content in current version
-        var imageCount = DatasetImages.Count(m => m.IsImage);
-        var videoCount = DatasetImages.Count(m => m.IsVideo);
-        var captionCount = DatasetImages.Count(m => File.Exists(m.CaptionFilePath));
-
+        // Pass current version's media files for rating-based filtering
         var result = await DialogService.ShowCreateVersionDialogAsync(
             currentVersion,
             availableVersions,
-            imageCount,
-            videoCount,
-            captionCount);
+            DatasetImages);
 
         if (!result.Confirmed) return;
 
         var copyFiles = result.SourceOption == VersionSourceOption.CopyFromVersion;
         var sourceVersion = result.SourceVersion;
 
-        // If copy is selected but no content types are checked, treat as start fresh
-        if (copyFiles && !result.CopyImages && !result.CopyVideos && !result.CopyCaptions)
+        // If copy is selected but no content types or no rating categories are checked, treat as start fresh
+        if (copyFiles && (!result.CopyImages && !result.CopyVideos && !result.CopyCaptions))
+        {
+            copyFiles = false;
+        }
+        if (copyFiles && (!result.IncludeProductionReady && !result.IncludeUnrated && !result.IncludeTrash))
         {
             copyFiles = false;
         }
@@ -1860,27 +1858,48 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             if (copyFiles)
             {
                 var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
+                
+                // Build a set of file base names that match the rating filter
+                // (based on DatasetImages which has the rating info)
+                var allowedBaseNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var img in DatasetImages)
+                {
+                    var shouldInclude = 
+                        (result.IncludeProductionReady && img.IsApproved) ||
+                        (result.IncludeUnrated && img.IsUnrated) ||
+                        (result.IncludeTrash && img.IsRejected);
+                    
+                    if (shouldInclude)
+                    {
+                        // Add the base name (without extension) for matching media and caption files
+                        allowedBaseNames.Add(Path.GetFileNameWithoutExtension(img.ImagePath));
+                    }
+                }
+
                 var files = Directory.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
 
                 foreach (var sourceFile in files)
                 {
-                    var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
+                    var baseName = Path.GetFileNameWithoutExtension(sourceFile);
                     var shouldCopy = false;
 
                     // Check if this file type should be copied based on user selection
                     if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For images, check if base name is in allowed set (rating filter)
+                        shouldCopy = allowedBaseNames.Contains(baseName);
                     }
                     else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For videos, check if base name is in allowed set (rating filter)
+                        shouldCopy = allowedBaseNames.Contains(baseName);
                     }
                     else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
                     {
-                        shouldCopy = true;
+                        // For captions, only copy if the corresponding media file is being copied
+                        shouldCopy = allowedBaseNames.Contains(baseName);
                     }
 
                     if (shouldCopy)

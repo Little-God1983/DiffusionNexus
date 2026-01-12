@@ -215,12 +215,10 @@ public class DialogService : IDialogService
     public async Task<CreateVersionResult> ShowCreateVersionDialogAsync(
         int currentVersion,
         IReadOnlyList<int> availableVersions,
-        int imageCount,
-        int videoCount,
-        int captionCount)
+        IEnumerable<DatasetImageViewModel> mediaFiles)
     {
         var dialog = new CreateVersionDialog()
-            .WithVersionInfo(currentVersion, availableVersions, imageCount, videoCount, captionCount);
+            .WithVersionInfo(currentVersion, availableVersions, mediaFiles);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateVersionResult.Cancelled();

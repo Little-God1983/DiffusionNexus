@@ -4,13 +4,13 @@
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         x:Class="DiffusionNexus.UI.Views.Dialogs.CreateVersionDialog"
         x:DataType="vm:CreateVersionDialogViewModel"
-        Width="500"
+        Width="520"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="#252526">
   
-  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
     
     <!-- Title -->
     <StackPanel Grid.Row="0" Margin="0,0,0,20">
@@ -90,8 +90,45 @@
       </Border>
     </StackPanel>
     
+    <!-- Rating Selection (when Copy is selected) - inspired by Export dialog -->
+    <StackPanel Grid.Row="2" Margin="0,0,0,16" IsVisible="{Binding IsCopyFromVersion}">
+      <TextBlock Text="Include Media by Rating"
+                 FontWeight="SemiBold"
+                 Margin="0,0,0,8"/>
+      
+      <!-- Production Ready -->
+      <CheckBox IsChecked="{Binding IncludeProductionReady}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#4CAF50" VerticalAlignment="Center"/>
+          <TextBlock Text="Production Ready" Foreground="#4CAF50"/>
+          <TextBlock Text="{Binding ProductionReadyCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
+      
+      <!-- Unrated -->
+      <CheckBox IsChecked="{Binding IncludeUnrated}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#888" VerticalAlignment="Center"/>
+          <TextBlock Text="Unrated"/>
+          <TextBlock Text="{Binding UnratedCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
+      
+      <!-- Trash -->
+      <CheckBox IsChecked="{Binding IncludeTrash}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#F44336" VerticalAlignment="Center"/>
+          <TextBlock Text="Trash" Foreground="#F44336"/>
+          <TextBlock Text="{Binding TrashCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
+    </StackPanel>
+    
     <!-- Content Type Selection (when Copy is selected) -->
-    <Border Grid.Row="2" 
+    <Border Grid.Row="3" 
             Background="#1A1A1A" 
             CornerRadius="8" 
             Padding="16"
@@ -174,8 +211,40 @@
       </StackPanel>
     </Border>
     
-    <!-- Info Text -->
-    <Border Grid.Row="3" 
+    <!-- To Copy Count (highlighted) - shown when copying and has selection -->
+    <Border Grid.Row="4" 
+            Background="#2D7D46" 
+            CornerRadius="8" 
+            Padding="16"
+            Margin="0,0,0,20"
+            IsVisible="{Binding IsCopyFromVersion}">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" 
+                   Text="Media files to copy:" 
+                   FontWeight="SemiBold"
+                   VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" 
+                   Text="{Binding FilteredMediaCount}" 
+                   FontWeight="Bold"
+                   FontSize="16"
+                   HorizontalAlignment="Right"/>
+      </Grid>
+    </Border>
+    
+    <!-- Warning when no rating selection -->
+    <Border Grid.Row="4" 
+            Background="#7D2D2D" 
+            CornerRadius="8" 
+            Padding="16"
+            Margin="0,0,0,20"
+            IsVisible="{Binding !HasRatingSelection}">
+      <TextBlock Text="Select at least one rating category to copy."
+                 HorizontalAlignment="Center"
+                 FontWeight="SemiBold"/>
+    </Border>
+    
+    <!-- Info Text for Start Fresh -->
+    <Border Grid.Row="5" 
             Background="#2A2A2A" 
             CornerRadius="8" 
             Padding="12"
@@ -191,7 +260,7 @@
       </StackPanel>
     </Border>
     
-    <Border Grid.Row="4" 
+    <Border Grid.Row="5" 
             Background="#2A2A2A" 
             CornerRadius="8" 
             Padding="12"
@@ -199,7 +268,7 @@
             IsVisible="{Binding IsCopyFromVersion}">
       <StackPanel Orientation="Horizontal" Spacing="8">
         <TextBlock Text="?" Foreground="#4FC3F7" FontSize="16"/>
-        <TextBlock Text="Selected content will be copied to the new version.&#x0a;Original files remain unchanged."
+        <TextBlock Text="Only media matching selected ratings will be copied.&#x0a;Original files remain unchanged."
                    Opacity="0.8"
                    FontSize="12"
                    TextWrapping="Wrap"
@@ -208,7 +277,7 @@
     </Border>
     
     <!-- Buttons -->
-    <StackPanel Grid.Row="5" 
+    <StackPanel Grid.Row="6" 
                 Orientation="Horizontal" 
                 HorizontalAlignment="Right" 
                 Spacing="8">
