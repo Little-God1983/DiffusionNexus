@@ -189,6 +189,13 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     private int _nextVersionNumber;
 
     /// <summary>
+    /// Whether to copy captions when creating a new version.
+    /// Default is true to keep LoRA and caption data together.
+    /// </summary>
+    [ObservableProperty]
+    private bool _copyCaptionsWithNewVersion = true;
+
+    /// <summary>
     /// True if a dataset is selected (enables version increment option).
     /// </summary>
     public bool CanIncrementVersion => SelectedDataset is not null;
@@ -816,12 +823,23 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
             SuccessCount = result.SuccessCount;
             FailedCount = result.FailedCount;
             SkippedCount = result.SkippedCount;
+
+            // Copy captions if creating a new version and the option is enabled
+            var captionsCopied = 0;
+            if (UseIncrementVersion && SelectedDataset is not null && CopyCaptionsWithNewVersion)
+            {
+                captionsCopied = await CopyCaptionsToNewVersionAsync(
+                    EffectiveSourceFolder,
+                    EffectiveTargetFolder!,
+                    _cancellationTokenSource.Token);
+            }
             
             var modeInfo = UsePadding ? " (padded)" : " (cropped)";
             var targetInfo = UseIncrementVersion 
                 ? $" to V{NextVersionNumber}" 
                 : "";
-            StatusMessage = $"Completed{targetInfo}{modeInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed";
+            var captionInfo = captionsCopied > 0 ? $", {captionsCopied} captions copied" : "";
+            StatusMessage = $"Completed{targetInfo}{modeInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed{captionInfo}";
 
             // If we created a new version, update the next version number for subsequent runs
             if (UseIncrementVersion && SelectedDataset is not null)
@@ -881,6 +899,59 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     #endregion
 
     #region Private Methods
+
+    /// <summary>
+    /// Copies caption files (.txt) from the source folder to the target folder.
+    /// Only copies captions for images that exist in the target folder (i.e., were processed).
+    /// </summary>
+    /// <param name="sourceFolder">The source folder containing caption files.</param>
+    /// <param name="targetFolder">The target folder to copy captions to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The number of captions copied.</returns>
+    private static async Task<int> CopyCaptionsToNewVersionAsync(
+        string sourceFolder,
+        string targetFolder,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(sourceFolder) || !Directory.Exists(targetFolder))
+            return 0;
+
+        var copied = 0;
+
+        // Get all image files in the target folder to know which captions to copy
+        var targetImages = Directory.EnumerateFiles(targetFolder)
+            .Where(MediaFileExtensions.IsImageFile)
+            .Select(Path.GetFileNameWithoutExtension)
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Find and copy matching caption files from source
+        var captionFiles = Directory.EnumerateFiles(sourceFolder)
+            .Where(MediaFileExtensions.IsCaptionFile);
+
+        foreach (var captionFile in captionFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var baseName = Path.GetFileNameWithoutExtension(captionFile);
+            
+            // Only copy if the corresponding image was processed to the target
+            if (targetImages.Contains(baseName))
+            {
+                var fileName = Path.GetFileName(captionFile);
+                var targetCaptionPath = Path.Combine(targetFolder, fileName);
+
+                // Don't overwrite existing captions
+                if (!File.Exists(targetCaptionPath))
+                {
+                    await Task.Run(() => File.Copy(captionFile, targetCaptionPath), cancellationToken);
+                    copied++;
+                }
+            }
+        }
+
+        return copied;
+    }
 
     private void CheckTargetFolderEmpty()
     {

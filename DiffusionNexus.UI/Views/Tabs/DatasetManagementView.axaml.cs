@@ -429,8 +429,8 @@ public partial class DatasetManagementView : UserControl
         vm.IsFileDialogOpen = true;
         try
         {
-            // If there are conflicts OR non-conflicting files, show conflict resolution dialog immediately
-            if (conflicts.Count > 0 || nonConflictingFiles.Count > 0)
+            // If there are conflicts, show conflict resolution dialog immediately
+            if (conflicts.Count > 0)
             {
                 var result = await vm.DialogService.ShowFileConflictDialogAsync(conflicts, nonConflictingFiles);
                 
@@ -443,6 +443,17 @@ public partial class DatasetManagementView : UserControl
 
                 // Process based on user selections
                 await ProcessConflictResolutionAsync(vm, result, nonConflictingFiles, destFolderPath);
+            }
+            else if (nonConflictingFiles.Count > 0)
+            {
+                // No conflicts - just copy the non-conflicting files
+                // We reuse ProcessConflictResolutionAsync with a dummy empty result, or call a direct copy
+                // Direct copy is simpler but using the same method keeps logic centralized if needed, 
+                // but wait, ProcessConflictResolutionAsync takes FileConflictResolutionResult.
+                // We can construct a valid empty result.
+                
+                var emptyResult = new FileConflictResolutionResult { Confirmed = true, Conflicts = [] };
+                await ProcessConflictResolutionAsync(vm, emptyResult, nonConflictingFiles, destFolderPath);
             }
             else
             {

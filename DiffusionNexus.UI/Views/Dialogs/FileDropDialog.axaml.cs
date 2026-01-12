@@ -222,15 +222,14 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         dropZone.BorderThickness = new Avalonia.Thickness(2);
     }
 
-#pragma warning disable CS0618 // Type or member is obsolete - Data property is still required for GetFiles extension
     private async void OnDrop(object? sender, DragEventArgs e)
     {
         // Reset border style
         OnDragLeave(sender, e);
 
-        var files = e.Data.GetFiles();
+        var files = GetFilesFromEvent(e);
         if (files is null) return;
-
+        
         // Collect all dropped files
         var droppedFiles = new List<string>();
         
@@ -267,8 +266,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 _existingFileNames,
                 _destinationFolder);
 
-            // If there are any conflicts OR non-conflicting files, invoke the callback
-            if (conflictResult.Conflicts.Count > 0 || conflictResult.NonConflictingFiles.Count > 0)
+            // If there are any conflicts, invoke the callback
+            if (conflictResult.Conflicts.Count > 0)
             {
                 var result = await _onConflictsDetected(conflictResult.Conflicts, conflictResult.NonConflictingFiles);
                 
@@ -283,6 +282,14 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 Close(true);
                 return;
             }
+            else
+            {
+                // No conflicts detection - add files normally
+                foreach (var filePath in filteredFiles)
+                {
+                    AddFile(filePath);
+                }
+            }
         }
         else
         {
@@ -295,7 +302,6 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         NotifyPropertiesChanged();
     }
-#pragma warning restore CS0618
 
     /// <summary>
     /// Processes the conflict resolution result and returns the final list of files to import.
@@ -359,7 +365,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// <returns>A tuple of (hasValidFiles, hasInvalidFiles)</returns>
     private (bool HasValid, bool HasInvalid) AnalyzeFilesInDrag(DragEventArgs e)
     {
-        var files = e.Data.GetFiles();
+        var files = GetFilesFromEvent(e);
         if (files is null) return (false, false);
 
         var hasValid = false;
@@ -398,6 +404,13 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         }
 
         return (hasValid, hasInvalid);
+    }
+
+    private static IEnumerable<IStorageItem>? GetFilesFromEvent(DragEventArgs e)
+    {
+#pragma warning disable CS0618 // Type or member is obsolete
+        return e.Data.GetFiles();
+#pragma warning restore CS0618
     }
 
     /// <summary>

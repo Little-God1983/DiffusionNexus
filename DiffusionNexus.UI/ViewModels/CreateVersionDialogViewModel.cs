@@ -28,7 +28,7 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     private readonly IReadOnlyList<int> _availableVersions;
     private readonly List<DatasetImageViewModel> _allMediaFiles;
 
-    private VersionSourceOption _sourceOption = VersionSourceOption.StartFresh;
+    private VersionSourceOption _sourceOption = VersionSourceOption.CopyFromVersion;
     private int _selectedSourceVersion;
     private bool _copyImages = true;
     private bool _copyVideos = true;
