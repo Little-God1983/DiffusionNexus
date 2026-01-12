@@ -252,9 +252,9 @@ public partial class VersionDeleteItem : ObservableObject
         get
         {
             var parts = new List<string>();
-            if (_imageCount > 0) parts.Add($"{_imageCount} {(_imageCount == 1 ? "image" : "images")}");
-            if (_videoCount > 0) parts.Add($"{_videoCount} {(_videoCount == 1 ? "video" : "videos")}");
-            if (_captionCount > 0) parts.Add($"{_captionCount} {(_captionCount == 1 ? "caption" : "captions")}");
+            if (ImageCount > 0) parts.Add($"{ImageCount} {(ImageCount == 1 ? "image" : "images")}");
+            if (VideoCount > 0) parts.Add($"{VideoCount} {(VideoCount == 1 ? "video" : "videos")}");
+            if (CaptionCount > 0) parts.Add($"{CaptionCount} {(CaptionCount == 1 ? "caption" : "captions")}");
             return parts.Count > 0 ? string.Join(", ", parts) : "Empty";
         }
     }
