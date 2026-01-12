@@ -1,11 +1,7 @@
 using Avalonia.Data.Converters;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using DiffusionNexus.UI.Services;
-using DiffusionNexus.UI.ViewModels;
-using System;
 using System.Globalization;
-using System.IO;
 
 namespace DiffusionNexus.UI.Converters;
 
@@ -13,6 +9,10 @@ namespace DiffusionNexus.UI.Converters;
 /// Converts a file path string to a Bitmap for display in Image controls.
 /// Uses async loading with caching via ThumbnailService when available.
 /// Falls back to synchronous DecodeToWidth if ThumbnailService is not configured.
+/// 
+/// ConverterParameter options:
+/// - "full" or "fullres": Load full resolution image (bypasses ThumbnailService)
+/// - null or "thumbnail": Use ThumbnailService for 340px thumbnails
 /// </summary>
 public class PathToBitmapConverter : IValueConverter
 {
@@ -35,6 +35,17 @@ public class PathToBitmapConverter : IValueConverter
     {
         if (value is not string path || string.IsNullOrEmpty(path) || !File.Exists(path))
             return null;
+
+        // Check if full resolution is requested via ConverterParameter
+        var paramStr = parameter as string;
+        var isFullRes = string.Equals(paramStr, "full", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(paramStr, "fullres", StringComparison.OrdinalIgnoreCase);
+
+        if (isFullRes)
+        {
+            // Load full resolution image synchronously (for image viewer, editor, etc.)
+            return LoadFullResolution(path);
+        }
 
         // If ThumbnailService is available, use it for cached async loading
         if (ThumbnailService is not null)
@@ -62,11 +73,27 @@ public class PathToBitmapConverter : IValueConverter
         try
         {
             await ThumbnailService.LoadThumbnailAsync(path, DefaultThumbnailWidth);
-            // Note: The ViewModel's NotifyThumbnailLoaded will trigger binding refresh
+            // Note: The ViewModel's Thumbnail property will trigger binding refresh
         }
         catch
         {
             // Ignore loading errors
+        }
+    }
+
+    /// <summary>
+    /// Loads the full resolution image without any scaling.
+    /// </summary>
+    private static Bitmap? LoadFullResolution(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return new Bitmap(stream);
+        }
+        catch
+        {
+            return null;
         }
     }
 
