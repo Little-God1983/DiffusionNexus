@@ -124,7 +124,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Create tab ViewModels - pass activity log for comprehensive logging
         DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, captioningService, videoThumbnailService, backupService, activityLog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
-        BatchCropScale = new BatchCropScaleTabViewModel(state);
+        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;

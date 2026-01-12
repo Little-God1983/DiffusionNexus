@@ -186,6 +186,30 @@ public interface IDialogService
     Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts);
 
     /// <summary>
+    /// Shows the file conflict resolution dialog for handling duplicate filenames,
+    /// also displaying non-conflicting files that will be added.
+    /// </summary>
+    /// <param name="conflicts">The list of file conflicts to resolve.</param>
+    /// <param name="nonConflictingFilePaths">Paths to files that don't conflict and will be added.</param>
+    /// <returns>Resolution result with user selections, or cancelled result.</returns>
+    Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(
+        IEnumerable<FileConflictItem> conflicts,
+        IEnumerable<string> nonConflictingFilePaths);
+
+    /// <summary>
+    /// Shows a drag-and-drop file picker dialog with conflict detection.
+    /// When files are dropped that conflict with existing files, the conflict dialog is shown immediately.
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="existingFileNames">Names of files that already exist in the destination.</param>
+    /// <param name="destinationFolder">The destination folder path.</param>
+    /// <returns>List of selected file paths with conflict resolutions applied, or null if cancelled.</returns>
+    Task<FileDropWithConflictResult?> ShowFileDropDialogWithConflictDetectionAsync(
+        string title,
+        IEnumerable<string> existingFileNames,
+        string destinationFolder);
+
+    /// <summary>
     /// Shows a dialog for selecting which versions of a multi-version dataset to delete.
     /// Used in stacked/unflatten view when deleting a dataset with multiple versions.
     /// </summary>
@@ -277,4 +301,47 @@ public interface IBusyViewModel
     /// Gets or sets an optional message describing the current operation.
     /// </summary>
     string? BusyMessage { get; set; }
+}
+
+/// <summary>
+/// Result from the file drop dialog with conflict detection.
+/// </summary>
+public class FileDropWithConflictResult
+{
+    /// <summary>
+    /// Files that do not conflict and should be copied directly.
+    /// </summary>
+    public List<string> NonConflictingFiles { get; init; } = [];
+
+    /// <summary>
+    /// Conflict resolution results for files that had naming conflicts.
+    /// </summary>
+    public FileConflictResolutionResult? ConflictResolutions { get; init; }
+
+    /// <summary>
+    /// Whether the user cancelled the operation.
+    /// </summary>
+    public bool Cancelled { get; init; }
+
+    /// <summary>
+    /// Gets all files that should be added (non-conflicting + resolved conflicts).
+    /// </summary>
+    public IEnumerable<string> GetFilesToAdd()
+    {
+        foreach (var file in NonConflictingFiles)
+        {
+            yield return file;
+        }
+
+        if (ConflictResolutions?.Confirmed == true)
+        {
+            foreach (var conflict in ConflictResolutions.Conflicts)
+            {
+                if (conflict.Resolution != FileConflictResolution.Ignore)
+                {
+                    yield return conflict.NewFilePath;
+                }
+            }
+        }
+    }
 }

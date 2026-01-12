@@ -121,6 +121,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 {
     private readonly IImageCropperService _cropperService;
     private readonly IDatasetState? _state;
+    private readonly IDatasetEventAggregator? _eventAggregator;
     private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
 
@@ -399,10 +400,19 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Creates a new BatchCropScaleTabViewModel with dataset state support.
     /// </summary>
-    public BatchCropScaleTabViewModel(IDatasetState? state = null)
+    public BatchCropScaleTabViewModel(IDatasetState? state = null, IDatasetEventAggregator? eventAggregator = null)
     {
         _state = state;
+        _eventAggregator = eventAggregator;
         _cropperService = new ImageCropperService();
+
+        // Subscribe to events for dataset/version creation
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.DatasetCreated += OnDatasetCreated;
+            _eventAggregator.VersionCreated += OnVersionCreated;
+            _eventAggregator.ImageAdded += OnImageAdded;
+        }
 
         // Load default buckets
         InitializeBuckets();
@@ -503,6 +513,57 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     #endregion
 
     #region Dataset Methods
+
+    /// <summary>
+    /// Handles dataset created events - notifies UI to refresh dataset dropdown.
+    /// </summary>
+    private void OnDatasetCreated(object? sender, DatasetCreatedEventArgs e)
+    {
+        // The Datasets collection is shared via IDatasetState, so it's already updated.
+        // We just need to notify the UI that the collection may have changed.
+        OnPropertyChanged(nameof(Datasets));
+    }
+
+    /// <summary>
+    /// Handles version created events - refreshes version dropdown if viewing the affected dataset.
+    /// </summary>
+    private async void OnVersionCreated(object? sender, VersionCreatedEventArgs e)
+    {
+        // If we're currently viewing this dataset, refresh the version list
+        if (_selectedDataset is not null &&
+            string.Equals(_selectedDataset.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            await LoadDatasetVersionsAsync();
+            UpdateNextVersionNumber();
+        }
+    }
+
+    /// <summary>
+    /// Handles image added events - refreshes version dropdown and image count when images are added.
+    /// </summary>
+    private async void OnImageAdded(object? sender, ImageAddedEventArgs e)
+    {
+        // If we're currently viewing this dataset, refresh the version list for updated counts
+        if (_selectedDataset is not null &&
+            string.Equals(_selectedDataset.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentVersion = _selectedVersion?.Version;
+            await LoadDatasetVersionsAsync();
+            
+            // Re-select the version if one was selected
+            if (currentVersion.HasValue)
+            {
+                var versionToReselect = VersionItems.FirstOrDefault(v => v.Version == currentVersion.Value);
+                if (versionToReselect is not null)
+                {
+                    _selectedVersion = versionToReselect;
+                    OnPropertyChanged(nameof(SelectedVersion));
+                }
+            }
+            
+            UpdateDatasetImageCount();
+        }
+    }
 
     /// <summary>
     /// Preselects a dataset and version for processing.
@@ -873,6 +934,14 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
         if (disposing)
         {
+            // Unsubscribe from events to prevent memory leaks
+            if (_eventAggregator is not null)
+            {
+                _eventAggregator.DatasetCreated -= OnDatasetCreated;
+                _eventAggregator.VersionCreated -= OnVersionCreated;
+                _eventAggregator.ImageAdded -= OnImageAdded;
+            }
+
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource?.Dispose();
         }

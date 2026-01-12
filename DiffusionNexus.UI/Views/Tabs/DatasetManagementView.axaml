@@ -401,7 +401,9 @@
             </Border>
             
             <!-- Image Cards -->
-            <Grid IsVisible="{Binding !HasNoImages}" RowDefinitions="Auto,*">
+            <Grid IsVisible="{Binding !HasNoImages}" RowDefinitions="Auto,*"
+                  x:Name="ImageGridArea"
+                  DragDrop.AllowDrop="True">
               <!-- Selection Toolbar -->
               <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">

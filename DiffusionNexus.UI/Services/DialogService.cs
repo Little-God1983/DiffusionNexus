@@ -244,6 +244,76 @@ public class DialogService : IDialogService
         return dialog.Result ?? FileConflictResolutionResult.Cancelled();
     }
 
+    public async Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(
+        IEnumerable<FileConflictItem> conflicts,
+        IEnumerable<string> nonConflictingFilePaths)
+    {
+        var dialog = new FileConflictDialog()
+            .WithConflictsAndNonConflicting(conflicts, nonConflictingFilePaths);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? FileConflictResolutionResult.Cancelled();
+    }
+
+    public async Task<FileDropWithConflictResult?> ShowFileDropDialogWithConflictDetectionAsync(
+        string title,
+        IEnumerable<string> existingFileNames,
+        string destinationFolder)
+    {
+        FileDropWithConflictResult? finalResult = null;
+        var conflictResolution = (FileConflictResolutionResult?)null;
+        var nonConflictingFromDialog = new List<string>();
+
+        var dialog = new FileDropDialog()
+            .WithTitle(title)
+            .ForMediaAndText()
+            .WithConflictDetection(
+                existingFileNames,
+                destinationFolder,
+                async (conflicts, nonConflictingFiles) =>
+                {
+                    nonConflictingFromDialog = nonConflictingFiles.ToList();
+                    
+                    // Show conflict dialog immediately with both conflicts and non-conflicting files
+                    var conflictDialog = new FileConflictDialog()
+                        .WithConflictsAndNonConflicting(conflicts, nonConflictingFiles);
+                    
+                    await conflictDialog.ShowDialog(_window);
+                    conflictResolution = conflictDialog.Result;
+                    return conflictResolution;
+                });
+
+        await dialog.ShowDialog(_window);
+
+        if (dialog.ResultFiles is null)
+        {
+            // User cancelled from the file drop dialog
+            return new FileDropWithConflictResult { Cancelled = true };
+        }
+
+        // If conflict resolution was triggered, build result from that
+        if (conflictResolution is not null)
+        {
+            finalResult = new FileDropWithConflictResult
+            {
+                Cancelled = !conflictResolution.Confirmed,
+                NonConflictingFiles = nonConflictingFromDialog,
+                ConflictResolutions = conflictResolution
+            };
+        }
+        else
+        {
+            // No conflicts detected, just return the selected files
+            finalResult = new FileDropWithConflictResult
+            {
+                Cancelled = false,
+                NonConflictingFiles = dialog.ResultFiles
+            };
+        }
+
+        return finalResult;
+    }
+
     public async Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset)
     {
         var dialog = new SelectVersionsToDeleteDialog()

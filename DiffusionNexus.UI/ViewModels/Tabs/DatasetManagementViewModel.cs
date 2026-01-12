@@ -1425,95 +1425,40 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
-            var files = await DialogService.ShowFileDropDialogAsync($"Add Media to: {ActiveDataset.Name}");
-            if (files is null || files.Count == 0) return;
+            var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
+            Directory.CreateDirectory(destFolderPath);
 
-            _activityLog?.LogInfo("Import", $"Importing {files.Count} files to '{ActiveDataset.Name}'");
+            // Get existing filenames for immediate conflict detection
+            var existingFileNames = Directory.GetFiles(destFolderPath)
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Cast<string>()
+                .ToList();
+
+            var result = await DialogService.ShowFileDropDialogWithConflictDetectionAsync(
+                $"Add Media to: {ActiveDataset.Name}",
+                existingFileNames,
+                destFolderPath);
+
+            if (result is null || result.Cancelled) return;
+
+            var filesToAdd = result.GetFilesToAdd().ToList();
+            if (filesToAdd.Count == 0) return;
+
+            _activityLog?.LogInfo("Import", $"Importing {filesToAdd.Count} files to '{ActiveDataset.Name}'");
             
             IsLoading = true;
             try
             {
-                var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
-                Directory.CreateDirectory(destFolderPath);
-
-                // Detect conflicts
-                var conflicts = new List<FileConflictItem>();
-                var nonConflictingFiles = new List<string>();
-
-                foreach (var sourceFile in files)
-                {
-                    var fileName = Path.GetFileName(sourceFile);
-                    var destPath = Path.Combine(destFolderPath, fileName);
-
-                    if (File.Exists(destPath))
-                    {
-                        // This file conflicts with an existing file
-                        var existingInfo = new FileInfo(destPath);
-                        var newInfo = new FileInfo(sourceFile);
-                        
-                        conflicts.Add(new FileConflictItem
-                        {
-                            ConflictingName = fileName,
-                            ExistingFilePath = destPath,
-                            NewFilePath = sourceFile,
-                            ExistingFileSize = existingInfo.Length,
-                            NewFileSize = newInfo.Length,
-                            ExistingCreationDate = existingInfo.CreationTime,
-                            NewCreationDate = newInfo.CreationTime,
-                            IsImage = MediaFileExtensions.IsImageFile(sourceFile)
-                        });
-                    }
-                    else
-                    {
-                        nonConflictingFiles.Add(sourceFile);
-                    }
-                }
-
-                // If there are conflicts, show the resolution dialog
-                if (conflicts.Count > 0)
-                {
-                    var result = await DialogService.ShowFileConflictDialogAsync(conflicts);
-                    if (!result.Confirmed)
-                    {
-                        StatusMessage = "Import cancelled";
-                        return;
-                    }
-
-                    // Process conflicts based on user selections
-                    foreach (var conflict in result.Conflicts)
-                    {
-                        switch (conflict.Resolution)
-                        {
-                            case FileConflictResolution.Override:
-                                // Delete existing and copy new
-                                File.Delete(conflict.ExistingFilePath);
-                                File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
-                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(conflict.ExistingFilePath))
-                                {
-                                    await _videoThumbnailService.GenerateThumbnailAsync(conflict.ExistingFilePath);
-                                }
-                                break;
-
-                            case FileConflictResolution.Rename:
-                                // Generate a unique name
-                                var renamedPath = GenerateUniqueFileName(destFolderPath, conflict.ConflictingName);
-                                File.Copy(conflict.NewFilePath, renamedPath);
-                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(renamedPath))
-                                {
-                                    await _videoThumbnailService.GenerateThumbnailAsync(renamedPath);
-                                }
-                                break;
-
-                            case FileConflictResolution.Ignore:
-                                // Skip this file
-                                break;
-                        }
-                    }
-                }
-
-                // Copy non-conflicting files
                 var copied = 0;
-                foreach (var sourceFile in nonConflictingFiles)
+                var overridden = 0;
+                var renamed = 0;
+                var ignored = 0;
+
+                // Process files based on the result from the dialog
+                
+                // 1. Process non-conflicting files
+                foreach (var sourceFile in result.NonConflictingFiles)
                 {
                     var fileName = Path.GetFileName(sourceFile);
                     var destPath = Path.Combine(destFolderPath, fileName);
@@ -1526,10 +1471,75 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     }
                 }
 
-                // Calculate totals for status message
-                var overridden = conflicts.Count(c => c.Resolution == FileConflictResolution.Override);
-                var renamed = conflicts.Count(c => c.Resolution == FileConflictResolution.Rename);
-                var ignored = conflicts.Count(c => c.Resolution == FileConflictResolution.Ignore);
+                // 2. Process resolved conflicts
+                if (result.ConflictResolutions is not null && result.ConflictResolutions.Confirmed)
+                {
+                    var renamedPairs = new Dictionary<string, string>(); // Base name -> new base name
+                   
+                    foreach (var conflict in result.ConflictResolutions.Conflicts)
+                    {
+                        switch (conflict.Resolution)
+                        {
+                            case FileConflictResolution.Override:
+                                // Delete existing and copy new
+                                if (File.Exists(conflict.ExistingFilePath))
+                                {
+                                    File.Delete(conflict.ExistingFilePath);
+                                }
+                                File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
+                                overridden++;
+                                
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(conflict.ExistingFilePath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(conflict.ExistingFilePath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Rename:
+                                // Generate a unique name
+                                // CRITICAL: If this file is part of a pair, it should receive the SAME new base name as its partner.
+                                // Currently, the simplest way is to check if we already renamed a partial pair.
+                                
+                                var baseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
+                                
+                                // Check if we already generated a new name for this base name in this batch
+                                if (!renamedPairs.TryGetValue(baseName, out var newBaseName))
+                                {
+                                    // Generate a new unique path for the first file in the pair
+                                    var uniquePath = GenerateUniqueFileName(destFolderPath, conflict.ConflictingName);
+                                    newBaseName = Path.GetFileNameWithoutExtension(uniquePath);
+                                    renamedPairs[baseName] = newBaseName;
+                                }
+
+                                var extension = Path.GetExtension(conflict.ConflictingName);
+                                var finalNewName = newBaseName + extension;
+                                var finalRenamedPath = Path.Combine(destFolderPath, finalNewName);
+
+                                // Ensure uniqueness for this specific extension AGAIN just in case (e.g. if the pair had different collision states)
+                                // But if we lock them to the *same* new base name, we should be fine if GenerateUniqueFileName checks for *any* file with that base?
+                                // Standard GenerateUniqueFileName checks full path. 
+                                // If 'img_1.png' exists, 'img_1.txt' might not. 
+                                // But if we want them paired, we must use the same index.
+                                // So we trust the first generation.
+                                
+                                File.Copy(conflict.NewFilePath, finalRenamedPath);
+                                renamed++;
+                                
+                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(finalRenamedPath))
+                                {
+                                    await _videoThumbnailService.GenerateThumbnailAsync(finalRenamedPath);
+                                }
+                                break;
+
+                            case FileConflictResolution.Ignore:
+                                // Skip this file
+                                ignored++;
+                                break;
+                        }
+                    }
+                }
+
+                // Calculate total added
                 var totalAdded = copied + overridden + renamed;
 
                 // Build status message
