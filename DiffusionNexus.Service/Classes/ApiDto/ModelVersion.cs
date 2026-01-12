@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System;
     using System.Collections.Generic;
@@ -16,13 +15,13 @@ namespace DiffusionNexus.Service.Classes
             public int Index { get; set; }
 
             [JsonPropertyName("name")]
-            public string Name { get; set; }
+            public string? Name { get; set; }
 
             [JsonPropertyName("baseModel")]
-            public string BaseModel { get; set; }
+            public string? BaseModel { get; set; }
 
             [JsonPropertyName("baseModelType")]
-            public string BaseModelType { get; set; }
+            public string? BaseModelType { get; set; }
 
             [JsonPropertyName("createdAt")]
             public DateTime CreatedAt { get; set; }
@@ -31,34 +30,34 @@ namespace DiffusionNexus.Service.Classes
             public DateTime PublishedAt { get; set; }
 
             [JsonPropertyName("status")]
-            public string Status { get; set; }
+            public string? Status { get; set; }
 
             [JsonPropertyName("availability")]
-            public string Availability { get; set; }
+            public string? Availability { get; set; }
 
             [JsonPropertyName("nsfwLevel")]
             public int NsfwLevel { get; set; }
 
             [JsonPropertyName("description")]
-            public string Description { get; set; }
+            public string? Description { get; set; }
 
             [JsonPropertyName("trainedWords")]
-            public List<string> TrainedWords { get; set; }
+            public List<string>? TrainedWords { get; set; }
 
             [JsonPropertyName("covered")]
             public bool Covered { get; set; }
 
             [JsonPropertyName("stats")]
-            public ModelStats Stats { get; set; }
+            public ModelStats? Stats { get; set; }
 
             [JsonPropertyName("files")]
-            public List<ModelFile> Files { get; set; }
+            public List<ModelFile>? Files { get; set; }
 
             [JsonPropertyName("images")]
-            public List<ModelImage> Images { get; set; }
+            public List<ModelImage>? Images { get; set; }
 
             [JsonPropertyName("downloadUrl")]
-            public string DownloadUrl { get; set; }
+            public string? DownloadUrl { get; set; }
         }
     }
 }

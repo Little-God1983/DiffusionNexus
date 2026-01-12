@@ -123,6 +123,7 @@ public partial class DatasetManagementView : UserControl
         }
     }
 
+#pragma warning disable CS0618 // Type or member is obsolete - Data property is still required for GetFiles extension
     private (bool HasValid, bool HasInvalid) AnalyzeMediaFilesInDrag(DragEventArgs e)
     {
         var files = e.Data.GetFiles();
@@ -280,6 +281,7 @@ public partial class DatasetManagementView : UserControl
             vm.IsFileDialogOpen = false;
         }
     }
+#pragma warning restore CS0618
 
     /// <summary>
     /// Collects all file paths from a folder (non-recursive).

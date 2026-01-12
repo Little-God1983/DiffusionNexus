@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System.Text.Json.Serialization;
 
@@ -8,7 +7,7 @@ namespace DiffusionNexus.Service.Classes
         public class FileMetadata
         {
             [JsonPropertyName("format")]
-            public string Format { get; set; }
+            public string? Format { get; set; }
         }
     }
 }

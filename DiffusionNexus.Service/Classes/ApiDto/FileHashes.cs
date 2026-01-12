@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System.Text.Json.Serialization;
 
@@ -8,22 +7,22 @@ namespace DiffusionNexus.Service.Classes
         public class FileHashes
         {
             [JsonPropertyName("AutoV1")]
-            public string AutoV1 { get; set; }
+            public string? AutoV1 { get; set; }
 
             [JsonPropertyName("AutoV2")]
-            public string AutoV2 { get; set; }
+            public string? AutoV2 { get; set; }
 
             [JsonPropertyName("SHA256")]
-            public string SHA256 { get; set; }
+            public string? SHA256 { get; set; }
 
             [JsonPropertyName("CRC32")]
-            public string CRC32 { get; set; }
+            public string? CRC32 { get; set; }
 
             [JsonPropertyName("BLAKE3")]
-            public string BLAKE3 { get; set; }
+            public string? BLAKE3 { get; set; }
 
             [JsonPropertyName("AutoV3")]
-            public string AutoV3 { get; set; }
+            public string? AutoV3 { get; set; }
         }
     }
 }

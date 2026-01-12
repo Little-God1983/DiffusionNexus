@@ -47,6 +47,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 {
     private readonly IAppSettingsService _settingsService;
     private readonly IDatasetBackupService? _backupService;
+    private readonly ICaptioningService? _captioningService; // Made optional to avoid breaking existing tests/instantiation if any
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
@@ -530,6 +531,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand RejectSelectedCommand { get; }
     public IRelayCommand ClearRatingSelectedCommand { get; }
     public IAsyncRelayCommand DeleteSelectedCommand { get; }
+    public IAsyncRelayCommand OpenCaptioningToolCommand { get; } // New Command
 
     #endregion
 
@@ -542,6 +544,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IAppSettingsService settingsService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
+        ICaptioningService? captioningService = null, // Added as optional
         IVideoThumbnailService? videoThumbnailService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null)
@@ -549,6 +552,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
+        _captioningService = captioningService;
         _videoThumbnailService = videoThumbnailService;
         _backupService = backupService;
         _activityLog = activityLog;
@@ -597,12 +601,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         SelectApprovedCommand = new RelayCommand(SelectApproved);
         SelectRejectedCommand = new RelayCommand(SelectRejected);
         DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
+        
+        OpenCaptioningToolCommand = new AsyncRelayCommand(OpenCaptioningToolAsync);
     }
 
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null, null, null, null)
     {
     }
 
@@ -1995,6 +2001,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             StatusMessage = $"Exported {exportedCount} files successfully.";
             _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+
+            // Open the export location in Explorer
+            OpenFolderInExplorer(destinationPath, result.ExportType == ExportType.Zip);
         }
         catch (Exception ex)
         {
@@ -2004,6 +2013,40 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the specified path in Windows Explorer.
+    /// If isFile is true, opens the containing folder and selects the file.
+    /// </summary>
+    private static void OpenFolderInExplorer(string path, bool isFile)
+    {
+        try
+        {
+            if (isFile && File.Exists(path))
+            {
+                // Open Explorer and select the file
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            else if (Directory.Exists(path))
+            {
+                // Open the folder
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch
+        {
+            // Ignore errors opening Explorer - not critical
         }
     }
 
@@ -2428,6 +2471,20 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             StatusMessage = $"Error deleting image: {ex.Message}";
         }
+    }
+
+    private async Task OpenCaptioningToolAsync()
+    {
+        if (DialogService is null) return;
+        
+        if (_captioningService is null)
+        {
+            StatusMessage = "Captioning service is not available.";
+            return;
+        }
+
+        // Pass the Datasets collection to the dialog
+        await DialogService.ShowCaptioningDialogAsync(_captioningService, Datasets, _eventAggregator);
     }
 
     #endregion

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
+using DiffusionNexus.Captioning;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Services;
@@ -197,6 +198,9 @@ public partial class App : Application
         // Image upscaling service (singleton - maintains ONNX session)
         services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
 
+        // Captioning service (singleton - manages local LLM)
+        services.AddCaptioningServices();
+
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();
@@ -217,6 +221,7 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IDatasetState>(),
+            sp.GetService<ICaptioningService>(),
             sp.GetService<IVideoThumbnailService>(),
             sp.GetService<IBackgroundRemovalService>(),
             sp.GetService<IImageUpscalingService>(),

@@ -1,5 +1,4 @@
-﻿
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     using System.Text.Json.Serialization;
 
@@ -8,7 +7,7 @@ namespace DiffusionNexus.Service.Classes
         public class ModelImage
         {
             [JsonPropertyName("url")]
-            public string Url { get; set; }
+            public string? Url { get; set; }
 
             [JsonPropertyName("nsfwLevel")]
             public int NsfwLevel { get; set; }
@@ -20,10 +19,10 @@ namespace DiffusionNexus.Service.Classes
             public int Height { get; set; }
 
             [JsonPropertyName("hash")]
-            public string Hash { get; set; }
+            public string? Hash { get; set; }
 
             [JsonPropertyName("type")]
-            public string Type { get; set; }
+            public string? Type { get; set; }
 
             [JsonPropertyName("minor")]
             public bool Minor { get; set; }

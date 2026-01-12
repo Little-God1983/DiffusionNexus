@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DiffusionNexus.Captioning</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- LlamaSharp for local LLM inference -->
+    <PackageReference Include="LLamaSharp" Version="0.21.0" />
+    
+    <!-- CUDA 12 backend for NVIDIA GPU acceleration (supports CUDA 12.8 for RTX 50XX) -->
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.21.0" />
+    
+    <!-- Explicitly exclude CPU backend to prevent single-file publish conflicts (AVX variant DLLs with same filename) -->
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.21.0">
+      <ExcludeAssets>all</ExcludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    
+    <!-- Image processing -->
+    <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    
+    <!-- Logging -->
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    
+    <!-- DI support -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -37,67 +37,37 @@
     
     <!-- Export Options -->
     <StackPanel Grid.Row="2" Margin="0,0,0,20">
-      <TextBlock Text="Export Options"
+      <TextBlock Text="Include in Export"
                  FontWeight="SemiBold"
                  Margin="0,0,0,8"/>
-      <CheckBox Content="Export unrated images/videos"
-                IsChecked="{Binding ExportUnrated}"
-                Margin="0,4"/>
-      <CheckBox Content="Export trash images/videos as well"
-                IsChecked="{Binding IncludeFailedImages}"
-                Margin="0,4"/>
+      <CheckBox IsChecked="{Binding ExportProductionReady}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#4CAF50" VerticalAlignment="Center"/>
+          <TextBlock Text="Production Ready" Foreground="#4CAF50"/>
+          <TextBlock Text="{Binding ProductionReadyCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
+      <CheckBox IsChecked="{Binding ExportUnrated}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#888" VerticalAlignment="Center"/>
+          <TextBlock Text="Unrated"/>
+          <TextBlock Text="{Binding UnratedCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
+      <CheckBox IsChecked="{Binding ExportTrash}"
+                Margin="0,4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#F44336" VerticalAlignment="Center"/>
+          <TextBlock Text="Trash" Foreground="#F44336"/>
+          <TextBlock Text="{Binding TrashCount, StringFormat='({0})'}" Opacity="0.7"/>
+        </StackPanel>
+      </CheckBox>
     </StackPanel>
     
-    <!-- Preview Counts -->
-    <Border Grid.Row="3" 
-            Background="#1A1A1A" 
-            CornerRadius="8" 
-            Padding="16"
-            Margin="0,0,0,20">
-      <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
-        
-        <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                   Text="Preview"
-                   FontWeight="SemiBold"
-                   Foreground="#D4A574"
-                   Margin="0,0,0,12"/>
-        
-        <!-- Total -->
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="In folder:" Opacity="0.7"/>
-        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TotalText}" HorizontalAlignment="Right"/>
-        
-        <!-- Production Ready -->
-        <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal">
-          <Ellipse Width="10" Height="10" Fill="#4CAF50" Margin="0,0,6,0" VerticalAlignment="Center"/>
-          <TextBlock Text="Production Ready:" Foreground="#4CAF50"/>
-        </StackPanel>
-        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ProductionReadyText}" Foreground="#4CAF50" HorizontalAlignment="Right"/>
-        
-        <!-- Failed -->
-        <StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal">
-          <Ellipse Width="10" Height="10" Fill="#F44336" Margin="0,0,6,0" VerticalAlignment="Center"/>
-          <TextBlock Text="Trash:" Foreground="#F44336"/>
-        </StackPanel>
-        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TrashText}" Foreground="#F44336" HorizontalAlignment="Right"/>
-        
-        <!-- Unrated -->
-        <StackPanel Grid.Row="4" Grid.Column="0" Orientation="Horizontal">
-          <Ellipse Width="10" Height="10" Fill="#888" Margin="0,0,6,0" VerticalAlignment="Center"/>
-          <TextBlock Text="Unrated:" Opacity="0.7"/>
-        </StackPanel>
-        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding UnratedText}" Opacity="0.7" HorizontalAlignment="Right"/>
-        
-        <!-- Separator -->
-        <Border Grid.Row="5" Grid.ColumnSpan="2" 
-                Height="1" 
-                Background="#444" 
-                Margin="0,12,0,12"/>
-        
-      </Grid>
-    </Border>
-    
     <!-- To Export Count (highlighted) -->
-    <Border Grid.Row="4" 
+    <Border Grid.Row="3" 
             Background="#2D7D46" 
             CornerRadius="8" 
             Padding="16"
@@ -117,19 +87,19 @@
     </Border>
     
     <!-- Warning when no files to export -->
-    <Border Grid.Row="4" 
+    <Border Grid.Row="3" 
             Background="#7D2D2D" 
             CornerRadius="8" 
             Padding="16"
             Margin="0,0,0,20"
             IsVisible="{Binding !CanExport}">
-      <TextBlock Text="No files match the current filter settings."
+      <TextBlock Text="Select at least one category to export."
                  HorizontalAlignment="Center"
                  FontWeight="SemiBold"/>
     </Border>
     
     <!-- Buttons -->
-    <StackPanel Grid.Row="5" 
+    <StackPanel Grid.Row="4" 
                 Orientation="Horizontal" 
                 HorizontalAlignment="Right" 
                 Spacing="8">
