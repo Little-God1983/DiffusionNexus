@@ -4,12 +4,12 @@
         x:Class="DiffusionNexus.UI.Views.Dialogs.ReplaceDialog"
         x:DataType="vm:ReplaceImageDialogViewModel"
         Width="800"
-        Height="500"
+        Height="600"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="#252526"
         Title="Replace Image"
-        Icon="/Assets/AIKnowledgeIcon.ico">
+        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico">
   
   <Grid RowDefinitions="Auto,*,Auto">
      <TextBlock Text="Replace Image" 
@@ -43,11 +43,11 @@
                   <Border CornerRadius="4" ClipToBounds="True" Background="#000" Height="200" HorizontalAlignment="Stretch">
                       <Image Source="{Binding NewThumbnail}" Stretch="Uniform"/>
                   </Border>
-                  <TextBlock Text="{Binding NewFileName}" TextWrapping="Wrap" HorizontalAlignment="Center" Foreground="#D4A574"/>
-                  <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding NewFileSize}" Foreground="#CCC"/>
-                      <TextBlock Text="{Binding NewResolution}" Foreground="#CCC"/>
-                      <TextBlock Text="{Binding NewDate}" Foreground="#CCC"/>
+                  <TextBlock Text="{Binding NewFileName}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Foreground="#D4A574"/>
+                  <StackPanel Spacing="4" HorizontalAlignment="Center">
+                      <TextBlock Text="{Binding NewFileSize}" Foreground="#CCC" HorizontalAlignment="Center"/>
+                      <TextBlock Text="{Binding NewResolution}" Foreground="#CCC" HorizontalAlignment="Center"/>
+                      <TextBlock Text="{Binding NewDate}" Foreground="#CCC" HorizontalAlignment="Center"/>
                   </StackPanel>
                </StackPanel>
 
