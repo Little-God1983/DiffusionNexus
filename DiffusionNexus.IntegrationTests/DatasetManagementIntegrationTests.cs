@@ -3,7 +3,9 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
+using DiffusionNexus.UI.Views.Dialogs;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.IntegrationTests;
 
@@ -97,7 +99,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Task.FromResult(new ExportDatasetResult { Confirmed = false });
 
         public Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories) =>
-            Task.FromResult(new CreateDatasetResult { Cancelled = true });
+            Task.FromResult(CreateDatasetResult.Cancelled());
 
         public Task ShowImageViewerDialogAsync(
             ObservableCollection<DatasetImageViewModel> images,
@@ -108,7 +110,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Task.CompletedTask;
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath) =>
-            Task.FromResult(new SaveAsResult { Cancelled = true });
+            Task.FromResult(SaveAsResult.Cancelled());
 
         public Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage) =>
             Task.FromResult(ReplaceImageResult.Cancelled());
@@ -120,7 +122,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             int currentVersion,
             IReadOnlyList<int> availableVersions,
             IEnumerable<DatasetImageViewModel> mediaFiles) =>
-            Task.FromResult(new CreateVersionResult { Cancelled = true });
+            Task.FromResult(CreateVersionResult.Cancelled());
 
         public Task ShowCaptioningDialogAsync(
             ICaptioningService captioningService,
@@ -156,6 +158,6 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         }
 
         public Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset) =>
-            Task.FromResult(new SelectVersionsToDeleteResult { Cancelled = true });
+            Task.FromResult(SelectVersionsToDeleteResult.Cancelled());
     }
 }
