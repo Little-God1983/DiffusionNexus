@@ -181,6 +181,23 @@ public class DatasetImageViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Forces a refresh of the thumbnail by clearing the local and global cache and notifying observers.
+    /// Call this after the underlying file has been modified.
+    /// </summary>
+    public void RefreshThumbnail()
+    {
+        // Invalidate global cache 
+        if (!string.IsNullOrEmpty(ThumbnailPath))
+        {
+            PathToBitmapConverter.ThumbnailService?.Invalidate(ThumbnailPath);
+        }
+        
+        // Clear local cache
+        _thumbnail = null;
+        OnPropertyChanged(nameof(Thumbnail));
+    }
+
     /// <summary>Whether this media item is a video file.</summary>
     public bool IsVideo => _isVideo;
 

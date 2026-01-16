@@ -1793,6 +1793,84 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
     }
 
+    /// <summary>
+    /// Replaces an existing image/video file with a new file while preserving the name and caption.
+    /// </summary>
+    [RelayCommand]
+    private async Task ReplaceImage(DatasetImageViewModel? image)
+    {
+        if (image == null || DialogService == null || ActiveDataset == null) return;
+
+        var title = image.IsImage ? "Select Replacement Image" : "Select Replacement Video";
+        var sourcePath = await DialogService.ShowOpenFileDialogAsync(title, filter: null);
+
+        if (string.IsNullOrEmpty(sourcePath)) return;
+
+        if (image.IsImage && !MediaFileExtensions.IsImageFile(sourcePath))
+        {
+            var allowed = string.Join(", ", MediaFileExtensions.ImageExtensions);
+            await DialogService.ShowMessageAsync("Invalid File Type", 
+                $"You are replacing an image. Please select a valid image file.\nAllowed: {allowed}");
+            return;
+        }
+
+        if (image.IsVideo && !MediaFileExtensions.IsVideoFile(sourcePath))
+        {
+            var allowed = string.Join(", ", MediaFileExtensions.VideoExtensions);
+            await DialogService.ShowMessageAsync("Invalid File Type", 
+                $"You are replacing a video. Please select a valid video file.\nAllowed: {allowed}");
+            return;
+        }
+
+        try
+        {
+            var destFolder = Path.GetDirectoryName(image.ImagePath)!;
+            var oldFileNameWithoutExt = Path.GetFileNameWithoutExtension(image.ImagePath);
+            var newExtension = Path.GetExtension(sourcePath);
+
+            var newDestPath = Path.Combine(destFolder, oldFileNameWithoutExt + newExtension);
+
+            if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(image.ImagePath), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var confirm = await DialogService.ShowConfirmAsync("Replace File", 
+                $"Are you sure you want to replace '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'?\n\nThis will overwrite the image content but keep the caption.");
+            
+            if (!confirm) return;
+
+            bool samePath = string.Equals(image.ImagePath, newDestPath, StringComparison.OrdinalIgnoreCase);
+
+            if (!samePath && File.Exists(newDestPath))
+            {
+                var overwrite = await DialogService.ShowConfirmAsync("File Exists", 
+                    $"File '{Path.GetFileName(newDestPath)}' already exists. Overwrite it?");
+                if (!overwrite) return;
+            }
+
+            if (!samePath && File.Exists(image.ImagePath))
+            {
+                File.Delete(image.ImagePath);
+            }
+
+            File.Copy(sourcePath, newDestPath, true);
+
+            if (!samePath)
+            {
+                image.ImagePath = newDestPath;
+            }
+
+            image.RefreshThumbnail();
+
+            _activityLog?.LogInfo("Replace", $"Replaced file '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'");
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageAsync("Error", $"Failed to replace file: {ex.Message}");
+        }
+    }
+
     private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
     {
         if (dataset is null || DialogService is null) return;
