@@ -265,9 +265,11 @@
                       Background="{Binding CurrentImage.HasUnsavedChanges, Converter={x:Static converters:BoolConverters.BoolToUnsavedBackground}}"
                       Foreground="White"
                       CornerRadius="4"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
                       ToolTip.Placement="Left"
                       ToolTip.Tip="Save caption (Ctrl+S)">
-                <StackPanel Orientation="Horizontal" Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
                   <TextBlock Text="*" 
                              FontWeight="Bold" 
                              Foreground="#FFD700"
@@ -277,16 +279,46 @@
               </Button>
               
               <!-- Revert button -->
-              <Button Content="Revert"
+              <Button Content="Reset"
                       Command="{Binding CurrentImage.RevertCaptionCommand}"
                       Padding="12,8"
                       FontSize="13"
                       Background="#80444444"
                       Foreground="White"
                       CornerRadius="4"
-                      IsEnabled="{Binding CurrentImage.HasUnsavedChanges}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
                       ToolTip.Placement="Left"
-                      ToolTip.Tip="Revert changes (Ctrl+Z)"/>
+                      ToolTip.Tip="Reset changes"/>
+                      
+              <!-- Undo button -->
+              <Button Content="Undo"
+                      Command="{Binding CurrentImage.UndoCaptionCommand}"
+                      Padding="12,8"
+                      FontSize="13"
+                      Background="#80444444"
+                      Foreground="White"
+                      CornerRadius="4"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
+                      ToolTip.Placement="Left"
+                      ToolTip.Tip="Undo changes"/>
+                      
+              <!-- Redo button -->
+              <Button Content="Redo"
+                      Command="{Binding CurrentImage.RedoCaptionCommand}"
+                      Padding="12,8"
+                      FontSize="13"
+                      Background="#80444444"
+                      Foreground="White"
+                      CornerRadius="4"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
+                      ToolTip.Placement="Left"
+                      ToolTip.Tip="Redo changes"/>
             </StackPanel>
           </Grid>
           

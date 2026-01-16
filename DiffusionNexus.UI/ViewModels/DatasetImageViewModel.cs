@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -30,6 +31,9 @@ namespace DiffusionNexus.UI.ViewModels;
 public class DatasetImageViewModel : ObservableObject
 {
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly Stack<string> _undoStack = new();
+    private readonly Stack<string> _redoStack = new();
+    private bool _isUndoingOrRedoing;
     private string _originalCaption = string.Empty;
     
     private string _imagePath = string.Empty;
@@ -195,6 +199,14 @@ public class DatasetImageViewModel : ObservableObject
         get => _caption;
         set
         {
+            if (_caption != value && !_isUndoingOrRedoing)
+            {
+                _undoStack.Push(_caption);
+                _redoStack.Clear();
+                UndoCaptionCommand.NotifyCanExecuteChanged();
+                RedoCaptionCommand.NotifyCanExecuteChanged();
+            }
+
             if (SetProperty(ref _caption, value))
             {
                 HasUnsavedChanges = value != _originalCaption;
@@ -273,6 +285,8 @@ public class DatasetImageViewModel : ObservableObject
 
     public IRelayCommand SaveCaptionCommand { get; }
     public IRelayCommand RevertCaptionCommand { get; }
+    public IRelayCommand UndoCaptionCommand { get; }
+    public IRelayCommand RedoCaptionCommand { get; }
     public IRelayCommand DeleteCommand { get; }
     public IRelayCommand MarkApprovedCommand { get; }
     public IRelayCommand MarkRejectedCommand { get; }
@@ -290,6 +304,8 @@ public class DatasetImageViewModel : ObservableObject
         
         SaveCaptionCommand = new RelayCommand(SaveCaption);
         RevertCaptionCommand = new RelayCommand(RevertCaption);
+        UndoCaptionCommand = new RelayCommand(UndoCaption, () => _undoStack.Count > 0);
+        RedoCaptionCommand = new RelayCommand(RedoCaption, () => _redoStack.Count > 0);
         DeleteCommand = new RelayCommand(Delete);
         MarkApprovedCommand = new RelayCommand(MarkApproved);
         MarkRejectedCommand = new RelayCommand(MarkRejected);
@@ -427,7 +443,11 @@ public class DatasetImageViewModel : ObservableObject
             File.WriteAllText(CaptionFilePath, _caption);
             _originalCaption = _caption;
             HasUnsavedChanges = false;
-
+            
+            // Clear undo/redo stacks on save? 
+            // Usually we don't clear undo stack on save, so user can still undo after save.
+            // But HasUnsavedChanges becomes false.
+            
             // Publish caption saved event
             _eventAggregator?.PublishCaptionChanged(new CaptionChangedEventArgs
             {
@@ -448,7 +468,50 @@ public class DatasetImageViewModel : ObservableObject
     private void RevertCaption()
     {
         Caption = _originalCaption;
-        HasUnsavedChanges = false;
+    }
+
+    private void UndoCaption()
+    {
+        if (_undoStack.Count == 0) return;
+        
+        _isUndoingOrRedoing = true;
+        try
+        {
+            var previous = _undoStack.Pop();
+            _redoStack.Push(_caption);
+            if (SetProperty(ref _caption, previous, nameof(Caption)))
+            {
+                HasUnsavedChanges = _caption != _originalCaption;
+            }
+        }
+        finally
+        {
+            _isUndoingOrRedoing = false;
+            UndoCaptionCommand.NotifyCanExecuteChanged();
+            RedoCaptionCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void RedoCaption()
+    {
+        if (_redoStack.Count == 0) return;
+
+        _isUndoingOrRedoing = true;
+        try
+        {
+            var next = _redoStack.Pop();
+            _undoStack.Push(_caption);
+            if (SetProperty(ref _caption, next, nameof(Caption)))
+            {
+                HasUnsavedChanges = _caption != _originalCaption;
+            }
+        }
+        finally
+        {
+            _isUndoingOrRedoing = false;
+            UndoCaptionCommand.NotifyCanExecuteChanged();
+            RedoCaptionCommand.NotifyCanExecuteChanged();
+        }
     }
 
     private void Delete()
