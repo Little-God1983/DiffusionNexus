@@ -1801,73 +1801,79 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         if (image == null || DialogService == null || ActiveDataset == null) return;
 
-        var title = image.IsImage ? "Select Replacement Image" : "Select Replacement Video";
-        var sourcePath = await DialogService.ShowOpenFileDialogAsync(title, filter: null);
-
-        if (string.IsNullOrEmpty(sourcePath)) return;
-
-        if (image.IsImage && !MediaFileExtensions.IsImageFile(sourcePath))
-        {
-            var allowed = string.Join(", ", MediaFileExtensions.ImageExtensions);
-            await DialogService.ShowMessageAsync("Invalid File Type", 
-                $"You are replacing an image. Please select a valid image file.\nAllowed: {allowed}");
-            return;
-        }
-
-        if (image.IsVideo && !MediaFileExtensions.IsVideoFile(sourcePath))
-        {
-            var allowed = string.Join(", ", MediaFileExtensions.VideoExtensions);
-            await DialogService.ShowMessageAsync("Invalid File Type", 
-                $"You are replacing a video. Please select a valid video file.\nAllowed: {allowed}");
-            return;
-        }
+        var result = await DialogService.ShowReplaceImageDialogAsync(image);
+        if (!result.Confirmed || string.IsNullOrEmpty(result.NewFilePath)) return;
 
         try
         {
+            var sourcePath = result.NewFilePath!;
             var destFolder = Path.GetDirectoryName(image.ImagePath)!;
-            var oldFileNameWithoutExt = Path.GetFileNameWithoutExtension(image.ImagePath);
-            var newExtension = Path.GetExtension(sourcePath);
 
-            var newDestPath = Path.Combine(destFolder, oldFileNameWithoutExt + newExtension);
-
-            if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(image.ImagePath), StringComparison.OrdinalIgnoreCase))
+            if (result.Action == ReplaceAction.Replace)
             {
-                return;
+                var oldFileNameWithoutExt = Path.GetFileNameWithoutExtension(image.ImagePath);
+                var newExtension = Path.GetExtension(sourcePath);
+                var newDestPath = Path.Combine(destFolder, oldFileNameWithoutExt + newExtension);
+
+                // Prevent replacing with self if paths are identical
+                if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(image.ImagePath), StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                bool samePath = string.Equals(image.ImagePath, newDestPath, StringComparison.OrdinalIgnoreCase);
+
+                // If target exists and is not the file we currently point to
+                if (!samePath && File.Exists(newDestPath))
+                {
+                    var overwrite = await DialogService.ShowConfirmAsync("File Exists", 
+                        $"File '{Path.GetFileName(newDestPath)}' already exists. Overwrite it?");
+                    if (!overwrite) return;
+                }
+
+                // If path changed (extension changed), delete the old file
+                if (!samePath && File.Exists(image.ImagePath))
+                {
+                    File.Delete(image.ImagePath);
+                }
+
+                File.Copy(sourcePath, newDestPath, true);
+
+                if (!samePath)
+                {
+                    image.ImagePath = newDestPath;
+                }
+
+                image.RefreshThumbnail();
+                _activityLog?.LogInfo("Replace", $"Replaced file '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'");
             }
-
-            var confirm = await DialogService.ShowConfirmAsync("Replace File", 
-                $"Are you sure you want to replace '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'?\n\nThis will overwrite the image content but keep the caption.");
-            
-            if (!confirm) return;
-
-            bool samePath = string.Equals(image.ImagePath, newDestPath, StringComparison.OrdinalIgnoreCase);
-
-            if (!samePath && File.Exists(newDestPath))
+            else if (result.Action == ReplaceAction.AddAsNew)
             {
-                var overwrite = await DialogService.ShowConfirmAsync("File Exists", 
-                    $"File '{Path.GetFileName(newDestPath)}' already exists. Overwrite it?");
-                if (!overwrite) return;
+                var newFileName = Path.GetFileName(sourcePath);
+                var uniquePath = GenerateUniqueFileName(destFolder, newFileName);
+                
+                File.Copy(sourcePath, uniquePath);
+                
+                var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator);
+                if (newImageVm.IsVideo && _videoThumbnailService != null)
+                {
+                    await GenerateVideoThumbnailAsync(newImageVm);
+                }
+                
+                DatasetImages.Add(newImageVm);
+                
+                if (ActiveDataset != null)
+                {
+                    ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                    ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+                }
+                
+                _activityLog?.LogInfo("Import", $"Added new file '{newImageVm.FullFileName}' alongside '{image.FullFileName}'");
             }
-
-            if (!samePath && File.Exists(image.ImagePath))
-            {
-                File.Delete(image.ImagePath);
-            }
-
-            File.Copy(sourcePath, newDestPath, true);
-
-            if (!samePath)
-            {
-                image.ImagePath = newDestPath;
-            }
-
-            image.RefreshThumbnail();
-
-            _activityLog?.LogInfo("Replace", $"Replaced file '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'");
         }
         catch (Exception ex)
         {
-            await DialogService.ShowMessageAsync("Error", $"Failed to replace file: {ex.Message}");
+            await DialogService.ShowMessageAsync("Error", $"Failed to process file: {ex.Message}");
         }
     }
 

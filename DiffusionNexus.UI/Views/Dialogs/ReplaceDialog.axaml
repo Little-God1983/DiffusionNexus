@@ -1,0 +1,81 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.ReplaceDialog"
+        x:DataType="vm:ReplaceImageDialogViewModel"
+        Width="800"
+        Height="500"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526"
+        Title="Replace Image"
+        Icon="/Assets/AIKnowledgeIcon.ico">
+  
+  <Grid RowDefinitions="Auto,*,Auto">
+     <TextBlock Text="Replace Image" 
+                FontSize="20" FontWeight="SemiBold" Foreground="#D4A574" 
+                Margin="0,20,0,10" HorizontalAlignment="Center"/>
+
+     <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*" Margin="20">
+        <!-- Original File -->
+        <Border Grid.Column="0" Background="#333" CornerRadius="8" Padding="15">
+           <StackPanel Spacing="10">
+              <TextBlock Text="Original File" FontWeight="Bold" HorizontalAlignment="Center" Foreground="#EEE"/>
+              <Border CornerRadius="4" ClipToBounds="True" Background="#000" Height="200" HorizontalAlignment="Stretch">
+                  <Image Source="{Binding OriginalThumbnail}" Stretch="Uniform"/>
+              </Border>
+              <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding OriginalFileSize}" Foreground="#CCC"/>
+                  <TextBlock Text="{Binding OriginalResolution}" Foreground="#CCC"/>
+                  <TextBlock Text="{Binding OriginalDate}" Foreground="#CCC"/>
+              </StackPanel>
+           </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Background="#444" Width="1" Margin="20,0"/>
+
+        <!-- New File -->
+        <Border Grid.Column="2" Background="#2A2A2A" CornerRadius="8" Padding="15" 
+                DragDrop.AllowDrop="True" BorderBrush="#555" BorderThickness="2">
+           <Panel>
+               <StackPanel Spacing="10" IsVisible="{Binding HasNewFile}">
+                  <TextBlock Text="New File" FontWeight="Bold" HorizontalAlignment="Center" Foreground="#EEE"/>
+                  <Border CornerRadius="4" ClipToBounds="True" Background="#000" Height="200" HorizontalAlignment="Stretch">
+                      <Image Source="{Binding NewThumbnail}" Stretch="Uniform"/>
+                  </Border>
+                  <TextBlock Text="{Binding NewFileName}" TextWrapping="Wrap" HorizontalAlignment="Center" Foreground="#D4A574"/>
+                  <StackPanel Spacing="4">
+                      <TextBlock Text="{Binding NewFileSize}" Foreground="#CCC"/>
+                      <TextBlock Text="{Binding NewResolution}" Foreground="#CCC"/>
+                      <TextBlock Text="{Binding NewDate}" Foreground="#CCC"/>
+                  </StackPanel>
+               </StackPanel>
+
+               <StackPanel IsVisible="{Binding HasNoNewFile}" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="15">
+                    <TextBlock Text="⬇" FontSize="40" HorizontalAlignment="Center" Opacity="0.5"/>
+                    <TextBlock Text="Drop File Here" FontSize="18" HorizontalAlignment="Center" Foreground="#EEE"/>
+                    <TextBlock Text="or click to browse" Opacity="0.7" HorizontalAlignment="Center"/>
+               </StackPanel>
+               
+               <Button Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Click="OnBrowseClick"/>
+           </Panel>
+        </Border>
+     </Grid>
+
+     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="20">
+        <Button Content="Add as New" 
+                Command="{Binding AddAsNewCommand}" 
+                CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" 
+                IsEnabled="{Binding HasNewFile}"/>
+        <Button Content="Replace" 
+                Command="{Binding ReplaceCommand}" 
+                CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" 
+                Background="#D4A574" Foreground="Black" 
+                IsEnabled="{Binding HasNewFile}"/>
+        <Button Content="Cancel" 
+                Command="{Binding CancelCommand}" 
+                CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" 
+                IsCancel="True"/>
+     </StackPanel>
+  </Grid>
+</Window>
