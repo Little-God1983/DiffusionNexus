@@ -1793,6 +1793,90 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
     }
 
+    /// <summary>
+    /// Replaces an existing image/video file with a new file while preserving the name and caption.
+    /// </summary>
+    [RelayCommand]
+    private async Task ReplaceImage(DatasetImageViewModel? image)
+    {
+        if (image == null || DialogService == null || ActiveDataset == null) return;
+
+        var result = await DialogService.ShowReplaceImageDialogAsync(image);
+        if (!result.Confirmed || string.IsNullOrEmpty(result.NewFilePath)) return;
+
+        try
+        {
+            var sourcePath = result.NewFilePath!;
+            var destFolder = Path.GetDirectoryName(image.ImagePath)!;
+
+            if (result.Action == ReplaceAction.Replace)
+            {
+                var oldFileNameWithoutExt = Path.GetFileNameWithoutExtension(image.ImagePath);
+                var newExtension = Path.GetExtension(sourcePath);
+                var newDestPath = Path.Combine(destFolder, oldFileNameWithoutExt + newExtension);
+
+                // Prevent replacing with self if paths are identical
+                if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(image.ImagePath), StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                bool samePath = string.Equals(image.ImagePath, newDestPath, StringComparison.OrdinalIgnoreCase);
+
+                // If target exists and is not the file we currently point to
+                if (!samePath && File.Exists(newDestPath))
+                {
+                    var overwrite = await DialogService.ShowConfirmAsync("File Exists", 
+                        $"File '{Path.GetFileName(newDestPath)}' already exists. Overwrite it?");
+                    if (!overwrite) return;
+                }
+
+                // If path changed (extension changed), delete the old file
+                if (!samePath && File.Exists(image.ImagePath))
+                {
+                    File.Delete(image.ImagePath);
+                }
+
+                File.Copy(sourcePath, newDestPath, true);
+
+                if (!samePath)
+                {
+                    image.ImagePath = newDestPath;
+                }
+
+                image.RefreshThumbnail();
+                _activityLog?.LogInfo("Replace", $"Replaced file '{image.FullFileName}' with '{Path.GetFileName(sourcePath)}'");
+            }
+            else if (result.Action == ReplaceAction.AddAsNew)
+            {
+                var newFileName = Path.GetFileName(sourcePath);
+                var uniquePath = GenerateUniqueFileName(destFolder, newFileName);
+                
+                File.Copy(sourcePath, uniquePath);
+                
+                var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator);
+                if (newImageVm.IsVideo && _videoThumbnailService != null)
+                {
+                    await GenerateVideoThumbnailAsync(newImageVm);
+                }
+                
+                DatasetImages.Add(newImageVm);
+                
+                if (ActiveDataset != null)
+                {
+                    ActiveDataset.ImageCount = DatasetImages.Count(m => m.IsImage);
+                    ActiveDataset.VideoCount = DatasetImages.Count(m => m.IsVideo);
+                }
+                
+                _activityLog?.LogInfo("Import", $"Added new file '{newImageVm.FullFileName}' alongside '{image.FullFileName}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageAsync("Error", $"Failed to process file: {ex.Message}");
+        }
+    }
+
     private async Task DeleteDatasetAsync(DatasetCardViewModel? dataset)
     {
         if (dataset is null || DialogService is null) return;

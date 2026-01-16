@@ -148,6 +148,13 @@ public interface IDialogService
     Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath);
 
     /// <summary>
+    /// Shows the Replace Image dialog for comparing and replacing an image.
+    /// </summary>
+    /// <param name="originalImage">The original image view model.</param>
+    /// <returns>The result indicating action (Replace, AddAsNew) and new file path.</returns>
+    Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage);
+
+    /// <summary>
     /// Shows the backup comparison dialog for comparing current data with a backup.
     /// </summary>
     /// <param name="currentStats">Statistics about the current dataset storage.</param>

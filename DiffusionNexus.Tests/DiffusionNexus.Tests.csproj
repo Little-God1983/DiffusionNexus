@@ -8,6 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AvaloniaXaml Remove="UI\**" />
+    <Compile Remove="UI\**" />
+    <EmbeddedResource Remove="UI\**" />
+    <None Remove="UI\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia.Headless" Version="11.3.10" />
     <PackageReference Include="coverlet.collector" Version="6.0.4">
       <PrivateAssets>all</PrivateAssets>
@@ -29,14 +36,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
-    <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\DiffusionNexus.UI\DiffusionNexus.UI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="LoraSort\UI\" />
     <Folder Include="LoraSort\ViewModels\" />
-    <Folder Include="UI\ViewModels\" />
   </ItemGroup>
 
 </Project>

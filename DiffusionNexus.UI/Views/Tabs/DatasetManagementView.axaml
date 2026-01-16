@@ -488,7 +488,7 @@
                                 <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
                               </Border>
                               <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
-                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
                                   <Button Grid.Column="0" Content="+" Command="{Binding MarkApprovedCommand}" Padding="12,6" FontSize="14"
                                           Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                                           Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
@@ -498,11 +498,15 @@
                                           Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
                                           CornerRadius="4" FontWeight="Bold"/>
                                   <Border Grid.Column="2"/>
-                                  <Button Grid.Column="3" Content="Edit"
+                                  <Button Grid.Column="3" Content="Replace"
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).ReplaceImageCommand}"
+                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,4,0"/>
+                                  <Button Grid.Column="4" Content="Edit"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
                                           CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="4" Content="X" 
+                                  <Button Grid.Column="5" Content="X" 
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
                                           CommandParameter="{Binding}" 
                                           Padding="12,6" FontSize="14"
@@ -519,9 +523,18 @@
                               <TextBox Grid.Row="0" Text="{Binding Caption, Mode=TwoWay}" Watermark="Enter caption..."
                                        TextWrapping="Wrap" AcceptsReturn="True" FontSize="13" MinHeight="80" MaxHeight="120"/>
                               <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                                      Margin="0,6,0,0" IsVisible="{Binding HasUnsavedChanges}">
-                                <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"/>
+                                      Margin="0,6,0,0">
+                                <Button Content="Undo" Command="{Binding UndoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,4,0"
+                                        IsVisible="{Binding HasUnsavedChanges}"/>
+                                <Button Content="Redo" Command="{Binding RedoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
+                                        IsVisible="{Binding HasUnsavedChanges}"/>
+                                
+                                <Button Content="Reset" Command="{Binding RevertCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
+                                        IsVisible="{Binding HasUnsavedChanges}"/>
+                                <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"
+                                           IsVisible="{Binding HasUnsavedChanges}"/>
+                                <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"
+                                        IsVisible="{Binding HasUnsavedChanges}"/>
                               </StackPanel>
                             </Grid>
                           </Border>

@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Mapping\**" />
+    <EmbeddedResource Remove="Mapping\**" />
+    <None Remove="Mapping\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Serilog" Version="4.3.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.*" />
@@ -23,10 +29,6 @@
     <ProjectReference Include="..\DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Mapping\" />
   </ItemGroup>
 
 </Project>
