@@ -41,6 +41,11 @@
         <views:BatchCropScaleView DataContext="{Binding BatchCropScale}"/>
       </TabItem>
 
+      <!-- Image Compare Tab -->
+      <TabItem Header="Image Compare">
+        <views:ImageCompareTabView DataContext="{Binding ImageCompare}"/>
+      </TabItem>
+
     </TabControl>
 
     <!-- Status Bar -->

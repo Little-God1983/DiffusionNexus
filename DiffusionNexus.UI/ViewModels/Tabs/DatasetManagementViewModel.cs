@@ -532,6 +532,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand ClearRatingSelectedCommand { get; }
     public IAsyncRelayCommand DeleteSelectedCommand { get; }
     public IAsyncRelayCommand OpenCaptioningToolCommand { get; } // New Command
+    public IRelayCommand CompareImagesCommand { get; }
 
     #endregion
 
@@ -604,6 +605,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
         
         OpenCaptioningToolCommand = new AsyncRelayCommand(OpenCaptioningToolAsync);
+        CompareImagesCommand = new RelayCommand(CompareImages, CanCompareImages);
     }
 
     /// <summary>
@@ -669,6 +671,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private void OnImageSelectionChanged(object? sender, ImageSelectionChangedEventArgs e)
     {
         _state.UpdateSelectionCount();
+        // Notify CompareImagesCommand that selection changed so it can update CanExecute
+        (CompareImagesCommand as RelayCommand)?.NotifyCanExecuteChanged();
     }
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
@@ -1701,6 +1705,31 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         });
 
         StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Batch Crop/Scale";
+    }
+
+    private bool CanCompareImages()
+    {
+        var selectedImages = DatasetImages.Where(i => i.IsSelected && !i.IsVideo).ToList();
+        return selectedImages.Count >= 1 && selectedImages.Count <= 2;
+    }
+
+    private void CompareImages()
+    {
+        var selectedImages = DatasetImages.Where(i => i.IsSelected && !i.IsVideo).ToList();
+        if (selectedImages.Count == 0) return;
+
+        string? bottomPath = selectedImages.Count >= 1 ? selectedImages[0].ImagePath : null;
+        string? topPath = selectedImages.Count >= 2 ? selectedImages[1].ImagePath : null;
+
+        _eventAggregator.PublishNavigateToImageCompare(new NavigateToImageCompareEventArgs
+        {
+            BottomImagePath = bottomPath,
+            TopImagePath = topPath
+        });
+
+        StatusMessage = selectedImages.Count == 2
+            ? $"Comparing {selectedImages[0].FullFileName} with {selectedImages[1].FullFileName}"
+            : $"Opened {selectedImages[0].FullFileName} in Image Compare";
     }
 
     private async Task OpenImageViewerAsync(DatasetImageViewModel? image)

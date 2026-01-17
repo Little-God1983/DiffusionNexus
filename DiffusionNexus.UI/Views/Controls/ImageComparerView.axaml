@@ -39,37 +39,44 @@
                 <TextBlock Text="Drop one or two files" FontSize="14" Foreground="#8A8A8A" />
             </StackPanel>
 
-            <Image Source="{Binding ImageBottom}"
-                   Stretch="Fill"
-                   IsVisible="{Binding HasImages}" />
+            <!-- Single Image Mode -->
+            <Grid IsVisible="{Binding HasBothImages, Converter={x:Static converters:BoolConverters.Not}}">
+                <Image Source="{Binding ImageBottom}" Stretch="Fill" IsVisible="{Binding HasImages}" />
+                <Image Source="{Binding ImageTop}" Stretch="Fill" IsVisible="{Binding HasImages}" />
+            </Grid>
 
-            <Border HorizontalAlignment="Left"
-                    ClipToBounds="True"
-                    IsVisible="{Binding HasImages}">
-                <Border.Width>
-                    <MultiBinding Converter="{x:Static converters:MathConverters.Multiply}">
-                        <Binding Path="SliderPosition" />
-                        <Binding ElementName="ImageContainer" Path="Bounds.Width" />
-                    </MultiBinding>
-                </Border.Width>
-
-                <Image Source="{Binding ImageTop}"
-                       Stretch="Fill"
-                       Width="{Binding ElementName=ImageContainer, Path=Bounds.Width}"
-                       Height="{Binding ElementName=ImageContainer, Path=Bounds.Height}" />
-            </Border>
-
+            <!-- Compare Mode -->
             <Grid IsVisible="{Binding HasBothImages}">
+                <!-- Background: New Image (Top) -->
+                <Image Source="{Binding ImageTop}" 
+                       Stretch="Fill" />
+
+                <!-- Foreground: Old Image (Bottom) - Clipped to Left -->
+                <Border HorizontalAlignment="Left"
+                        ClipToBounds="True">
+                    <Border.Width>
+                        <MultiBinding Converter="{x:Static converters:MathConverters.Multiply}">
+                            <Binding Path="SliderPosition" />
+                            <Binding ElementName="ImageContainer" Path="Bounds.Width" />
+                        </MultiBinding>
+                    </Border.Width>
+
+                    <Image Source="{Binding ImageBottom}"
+                           Stretch="Fill"
+                           Width="{Binding ElementName=ImageContainer, Path=Bounds.Width}"
+                           Height="{Binding ElementName=ImageContainer, Path=Bounds.Height}" />
+                </Border>
+
                 <Canvas>
                     <Border Width="2"
                             Background="#F4F4F4"
                             Height="{Binding ElementName=ImageContainer, Path=Bounds.Height}">
-                        <Border.Canvas.Left>
+                        <Canvas.Left>
                             <MultiBinding Converter="{x:Static converters:MathConverters.Multiply}">
                                 <Binding Path="SliderPosition" />
                                 <Binding ElementName="ImageContainer" Path="Bounds.Width" />
                             </MultiBinding>
-                        </Border.Canvas.Left>
+                        </Canvas.Left>
                     </Border>
                 </Canvas>
 
@@ -81,7 +88,6 @@
                         Foreground="Transparent">
                     <Slider.Styles>
                         <Style Selector="Slider /template/ Track#PART_Track">
-                            <Setter Property="Background" Value="Transparent" />
                         </Style>
                         <Style Selector="Slider /template/ Thumb#PART_Thumb">
                             <Setter Property="Background" Value="Transparent" />
@@ -93,13 +99,14 @@
 
             <Border Background="#B3000000"
                     IsVisible="{Binding IsDragOver}">
-                <Border BorderBrush="#4DA3FF"
-                        BorderThickness="2"
-                        BorderDashArray="5,2"
-                        CornerRadius="8"
-                        Margin="10">
+                <Panel Margin="10">
+                    <Rectangle Stroke="#4DA3FF"
+                               StrokeThickness="2"
+                               StrokeDashArray="5,2"
+                               RadiusX="8"
+                               RadiusY="8"/>
                     <TextBlock Text="Drop images to compare" Classes="DropText" />
-                </Border>
+                </Panel>
             </Border>
         </Grid>
     </Border>
