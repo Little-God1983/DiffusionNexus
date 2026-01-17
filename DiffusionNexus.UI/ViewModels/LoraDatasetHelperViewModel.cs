@@ -2,7 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
-
+// Test edit
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
@@ -63,6 +63,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public BatchCropScaleTabViewModel BatchCropScale { get; }
 
+    /// <summary>
+    /// ViewModel for the Image Compare tab.
+    /// </summary>
+    public ImageCompareTabViewModel ImageCompare { get; }
+
     #endregion
 
     #region Observable Properties
@@ -122,17 +127,19 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded");
 
         // Create tab ViewModels - pass activity log for comprehensive logging
-        DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, captioningService, videoThumbnailService, backupService, activityLog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
-        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
+            DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, captioningService, videoThumbnailService, backupService, activityLog);
+            ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
+            BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
+            ImageCompare = new ImageCompareTabViewModel(eventAggregator);
 
-        // Subscribe to state changes for property forwarding
-        _state.StateChanged += OnStateChanged;
+            // Subscribe to state changes for property forwarding
+            _state.StateChanged += OnStateChanged;
 
-        // Subscribe to navigation events to switch tabs
-        _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
-        _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
-    }
+            // Subscribe to navigation events to switch tabs
+            _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
+            _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
+            _eventAggregator.NavigateToImageCompareRequested += OnNavigateToImageCompare;
+        }
 
     /// <summary>
     /// Design-time constructor.
@@ -175,6 +182,18 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         
         // Switch to Batch Crop/Scale tab (index 3)
         SelectedTabIndex = 3;
+    }
+
+    private void OnNavigateToImageCompare(object? sender, NavigateToImageCompareEventArgs e)
+    {
+        // Preload images if provided
+        if (!string.IsNullOrEmpty(e.BottomImagePath) || !string.IsNullOrEmpty(e.TopImagePath))
+        {
+            ImageCompare.LoadImages(e.BottomImagePath, e.TopImagePath);
+        }
+        
+        // Switch to Image Compare tab (index 4)
+        SelectedTabIndex = 4;
     }
 
     #endregion
@@ -221,11 +240,13 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
             _eventAggregator.NavigateToBatchCropScaleRequested -= OnNavigateToBatchCropScale;
+            _eventAggregator.NavigateToImageCompareRequested -= OnNavigateToImageCompare;
 
             // Dispose child ViewModels
             DatasetManagement.Dispose();
             ImageEdit.Dispose();
             BatchCropScale.Dispose();
+            ImageCompare.Dispose();
         }
 
         _disposed = true;

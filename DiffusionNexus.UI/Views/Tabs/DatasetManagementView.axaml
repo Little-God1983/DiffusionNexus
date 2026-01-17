@@ -406,7 +406,7 @@
                   DragDrop.AllowDrop="True">
               <!-- Selection Toolbar -->
               <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                   <!-- Add Files Button -->
                   <Button Grid.Column="0" Content="+ Add Files"
                           Command="{Binding AddImagesCommand}"
@@ -446,8 +446,11 @@
                           Background="#D9534F" Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"/>
                   <Button Grid.Column="8" Content="Clear Rating" Command="{Binding ClearRatingSelectedCommand}" 
                           Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"/>
-                  <Border Grid.Column="9" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding HasSelection}"/>
-                  <Button Grid.Column="10" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}" 
+                  <Button Grid.Column="9" Content="Compare" Command="{Binding CompareImagesCommand}" 
+                          Background="#2196F3" Foreground="White" Padding="12,6" Margin="0,0,4,0" IsVisible="{Binding HasSelection}"
+                          ToolTip.Tip="Compare selected images (select 1 or 2 images)"/>
+                  <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding HasSelection}"/>
+                  <Button Grid.Column="11" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}" 
                           Background="#B22222" Padding="12,6" IsVisible="{Binding HasSelection}"/>
                 </Grid>
               </Border>

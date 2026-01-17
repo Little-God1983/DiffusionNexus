@@ -214,6 +214,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     #region Commands
 
     public IRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
+    public IRelayCommand OpenCompareCommand { get; }
 
     #endregion
 
@@ -255,6 +256,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         // Initialize commands
         LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
+        OpenCompareCommand = new RelayCommand(OpenCompare, CanOpenCompare);
     }
 
     /// <summary>
@@ -669,6 +671,30 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Determines if the compare command can execute (needs an image loaded in editor).
+    /// </summary>
+    private bool CanOpenCompare()
+    {
+        return ImageEditor.HasImage;
+    }
+
+    /// <summary>
+    /// Opens the Image Compare tab with the current editor image.
+    /// </summary>
+    private void OpenCompare()
+    {
+        if (!ImageEditor.HasImage || string.IsNullOrEmpty(ImageEditor.CurrentImagePath)) return;
+
+        _eventAggregator.PublishNavigateToImageCompare(new NavigateToImageCompareEventArgs
+        {
+            BottomImagePath = ImageEditor.CurrentImagePath,
+            TopImagePath = null
+        });
+
+        StatusMessage = $"Opened {Path.GetFileName(ImageEditor.CurrentImagePath)} in Image Compare";
     }
 
     #endregion

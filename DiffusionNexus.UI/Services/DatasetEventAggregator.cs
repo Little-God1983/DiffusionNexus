@@ -288,6 +288,22 @@ public sealed class SettingsSavedEventArgs : DatasetEventArgs
 {
 }
 
+/// <summary>
+/// Event raised when navigation to the Image Compare tab is requested.
+/// </summary>
+public sealed class NavigateToImageCompareEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// Path to the bottom (left/original) image, or null to not preload.
+    /// </summary>
+    public string? BottomImagePath { get; init; }
+
+    /// <summary>
+    /// Path to the top (right/new) image, or null to not preload.
+    /// </summary>
+    public string? TopImagePath { get; init; }
+}
+
 #endregion
 
 /// <summary>
@@ -416,6 +432,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
 
+    /// <summary>
+    /// Raised when navigation to the Image Compare tab is requested.
+    /// </summary>
+    event EventHandler<NavigateToImageCompareEventArgs>? NavigateToImageCompareRequested;
+
     #endregion
 
     #region Publish Methods
@@ -437,6 +458,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
+    void PublishNavigateToImageCompare(NavigateToImageCompareEventArgs args);
 
     #endregion
 }
@@ -509,6 +531,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToImageCompareEventArgs>? NavigateToImageCompareRequested;
 
     #endregion
 
@@ -631,6 +656,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(SettingsSaved, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToImageCompare(NavigateToImageCompareEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToImageCompareRequested, args);
     }
 
     #endregion
