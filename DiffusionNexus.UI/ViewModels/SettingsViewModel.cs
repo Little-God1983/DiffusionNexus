@@ -991,3 +991,30 @@ public partial class LoraSourceViewModel : ObservableObject
     partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
     partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
 }
+public partial class ImageGalleryViewModel : ObservableObject
+{
+    /// <summary>
+    /// Database ID (0 for new sources).
+    /// </summary>
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Folder path.
+    /// </summary>
+    [ObservableProperty]
+    private string? _folderPath;
+
+    /// <summary>
+    /// Whether this source is enabled.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEnabled = true;
+
+    /// <summary>
+    /// Event raised when any property changes (for parent to detect changes).
+    /// </summary>
+    public event EventHandler? SourceChanged;
+
+    partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+}
