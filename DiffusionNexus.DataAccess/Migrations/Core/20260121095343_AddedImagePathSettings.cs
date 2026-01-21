@@ -17,7 +17,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     Id = table.Column<int>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     AppSettingsId = table.Column<int>(type: "INTEGER", nullable: false),
-                    FolderPath = table.Column<string>(type: "TEXT", nullable: false),
+                    FolderPath = table.Column<string>(type: "TEXT", maxLength: 1000, nullable: false),
                     IsEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
                     Order = table.Column<int>(type: "INTEGER", nullable: false)
                 },
@@ -36,6 +36,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                 name: "IX_ImageGalleries_AppSettingsId",
                 table: "ImageGalleries",
                 column: "AppSettingsId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ImageGalleries_FolderPath",
+                table: "ImageGalleries",
+                column: "FolderPath");
         }
 
         /// <inheritdoc />

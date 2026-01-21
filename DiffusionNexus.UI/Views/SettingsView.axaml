@@ -360,10 +360,10 @@
        <Border Padding="16">
             <StackPanel Spacing="16">
               
-              <!-- Source Folders Section -->
+               <!-- Source Folders Section -->
               <StackPanel Spacing="8">
                 <TextBlock Text="Source Folders" FontWeight="SemiBold" FontSize="14"/>
-                <TextBlock Text="Folders containing your LoRA models. All subfolders will be scanned." 
+                <TextBlock Text="Folders containing your images. All subfolders will be scanned." 
                            FontSize="12" 
                            Opacity="0.7"/>
                 
@@ -372,10 +372,10 @@
                         Command="{Binding AddImageGallerySourceCommand}"
                         HorizontalAlignment="Left"/>
                 
-                <!-- Source List -->
+                <!-- Source Image List -->
                 <ItemsControl ItemsSource="{Binding ImageGallerySources}">
                   <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:LoraSourceViewModel">
+                    <DataTemplate x:DataType="vm:ImageGalleryViewModel">
                       <Border Background="#20FFFFFF"
                               CornerRadius="4"
                               Padding="12"
@@ -397,7 +397,7 @@
                           <!-- Browse Button -->
                           <Button Grid.Column="2"
                                   Content="Browse..."
-                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).BrowseLoraSourceCommand}"
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).BrowseImageGallerySourceCommand}"
                                   CommandParameter="{Binding}"
                                   Margin="0,0,8,0"/>
                           
@@ -406,7 +406,7 @@
                                   Content="X"
                                   FontWeight="Bold"
                                   Foreground="#FF6B6B"
-                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveLoraSourceCommand}"
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveImageGallerySourceCommand}"
                                   CommandParameter="{Binding}"
                                   ToolTip.Tip="Remove this source"/>
                           

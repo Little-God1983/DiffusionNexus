@@ -78,6 +78,7 @@ public class DiffusionNexusCoreDbContext : DbContext
         ConfigureLoraSource(modelBuilder);
         ConfigureDatasetCategory(modelBuilder);
         ConfigureDisclaimerAcceptance(modelBuilder);
+        ConfigureImageGallery(modelBuilder);
     }
 
     #region Entity Configurations
@@ -339,6 +340,11 @@ public class DiffusionNexusCoreDbContext : DbContext
                 .WithOne(c => c.AppSettings)
                 .HasForeignKey(c => c.AppSettingsId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(e => e.ImageGalleries)
+                .WithOne(g => g.AppSettings)
+                .HasForeignKey(g => g.AppSettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
@@ -390,6 +396,22 @@ public class DiffusionNexusCoreDbContext : DbContext
 
             // Properties
             entity.Property(e => e.WindowsUsername).IsRequired().HasMaxLength(256);
+        });
+    }
+
+    private static void ConfigureImageGallery(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ImageGallery>(entity =>
+        {
+            entity.ToTable("ImageGalleries");
+            entity.HasKey(e => e.Id);
+
+            // Indexes
+            entity.HasIndex(e => e.AppSettingsId);
+            entity.HasIndex(e => e.FolderPath);
+
+            // Properties
+            entity.Property(e => e.FolderPath).IsRequired().HasMaxLength(1000);
         });
     }
 

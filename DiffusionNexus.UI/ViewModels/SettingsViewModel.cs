@@ -284,6 +284,25 @@ public partial class SettingsViewModel : BusyViewModelBase
                 DatasetCategories.Add(categoryVm);
             }
 
+            // Map Image Gallery sources
+            foreach (var existing in ImageGallerySources)
+            {
+                existing.SourceChanged -= OnImageGalleryChanged;
+            }
+            ImageGallerySources.Clear();
+
+            foreach (var source in settings.ImageGalleries.OrderBy(s => s.Order))
+            {
+                var sourceVm = new ImageGalleryViewModel
+                {
+                    Id = source.Id,
+                    FolderPath = source.FolderPath,
+                    IsEnabled = source.IsEnabled
+                };
+                sourceVm.SourceChanged += OnImageGalleryChanged;
+                ImageGallerySources.Add(sourceVm);
+            }
+
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
@@ -353,6 +372,21 @@ public partial class SettingsViewModel : BusyViewModelBase
                     Description = categoryVm.Description,
                     IsDefault = categoryVm.IsDefault,
                     Order = categoryOrder++
+                });
+            }
+
+            // Map Image Gallery sources (remove empty ones)
+            settings.ImageGalleries.Clear();
+            var galleryOrder = 0;
+            foreach (var sourceVm in ImageGallerySources.Where(s => !string.IsNullOrWhiteSpace(s.FolderPath)))
+            {
+                settings.ImageGalleries.Add(new ImageGallery
+                {
+                    Id = sourceVm.Id,
+                    AppSettingsId = 1,
+                    FolderPath = sourceVm.FolderPath!,
+                    IsEnabled = sourceVm.IsEnabled,
+                    Order = galleryOrder++
                 });
             }
 
@@ -471,7 +505,7 @@ public partial class SettingsViewModel : BusyViewModelBase
 
 
     /// <summary>
-    /// Adds a new LoRA source folder.
+    /// Adds a new Image Gallery source folder.
     /// </summary>
     [RelayCommand]
     private void AddImageGallerySource()
@@ -483,7 +517,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Removes a LoRA source folder.
+    /// Removes an Image Gallery source folder.
     /// </summary>
     [RelayCommand]
     private void RemoveImageGallerySource(ImageGalleryViewModel? source)
@@ -496,7 +530,24 @@ public partial class SettingsViewModel : BusyViewModelBase
         }
     }
 
+    /// <summary>
+    /// Browse for an Image Gallery source folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseImageGallerySourceAsync(ImageGalleryViewModel? source)
+    {
+        if (source is null || DialogService is null)
+        {
+            return;
+        }
 
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Image Gallery Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            source.FolderPath = path;
+            HasChanges = true;
+        }
+    }
 
     /// <summary>
     /// Browse for Dataset Storage folder.

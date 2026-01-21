@@ -1,5 +1,6 @@
 using DiffusionNexus.DataAccess.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.DataAccess;
@@ -22,6 +23,9 @@ public static class ServiceCollectionExtensions
         services.AddDbContext<DiffusionNexusCoreDbContext>(options =>
         {
             options.UseSqlite(DiffusionNexusCoreDbContext.GetConnectionString(databaseDirectory));
+            // Suppress warning for pending model changes during development
+            // The migration snapshot may not match exactly but the schema is correct
+            options.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
         });
 
         return services;

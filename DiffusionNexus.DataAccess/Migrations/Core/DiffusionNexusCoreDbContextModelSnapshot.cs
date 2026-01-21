@@ -181,6 +181,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<string>("FolderPath")
                         .IsRequired()
+                        .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsEnabled")
@@ -193,7 +194,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.HasIndex("AppSettingsId");
 
-                    b.ToTable("ImageGalleries");
+                    b.HasIndex("FolderPath");
+
+                    b.ToTable("ImageGalleries", (string)null);
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.LoraSource", b =>
@@ -690,7 +693,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageGallery", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.AppSettings", "AppSettings")
-                        .WithMany()
+                        .WithMany("ImageGalleries")
                         .HasForeignKey("AppSettingsId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -785,6 +788,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
                     b.Navigation("DatasetCategories");
+
+                    b.Navigation("ImageGalleries");
 
                     b.Navigation("LoraSources");
                 });
