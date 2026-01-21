@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
@@ -28,7 +29,8 @@ public class ViewerViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
-        var viewModel = new ViewerViewModel(mockSettings.Object);
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -64,7 +66,8 @@ public class ViewerViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
-        var viewModel = new ViewerViewModel(mockSettings.Object);
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -100,7 +103,8 @@ public class ViewerViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
-        var viewModel = new ViewerViewModel(mockSettings.Object);
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
         viewModel.SelectedSortOption = "Name";

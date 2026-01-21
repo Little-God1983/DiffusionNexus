@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -15,17 +16,28 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class ViewerViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
+    private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly List<ViewerMediaItemViewModel> _allMediaItems = [];
 
     public ViewerViewModel()
     {
         _settingsService = null;
+        _eventAggregator = null;
         LoadDesignData();
     }
 
-    public ViewerViewModel(IAppSettingsService settingsService)
+    public ViewerViewModel(IAppSettingsService settingsService, IDatasetEventAggregator eventAggregator)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
+        
+        _eventAggregator.SettingsSaved += OnSettingsSaved;
+    }
+
+    private void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
+    {
+        // Reload gallery when settings change (new folders might be added)
+        LoadMediaCommand.Execute(null);
     }
 
     public ObservableCollection<ViewerMediaItemViewModel> MediaItems { get; } = [];

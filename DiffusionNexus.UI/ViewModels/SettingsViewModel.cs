@@ -309,6 +309,72 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Reloads collections from the database to get updated IDs for newly created entries.
+    /// </summary>
+    private async Task ReloadCollectionsAsync()
+    {
+        var settings = await _settingsService.GetSettingsAsync();
+
+        // Reload LoRA sources
+        foreach (var existing in LoraSources)
+        {
+            existing.SourceChanged -= OnLoraSourceChanged;
+        }
+        LoraSources.Clear();
+
+        foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
+        {
+            var sourceVm = new LoraSourceViewModel
+            {
+                Id = source.Id,
+                FolderPath = source.FolderPath,
+                IsEnabled = source.IsEnabled
+            };
+            sourceVm.SourceChanged += OnLoraSourceChanged;
+            LoraSources.Add(sourceVm);
+        }
+
+        // Reload dataset categories
+        foreach (var existing in DatasetCategories)
+        {
+            existing.CategoryChanged -= OnCategoryChanged;
+        }
+        DatasetCategories.Clear();
+
+        foreach (var category in settings.DatasetCategories.OrderBy(c => c.Order))
+        {
+            var categoryVm = new DatasetCategoryViewModel
+            {
+                Id = category.Id,
+                Name = category.Name,
+                Description = category.Description,
+                IsDefault = category.IsDefault
+            };
+            categoryVm.CategoryChanged += OnCategoryChanged;
+            DatasetCategories.Add(categoryVm);
+        }
+
+        // Reload Image Gallery sources
+        foreach (var existing in ImageGallerySources)
+        {
+            existing.SourceChanged -= OnImageGalleryChanged;
+        }
+        ImageGallerySources.Clear();
+
+        foreach (var source in settings.ImageGalleries.OrderBy(s => s.Order))
+        {
+            var sourceVm = new ImageGalleryViewModel
+            {
+                Id = source.Id,
+                FolderPath = source.FolderPath,
+                IsEnabled = source.IsEnabled
+            };
+            sourceVm.SourceChanged += OnImageGalleryChanged;
+            ImageGallerySources.Add(sourceVm);
+        }
+    }
+
+    /// <summary>
     /// Saves settings to the database.
     /// </summary>
     [RelayCommand]
@@ -391,6 +457,9 @@ public partial class SettingsViewModel : BusyViewModelBase
             }
 
             await _settingsService.SaveSettingsAsync(settings);
+
+            // Reload to get database-generated IDs for newly created entries
+            await ReloadCollectionsAsync();
 
             HasChanges = false;
             StatusMessage = "Settings saved successfully.";

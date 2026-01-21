@@ -176,6 +176,12 @@ public sealed class AppSettingsService : IAppSettingsService
             entry.State = EntityState.Detached;
         }
 
+        var trackedAppSettings = _dbContext.ChangeTracker.Entries<AppSettings>().ToList();
+        foreach (var entry in trackedAppSettings)
+        {
+            entry.State = EntityState.Detached;
+        }
+
         var existingSettings = await _dbContext.AppSettings
             .Include(s => s.LoraSources)
             .Include(s => s.DatasetCategories)
@@ -343,7 +349,7 @@ public sealed class AppSettingsService : IAppSettingsService
                     existingGallery.IsEnabled = galleryData.IsEnabled;
                     existingGallery.Order = galleryData.Order;
                 }
-                else
+                else if (galleryData.Id == 0)
                 {
                     var newGallery = new ImageGallery
                     {

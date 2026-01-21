@@ -68,16 +68,17 @@
         <ItemsControl x:Name="GalleryItems" ItemsSource="{Binding MediaItems}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
-              <WrapPanel Orientation="Horizontal" Spacing="12"/>
+              <WrapPanel Orientation="Horizontal"/>
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:ViewerMediaItemViewModel">
-              <Border Width="{Binding DataContext.TileWidth, ElementName=GalleryItems}"
-                      Height="{Binding DataContext.TileWidth, ElementName=GalleryItems}"
+              <Border Width="{Binding $parent[ItemsControl].((vm:ViewerViewModel)DataContext).TileWidth}"
+                      Height="{Binding $parent[ItemsControl].((vm:ViewerViewModel)DataContext).TileWidth}"
                       Background="#2A2A2A"
                       CornerRadius="8"
-                      ClipToBounds="True">
+                      ClipToBounds="True"
+                      Margin="6">
                 <Grid>
                   <Image Source="{Binding FilePath, Converter={StaticResource PathToBitmapConverter}}"
                          Stretch="UniformToFill"
