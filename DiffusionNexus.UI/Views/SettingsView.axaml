@@ -369,11 +369,11 @@
                 
                 <!-- Add Button -->
                 <Button Content="+ Add Source Folder" 
-                        Command="{Binding AddLoraSourceCommand}"
+                        Command="{Binding AddImageGallerySourceCommand}"
                         HorizontalAlignment="Left"/>
                 
                 <!-- Source List -->
-                <ItemsControl ItemsSource="{Binding LoraSources}">
+                <ItemsControl ItemsSource="{Binding ImageGallerySources}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:LoraSourceViewModel">
                       <Border Background="#20FFFFFF"

@@ -58,6 +58,7 @@ public class DiffusionNexusCoreDbContext : DbContext
 
     /// <summary>Disclaimer acceptances.</summary>
     public DbSet<DisclaimerAcceptance> DisclaimerAcceptances => Set<DisclaimerAcceptance>();
+    public DbSet<ImageGallery> ImageGalleries => Set<ImageGallery>();
 
     #endregion
 

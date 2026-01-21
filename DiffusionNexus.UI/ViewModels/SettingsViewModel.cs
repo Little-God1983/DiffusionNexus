@@ -150,6 +150,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private ObservableCollection<LoraSourceViewModel> _loraSources = [];
 
     /// <summary>
+    /// Collection of LoRA source folders.
+    /// </summary>
+    [ObservableProperty]
+    private ObservableCollection<ImageGalleryViewModel> _imageGallerySources = [];
+
+    /// <summary>
     /// Collection of dataset categories.
     /// </summary>
     [ObservableProperty]
@@ -462,6 +468,35 @@ public partial class SettingsViewModel : BusyViewModelBase
             HasChanges = true;
         }
     }
+
+
+    /// <summary>
+    /// Adds a new LoRA source folder.
+    /// </summary>
+    [RelayCommand]
+    private void AddImageGallerySource()
+    {
+        var source = new ImageGalleryViewModel { IsEnabled = true };
+        source.SourceChanged += OnImageGalleryChanged;
+        ImageGallerySources.Add(source);
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Removes a LoRA source folder.
+    /// </summary>
+    [RelayCommand]
+    private void RemoveImageGallerySource(ImageGalleryViewModel? source)
+    {
+        if (source is not null)
+        {
+            source.SourceChanged -= OnImageGalleryChanged;
+            ImageGallerySources.Remove(source);
+            HasChanges = true;
+        }
+    }
+
+
 
     /// <summary>
     /// Browse for Dataset Storage folder.
@@ -867,6 +902,11 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     private void OnCategoryChanged(object? sender, EventArgs e)
+    {
+        HasChanges = true;
+    }
+
+    private void OnImageGalleryChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
     }
