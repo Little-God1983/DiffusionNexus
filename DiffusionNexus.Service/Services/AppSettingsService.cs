@@ -176,12 +176,6 @@ public sealed class AppSettingsService : IAppSettingsService
             entry.State = EntityState.Detached;
         }
 
-        var trackedAppSettings = _dbContext.ChangeTracker.Entries<AppSettings>().ToList();
-        foreach (var entry in trackedAppSettings)
-        {
-            entry.State = EntityState.Detached;
-        }
-
         var existingSettings = await _dbContext.AppSettings
             .Include(s => s.LoraSources)
             .Include(s => s.DatasetCategories)
@@ -360,6 +354,7 @@ public sealed class AppSettingsService : IAppSettingsService
                     };
                     _dbContext.ImageGalleries.Add(newGallery);
                 }
+                // Entries with Id > 0 but not found in existing are ignored (should not happen normally)
             }
         }
 

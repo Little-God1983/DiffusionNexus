@@ -1,12 +1,19 @@
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Converters;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel representing a single media item in the Viewer gallery.
 /// </summary>
-public class ViewerMediaItemViewModel : ObservableObject
+public partial class ViewerMediaItemViewModel : ObservableObject
 {
+    private Bitmap? _thumbnail;
+    private bool _isThumbnailLoading;
+
     public ViewerMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc)
     {
         FilePath = filePath;
@@ -43,4 +50,69 @@ public class ViewerMediaItemViewModel : ObservableObject
     /// Creation timestamp for sorting.
     /// </summary>
     public DateTime CreatedAtUtc { get; }
+
+    /// <summary>
+    /// The loaded thumbnail bitmap. Loads asynchronously on first access.
+    /// </summary>
+    public Bitmap? Thumbnail
+    {
+        get
+        {
+            if (_thumbnail is not null)
+                return _thumbnail;
+
+            if (!_isThumbnailLoading)
+            {
+                LoadThumbnailAsync();
+            }
+
+            return null;
+        }
+        private set => SetProperty(ref _thumbnail, value);
+    }
+
+    private async void LoadThumbnailAsync()
+    {
+        if (_isThumbnailLoading) return;
+        _isThumbnailLoading = true;
+
+        var thumbnailService = PathToBitmapConverter.ThumbnailService;
+        if (thumbnailService is null)
+        {
+            _isThumbnailLoading = false;
+            return;
+        }
+
+        // Try direct cache access first
+        if (thumbnailService.TryGetCached(FilePath, out var cached))
+        {
+             Thumbnail = cached;
+             _isThumbnailLoading = false;
+             return;
+        }
+
+        try
+        {
+            // Load async (using default target width from service which is usually matched to card size)
+            // Note: Viewer tile width is adjustable, but we use the standard thumbnail size for consistency/caching
+            var bitmap = await thumbnailService.LoadThumbnailAsync(FilePath);
+
+            if (bitmap != null)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    Thumbnail = bitmap;
+                    _isThumbnailLoading = false;
+                });
+            }
+            else
+            {
+                _isThumbnailLoading = false;
+            }
+        }
+        catch
+        {
+            _isThumbnailLoading = false;
+        }
+    }
 }

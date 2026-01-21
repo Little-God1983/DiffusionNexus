@@ -80,7 +80,7 @@
                       ClipToBounds="True"
                       Margin="6">
                 <Grid>
-                  <Image Source="{Binding FilePath, Converter={StaticResource PathToBitmapConverter}}"
+                  <Image Source="{Binding Thumbnail}"
                          Stretch="UniformToFill"
                          IsVisible="{Binding IsImage}"/>
                   <Border Background="Black" IsVisible="{Binding IsVideo}">
