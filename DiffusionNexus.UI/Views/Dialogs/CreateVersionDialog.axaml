@@ -4,7 +4,7 @@
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         x:Class="DiffusionNexus.UI.Views.Dialogs.CreateVersionDialog"
         x:DataType="vm:CreateVersionDialogViewModel"
-        Width="780"
+        Width="900"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
@@ -154,7 +154,7 @@
                         Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="Images" VerticalAlignment="Center"/>
-                  <TextBlock Text="(.png, .jpg, .webp, .bmp, .gif)"
+                  <TextBlock Text="{Binding ImageExtensionsDisplay}"
                              Opacity="0.5"
                              FontSize="11"
                              VerticalAlignment="Center"/>
@@ -177,7 +177,7 @@
                         Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="Videos" VerticalAlignment="Center"/>
-                  <TextBlock Text="(.mp4, .mov, .webm, .avi)"
+                  <TextBlock Text="{Binding VideoExtensionsDisplay}"
                              Opacity="0.5"
                              FontSize="11"
                              VerticalAlignment="Center"/>
@@ -200,7 +200,7 @@
                         Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="Captions" VerticalAlignment="Center"/>
-                  <TextBlock Text="(.txt text files)"
+                  <TextBlock Text="{Binding CaptionExtensionsDisplay}"
                              Opacity="0.5"
                              FontSize="11"
                              VerticalAlignment="Center"/>

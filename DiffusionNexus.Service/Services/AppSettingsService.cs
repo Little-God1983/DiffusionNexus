@@ -25,6 +25,7 @@ public sealed class AppSettingsService : IAppSettingsService
         var settings = await _dbContext.AppSettings
             .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
             .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
+            .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
             .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
 
         if (settings is null)
@@ -41,6 +42,7 @@ public sealed class AppSettingsService : IAppSettingsService
             settings = await _dbContext.AppSettings
                 .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
                 .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
+                .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
                 .FirstAsync(s => s.Id == 1, cancellationToken);
         }
         else if (!settings.DatasetCategories.Any())
@@ -52,6 +54,7 @@ public sealed class AppSettingsService : IAppSettingsService
             settings = await _dbContext.AppSettings
                 .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
                 .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
+                .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
                 .FirstAsync(s => s.Id == 1, cancellationToken);
         }
         else
@@ -133,6 +136,14 @@ public sealed class AppSettingsService : IAppSettingsService
             category.AppSettingsId = 1; // Ensure FK is set
         }
 
+        // Update Image Gallery order
+        var galleryOrder = 0;
+        foreach (var gallery in settings.ImageGalleries)
+        {
+            gallery.Order = galleryOrder++;
+            gallery.AppSettingsId = 1; // Ensure FK is set
+        }
+
         // Get the incoming data before querying (to avoid tracking issues)
         var incomingSourceData = settings.LoraSources
             .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
@@ -140,6 +151,10 @@ public sealed class AppSettingsService : IAppSettingsService
 
         var incomingCategoryData = settings.DatasetCategories
             .Select(c => new { c.Id, c.Name, c.Description, c.IsDefault, c.Order })
+            .ToList();
+
+        var incomingGalleryData = settings.ImageGalleries
+            .Select(g => new { g.Id, g.FolderPath, g.IsEnabled, g.Order })
             .ToList();
 
         // Detach any tracked entities to avoid conflicts
@@ -155,9 +170,16 @@ public sealed class AppSettingsService : IAppSettingsService
             entry.State = EntityState.Detached;
         }
 
+        var trackedGalleries = _dbContext.ChangeTracker.Entries<ImageGallery>().ToList();
+        foreach (var entry in trackedGalleries)
+        {
+            entry.State = EntityState.Detached;
+        }
+
         var existingSettings = await _dbContext.AppSettings
             .Include(s => s.LoraSources)
             .Include(s => s.DatasetCategories)
+            .Include(s => s.ImageGalleries)
             .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
 
         if (existingSettings is null)
@@ -291,6 +313,46 @@ public sealed class AppSettingsService : IAppSettingsService
                         Order = categoryData.Order
                     };
                     _dbContext.DatasetCategories.Add(newCategory);
+                }
+            }
+
+            // Handle ImageGalleries (remove deleted, update existing, add new)
+            var existingGalleryIds = existingSettings.ImageGalleries
+                .Where(g => g.Id > 0)
+                .Select(g => g.Id)
+                .ToHashSet();
+            var incomingGalleryIds = incomingGalleryData
+                .Where(g => g.Id > 0)
+                .Select(g => g.Id)
+                .ToHashSet();
+
+            foreach (var gallery in existingSettings.ImageGalleries.ToList())
+            {
+                if (gallery.Id > 0 && !incomingGalleryIds.Contains(gallery.Id))
+                {
+                    _dbContext.ImageGalleries.Remove(gallery);
+                }
+            }
+
+            foreach (var galleryData in incomingGalleryData)
+            {
+                if (galleryData.Id > 0 && existingGalleryIds.Contains(galleryData.Id))
+                {
+                    var existingGallery = existingSettings.ImageGalleries.First(g => g.Id == galleryData.Id);
+                    existingGallery.FolderPath = galleryData.FolderPath;
+                    existingGallery.IsEnabled = galleryData.IsEnabled;
+                    existingGallery.Order = galleryData.Order;
+                }
+                else
+                {
+                    var newGallery = new ImageGallery
+                    {
+                        AppSettingsId = 1,
+                        FolderPath = galleryData.FolderPath,
+                        IsEnabled = galleryData.IsEnabled,
+                        Order = galleryData.Order
+                    };
+                    _dbContext.ImageGalleries.Add(newGallery);
                 }
             }
         }

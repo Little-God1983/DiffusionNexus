@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using Serilog;
 using SkiaSharp;
 
@@ -43,11 +44,6 @@ public sealed class ImagePreprocessor
     private const int MinDimension = 16;
     private const long MinFileSizeBytes = 100; // Minimum valid image size
 
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"
-    };
-
     /// <summary>
     /// Gets the maximum dimension for image preprocessing.
     /// </summary>
@@ -67,8 +63,8 @@ public sealed class ImagePreprocessor
             return (false, "File does not exist.");
 
         var extension = Path.GetExtension(filePath);
-        if (!SupportedExtensions.Contains(extension))
-            return (false, $"Unsupported file format: {extension}. Supported formats: {string.Join(", ", SupportedExtensions)}");
+        if (!SupportedMediaTypes.ImageExtensionSet.Contains(extension))
+            return (false, $"Unsupported file format: {extension}. Supported formats: {string.Join(", ", SupportedMediaTypes.ImageExtensions)}");
 
         try
         {
@@ -262,16 +258,12 @@ public sealed class ImagePreprocessor
     }
 
     /// <summary>
-    /// Checks if a file extension is a supported image format.
-    /// </summary>
-    public static bool IsSupportedImageFormat(string filePath)
-    {
-        var extension = Path.GetExtension(filePath);
-        return SupportedExtensions.Contains(extension);
-    }
+        /// Checks if a file extension is a supported image format.
+        /// </summary>
+        public static bool IsSupportedImageFormat(string filePath) => SupportedMediaTypes.IsImageFile(filePath);
 
-    /// <summary>
-    /// Gets the list of supported image extensions.
-    /// </summary>
-    public static IReadOnlyCollection<string> GetSupportedExtensions() => SupportedExtensions;
-}
+        /// <summary>
+        /// Gets the list of supported image extensions.
+        /// </summary>
+        public static IReadOnlyCollection<string> GetSupportedExtensions() => SupportedMediaTypes.ImageExtensions;
+    }

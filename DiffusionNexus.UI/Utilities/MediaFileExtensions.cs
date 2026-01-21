@@ -1,88 +1,61 @@
+using DiffusionNexus.Domain.Enums;
+
 namespace DiffusionNexus.UI.Utilities;
 
 /// <summary>
-/// Centralized utility class for media file type detection and extension handling.
-/// Follows DRY principle by consolidating file extension arrays and helper methods
-/// that were duplicated across DatasetCardViewModel, DatasetManagementViewModel,
-/// and DatasetImageViewModel.
+/// UI-layer utility class for media file type detection and extension handling.
+/// Delegates to <see cref="SupportedMediaTypes"/> as the single source of truth.
+/// Provides additional UI-specific functionality like thumbnail detection.
 /// </summary>
 public static class MediaFileExtensions
 {
     /// <summary>
     /// Supported image file extensions.
     /// </summary>
-    public static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+    public static string[] ImageExtensions => SupportedMediaTypes.ImageExtensions;
 
     /// <summary>
     /// Supported video file extensions.
     /// </summary>
-    public static readonly string[] VideoExtensions = [".mp4", ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v"];
+    public static string[] VideoExtensions => SupportedMediaTypes.VideoExtensions;
 
     /// <summary>
     /// Supported caption file extensions.
     /// </summary>
-    public static readonly string[] CaptionExtensions = [".txt", ".caption"];
+    public static string[] CaptionExtensions => SupportedMediaTypes.CaptionExtensions;
 
     /// <summary>
     /// Combined media extensions (images + videos).
     /// </summary>
-    public static readonly string[] MediaExtensions = [..ImageExtensions, ..VideoExtensions];
+    public static string[] MediaExtensions => SupportedMediaTypes.MediaExtensions;
 
     /// <summary>
     /// Checks if a file is an image file based on its extension.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file has a recognized image extension.</returns>
-    public static bool IsImageFile(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return false;
-
-        var ext = Path.GetExtension(filePath);
-        return ImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsImageFile(string filePath) => SupportedMediaTypes.IsImageFile(filePath);
 
     /// <summary>
     /// Checks if a file is a video file based on its extension.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file has a recognized video extension.</returns>
-    public static bool IsVideoFile(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return false;
-
-        var ext = Path.GetExtension(filePath);
-        return VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsVideoFile(string filePath) => SupportedMediaTypes.IsVideoFile(filePath);
 
     /// <summary>
     /// Checks if a file is a media file (image or video).
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file has a recognized media extension.</returns>
-    public static bool IsMediaFile(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return false;
-
-        var ext = Path.GetExtension(filePath);
-        return MediaExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsMediaFile(string filePath) => SupportedMediaTypes.IsMediaFile(filePath);
 
     /// <summary>
     /// Checks if a file is a caption file.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file has a recognized caption extension.</returns>
-    public static bool IsCaptionFile(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return false;
-
-        var ext = Path.GetExtension(filePath);
-        return CaptionExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
-    }
+    public static bool IsCaptionFile(string filePath) => SupportedMediaTypes.IsCaptionFile(filePath);
 
     /// <summary>
     /// Checks if a file is a video thumbnail (ends with _thumb.webp, _thumb.jpg, or _thumb.png).
