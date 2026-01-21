@@ -65,7 +65,7 @@
       </Border>
 
       <ScrollViewer IsVisible="{Binding HasMedia}" Padding="16">
-        <ItemsControl ItemsSource="{Binding MediaItems}">
+        <ItemsControl x:Name="GalleryItems" ItemsSource="{Binding MediaItems}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
               <WrapPanel Orientation="Horizontal" Spacing="12"/>
@@ -73,8 +73,8 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:ViewerMediaItemViewModel">
-              <Border Width="{Binding $parent[ItemsControl].DataContext.TileWidth}"
-                      Height="{Binding $parent[ItemsControl].DataContext.TileWidth}"
+              <Border Width="{Binding DataContext.TileWidth, ElementName=GalleryItems}"
+                      Height="{Binding DataContext.TileWidth, ElementName=GalleryItems}"
                       Background="#2A2A2A"
                       CornerRadius="8"
                       ClipToBounds="True">
