@@ -80,7 +80,13 @@
                       ClipToBounds="True"
                       Margin="6">
                 <Grid>
-                  <Image Source="{Binding Thumbnail}"
+                  <!-- Loading placeholder shown while thumbnail is null -->
+                  <Border Background="#333"
+                          IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNull}}">
+                    <TextBlock Text="⏳" FontSize="24" Opacity="0.4"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  </Border>
+                  <Image Source="{Binding Thumbnail, TargetNullValue={x:Null}}"
                          Stretch="UniformToFill"
                          IsVisible="{Binding IsImage}"/>
                   <Border Background="Black" IsVisible="{Binding IsVideo}">

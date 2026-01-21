@@ -63,7 +63,7 @@ public partial class ViewerMediaItemViewModel : ObservableObject
 
             if (!_isThumbnailLoading)
             {
-                LoadThumbnailAsync();
+                _ = LoadThumbnailAsync();
             }
 
             return null;
@@ -71,7 +71,7 @@ public partial class ViewerMediaItemViewModel : ObservableObject
         private set => SetProperty(ref _thumbnail, value);
     }
 
-    private async void LoadThumbnailAsync()
+    private async Task LoadThumbnailAsync()
     {
         if (_isThumbnailLoading) return;
         _isThumbnailLoading = true;
@@ -84,7 +84,7 @@ public partial class ViewerMediaItemViewModel : ObservableObject
         }
 
         // Try direct cache access first
-        if (thumbnailService.TryGetCached(FilePath, out var cached))
+        if (thumbnailService.TryGetCached(FilePath, out var cached) && cached is not null)
         {
              Thumbnail = cached;
              _isThumbnailLoading = false;
@@ -95,11 +95,11 @@ public partial class ViewerMediaItemViewModel : ObservableObject
         {
             // Load async (using default target width from service which is usually matched to card size)
             // Note: Viewer tile width is adjustable, but we use the standard thumbnail size for consistency/caching
-            var bitmap = await thumbnailService.LoadThumbnailAsync(FilePath);
+            var bitmap = await thumbnailService.LoadThumbnailAsync(FilePath).ConfigureAwait(false);
 
-            if (bitmap != null)
+            if (bitmap is not null)
             {
-                Dispatcher.UIThread.Post(() =>
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     Thumbnail = bitmap;
                     _isThumbnailLoading = false;
