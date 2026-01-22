@@ -157,9 +157,9 @@
               <DataTemplate x:DataType="vm:GenerationGalleryGroupViewModel">
                 <StackPanel Spacing="8">
                   <Grid ColumnDefinitions="Auto,8,*,8,Auto" Margin="8,8,8,4">
-                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" Foreground="#888"/>
+                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" Foreground="#AAA"/>
                     <Border Grid.Column="2" Height="1" Background="#444" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Column="4" Text="{Binding CountText}" FontSize="12" Foreground="#666"/>
+                    <TextBlock Grid.Column="4" Text="{Binding CountText}" FontSize="14" Foreground="#888"/>
                   </Grid>
                   <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource MediaItemTemplate}">
                     <ItemsControl.ItemsPanel>
