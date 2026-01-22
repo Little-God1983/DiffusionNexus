@@ -10,6 +10,67 @@
 
   <UserControl.Resources>
     <converters:PathToBitmapConverter x:Key="PathToBitmapConverter"/>
+    <DataTemplate x:Key="MediaItemTemplate" x:DataType="vm:GenerationGalleryMediaItemViewModel">
+      <Border Width="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
+              Height="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
+              Background="#2A2A2A"
+              CornerRadius="8"
+              ClipToBounds="True"
+              Margin="6"
+              BorderBrush="#444"
+              BorderThickness="2"
+              PointerPressed="OnMediaCardPointerPressed">
+        <Grid>
+          <!-- Selection overlay border -->
+          <Border CornerRadius="6" 
+                  BorderBrush="#2196F3" 
+                  BorderThickness="3" 
+                  Margin="-1"
+                  IsVisible="{Binding IsSelected}" 
+                  IsHitTestVisible="False"
+                  ZIndex="10"/>
+
+          <!-- Loading placeholder shown while thumbnail is null -->
+          <Border Background="#333"
+                  IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNull}}">
+            <TextBlock Text="⏳" FontSize="24" Opacity="0.4"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <Image Source="{Binding Thumbnail, TargetNullValue={x:Null}}"
+                 Stretch="UniformToFill"
+                 IsVisible="{Binding IsImage}"/>
+          <Border Background="Black" IsVisible="{Binding IsVideo}">
+            <TextBlock Text="VIDEO" Foreground="White" FontWeight="Bold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7"/>
+          </Border>
+
+          <!-- File Extension Label (Top Left) -->
+          <Border Background="#66000000" CornerRadius="4" Padding="6,2"
+                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" ZIndex="5">
+            <TextBlock Text="{Binding FileExtension}" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+          </Border>
+
+          <!-- Delete Button (Top Right) -->
+          <Button Content="X"
+                  Command="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).DeleteImageCommand}"
+                  CommandParameter="{Binding}"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Top"
+                  Margin="6"
+                  Padding="6,2"
+                  Background="#80000000"
+                  CornerRadius="4"
+                  Foreground="#FF6B6B"
+                  FontWeight="Bold"
+                  ZIndex="5"/>
+
+          <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
+            <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.8"
+                       TextTrimming="CharacterEllipsis" MaxLines="1"/>
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
   </UserControl.Resources>
 
   <Grid RowDefinitions="Auto,Auto,*" Background="#252526">
@@ -26,6 +87,17 @@
                       SelectedItem="{Binding SelectedSortOption}"
                       Width="170"/>
           </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Text="Group by" VerticalAlignment="Center"/>
+            <ComboBox ItemsSource="{Binding GroupingOptions}"
+                      SelectedItem="{Binding SelectedGroupingOption}"
+                      Width="160"/>
+          </StackPanel>
+
+          <CheckBox Content="Include sub-folders"
+                    IsChecked="{Binding IncludeSubFolders}"
+                    VerticalAlignment="Center"/>
 
           <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
             <TextBlock Text="Tile width" VerticalAlignment="Center"/>
@@ -74,76 +146,44 @@
       </Border>
 
       <ScrollViewer IsVisible="{Binding HasMedia}" Padding="16">
-        <ItemsControl x:Name="GalleryItems" ItemsSource="{Binding MediaItems}">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <WrapPanel Orientation="Horizontal"/>
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:GenerationGalleryMediaItemViewModel">
-              <Border Width="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
-                      Height="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
-                      Background="#2A2A2A"
-                      CornerRadius="8"
-                      ClipToBounds="True"
-                      Margin="6"
-                      BorderBrush="#444"
-                      BorderThickness="2"
-                      PointerPressed="OnMediaCardPointerPressed">
-                <Grid>
-                  <!-- Selection overlay border -->
-                  <Border CornerRadius="6" 
-                          BorderBrush="#2196F3" 
-                          BorderThickness="3" 
-                          Margin="-1"
-                          IsVisible="{Binding IsSelected}" 
-                          IsHitTestVisible="False"
-                          ZIndex="10"/>
+        <Grid>
+          <ItemsControl ItemsSource="{Binding GroupedMediaItems}" IsVisible="{Binding IsGroupingEnabled}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Vertical" Spacing="8"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:GenerationGalleryGroupViewModel">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="Auto,8,*,8,Auto" Margin="8,8,8,4">
+                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" Foreground="#AAA"/>
+                    <Border Grid.Column="2" Height="1" Background="#444" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="4" Text="{Binding CountText}" FontSize="14" Foreground="#888"/>
+                  </Grid>
+                  <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource MediaItemTemplate}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                  </ItemsControl>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
 
-                  <!-- Loading placeholder shown while thumbnail is null -->
-                  <Border Background="#333"
-                          IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNull}}">
-                    <TextBlock Text="⏳" FontSize="24" Opacity="0.4"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                  </Border>
-                  <Image Source="{Binding Thumbnail, TargetNullValue={x:Null}}"
-                         Stretch="UniformToFill"
-                         IsVisible="{Binding IsImage}"/>
-                  <Border Background="Black" IsVisible="{Binding IsVideo}">
-                    <TextBlock Text="VIDEO" Foreground="White" FontWeight="Bold"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7"/>
-                  </Border>
-
-                  <!-- File Extension Label (Top Left) -->
-                  <Border Background="#66000000" CornerRadius="4" Padding="6,2"
-                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" ZIndex="5">
-                    <TextBlock Text="{Binding FileExtension}" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
-                  </Border>
-
-                  <!-- Delete Button (Top Right) -->
-                  <Button Content="X"
-                          Command="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).DeleteImageCommand}"
-                          CommandParameter="{Binding}"
-                          HorizontalAlignment="Right"
-                          VerticalAlignment="Top"
-                          Margin="6"
-                          Padding="6,2"
-                          Background="#80000000"
-                          CornerRadius="4"
-                          Foreground="#FF6B6B"
-                          FontWeight="Bold"
-                          ZIndex="5"/>
-
-                  <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
-                    <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.8"
-                               TextTrimming="CharacterEllipsis" MaxLines="1"/>
-                  </Border>
-                </Grid>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+          <ItemsControl x:Name="GalleryItems"
+                        ItemsSource="{Binding MediaItems}"
+                        ItemTemplate="{StaticResource MediaItemTemplate}"
+                        IsVisible="{Binding !IsGroupingEnabled}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+          </ItemsControl>
+        </Grid>
       </ScrollViewer>
     </Grid>
   </Grid>
