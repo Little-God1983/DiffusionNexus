@@ -19,7 +19,9 @@
               Margin="6"
               BorderBrush="#444"
               BorderThickness="2"
-              PointerPressed="OnMediaCardPointerPressed">
+              PointerPressed="OnMediaCardPointerPressed"
+              DoubleTapped="OnMediaDoubleTapped"
+              Cursor="Hand">
         <Grid>
           <!-- Selection overlay border -->
           <Border CornerRadius="6" 
@@ -104,6 +106,13 @@
             <Slider Minimum="140" Maximum="360" Value="{Binding TileWidth, Mode=TwoWay}" Width="180"/>
             <TextBlock Text="{Binding TileWidth, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
           </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+          <Button Content="Open Viewer"
+                  Command="{Binding OpenViewerCommand}"
+                  Padding="10,6"
+                  IsEnabled="{Binding HasMedia}"/>
         </StackPanel>
       </Grid>
     </Border>

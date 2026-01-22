@@ -186,10 +186,11 @@ public class DialogService : IDialogService
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
-        Action<DatasetImageViewModel>? onDeleteRequested = null)
+        Action<DatasetImageViewModel>? onDeleteRequested = null,
+        bool showRatingControls = true)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested, showRatingControls);
 
         await dialog.ShowDialog(_window);
     }

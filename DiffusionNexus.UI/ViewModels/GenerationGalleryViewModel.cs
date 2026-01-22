@@ -220,6 +220,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         UpdateSelectionState();
     }
 
+    [RelayCommand]
+    private async Task OpenViewerAsync()
+    {
+        if (DialogService is null || MediaItems.Count == 0) return;
+
+        var startIndex = GetDefaultViewerIndex();
+        await OpenImageViewerAtIndexAsync(startIndex);
+    }
+
+    [RelayCommand]
+    private async Task OpenImageViewerAsync(GenerationGalleryMediaItemViewModel? item)
+    {
+        if (DialogService is null || item is null) return;
+
+        var index = MediaItems.IndexOf(item);
+        if (index < 0) return;
+
+        await OpenImageViewerAtIndexAsync(index);
+    }
+
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private async Task AddSelectedToDatasetAsync()
     {
@@ -279,6 +299,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             ClearSelectionSilent();
             UpdateSelectionState();
         }, "Adding media to dataset...");
+    }
+
+    private async Task OpenImageViewerAtIndexAsync(int index)
+    {
+        if (DialogService is null || MediaItems.Count == 0) return;
+        if (index < 0 || index >= MediaItems.Count) return;
+
+        var viewerImages = new ObservableCollection<DatasetImageViewModel>(
+            MediaItems.Select(item => DatasetImageViewModel.FromFile(item.FilePath)));
+
+        await DialogService.ShowImageViewerDialogAsync(
+            viewerImages,
+            index,
+            showRatingControls: false);
     }
 
     private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
@@ -602,6 +636,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         UpdateGroupedMediaItems(MediaItems.ToList());
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
+    }
+
+    private int GetDefaultViewerIndex()
+    {
+        for (var i = 0; i < MediaItems.Count; i++)
+        {
+            if (MediaItems[i].IsSelected)
+            {
+                return i;
+            }
+        }
+
+        return 0;
     }
 
     private static void DeleteFileIfExists(string filePath)
