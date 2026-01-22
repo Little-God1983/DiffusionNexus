@@ -223,6 +223,16 @@ public interface IDialogService
     /// <param name="dataset">The dataset with multiple versions to delete from.</param>
     /// <returns>Result containing selected versions to delete, or cancelled result.</returns>
     Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset);
+
+    /// <summary>
+    /// Shows the add to dataset dialog for importing files into datasets.
+    /// </summary>
+    /// <param name="selectedFileCount">Number of selected files.</param>
+    /// <param name="availableDatasets">Datasets available for selection.</param>
+    /// <returns>Result describing import options, or cancelled result.</returns>
+    Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
+        int selectedFileCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets);
 }
 
 /// <summary>

@@ -1457,87 +1457,17 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
                 // Process files based on the result from the dialog
                 
-                // 1. Process non-conflicting files
-                foreach (var sourceFile in result.NonConflictingFiles)
-                {
-                    var fileName = Path.GetFileName(sourceFile);
-                    var destPath = Path.Combine(destFolderPath, fileName);
-                    File.Copy(sourceFile, destPath);
-                    copied++;
+                var importResult = await DatasetFileImporter.ImportResolvedAsync(
+                    result.NonConflictingFiles,
+                    result.ConflictResolutions,
+                    destFolderPath,
+                    _videoThumbnailService,
+                    moveFiles: false);
 
-                    if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(destPath))
-                    {
-                        await _videoThumbnailService.GenerateThumbnailAsync(destPath);
-                    }
-                }
-
-                // 2. Process resolved conflicts
-                if (result.ConflictResolutions is not null && result.ConflictResolutions.Confirmed)
-                {
-                    var renamedPairs = new Dictionary<string, string>(); // Base name -> new base name
-                   
-                    foreach (var conflict in result.ConflictResolutions.Conflicts)
-                    {
-                        switch (conflict.Resolution)
-                        {
-                            case FileConflictResolution.Override:
-                                // Delete existing and copy new
-                                if (File.Exists(conflict.ExistingFilePath))
-                                {
-                                    File.Delete(conflict.ExistingFilePath);
-                                }
-                                File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
-                                overridden++;
-                                
-                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(conflict.ExistingFilePath))
-                                {
-                                    await _videoThumbnailService.GenerateThumbnailAsync(conflict.ExistingFilePath);
-                                }
-                                break;
-
-                            case FileConflictResolution.Rename:
-                                // Generate a unique name
-                                // CRITICAL: If this file is part of a pair, it should receive the SAME new base name as its partner.
-                                // Currently, the simplest way is to check if we already renamed a partial pair.
-                                
-                                var baseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
-                                
-                                // Check if we already generated a new name for this base name in this batch
-                                if (!renamedPairs.TryGetValue(baseName, out var newBaseName))
-                                {
-                                    // Generate a new unique path for the first file in the pair
-                                    var uniquePath = GenerateUniqueFileName(destFolderPath, conflict.ConflictingName);
-                                    newBaseName = Path.GetFileNameWithoutExtension(uniquePath);
-                                    renamedPairs[baseName] = newBaseName;
-                                }
-
-                                var extension = Path.GetExtension(conflict.ConflictingName);
-                                var finalNewName = newBaseName + extension;
-                                var finalRenamedPath = Path.Combine(destFolderPath, finalNewName);
-
-                                // Ensure uniqueness for this specific extension AGAIN just in case (e.g. if the pair had different collision states)
-                                // But if we lock them to the *same* new base name, we should be fine if GenerateUniqueFileName checks for *any* file with that base?
-                                // Standard GenerateUniqueFileName checks full path. 
-                                // If 'img_1.png' exists, 'img_1.txt' might not. 
-                                // But if we want them paired, we must use the same index.
-                                // So we trust the first generation.
-                                
-                                File.Copy(conflict.NewFilePath, finalRenamedPath);
-                                renamed++;
-                                
-                                if (_videoThumbnailService is not null && DatasetImageViewModel.IsVideoFile(finalRenamedPath))
-                                {
-                                    await _videoThumbnailService.GenerateThumbnailAsync(finalRenamedPath);
-                                }
-                                break;
-
-                            case FileConflictResolution.Ignore:
-                                // Skip this file
-                                ignored++;
-                                break;
-                        }
-                    }
-                }
+                copied = importResult.Copied;
+                overridden = importResult.Overridden;
+                renamed = importResult.Renamed;
+                ignored = importResult.Ignored;
 
                 // Calculate total added
                 var totalAdded = copied + overridden + renamed;
@@ -2166,7 +2096,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             if (!ActiveDataset.IsVersionedStructure && ActiveDataset.ImageCount > 0)
             {
-                await MigrateLegacyToVersionedAsync(ActiveDataset);
+                await DatasetVersionUtilities.EnsureVersionedStructureAsync(ActiveDataset);
             }
 
             Directory.CreateDirectory(destPath);
@@ -2286,38 +2216,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsLoading = false;
         }
-    }
-
-    private Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
-    {
-        var rootPath = dataset.FolderPath;
-        var v1Path = dataset.GetVersionFolderPath(1);
-
-        Directory.CreateDirectory(v1Path);
-
-        var filesToMove = Directory.EnumerateFiles(rootPath)
-            .Where(f =>
-            {
-                var ext = Path.GetExtension(f).ToLowerInvariant();
-                var fileName = Path.GetFileName(f);
-                if (fileName.StartsWith(".")) return false;
-                return MediaFileExtensions.MediaExtensions.Contains(ext) || ext == ".txt";
-            })
-            .ToList();
-
-        foreach (var sourceFile in filesToMove)
-        {
-            var fileName = Path.GetFileName(sourceFile);
-            var destFile = Path.Combine(v1Path, fileName);
-            File.Move(sourceFile, destFile);
-        }
-
-        dataset.IsVersionedStructure = true;
-        dataset.CurrentVersion = 1;
-        dataset.TotalVersions = 1;
-        dataset.SaveMetadata();
-
-        return Task.CompletedTask;
     }
 
     private async Task ExportDatasetAsync()

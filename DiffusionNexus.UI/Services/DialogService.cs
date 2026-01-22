@@ -298,4 +298,15 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? SelectVersionsToDeleteResult.Cancelled();
     }
+
+    public async Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
+        int selectedFileCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets)
+    {
+        var dialog = new AddToDatasetDialog()
+            .WithOptions(selectedFileCount, availableDatasets);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? AddToDatasetResult.Cancelled();
+    }
 }

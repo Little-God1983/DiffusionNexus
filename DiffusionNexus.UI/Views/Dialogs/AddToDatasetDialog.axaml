@@ -1,0 +1,127 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.AddToDatasetDialog"
+        x:DataType="vm:AddToDatasetDialogViewModel"
+        Width="720"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto">
+    <StackPanel Grid.Row="0" Margin="0,0,0,20">
+      <TextBlock Text="Add Selected to Dataset"
+                 FontSize="18"
+                 FontWeight="SemiBold"
+                 Foreground="#4CAF50"/>
+      <TextBlock Text="{Binding SelectedCountText}"
+                 Opacity="0.7"
+                 Margin="0,6,0,0"/>
+    </StackPanel>
+
+    <Border Grid.Row="1"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16"
+            Margin="0,0,0,20">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Import Action"
+                   FontWeight="SemiBold"/>
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <RadioButton Content="Copy"
+                       GroupName="ImportAction"
+                       IsChecked="{Binding IsCopy, Mode=TwoWay}"/>
+          <RadioButton Content="Move"
+                       GroupName="ImportAction"
+                       IsChecked="{Binding IsMove, Mode=TwoWay}"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="2"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16"
+            Margin="0,0,0,20">
+      <StackPanel Spacing="12">
+        <TextBlock Text="Destination"
+                   FontWeight="SemiBold"/>
+
+        <Border Background="#232323"
+                CornerRadius="6"
+                Padding="12"
+                BorderThickness="2"
+                BorderBrush="{Binding IsNewDatasetSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+          <StackPanel Spacing="6">
+            <RadioButton Content="Create a new dataset"
+                         GroupName="DestinationOption"
+                         IsChecked="{Binding IsNewDatasetSelected, Mode=TwoWay}"/>
+            <TextBlock Text="Use the dataset creation dialog to define name, type, and category."
+                       FontSize="12"
+                       Opacity="0.6"/>
+          </StackPanel>
+        </Border>
+
+        <Border Background="#232323"
+                CornerRadius="6"
+                Padding="12"
+                BorderThickness="2"
+                BorderBrush="{Binding IsExistingDatasetSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}"
+                IsEnabled="{Binding IsExistingDatasetEnabled}">
+          <StackPanel Spacing="8">
+            <RadioButton Content="Add to existing dataset"
+                         GroupName="DestinationOption"
+                         IsChecked="{Binding IsExistingDatasetSelected, Mode=TwoWay}"/>
+            <ComboBox ItemsSource="{Binding AvailableDatasets}"
+                      SelectedItem="{Binding SelectedDataset, Mode=TwoWay}"
+                      MinWidth="260"
+                      IsEnabled="{Binding IsExistingDatasetSelected}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                  <TextBlock Text="{Binding Name}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <Border Background="#1C1C1C"
+                    CornerRadius="6"
+                    Padding="12"
+                    IsVisible="{Binding IsExistingDatasetSelected}">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Version Options"
+                           FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                  <RadioButton Content="Add to version"
+                               GroupName="VersionOption"
+                               IsChecked="{Binding IsUseExistingVersion, Mode=TwoWay}"
+                               IsEnabled="{Binding IsExistingDatasetSelected}"/>
+                  <ComboBox ItemsSource="{Binding AvailableVersions}"
+                            SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                            MinWidth="90"
+                            IsEnabled="{Binding IsUseExistingVersion}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                <RadioButton Content="Create new version"
+                             GroupName="VersionOption"
+                             IsChecked="{Binding IsCreateNewVersion, Mode=TwoWay}"
+                             IsEnabled="{Binding CanCreateNewVersion}"/>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Border>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Content="Cancel" Width="110" Click="OnCancelClick"/>
+      <Button Content="Add to Dataset" Width="140" Background="#4CAF50" Click="OnConfirmClick"/>
+    </StackPanel>
+  </Grid>
+</Window>

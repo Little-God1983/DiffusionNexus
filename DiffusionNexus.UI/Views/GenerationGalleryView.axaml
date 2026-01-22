@@ -38,7 +38,7 @@
 
     <Border Grid.Row="1" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1"
             IsVisible="{Binding HasSelection}">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
         <Border Grid.Column="0" Background="#4CAF50" CornerRadius="4" Padding="8,4">
           <TextBlock Text="{Binding SelectionText}" FontWeight="SemiBold" Foreground="White"/>
         </Border>
@@ -47,7 +47,9 @@
           <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4"/>
         </StackPanel>
         <Border Grid.Column="2"/>
-        <Button Grid.Column="3" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
+        <Button Grid.Column="3" Content="Add Selected to Dataset" Command="{Binding AddSelectedToDatasetCommand}"
+                Background="#2E7D32" Padding="12,6" Margin="0,0,8,0"/>
+        <Button Grid.Column="4" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
                 Background="#B22222" Padding="12,6"/>
       </Grid>
     </Border>

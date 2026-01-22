@@ -30,7 +30,8 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var mockDatasetState = new Mock<IDatasetState>();
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -67,7 +68,8 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var mockDatasetState = new Mock<IDatasetState>();
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -104,7 +106,8 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var mockDatasetState = new Mock<IDatasetState>();
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null);
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
         viewModel.SelectedSortOption = "Name";

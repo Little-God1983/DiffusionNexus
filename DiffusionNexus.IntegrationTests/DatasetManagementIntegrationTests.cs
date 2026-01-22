@@ -159,5 +159,10 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset) =>
             Task.FromResult(SelectVersionsToDeleteResult.Cancelled());
+
+        public Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
+            int selectedFileCount,
+            IEnumerable<DatasetCardViewModel> availableDatasets) =>
+            Task.FromResult(AddToDatasetResult.Cancelled());
     }
 }

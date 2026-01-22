@@ -231,7 +231,11 @@ public partial class App : Application
             sp.GetService<IActivityLogService>()));
         
         services.AddScoped<LoraViewerViewModel>();
-        services.AddScoped<GenerationGalleryViewModel>();
+        services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<IDatasetEventAggregator>(),
+            sp.GetRequiredService<IDatasetState>(),
+            sp.GetService<IVideoThumbnailService>()));
         
         // LoraDatasetHelperViewModel - use factory to inject all required services
         services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(
