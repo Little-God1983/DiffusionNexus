@@ -40,7 +40,7 @@ public partial class AddToDatasetDialogViewModel : ObservableObject
     private DatasetDestinationOption _destinationOption = DatasetDestinationOption.ExistingDataset;
     private DatasetVersionOption _versionOption = DatasetVersionOption.UseExistingVersion;
     private DatasetCardViewModel? _selectedDataset;
-    private int _selectedVersion;
+    private int? _selectedVersion;
 
     public AddToDatasetDialogViewModel(int selectedFileCount, IEnumerable<DatasetCardViewModel> availableDatasets)
     {
@@ -200,7 +200,7 @@ public partial class AddToDatasetDialogViewModel : ObservableObject
         }
     }
 
-    public int SelectedVersion
+    public int? SelectedVersion
     {
         get => _selectedVersion;
         set => SetProperty(ref _selectedVersion, value);
