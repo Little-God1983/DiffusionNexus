@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -23,6 +24,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
+    private bool _isUpdatingGroupingOptions;
 
     public GenerationGalleryViewModel()
     {
@@ -30,6 +32,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _eventAggregator = null;
         _datasetState = null;
         _videoThumbnailService = null;
+        UpdateGroupingOptions();
         LoadDesignData();
     }
 
@@ -45,6 +48,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _videoThumbnailService = videoThumbnailService;
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
+        UpdateGroupingOptions();
     }
 
     private void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
@@ -55,7 +59,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     public ObservableCollection<GenerationGalleryMediaItemViewModel> MediaItems { get; } = [];
 
+    public ObservableCollection<GenerationGalleryGroupViewModel> GroupedMediaItems { get; } = [];
+
     public IReadOnlyList<string> SortOptions { get; } = ["Name", "Creation date"];
+
+    public ObservableCollection<string> GroupingOptions { get; } = [];
 
     public string ImageExtensionsDisplay => SupportedMediaTypes.ImageExtensionsDisplay;
 
@@ -65,10 +73,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     private string _selectedSortOption = "Creation date";
 
     [ObservableProperty]
+    private string _selectedGroupingOption = "None";
+
+    [ObservableProperty]
     private double _tileWidth = 220;
 
     [ObservableProperty]
     private string? _noMediaMessage;
+
+    [ObservableProperty]
+    private bool _includeSubFolders = true;
 
     public int SelectionCount
     {
@@ -84,6 +98,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     public bool HasNoMedia => !HasMedia;
 
+    public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
+
     [RelayCommand]
     private async Task LoadMediaAsync()
     {
@@ -98,14 +114,31 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             var settings = await _settingsService.GetSettingsAsync();
             var enabledPaths = GetEnabledGalleryPaths(settings);
 
-            var mediaItems = await Task.Run(() => CollectMediaItems(enabledPaths));
+            var mediaItems = await Task.Run(() => CollectMediaItems(enabledPaths, IncludeSubFolders));
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
         }, "Loading gallery...");
     }
 
     partial void OnSelectedSortOptionChanged(string value)
     {
-        ApplySorting();
+        UpdateGroupingOptions();
+        ApplySortingAndGrouping();
+    }
+
+    partial void OnSelectedGroupingOptionChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsGroupingEnabled));
+        if (_isUpdatingGroupingOptions)
+        {
+            return;
+        }
+
+        ApplySortingAndGrouping();
+    }
+
+    partial void OnIncludeSubFoldersChanged(bool value)
+    {
+        LoadMediaCommand.Execute(null);
     }
 
     public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
@@ -350,7 +383,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             .ToList();
     }
 
-    private static List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths)
+    private static List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
     {
         var items = new List<GenerationGalleryMediaItemViewModel>();
         foreach (var root in paths)
@@ -360,19 +393,51 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
                 continue;
             }
 
-            foreach (var file in EnumerateMediaFiles(root))
+            foreach (var file in EnumerateMediaFiles(root, includeSubFolders))
             {
                 var isVideo = SupportedMediaTypes.IsVideoFile(file);
                 var createdAt = File.GetCreationTimeUtc(file);
-                items.Add(new GenerationGalleryMediaItemViewModel(file, isVideo, createdAt));
+                var folderGroupName = GetFolderGroupName(root, file);
+                items.Add(new GenerationGalleryMediaItemViewModel(file, isVideo, createdAt, folderGroupName));
             }
         }
 
         return items;
     }
 
-    private static IEnumerable<string> EnumerateMediaFiles(string root)
+    private static IEnumerable<string> EnumerateMediaFiles(string root, bool includeSubFolders)
     {
+        if (!includeSubFolders)
+        {
+            IEnumerable<string> files = [];
+            try
+            {
+                files = Directory.EnumerateFiles(root, "*.*", SearchOption.TopDirectoryOnly);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                yield break;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                yield break;
+            }
+            catch (IOException)
+            {
+                yield break;
+            }
+
+            foreach (var file in files)
+            {
+                if (SupportedMediaTypes.IsMediaFile(file))
+                {
+                    yield return file;
+                }
+            }
+
+            yield break;
+        }
+
         var pending = new Stack<string>();
         pending.Push(root);
 
@@ -447,7 +512,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _allMediaItems.Clear();
         _allMediaItems.AddRange(items);
 
-        ApplySorting();
+        ApplySortingAndGrouping();
 
         NoMediaMessage = enabledSourceCount == 0
             ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
@@ -459,7 +524,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         UpdateSelectionState();
     }
 
-    private void ApplySorting()
+    private void ApplySortingAndGrouping()
     {
         IEnumerable<GenerationGalleryMediaItemViewModel> sorted = _allMediaItems;
 
@@ -473,11 +538,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             sorted = sorted.OrderBy(item => item.FileName, StringComparer.OrdinalIgnoreCase);
         }
 
+        var sortedList = sorted.ToList();
+
         MediaItems.Clear();
-        foreach (var item in sorted)
+        foreach (var item in sortedList)
         {
             MediaItems.Add(item);
         }
+
+        UpdateGroupedMediaItems(sortedList);
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
@@ -487,11 +556,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     private void LoadDesignData()
     {
         _allMediaItems.Clear();
-        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-01.png", false, DateTime.UtcNow.AddDays(-1)));
-        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-02.jpg", false, DateTime.UtcNow));
-        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4)));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-01.png", false, DateTime.UtcNow.AddDays(-1), "Images"));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-02.jpg", false, DateTime.UtcNow, "Images"));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4), "Videos"));
 
-        ApplySorting();
+        ApplySortingAndGrouping();
     }
 
     private void SelectRange(GenerationGalleryMediaItemViewModel from, GenerationGalleryMediaItemViewModel to)
@@ -530,6 +599,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     {
         _allMediaItems.Remove(item);
         MediaItems.Remove(item);
+        UpdateGroupedMediaItems(MediaItems.ToList());
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
     }
@@ -546,5 +616,135 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         catch
         {
         }
+    }
+
+    private void UpdateGroupingOptions()
+    {
+        _isUpdatingGroupingOptions = true;
+        GroupingOptions.Clear();
+
+        IEnumerable<string> options = string.Equals(SelectedSortOption, "Creation date", StringComparison.OrdinalIgnoreCase)
+            ? ["Day", "Week", "Month", "Year", "None"]
+            : ["Folder", "None"];
+
+        foreach (var option in options)
+        {
+            GroupingOptions.Add(option);
+        }
+
+        if (!GroupingOptions.Any(option => string.Equals(option, SelectedGroupingOption, StringComparison.OrdinalIgnoreCase)))
+        {
+            SelectedGroupingOption = "None";
+        }
+
+        _isUpdatingGroupingOptions = false;
+        OnPropertyChanged(nameof(IsGroupingEnabled));
+    }
+
+    private void UpdateGroupedMediaItems(IReadOnlyList<GenerationGalleryMediaItemViewModel> sortedItems)
+    {
+        GroupedMediaItems.Clear();
+
+        if (!IsGroupingEnabled)
+        {
+            return;
+        }
+
+        IEnumerable<GenerationGalleryGroupViewModel> groups = SelectedGroupingOption switch
+        {
+            "Day" => CreateDateGroups(sortedItems),
+            "Week" => CreateWeekGroups(sortedItems),
+            "Month" => CreateMonthGroups(sortedItems),
+            "Year" => CreateYearGroups(sortedItems),
+            "Folder" => CreateFolderGroups(sortedItems),
+            _ => []
+        };
+
+        foreach (var group in groups)
+        {
+            GroupedMediaItems.Add(group);
+        }
+    }
+
+    private static IEnumerable<GenerationGalleryGroupViewModel> CreateDateGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)
+    {
+        return items
+            .GroupBy(item => item.CreatedAtUtc.ToLocalTime().Date)
+            .OrderByDescending(group => group.Key)
+            .Select(group => new GenerationGalleryGroupViewModel(
+                group.Key.ToString("MMM dd, yyyy", CultureInfo.CurrentCulture),
+                group));
+    }
+
+    private static IEnumerable<GenerationGalleryGroupViewModel> CreateWeekGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)
+    {
+        return items
+            .GroupBy(item =>
+            {
+                var local = item.CreatedAtUtc.ToLocalTime();
+                return (Year: ISOWeek.GetYear(local), Week: ISOWeek.GetWeekOfYear(local));
+            })
+            .OrderByDescending(group => group.Key.Year)
+            .ThenByDescending(group => group.Key.Week)
+            .Select(group =>
+            {
+                var label = $"Week {group.Key.Week} ({group.Key.Year})";
+                return new GenerationGalleryGroupViewModel(label, group);
+            });
+    }
+
+    private static IEnumerable<GenerationGalleryGroupViewModel> CreateMonthGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)
+    {
+        return items
+            .GroupBy(item =>
+            {
+                var local = item.CreatedAtUtc.ToLocalTime();
+                return new DateTime(local.Year, local.Month, 1);
+            })
+            .OrderByDescending(group => group.Key)
+            .Select(group => new GenerationGalleryGroupViewModel(
+                group.Key.ToString("MMMM yyyy", CultureInfo.CurrentCulture),
+                group));
+    }
+
+    private static IEnumerable<GenerationGalleryGroupViewModel> CreateYearGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)
+    {
+        return items
+            .GroupBy(item => item.CreatedAtUtc.ToLocalTime().Year)
+            .OrderByDescending(group => group.Key)
+            .Select(group => new GenerationGalleryGroupViewModel(group.Key.ToString(CultureInfo.CurrentCulture), group));
+    }
+
+    private static IEnumerable<GenerationGalleryGroupViewModel> CreateFolderGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)
+    {
+        return items
+            .GroupBy(item => item.FolderGroupName, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new GenerationGalleryGroupViewModel(group.Key, group));
+    }
+
+    private static string GetFolderGroupName(string root, string filePath)
+    {
+        var trimmedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rootName = Path.GetFileName(trimmedRoot);
+        if (string.IsNullOrWhiteSpace(rootName))
+        {
+            rootName = trimmedRoot;
+        }
+
+        var relativePath = Path.GetRelativePath(root, filePath);
+        var relativeDirectory = Path.GetDirectoryName(relativePath);
+        if (string.IsNullOrWhiteSpace(relativeDirectory) || relativeDirectory == ".")
+        {
+            return rootName;
+        }
+
+        var normalized = relativeDirectory.Replace(Path.DirectorySeparatorChar, '/');
+        if (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar)
+        {
+            normalized = normalized.Replace(Path.AltDirectorySeparatorChar, '/');
+        }
+
+        return $"{rootName}/{normalized}";
     }
 }
