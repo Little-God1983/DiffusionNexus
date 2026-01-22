@@ -343,7 +343,7 @@ public sealed class AppSettingsService : IAppSettingsService
                     existingGallery.IsEnabled = galleryData.IsEnabled;
                     existingGallery.Order = galleryData.Order;
                 }
-                else
+                else if (galleryData.Id == 0)
                 {
                     var newGallery = new ImageGallery
                     {
@@ -354,6 +354,7 @@ public sealed class AppSettingsService : IAppSettingsService
                     };
                     _dbContext.ImageGalleries.Add(newGallery);
                 }
+                // Entries with Id > 0 but not found in existing are ignored (should not happen normally)
             }
         }
 
