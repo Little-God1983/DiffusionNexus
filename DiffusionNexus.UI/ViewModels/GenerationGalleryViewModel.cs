@@ -18,6 +18,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
+    private GenerationGalleryMediaItemViewModel? _lastClickedItem;
+    private int _selectionCount;
 
     public GenerationGalleryViewModel()
     {
@@ -57,6 +59,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     [ObservableProperty]
     private string? _noMediaMessage;
 
+    public int SelectionCount
+    {
+        get => _selectionCount;
+        private set => SetProperty(ref _selectionCount, value);
+    }
+
+    public bool HasSelection => SelectionCount > 0;
+
+    public string SelectionText => SelectionCount == 1 ? "1 selected" : $"{SelectionCount} selected";
+
     public bool HasMedia => MediaItems.Count > 0;
 
     public bool HasNoMedia => !HasMedia;
@@ -83,6 +95,85 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     partial void OnSelectedSortOptionChanged(string value)
     {
         ApplySorting();
+    }
+
+    public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
+    {
+        if (item is null) return;
+
+        if (isShiftPressed && _lastClickedItem is not null)
+        {
+            SelectRange(_lastClickedItem, item);
+        }
+        else if (isCtrlPressed)
+        {
+            item.IsSelected = !item.IsSelected;
+        }
+        else
+        {
+            ClearSelectionSilent();
+            item.IsSelected = true;
+        }
+
+        _lastClickedItem = item;
+        UpdateSelectionState();
+    }
+
+    [RelayCommand]
+    private void SelectAll()
+    {
+        foreach (var item in MediaItems)
+        {
+            item.IsSelected = true;
+        }
+
+        UpdateSelectionState();
+    }
+
+    [RelayCommand]
+    private void ClearSelection()
+    {
+        ClearSelectionSilent();
+        UpdateSelectionState();
+    }
+
+    [RelayCommand]
+    private async Task DeleteSelectedAsync()
+    {
+        if (DialogService is null) return;
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Selected Media",
+            $"Delete {selectedItems.Count} selected items?");
+
+        if (!confirm) return;
+
+        foreach (var item in selectedItems)
+        {
+            DeleteFileIfExists(item.FilePath);
+            RemoveMediaItem(item);
+        }
+
+        UpdateSelectionState();
+    }
+
+    [RelayCommand]
+    private async Task DeleteImageAsync(GenerationGalleryMediaItemViewModel? item)
+    {
+        if (item is null || DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Media",
+            $"Delete '{item.FullFileName}'?");
+
+        if (!confirm) return;
+
+        DeleteFileIfExists(item.FilePath);
+        RemoveMediaItem(item);
+        UpdateSelectionState();
     }
 
     private static List<string> GetEnabledGalleryPaths(AppSettings settings)
@@ -200,6 +291,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
+        _lastClickedItem = null;
+        UpdateSelectionState();
     }
 
     private void ApplySorting()
@@ -224,6 +317,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
+        UpdateSelectionState();
     }
 
     private void LoadDesignData()
@@ -234,5 +328,58 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4)));
 
         ApplySorting();
+    }
+
+    private void SelectRange(GenerationGalleryMediaItemViewModel from, GenerationGalleryMediaItemViewModel to)
+    {
+        var fromIndex = MediaItems.IndexOf(from);
+        var toIndex = MediaItems.IndexOf(to);
+
+        if (fromIndex == -1 || toIndex == -1) return;
+
+        var startIndex = Math.Min(fromIndex, toIndex);
+        var endIndex = Math.Max(fromIndex, toIndex);
+
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            MediaItems[i].IsSelected = true;
+        }
+    }
+
+    private void ClearSelectionSilent()
+    {
+        foreach (var item in MediaItems)
+        {
+            item.IsSelected = false;
+        }
+    }
+
+    private void UpdateSelectionState()
+    {
+        SelectionCount = MediaItems.Count(item => item.IsSelected);
+        OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(SelectionText));
+    }
+
+    private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
+    {
+        _allMediaItems.Remove(item);
+        MediaItems.Remove(item);
+        OnPropertyChanged(nameof(HasMedia));
+        OnPropertyChanged(nameof(HasNoMedia));
+    }
+
+    private static void DeleteFileIfExists(string filePath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                File.Delete(filePath);
+            }
+        }
+        catch
+        {
+        }
     }
 }
