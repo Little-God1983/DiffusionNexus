@@ -1,7 +1,9 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.VisualTree;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views;
@@ -11,9 +13,27 @@ namespace DiffusionNexus.UI.Views;
 /// </summary>
 public partial class GenerationGalleryView : UserControl
 {
+    private bool _isInitialized;
+
     public GenerationGalleryView()
     {
         InitializeComponent();
+        AttachedToVisualTree += OnAttachedToVisualTree;
+    }
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_isInitialized) return;
+        _isInitialized = true;
+
+        if (DataContext is GenerationGalleryViewModel vm)
+        {
+            var window = this.VisualRoot as Window ?? TopLevel.GetTopLevel(this) as Window;
+            if (window is not null)
+            {
+                vm.DialogService = new DialogService(window);
+            }
+        }
     }
 
     private void InitializeComponent()
@@ -27,7 +47,7 @@ public partial class GenerationGalleryView : UserControl
         if (border.DataContext is not GenerationGalleryMediaItemViewModel item) return;
         if (DataContext is not GenerationGalleryViewModel vm) return;
 
-        if (e.Source is IVisual visual && visual.FindAncestorOfType<Button>() is not null)
+        if (e.Source is Visual visual && visual.FindAncestorOfType<Button>() is not null)
         {
             return;
         }
