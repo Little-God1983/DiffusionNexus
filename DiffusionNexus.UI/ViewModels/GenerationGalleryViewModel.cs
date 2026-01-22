@@ -4,9 +4,9 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
-using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -17,6 +17,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IDatasetState? _datasetState;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
@@ -25,13 +26,18 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     {
         _settingsService = null;
         _eventAggregator = null;
+        _datasetState = null;
         LoadDesignData();
     }
 
-    public GenerationGalleryViewModel(IAppSettingsService settingsService, IDatasetEventAggregator eventAggregator)
+    public GenerationGalleryViewModel(
+        IAppSettingsService settingsService,
+        IDatasetEventAggregator eventAggregator,
+        IDatasetState datasetState)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
+        _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
     }
@@ -158,6 +164,83 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         }
 
         UpdateSelectionState();
+    }
+
+    [RelayCommand]
+    private async Task AddSelectedToDatasetAsync()
+    {
+        if (DialogService is null || _settingsService is null || _eventAggregator is null || _datasetState is null) return;
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        var dialogResult = await DialogService.ShowAddToDatasetDialogAsync(
+            selectedItems.Count,
+            _datasetState.Datasets,
+            _datasetState.AvailableCategories);
+
+        if (!dialogResult.Confirmed) return;
+
+        var selectedFiles = selectedItems.Select(item => item.FilePath).ToList();
+        var transferMode = dialogResult.TransferMode;
+
+        await RunBusyAsync(async () =>
+        {
+            var targetDataset = await ResolveTargetDatasetAsync(dialogResult);
+            if (targetDataset is null)
+            {
+                return;
+            }
+
+            var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
+            if (!targetVersion.HasValue)
+            {
+                return;
+            }
+
+            var destinationFolder = targetDataset.IsVersionedStructure
+                ? targetDataset.GetVersionFolderPath(targetVersion.Value)
+                : targetDataset.CurrentVersionFolderPath;
+
+            Directory.CreateDirectory(destinationFolder);
+
+            DatasetImportSummary importSummary;
+            try
+            {
+                importSummary = await DatasetImportHelper.ImportFilesAsync(
+                    DialogService,
+                    destinationFolder,
+                    selectedFiles,
+                    transferMode == FileTransferMode.Move);
+            }
+            catch (Exception ex)
+            {
+                await DialogService.ShowMessageAsync("Add to Dataset", $"Failed to add files: {ex.Message}");
+                return;
+            }
+
+            if (importSummary.Cancelled)
+            {
+                return;
+            }
+
+            if (transferMode == FileTransferMode.Move && importSummary.ProcessedSourceFiles.Count > 0)
+            {
+                RemoveMovedItems(selectedItems, importSummary.ProcessedSourceFiles);
+            }
+
+            targetDataset.RefreshImageInfo();
+            targetDataset.SaveMetadata();
+
+            _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
+            {
+                Dataset = targetDataset,
+                AddedImages = []
+            });
+
+            ClearSelectionSilent();
+            UpdateSelectionState();
+        }, "Adding to dataset...");
     }
 
     [RelayCommand]
@@ -380,6 +463,88 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         }
         catch
         {
+        }
+    }
+
+    private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
+    {
+        if (dialogResult.TargetMode == DatasetTargetMode.Existing)
+        {
+            return dialogResult.SelectedDataset;
+        }
+
+        if (_settingsService is null || _eventAggregator is null || _datasetState is null || dialogResult.NewDataset is null)
+        {
+            return null;
+        }
+
+        var creationOutcome = await DatasetCreationHelper.TryCreateDatasetAsync(_settingsService, dialogResult.NewDataset);
+        _datasetState.SetStorageConfigured(creationOutcome.StorageConfigured);
+
+        if (!creationOutcome.Success || creationOutcome.Dataset is null)
+        {
+            if (DialogService is not null && !string.IsNullOrWhiteSpace(creationOutcome.ErrorMessage))
+            {
+                await DialogService.ShowMessageAsync(\"Create Dataset\", creationOutcome.ErrorMessage);
+            }
+            return null;
+        }
+
+        _datasetState.Datasets.Add(creationOutcome.Dataset);
+        _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = creationOutcome.Dataset
+        });
+
+        return creationOutcome.Dataset;
+    }
+
+    private async Task<int?> ResolveTargetVersionAsync(DatasetCardViewModel dataset, AddToDatasetResult dialogResult)
+    {
+        if (dialogResult.VersionMode == DatasetVersionMode.ExistingVersion)
+        {
+            var version = dialogResult.TargetVersion ?? dataset.CurrentVersion;
+            dataset.CurrentVersion = version;
+            dataset.SaveMetadata();
+            return version;
+        }
+
+        var parentVersion = dataset.CurrentVersion;
+        if (!dataset.IsVersionedStructure && dataset.TotalMediaCount > 0)
+        {
+            await DatasetVersionHelper.MigrateLegacyToVersionedAsync(dataset);
+        }
+
+        var nextVersion = dataset.GetNextVersionNumber();
+        var destPath = dataset.GetVersionFolderPath(nextVersion);
+        Directory.CreateDirectory(destPath);
+
+        var parentNsfw = dataset.VersionNsfwFlags.GetValueOrDefault(parentVersion, dataset.IsNsfw);
+        dataset.VersionNsfwFlags[nextVersion] = parentNsfw;
+        dataset.RecordBranch(nextVersion, parentVersion);
+        dataset.CurrentVersion = nextVersion;
+        dataset.IsVersionedStructure = true;
+        dataset.TotalVersions = Math.Max(dataset.TotalVersions, dataset.GetAllVersionNumbers().Count);
+        dataset.SaveMetadata();
+
+        _eventAggregator!.PublishVersionCreated(new VersionCreatedEventArgs
+        {
+            Dataset = dataset,
+            NewVersion = nextVersion,
+            BranchedFromVersion = parentVersion
+        });
+
+        return nextVersion;
+    }
+
+    private void RemoveMovedItems(
+        IReadOnlyList<GenerationGalleryMediaItemViewModel> selectedItems,
+        IReadOnlyList<string> processedSources)
+    {
+        var processedSet = processedSources.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in selectedItems.Where(item => processedSet.Contains(item.FilePath)))
+        {
+            RemoveMediaItem(item);
         }
     }
 }

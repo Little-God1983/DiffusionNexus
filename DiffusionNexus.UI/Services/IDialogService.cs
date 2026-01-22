@@ -125,6 +125,18 @@ public interface IDialogService
     Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories);
 
     /// <summary>
+    /// Shows the add-to-dataset dialog for moving or copying files into a dataset.
+    /// </summary>
+    /// <param name="selectionCount">Number of selected files.</param>
+    /// <param name="availableDatasets">List of available datasets.</param>
+    /// <param name="availableCategories">Categories for new dataset creation.</param>
+    /// <returns>Result with transfer and target settings, or cancelled result.</returns>
+    Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
+        int selectionCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets,
+        IEnumerable<DatasetCategoryViewModel> availableCategories);
+
+    /// <summary>
     /// Shows the full-screen image viewer dialog for browsing dataset images.
     /// Integrates with the event aggregator for cross-component state synchronization.
     /// </summary>

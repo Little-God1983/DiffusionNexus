@@ -570,6 +570,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _eventAggregator.ImageRatingChanged += OnImageRatingChanged;
         _eventAggregator.SettingsSaved += OnSettingsSaved;
         _eventAggregator.ImageSelectionChanged += OnImageSelectionChanged;
+        _eventAggregator.DatasetCreated += OnDatasetCreated;
 
         // Initialize commands
         CheckStorageConfigurationCommand = new AsyncRelayCommand(CheckStorageConfigurationAsync);
@@ -661,6 +662,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 OnPropertyChanged(nameof(HasNoImages));
                 break;
         }
+    }
+
+    private async void OnDatasetCreated(object? sender, DatasetCreatedEventArgs e)
+    {
+        await LoadDatasetsAsync();
     }
 
     /// <summary>
@@ -1339,82 +1345,41 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         if (DialogService is null || _settingsService is null) return;
 
-        var settings = await _settingsService.GetSettingsAsync();
-
-        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
-        {
-            StatusMessage = "Please configure the Dataset Storage Path in Settings first.";
-            _activityLog?.LogWarning("Dataset", "Dataset storage path not configured");
-            _state.SetStorageConfigured(false);
-            return;
-        }
-
-        if (!Directory.Exists(settings.DatasetStoragePath))
-        {
-            StatusMessage = "The configured Dataset Storage Path does not exist. Please update it in Settings.";
-            _activityLog?.LogError("Dataset", $"Storage path does not exist: {settings.DatasetStoragePath}");
-            _state.SetStorageConfigured(false);
-            return;
-        }
-
-        _state.SetStorageConfigured(true);
-
         var result = await DialogService.ShowCreateDatasetDialogAsync(AvailableCategories);
         if (!result.Confirmed || string.IsNullOrWhiteSpace(result.Name)) return;
 
-        var sanitizedName = result.Name;
-        var datasetPath = Path.Combine(settings.DatasetStoragePath, sanitizedName);
+        var creationOutcome = await DatasetCreationHelper.TryCreateDatasetAsync(_settingsService, result);
+        _state.SetStorageConfigured(creationOutcome.StorageConfigured);
 
-        if (Directory.Exists(datasetPath))
+        if (!creationOutcome.Success || creationOutcome.Dataset is null)
         {
-            StatusMessage = $"A dataset named '{sanitizedName}' already exists.";
-            _activityLog?.LogWarning("Dataset", $"Dataset '{sanitizedName}' already exists");
+            StatusMessage = creationOutcome.ErrorMessage;
+
+            if (!creationOutcome.StorageConfigured)
+            {
+                _activityLog?.LogWarning("Dataset", "Dataset storage path not configured");
+            }
+            else if (!string.IsNullOrWhiteSpace(creationOutcome.ErrorMessage))
+            {
+                _activityLog?.LogWarning("Dataset", creationOutcome.ErrorMessage);
+            }
+
             return;
         }
 
-        try
+        var newDataset = creationOutcome.Dataset;
+
+        Datasets.Add(newDataset);
+
+        StatusMessage = $"Dataset '{newDataset.Name}' created successfully.";
+        _activityLog?.LogSuccess("Dataset", $"Created dataset '{newDataset.Name}'");
+
+        _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
         {
-            Directory.CreateDirectory(datasetPath);
-            var v1Path = Path.Combine(datasetPath, "V1");
-            Directory.CreateDirectory(v1Path);
+            Dataset = newDataset
+        });
 
-            var newDataset = new DatasetCardViewModel
-            {
-                Name = sanitizedName,
-                FolderPath = datasetPath,
-                IsVersionedStructure = true,
-                CurrentVersion = 1,
-                TotalVersions = 1,
-                ImageCount = 0,
-                VideoCount = 0,
-                CategoryId = result.CategoryId,
-                CategoryOrder = result.CategoryOrder,
-                CategoryName = result.CategoryName,
-                Type = result.Type,
-                IsNsfw = result.IsNsfw
-            };
-
-            // Set the NSFW flag for V1
-            newDataset.VersionNsfwFlags[1] = result.IsNsfw;
-
-            newDataset.SaveMetadata();
-            Datasets.Add(newDataset);
-
-            StatusMessage = $"Dataset '{sanitizedName}' created successfully.";
-            _activityLog?.LogSuccess("Dataset", $"Created dataset '{sanitizedName}'");
-
-            _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
-            {
-                Dataset = newDataset
-            });
-
-            await OpenDatasetAsync(newDataset);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Failed to create dataset: {ex.Message}";
-            _activityLog?.LogError("Dataset", $"Failed to create dataset '{sanitizedName}'", ex);
-        }
+        await OpenDatasetAsync(newDataset);
     }
 
     private async Task AddImagesAsync()
@@ -2166,7 +2131,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             if (!ActiveDataset.IsVersionedStructure && ActiveDataset.ImageCount > 0)
             {
-                await MigrateLegacyToVersionedAsync(ActiveDataset);
+                await DatasetVersionHelper.MigrateLegacyToVersionedAsync(ActiveDataset);
             }
 
             Directory.CreateDirectory(destPath);
@@ -2286,38 +2251,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsLoading = false;
         }
-    }
-
-    private Task MigrateLegacyToVersionedAsync(DatasetCardViewModel dataset)
-    {
-        var rootPath = dataset.FolderPath;
-        var v1Path = dataset.GetVersionFolderPath(1);
-
-        Directory.CreateDirectory(v1Path);
-
-        var filesToMove = Directory.EnumerateFiles(rootPath)
-            .Where(f =>
-            {
-                var ext = Path.GetExtension(f).ToLowerInvariant();
-                var fileName = Path.GetFileName(f);
-                if (fileName.StartsWith(".")) return false;
-                return MediaFileExtensions.MediaExtensions.Contains(ext) || ext == ".txt";
-            })
-            .ToList();
-
-        foreach (var sourceFile in filesToMove)
-        {
-            var fileName = Path.GetFileName(sourceFile);
-            var destFile = Path.Combine(v1Path, fileName);
-            File.Move(sourceFile, destFile);
-        }
-
-        dataset.IsVersionedStructure = true;
-        dataset.CurrentVersion = 1;
-        dataset.TotalVersions = 1;
-        dataset.SaveMetadata();
-
-        return Task.CompletedTask;
     }
 
     private async Task ExportDatasetAsync()
@@ -2900,6 +2833,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _eventAggregator.SettingsSaved -= OnSettingsSaved;
             _eventAggregator.ImageSelectionChanged -= OnImageSelectionChanged;
+            _eventAggregator.DatasetCreated -= OnDatasetCreated;
         }
 
         _disposed = true;

@@ -181,6 +181,18 @@ public class DialogService : IDialogService
         return dialog.Result ?? CreateDatasetResult.Cancelled();
     }
 
+    public async Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
+        int selectionCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets,
+        IEnumerable<DatasetCategoryViewModel> availableCategories)
+    {
+        var dialog = new AddToDatasetDialog()
+            .WithOptions(selectionCount, availableDatasets, availableCategories);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? AddToDatasetResult.Cancelled();
+    }
+
     public async Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
