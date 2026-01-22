@@ -266,14 +266,14 @@ public partial class App : Application
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
             loraViewerView));
 
-        // Viewer module
+        // Generation Gallery module
         var viewerVm = Services!.GetRequiredService<ViewerViewModel>();
-        var viewerView = new ViewerView { DataContext = viewerVm };
+        var generationGalleryView = new GenerationGalleryView { DataContext = viewerVm };
 
         mainViewModel.RegisterModule(new ModuleItem(
-            "Viewer",
+            "Generation Gallery",
             "avares://DiffusionNexus.UI/Assets/PromptEdit.png",
-            viewerView));
+            generationGalleryView));
 
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();

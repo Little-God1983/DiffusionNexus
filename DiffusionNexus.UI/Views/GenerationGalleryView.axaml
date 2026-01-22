@@ -1,10 +1,10 @@
 <UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             xmlns:converters="using:DiffusionNexus.UI.Converters"
-             x:Class="DiffusionNexus.UI.Views.ViewerView"
-             x:DataType="vm:ViewerViewModel">
-  <Design.DataContext>
+           xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+           xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+           xmlns:converters="using:DiffusionNexus.UI.Converters"
+           x:Class="DiffusionNexus.UI.Views.GenerationGalleryView"
+           x:DataType="vm:ViewerViewModel">
+<Design.DataContext>
     <vm:ViewerViewModel/>
   </Design.DataContext>
 
@@ -16,7 +16,7 @@
     <Border Background="#1E1E1E" Padding="16" BorderBrush="#333" BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Text="Viewer" FontSize="18" FontWeight="SemiBold"/>
+          <TextBlock Text="Generation Gallery" FontSize="18" FontWeight="SemiBold"/>
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -58,9 +58,9 @@
               HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel Spacing="16" HorizontalAlignment="Center">
           <TextBlock Text="🖼️" FontSize="64" HorizontalAlignment="Center" Opacity="0.4"/>
-          <TextBlock Text="Viewer Gallery Empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Generation Gallery Empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
           <TextBlock Text="{Binding NoMediaMessage}" Opacity="0.6" TextAlignment="Center"/>
-          <TextBlock Text="Open Settings → Image Galleries to add and enable folders." Opacity="0.6" TextAlignment="Center"/>
+          <TextBlock Text="Open Settings → Generation Galleries to add and enable folders." Opacity="0.6" TextAlignment="Center"/>
         </StackPanel>
       </Border>
 

@@ -167,20 +167,20 @@
           </Border>
         </Expander>
 
-        <!-- Image Galleries -->
-        <Expander Header="Image Galleries" IsExpanded="False" HorizontalAlignment="Stretch">
+        <!-- Generation Galleries -->
+        <Expander Header="Generation Galleries" IsExpanded="False" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="16">
               
               <!-- Source Folders Section -->
               <StackPanel Spacing="8">
-                <TextBlock Text="Gallery Folders" FontWeight="SemiBold" FontSize="14"/>
-                <TextBlock Text="Folders containing images and videos to display in the Viewer." 
+                <TextBlock Text="Generation Gallery Folders" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Folders containing images and videos to display in the Generation Gallery." 
                            FontSize="12" 
                            Opacity="0.7"/>
                 
                 <!-- Add Button -->
-                <Button Content="+ Add Gallery Folder" 
+                <Button Content="+ Add Generation Gallery Folder" 
                         Command="{Binding AddImageGallerySourceCommand}"
                         HorizontalAlignment="Left"/>
                 
@@ -421,20 +421,20 @@
           </Border>
         </Expander>
 
-   <!-- Image Gallery Settings -->
-     <Expander Header="Image Gallery" HorizontalAlignment="Stretch"> 
+   <!-- Generation Gallery Settings -->
+     <Expander Header="Generation Gallery" HorizontalAlignment="Stretch"> 
        <Border Padding="16">
             <StackPanel Spacing="16">
               
                <!-- Source Folders Section -->
               <StackPanel Spacing="8">
-                <TextBlock Text="Source Folders" FontWeight="SemiBold" FontSize="14"/>
-                <TextBlock Text="Folders containing your images. All subfolders will be scanned." 
+                <TextBlock Text="Generation Gallery Folders" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock Text="Folders containing your images and videos. All subfolders will be scanned." 
                            FontSize="12" 
                            Opacity="0.7"/>
                 
                 <!-- Add Button -->
-                <Button Content="+ Add Source Folder" 
+                <Button Content="+ Add Generation Gallery Folder" 
                         Command="{Binding AddImageGallerySourceCommand}"
                         HorizontalAlignment="Left"/>
                 

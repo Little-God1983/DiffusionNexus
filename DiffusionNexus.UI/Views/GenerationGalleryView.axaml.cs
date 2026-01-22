@@ -4,11 +4,11 @@ using Avalonia.Markup.Xaml;
 namespace DiffusionNexus.UI.Views;
 
 /// <summary>
-/// Viewer mosaic gallery view.
+/// Generation gallery mosaic gallery view.
 /// </summary>
-public partial class ViewerView : UserControl
+public partial class GenerationGalleryView : UserControl
 {
-    public ViewerView()
+    public GenerationGalleryView()
     {
         InitializeComponent();
     }

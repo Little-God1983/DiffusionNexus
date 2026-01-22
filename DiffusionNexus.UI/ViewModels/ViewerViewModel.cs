@@ -195,8 +195,8 @@ public partial class ViewerViewModel : BusyViewModelBase
         ApplySorting();
 
         NoMediaMessage = enabledSourceCount == 0
-            ? "No image gallery folders are enabled. Configure Image Galleries in Settings to get started."
-            : "No media found in enabled image gallery folders. Check your Image Galleries in Settings.";
+            ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
+            : "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
