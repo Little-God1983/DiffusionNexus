@@ -13,6 +13,7 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
 {
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
+    private bool _isSelected;
 
     public GenerationGalleryMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc)
     {
@@ -42,6 +43,11 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     public string FileName => Path.GetFileNameWithoutExtension(FilePath);
 
     /// <summary>
+    /// The full file name including extension.
+    /// </summary>
+    public string FullFileName => Path.GetFileName(FilePath);
+
+    /// <summary>
     /// File extension (lowercase).
     /// </summary>
     public string FileExtension => Path.GetExtension(FilePath).ToLowerInvariant();
@@ -50,6 +56,15 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     /// Creation timestamp for sorting.
     /// </summary>
     public DateTime CreatedAtUtc { get; }
+
+    /// <summary>
+    /// Whether this item is selected in the gallery.
+    /// </summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetProperty(ref _isSelected, value);
+    }
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
