@@ -46,9 +46,10 @@ public partial class ImageViewerDialog : Window
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
-        Action<DatasetImageViewModel>? onDeleteRequested = null)
+        Action<DatasetImageViewModel>? onDeleteRequested = null,
+        bool showRatingControls = true)
     {
-        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested);
+        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested, showRatingControls);
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
@@ -117,14 +118,20 @@ public partial class ImageViewerDialog : Window
                 
             case Key.Up:
             case Key.W:
-                _viewModel.MarkApprovedCommand.Execute(null);
-                e.Handled = true;
+                if (_viewModel.ShowRatingControls)
+                {
+                    _viewModel.MarkApprovedCommand.Execute(null);
+                    e.Handled = true;
+                }
                 break;
                 
             case Key.Down:
             case Key.S:
-                _viewModel.MarkRejectedCommand.Execute(null);
-                e.Handled = true;
+                if (_viewModel.ShowRatingControls)
+                {
+                    _viewModel.MarkRejectedCommand.Execute(null);
+                    e.Handled = true;
+                }
                 break;
                 
             case Key.E:
@@ -148,8 +155,11 @@ public partial class ImageViewerDialog : Window
                 
             case Key.C:
                 // C key clears rating
-                _viewModel.ClearRatingCommand.Execute(null);
-                e.Handled = true;
+                if (_viewModel.ShowRatingControls)
+                {
+                    _viewModel.ClearRatingCommand.Execute(null);
+                    e.Handled = true;
+                }
                 break;
         }
     }

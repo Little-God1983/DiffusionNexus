@@ -85,6 +85,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public bool IsImage => _currentImage?.IsImage ?? true;
     public bool CanGoPrevious => _currentIndex > 0;
     public bool CanGoNext => _currentIndex < _allImages.Count - 1;
+    public bool ShowRatingControls { get; }
 
     #region Commands
 
@@ -112,12 +113,14 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
-        Action<DatasetImageViewModel>? onDeleteRequested = null)
+        Action<DatasetImageViewModel>? onDeleteRequested = null,
+        bool showRatingControls = true)
     {
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
         _onSendToImageEditor = onSendToImageEditor;
         _onDeleteRequested = onDeleteRequested;
+        ShowRatingControls = showRatingControls;
 
         // Subscribe to collection changes to handle external deletions
         _allImages.CollectionChanged += OnCollectionChanged;

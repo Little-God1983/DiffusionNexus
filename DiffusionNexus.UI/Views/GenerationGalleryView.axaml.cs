@@ -61,4 +61,29 @@ public partial class GenerationGalleryView : UserControl
         vm.SelectWithModifiers(item, isShiftPressed, isCtrlPressed);
         e.Handled = true;
     }
+
+    private void OnMediaDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is not Border border) return;
+
+        if (e.Source is Visual visual && visual.FindAncestorOfType<Button>() is not null)
+        {
+            return;
+        }
+
+        var parent = border.Parent;
+        while (parent is not null)
+        {
+            if (parent.DataContext is GenerationGalleryMediaItemViewModel item)
+            {
+                if (DataContext is GenerationGalleryViewModel vm)
+                {
+                    vm.OpenImageViewerCommand.Execute(item);
+                }
+                e.Handled = true;
+                return;
+            }
+            parent = parent.Parent as Control;
+        }
+    }
 }

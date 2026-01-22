@@ -138,7 +138,8 @@ public interface IDialogService
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
-        Action<DatasetImageViewModel>? onDeleteRequested = null);
+        Action<DatasetImageViewModel>? onDeleteRequested = null,
+        bool showRatingControls = true);
 
     /// <summary>
     /// Shows the Save As dialog for saving an image with a new name and optional rating.
