@@ -106,7 +106,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             int startIndex,
             IDatasetEventAggregator? eventAggregator = null,
             Action<DatasetImageViewModel>? onSendToImageEditor = null,
-            Action<DatasetImageViewModel>? onDeleteRequested = null) =>
+            Action<DatasetImageViewModel>? onDeleteRequested = null,
+            bool showRatingControls = true) =>
             Task.CompletedTask;
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath) =>
