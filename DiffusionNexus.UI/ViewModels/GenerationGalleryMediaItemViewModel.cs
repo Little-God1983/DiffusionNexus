@@ -42,6 +42,11 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     public string FileName => Path.GetFileNameWithoutExtension(FilePath);
 
     /// <summary>
+    /// Full file name with extension.
+    /// </summary>
+    public string FullFileName => Path.GetFileName(FilePath);
+
+    /// <summary>
     /// File extension (lowercase).
     /// </summary>
     public string FileExtension => Path.GetExtension(FilePath).ToLowerInvariant();
@@ -50,6 +55,9 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     /// Creation timestamp for sorting.
     /// </summary>
     public DateTime CreatedAtUtc { get; }
+
+    [ObservableProperty]
+    private bool _isSelected;
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.

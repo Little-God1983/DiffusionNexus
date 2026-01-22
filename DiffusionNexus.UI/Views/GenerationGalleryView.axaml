@@ -45,15 +45,15 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1">
-      <Border IsVisible="{Binding IsBusy}" Background="#80000000" ZIndex="100">
+    <Grid Grid.Row="1" RowDefinitions="Auto,*">
+      <Border IsVisible="{Binding IsBusy}" Background="#80000000" ZIndex="100" Grid.RowSpan="2">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
           <ProgressBar IsIndeterminate="True" Width="200"/>
           <TextBlock Text="{Binding BusyMessage}" Foreground="White" HorizontalAlignment="Center"/>
         </StackPanel>
       </Border>
 
-      <Border IsVisible="{Binding HasNoMedia}"
+      <Border IsVisible="{Binding HasNoMedia}" Grid.Row="1"
               Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
               HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel Spacing="16" HorizontalAlignment="Center">
@@ -64,7 +64,18 @@
         </StackPanel>
       </Border>
 
-      <ScrollViewer IsVisible="{Binding HasMedia}" Padding="16">
+      <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1"
+              IsVisible="{Binding HasSelection}">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4"/>
+          <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4"/>
+          <Border Width="1" Background="#444" Margin="8,4"/>
+          <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
+                  Background="#B22222" Padding="12,6"/>
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer Grid.Row="1" IsVisible="{Binding HasMedia}" Padding="16">
         <ItemsControl x:Name="GalleryItems" ItemsSource="{Binding MediaItems}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
@@ -78,8 +89,11 @@
                       Background="#2A2A2A"
                       CornerRadius="8"
                       ClipToBounds="True"
-                      Margin="6">
+                      Margin="6"
+                      PointerPressed="OnMediaCardPointerPressed">
                 <Grid>
+                  <Border CornerRadius="8" BorderBrush="#2196F3" BorderThickness="3" Margin="-1"
+                          IsVisible="{Binding IsSelected}" IsHitTestVisible="False"/>
                   <!-- Loading placeholder shown while thumbnail is null -->
                   <Border Background="#333"
                           IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNull}}">
@@ -93,9 +107,19 @@
                     <TextBlock Text="VIDEO" Foreground="White" FontWeight="Bold"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7"/>
                   </Border>
+                  <Button Content="X"
+                          Command="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).DeleteMediaCommand}"
+                          CommandParameter="{Binding}"
+                          Padding="6,2" FontSize="12" Background="#80444444"
+                          Foreground="#FF6B6B" FontWeight="Bold"
+                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6"/>
                   <Border Background="#66000000" CornerRadius="4" Padding="6,2"
-                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6">
+                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">
                     <TextBlock Text="{Binding FileExtension}" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                  </Border>
+                  <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
+                    <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.7"
+                               TextTrimming="CharacterEllipsis"/>
                   </Border>
                 </Grid>
               </Border>

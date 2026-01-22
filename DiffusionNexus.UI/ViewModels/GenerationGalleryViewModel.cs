@@ -18,11 +18,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
+    private GenerationGalleryMediaItemViewModel? _lastClickedItem;
 
     public GenerationGalleryViewModel()
     {
         _settingsService = null;
         _eventAggregator = null;
+        InitializeCommands();
         LoadDesignData();
     }
 
@@ -32,6 +34,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
+        InitializeCommands();
     }
 
     private void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
@@ -57,9 +60,22 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     [ObservableProperty]
     private string? _noMediaMessage;
 
+    [ObservableProperty]
+    private int _selectionCount;
+
     public bool HasMedia => MediaItems.Count > 0;
 
     public bool HasNoMedia => !HasMedia;
+
+    public bool HasSelection => SelectionCount > 0;
+
+    public IRelayCommand SelectAllCommand { get; private set; } = null!;
+
+    public IRelayCommand ClearSelectionCommand { get; private set; } = null!;
+
+    public IAsyncRelayCommand DeleteSelectedCommand { get; private set; } = null!;
+
+    public IAsyncRelayCommand<GenerationGalleryMediaItemViewModel?> DeleteMediaCommand { get; private set; } = null!;
 
     [RelayCommand]
     private async Task LoadMediaAsync()
@@ -192,14 +208,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _allMediaItems.Clear();
         _allMediaItems.AddRange(items);
 
+        ClearSelectionSilent();
         ApplySorting();
 
         NoMediaMessage = enabledSourceCount == 0
             ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
             : "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
 
-        OnPropertyChanged(nameof(HasMedia));
-        OnPropertyChanged(nameof(HasNoMedia));
+        UpdateMediaVisibility();
     }
 
     private void ApplySorting()
@@ -222,8 +238,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             MediaItems.Add(item);
         }
 
-        OnPropertyChanged(nameof(HasMedia));
-        OnPropertyChanged(nameof(HasNoMedia));
+        UpdateMediaVisibility();
     }
 
     private void LoadDesignData()
@@ -234,5 +249,158 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4)));
 
         ApplySorting();
+    }
+
+    private void InitializeCommands()
+    {
+        SelectAllCommand = new RelayCommand(SelectAll);
+        ClearSelectionCommand = new RelayCommand(ClearSelection);
+        DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
+        DeleteMediaCommand = new AsyncRelayCommand<GenerationGalleryMediaItemViewModel?>(DeleteMediaAsync);
+    }
+
+    public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
+    {
+        if (item is null) return;
+
+        if (isShiftPressed && _lastClickedItem is not null)
+        {
+            SelectRange(_lastClickedItem, item);
+        }
+        else if (isCtrlPressed)
+        {
+            item.IsSelected = !item.IsSelected;
+            _lastClickedItem = item;
+        }
+        else
+        {
+            ClearSelectionSilent();
+            item.IsSelected = true;
+            _lastClickedItem = item;
+        }
+
+        UpdateSelectionCount();
+    }
+
+    private void SelectRange(GenerationGalleryMediaItemViewModel from, GenerationGalleryMediaItemViewModel to)
+    {
+        var fromIndex = MediaItems.IndexOf(from);
+        var toIndex = MediaItems.IndexOf(to);
+
+        if (fromIndex == -1 || toIndex == -1) return;
+
+        var startIndex = Math.Min(fromIndex, toIndex);
+        var endIndex = Math.Max(fromIndex, toIndex);
+
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            MediaItems[i].IsSelected = true;
+        }
+
+        _lastClickedItem = to;
+    }
+
+    private void SelectAll()
+    {
+        foreach (var item in MediaItems)
+        {
+            item.IsSelected = true;
+        }
+
+        UpdateSelectionCount();
+    }
+
+    private void ClearSelection()
+    {
+        ClearSelectionSilent();
+        UpdateSelectionCount();
+    }
+
+    private void ClearSelectionSilent()
+    {
+        foreach (var item in MediaItems)
+        {
+            item.IsSelected = false;
+        }
+
+        _lastClickedItem = null;
+        SelectionCount = 0;
+        OnPropertyChanged(nameof(HasSelection));
+    }
+
+    private void UpdateSelectionCount()
+    {
+        SelectionCount = MediaItems.Count(item => item.IsSelected);
+        OnPropertyChanged(nameof(HasSelection));
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (DialogService is null) return;
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Selected Media",
+            $"Are you sure you want to delete {selectedItems.Count} selected media items?");
+
+        if (!confirm) return;
+
+        foreach (var item in selectedItems)
+        {
+            await DeleteMediaInternalAsync(item);
+        }
+
+        ClearSelectionSilent();
+        UpdateSelectionCount();
+        UpdateMediaVisibility();
+    }
+
+    private async Task DeleteMediaAsync(GenerationGalleryMediaItemViewModel? item)
+    {
+        if (item is null || DialogService is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Media",
+            $"Delete '{item.FullFileName}'?");
+
+        if (!confirm) return;
+
+        await DeleteMediaInternalAsync(item);
+        UpdateSelectionCount();
+        UpdateMediaVisibility();
+    }
+
+    private async Task DeleteMediaInternalAsync(GenerationGalleryMediaItemViewModel item)
+    {
+        try
+        {
+            if (File.Exists(item.FilePath))
+            {
+                File.Delete(item.FilePath);
+            }
+
+            MediaItems.Remove(item);
+            _allMediaItems.Remove(item);
+
+            if (_lastClickedItem == item)
+            {
+                _lastClickedItem = null;
+            }
+        }
+        catch
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync("Delete Failed", $"Could not delete '{item.FullFileName}'.");
+            }
+        }
+    }
+
+    private void UpdateMediaVisibility()
+    {
+        OnPropertyChanged(nameof(HasMedia));
+        OnPropertyChanged(nameof(HasNoMedia));
     }
 }
