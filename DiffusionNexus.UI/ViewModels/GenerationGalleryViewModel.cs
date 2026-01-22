@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -17,6 +18,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IDatasetState? _datasetState;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
@@ -25,13 +28,21 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     {
         _settingsService = null;
         _eventAggregator = null;
+        _datasetState = null;
+        _videoThumbnailService = null;
         LoadDesignData();
     }
 
-    public GenerationGalleryViewModel(IAppSettingsService settingsService, IDatasetEventAggregator eventAggregator)
+    public GenerationGalleryViewModel(
+        IAppSettingsService settingsService,
+        IDatasetEventAggregator eventAggregator,
+        IDatasetState datasetState,
+        IVideoThumbnailService? videoThumbnailService)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
+        _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
+        _videoThumbnailService = videoThumbnailService;
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
     }
@@ -174,6 +185,159 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         DeleteFileIfExists(item.FilePath);
         RemoveMediaItem(item);
         UpdateSelectionState();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task AddSelectedToDatasetAsync()
+    {
+        if (DialogService is null || _settingsService is null || _datasetState is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        var dialogResult = await DialogService.ShowAddToDatasetDialogAsync(
+            selectedItems.Count,
+            _datasetState.Datasets);
+
+        if (!dialogResult.Confirmed) return;
+
+        await RunBusyAsync(async () =>
+        {
+            var targetDataset = await ResolveTargetDatasetAsync(dialogResult);
+            if (targetDataset is null)
+            {
+                return;
+            }
+
+            var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
+            var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
+
+            var importResult = await DatasetFileImporter.ImportWithDialogAsync(
+                selectedItems.Select(item => item.FilePath),
+                destinationFolder,
+                DialogService,
+                _videoThumbnailService,
+                moveFiles: dialogResult.ImportAction == DatasetImportAction.Move);
+
+            if (importResult.Cancelled)
+            {
+                return;
+            }
+
+            if (dialogResult.ImportAction == DatasetImportAction.Move)
+            {
+                var movedSet = importResult.ProcessedSourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in selectedItems.Where(item => movedSet.Contains(item.FilePath)).ToList())
+                {
+                    RemoveMediaItem(item);
+                }
+            }
+
+            targetDataset.RefreshImageInfo();
+            _eventAggregator?.PublishImageAdded(new ImageAddedEventArgs
+            {
+                Dataset = targetDataset,
+                AddedImages = []
+            });
+
+            ClearSelectionSilent();
+            UpdateSelectionState();
+        }, "Adding media to dataset...");
+    }
+
+    private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
+    {
+        if (dialogResult.DestinationOption == DatasetDestinationOption.ExistingDataset)
+        {
+            if (dialogResult.SelectedDataset is null && DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Dataset Selected",
+                    "Please choose an existing dataset to continue.");
+            }
+            return dialogResult.SelectedDataset;
+        }
+
+        if (DialogService is null || _settingsService is null || _datasetState is null)
+        {
+            return null;
+        }
+
+        var createResult = await DialogService.ShowCreateDatasetDialogAsync(_datasetState.AvailableCategories);
+        if (!createResult.Confirmed || string.IsNullOrWhiteSpace(createResult.Name))
+        {
+            return null;
+        }
+
+        var settings = await _settingsService.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
+        {
+            await DialogService.ShowMessageAsync(
+                "Dataset Storage Not Configured",
+                "Please configure a dataset storage path in Settings before creating datasets.");
+            return null;
+        }
+
+        _datasetState.SetStorageConfigured(true);
+
+        var datasetPath = Path.Combine(settings.DatasetStoragePath, createResult.Name);
+        if (Directory.Exists(datasetPath))
+        {
+            await DialogService.ShowMessageAsync(
+                "Dataset Already Exists",
+                $"A dataset named '{createResult.Name}' already exists.");
+            return null;
+        }
+
+        Directory.CreateDirectory(datasetPath);
+        var v1Path = Path.Combine(datasetPath, "V1");
+        Directory.CreateDirectory(v1Path);
+
+        var newDataset = new DatasetCardViewModel
+        {
+            Name = createResult.Name,
+            FolderPath = datasetPath,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = 0,
+            VideoCount = 0,
+            CategoryId = createResult.CategoryId,
+            CategoryOrder = createResult.CategoryOrder,
+            CategoryName = createResult.CategoryName,
+            Type = createResult.Type,
+            IsNsfw = createResult.IsNsfw
+        };
+
+        newDataset.VersionNsfwFlags[1] = createResult.IsNsfw;
+        newDataset.SaveMetadata();
+        _datasetState.Datasets.Add(newDataset);
+
+        _eventAggregator?.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = newDataset
+        });
+
+        return newDataset;
+    }
+
+    private async Task<int> ResolveTargetVersionAsync(DatasetCardViewModel dataset, AddToDatasetResult dialogResult)
+    {
+        if (dialogResult.DestinationOption == DatasetDestinationOption.NewDataset)
+        {
+            return dataset.CurrentVersion;
+        }
+
+        if (dialogResult.VersionOption == DatasetVersionOption.CreateNewVersion)
+        {
+            var parentVersion = dataset.CurrentVersion;
+            return await DatasetVersionUtilities.CreateEmptyVersionAsync(dataset, parentVersion, _eventAggregator);
+        }
+
+        return dialogResult.SelectedVersion ?? dataset.CurrentVersion;
     }
 
     private static List<string> GetEnabledGalleryPaths(AppSettings settings)
@@ -359,6 +523,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         SelectionCount = MediaItems.Count(item => item.IsSelected);
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(SelectionText));
+        AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
