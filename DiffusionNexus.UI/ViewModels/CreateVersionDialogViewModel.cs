@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -67,6 +68,25 @@ public partial class CreateVersionDialogViewModel : ObservableObject
     /// All available versions to copy from.
     /// </summary>
     public IReadOnlyList<int> AvailableVersions => _availableVersions;
+
+    #region Supported File Types Display
+
+    /// <summary>
+    /// Display string for supported image extensions.
+    /// </summary>
+    public static string ImageExtensionsDisplay => $"({SupportedMediaTypes.ImageExtensionsDisplay})";
+
+    /// <summary>
+    /// Display string for supported video extensions.
+    /// </summary>
+    public static string VideoExtensionsDisplay => $"({SupportedMediaTypes.VideoExtensionsDisplay})";
+
+    /// <summary>
+    /// Display string for supported caption extensions.
+    /// </summary>
+    public static string CaptionExtensionsDisplay => $"({SupportedMediaTypes.CaptionExtensionsDisplay})";
+
+    #endregion
 
     #region Content Type Counts
 

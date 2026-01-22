@@ -150,6 +150,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private ObservableCollection<LoraSourceViewModel> _loraSources = [];
 
     /// <summary>
+    /// Collection of LoRA source folders.
+    /// </summary>
+    [ObservableProperty]
+    private ObservableCollection<ImageGalleryViewModel> _imageGallerySources = [];
+
+    /// <summary>
     /// Collection of dataset categories.
     /// </summary>
     [ObservableProperty]
@@ -278,9 +284,94 @@ public partial class SettingsViewModel : BusyViewModelBase
                 DatasetCategories.Add(categoryVm);
             }
 
+            // Map Image Gallery sources
+            foreach (var existing in ImageGallerySources)
+            {
+                existing.SourceChanged -= OnImageGalleryChanged;
+            }
+            ImageGallerySources.Clear();
+
+            foreach (var source in settings.ImageGalleries.OrderBy(s => s.Order))
+            {
+                var sourceVm = new ImageGalleryViewModel
+                {
+                    Id = source.Id,
+                    FolderPath = source.FolderPath,
+                    IsEnabled = source.IsEnabled
+                };
+                sourceVm.SourceChanged += OnImageGalleryChanged;
+                ImageGallerySources.Add(sourceVm);
+            }
+
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
+    }
+
+    /// <summary>
+    /// Reloads collections from the database to get updated IDs for newly created entries.
+    /// </summary>
+    private async Task ReloadCollectionsAsync()
+    {
+        var settings = await _settingsService.GetSettingsAsync();
+
+        // Reload LoRA sources
+        foreach (var existing in LoraSources)
+        {
+            existing.SourceChanged -= OnLoraSourceChanged;
+        }
+        LoraSources.Clear();
+
+        foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
+        {
+            var sourceVm = new LoraSourceViewModel
+            {
+                Id = source.Id,
+                FolderPath = source.FolderPath,
+                IsEnabled = source.IsEnabled
+            };
+            sourceVm.SourceChanged += OnLoraSourceChanged;
+            LoraSources.Add(sourceVm);
+        }
+
+        // Reload dataset categories
+        foreach (var existing in DatasetCategories)
+        {
+            existing.CategoryChanged -= OnCategoryChanged;
+        }
+        DatasetCategories.Clear();
+
+        foreach (var category in settings.DatasetCategories.OrderBy(c => c.Order))
+        {
+            var categoryVm = new DatasetCategoryViewModel
+            {
+                Id = category.Id,
+                Name = category.Name,
+                Description = category.Description,
+                IsDefault = category.IsDefault
+            };
+            categoryVm.CategoryChanged += OnCategoryChanged;
+            DatasetCategories.Add(categoryVm);
+        }
+
+        // Reload Image Gallery sources
+        foreach (var existing in ImageGallerySources)
+        {
+            existing.SourceChanged -= OnImageGalleryChanged;
+        }
+        ImageGallerySources.Clear();
+
+        foreach (var source in settings.ImageGalleries.OrderBy(s => s.Order))
+        {
+            var sourceVm = new ImageGalleryViewModel
+            {
+                Id = source.Id,
+                FolderPath = source.FolderPath,
+                IsEnabled = source.IsEnabled
+            };
+            sourceVm.SourceChanged += OnImageGalleryChanged;
+            ImageGallerySources.Add(sourceVm);
+        }
     }
 
     /// <summary>
@@ -350,7 +441,25 @@ public partial class SettingsViewModel : BusyViewModelBase
                 });
             }
 
+            // Map Image Gallery sources (remove empty ones)
+            settings.ImageGalleries.Clear();
+            var galleryOrder = 0;
+            foreach (var sourceVm in ImageGallerySources.Where(s => !string.IsNullOrWhiteSpace(s.FolderPath)))
+            {
+                settings.ImageGalleries.Add(new ImageGallery
+                {
+                    Id = sourceVm.Id,
+                    AppSettingsId = 1,
+                    FolderPath = sourceVm.FolderPath!,
+                    IsEnabled = sourceVm.IsEnabled,
+                    Order = galleryOrder++
+                });
+            }
+
             await _settingsService.SaveSettingsAsync(settings);
+
+            // Reload to get database-generated IDs for newly created entries
+            await ReloadCollectionsAsync();
 
             HasChanges = false;
             StatusMessage = "Settings saved successfully.";
@@ -459,6 +568,52 @@ public partial class SettingsViewModel : BusyViewModelBase
         if (!string.IsNullOrEmpty(path))
         {
             LoraSortTargetPath = path;
+            HasChanges = true;
+        }
+    }
+
+
+    /// <summary>
+    /// Adds a new Image Gallery source folder.
+    /// </summary>
+    [RelayCommand]
+    private void AddImageGallerySource()
+    {
+        var source = new ImageGalleryViewModel { IsEnabled = true };
+        source.SourceChanged += OnImageGalleryChanged;
+        ImageGallerySources.Add(source);
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Removes an Image Gallery source folder.
+    /// </summary>
+    [RelayCommand]
+    private void RemoveImageGallerySource(ImageGalleryViewModel? source)
+    {
+        if (source is not null)
+        {
+            source.SourceChanged -= OnImageGalleryChanged;
+            ImageGallerySources.Remove(source);
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for an Image Gallery source folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseImageGallerySourceAsync(ImageGalleryViewModel? source)
+    {
+        if (source is null || DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Image Gallery Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            source.FolderPath = path;
             HasChanges = true;
         }
     }
@@ -871,6 +1026,11 @@ public partial class SettingsViewModel : BusyViewModelBase
         HasChanges = true;
     }
 
+    private void OnImageGalleryChanged(object? sender, EventArgs e)
+    {
+        HasChanges = true;
+    }
+
     partial void OnCivitaiApiKeyChanged(string? value) => HasChanges = true;
     partial void OnHuggingfaceApiKeyChanged(string? value) => HasChanges = true;
     partial void OnShowNsfwChanged(bool value) => HasChanges = true;
@@ -965,6 +1125,33 @@ public partial class DatasetCategoryViewModel : ObservableObject
 /// ViewModel for a single LoRA source folder.
 /// </summary>
 public partial class LoraSourceViewModel : ObservableObject
+{
+    /// <summary>
+    /// Database ID (0 for new sources).
+    /// </summary>
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Folder path.
+    /// </summary>
+    [ObservableProperty]
+    private string? _folderPath;
+
+    /// <summary>
+    /// Whether this source is enabled.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEnabled = true;
+
+    /// <summary>
+    /// Event raised when any property changes (for parent to detect changes).
+    /// </summary>
+    public event EventHandler? SourceChanged;
+
+    partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+}
+public partial class ImageGalleryViewModel : ObservableObject
 {
     /// <summary>
     /// Database ID (0 for new sources).

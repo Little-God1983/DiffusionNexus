@@ -3,6 +3,7 @@ using System;
 using DiffusionNexus.DataAccess.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DiffusionNexus.DataAccess.Migrations.Core
 {
     [DbContext(typeof(DiffusionNexusCoreDbContext))]
-    partial class DiffusionNexusCoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260121095343_AddedImagePathSettings")]
+    partial class AddedImagePathSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.2");
@@ -181,7 +184,6 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<string>("FolderPath")
                         .IsRequired()
-                        .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsEnabled")
@@ -194,9 +196,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.HasIndex("AppSettingsId");
 
-                    b.HasIndex("FolderPath");
-
-                    b.ToTable("ImageGalleries", (string)null);
+                    b.ToTable("ImageGalleries");
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.LoraSource", b =>
@@ -693,7 +693,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageGallery", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.AppSettings", "AppSettings")
-                        .WithMany("ImageGalleries")
+                        .WithMany()
                         .HasForeignKey("AppSettingsId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -788,8 +788,6 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
                     b.Navigation("DatasetCategories");
-
-                    b.Navigation("ImageGalleries");
 
                     b.Navigation("LoraSources");
                 });

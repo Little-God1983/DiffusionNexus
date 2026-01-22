@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
+using Avalonia;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 
 namespace DiffusionNexus.UI.Services;
 
@@ -182,20 +185,86 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
     /// </summary>
     private static Bitmap? LoadAndDecode(string imagePath, int targetWidth)
     {
-        if (!File.Exists(imagePath))
-            return null;
+        // Guard clauses
+        if (string.IsNullOrEmpty(imagePath)) return null;
 
+        // Create black placeholder for MP4 files to avoid decoding errors
+        if (imagePath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateVideoPlaceholder(targetWidth);
+        }
+        
         try
         {
-            using var stream = File.OpenRead(imagePath);
-            // DecodeToWidth maintains aspect ratio and uses less memory than full decode
-            return Bitmap.DecodeToWidth(stream, targetWidth, BitmapInterpolationMode.MediumQuality);
+            // Verify file exists
+            if (!File.Exists(imagePath)) return null;
+
+            // Ensure valid width
+            var width = targetWidth > 0 ? targetWidth : 340;
+
+            // Use FileStream with shared read access to avoid locking issues
+            using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            
+            // Empty stream check
+            if (stream.Length == 0 || !stream.CanRead) return null;
+            
+            // Decode with error handling
+            try 
+            {
+                var bitmap = Bitmap.DecodeToWidth(stream, width, BitmapInterpolationMode.MediumQuality);
+                
+                // Validate bitmap
+                if (bitmap != null && bitmap.PixelSize.Width > 0)
+                {
+                    return bitmap;
+                }
+                
+                bitmap?.Dispose();
+                return null;
+            }
+            catch
+            {
+                // Internal decoding error
+                return null;
+            }
         }
-        catch (Exception)
+        catch
         {
-            // Image may be corrupted, locked, or unsupported format
+            // File access or generic error
             return null;
         }
+    }
+
+    /// <summary>
+    /// Creates a black placeholder bitmap for video files.
+    /// </summary>
+    private static Bitmap CreateVideoPlaceholder(int width)
+    {
+        // 16:9 aspect ratio
+        int height = Math.Max(1, width * 9 / 16);
+        
+        var bitmap = new WriteableBitmap(
+            new PixelSize(width, height),
+            new Vector(96, 96),
+            PixelFormat.Bgra8888,
+            AlphaFormat.Opaque);
+
+        using var frameBuffer = bitmap.Lock();
+        
+        // Calculate total bytes
+        int totalBytes = frameBuffer.RowBytes * height;
+        var data = new byte[totalBytes];
+        
+        // Fill with opaque black (B=0, G=0, R=0, A=255)
+        // Bgra8888 -> [B, G, R, A]
+        for (int i = 3; i < data.Length; i += 4)
+        {
+            data[i] = 255;
+        }
+
+        Marshal.Copy(data, 0, frameBuffer.Address, totalBytes);
+        
+        return bitmap;
     }
 
     /// <summary>

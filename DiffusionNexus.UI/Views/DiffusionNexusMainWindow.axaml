@@ -45,29 +45,29 @@
 
                             <!-- Bottom Social Links -->
                             <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
-                                <Button Width="196" Height="40" Margin="2,2"
+                                <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenYoutubeCommand}"
                                         HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <Image Source="avares://DiffusionNexus.UI/Assets/yt.png" Width="24" Height="24"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Image Source="avares://DiffusionNexus.UI/Assets/yt.png" Width="32" Height="32"/>
                                         <TextBlock Text="Youtube" VerticalAlignment="Center"
                                                    IsVisible="{Binding IsMenuOpen}"/>
                                     </StackPanel>
                                 </Button>
-                                <Button Width="196" Height="40" Margin="2,2"
+                                <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenPatreonCommand}"
                                         HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <Image Source="avares://DiffusionNexus.UI/Assets/patreon.png" Width="24" Height="24"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Image Source="avares://DiffusionNexus.UI/Assets/patreon.png" Width="32" Height="32"/>
                                         <TextBlock Text="Patreon" VerticalAlignment="Center"
                                                    IsVisible="{Binding IsMenuOpen}"/>
                                     </StackPanel>
                                 </Button>
-                                <Button Width="196" Height="40" Margin="2,2"
+                                <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenCivitaiCommand}"
                                         HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <Image Source="avares://DiffusionNexus.UI/Assets/civitai.png" Width="24" Height="24"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Image Source="avares://DiffusionNexus.UI/Assets/civitai.png" Width="32" Height="32"/>
                                         <TextBlock Text="Civitai" VerticalAlignment="Center"
                                                    IsVisible="{Binding IsMenuOpen}"/>
                                     </StackPanel>
@@ -80,14 +80,14 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Button Width="196" 
-                                                    Height="40"
+                                                    Height="48"
                                                     Margin="2,2"
                                                     Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
                                                     CommandParameter="{Binding}"
                                                     HorizontalContentAlignment="Left">
-                                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
                                                     <!-- Icon placeholder when no image -->
-                                                    <Border Width="24" Height="24"
+                                                    <Border Width="32" Height="32"
                                                             Background="#3C3C3C"
                                                             CornerRadius="4"
                                                             IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNull}}">
@@ -98,7 +98,7 @@
                                                     </Border>
                                                     <!-- Actual icon when provided -->
                                                     <Image Source="{Binding Icon}" 
-                                                           Width="24" Height="24"
+                                                           Width="32" Height="32"
                                                            IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                                                     <TextBlock Text="{Binding Name}"
                                                                VerticalAlignment="Center"

@@ -29,6 +29,11 @@ public class AppSettings
     public ICollection<LoraSource> LoraSources { get; set; } = new List<LoraSource>();
 
     /// <summary>
+    /// Collection of Image Gallery source folders.
+    /// </summary>
+    public ICollection<ImageGallery> ImageGalleries { get; set; } = new List<ImageGallery>();
+
+    /// <summary>
     /// Whether to show NSFW content by default.
     /// </summary>
     public bool ShowNsfw { get; set; }

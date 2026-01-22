@@ -3,6 +3,8 @@
  * For non-commercial use only. See LICENSE for details.
  */
 
+using DiffusionNexus.Domain.Enums;
+
 namespace DiffusionNexus.Service.Helper
 {
     internal static class StaticFileTypes
@@ -18,53 +20,17 @@ namespace DiffusionNexus.Service.Helper
         /// <summary>
         /// Supported video file extensions for LoRA video training datasets.
         /// </summary>
-        public static readonly string[] VideoExtensions =
-        [
-            ".mp4",
-            ".mov",
-            ".webm",
-            ".avi",
-            ".mkv",
-            ".wmv",
-            ".flv",
-            ".m4v"
-        ];
+        public static string[] VideoExtensions => SupportedMediaTypes.VideoExtensions;
 
         /// <summary>
         /// Supported image file extensions for datasets.
         /// </summary>
-        public static readonly string[] ImageExtensions =
-        [
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".bmp",
-            ".gif"
-        ];
+        public static string[] ImageExtensions => SupportedMediaTypes.ImageExtensions;
 
         /// <summary>
         /// Combined media extensions (images + videos) for dataset handling.
         /// </summary>
-        public static readonly string[] MediaExtensions =
-        [
-            // Images
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".bmp",
-            ".gif",
-            // Videos
-            ".mp4",
-            ".mov",
-            ".webm",
-            ".avi",
-            ".mkv",
-            ".wmv",
-            ".flv",
-            ".m4v"
-        ];
+        public static string[] MediaExtensions => SupportedMediaTypes.MediaExtensions;
 
         public static readonly string[] GeneralExtensions = [
         ".thumb.jpg",
@@ -93,39 +59,18 @@ namespace DiffusionNexus.Service.Helper
         ".yaml"];
 
         /// <summary>
-        /// Checks if a file path is a video file.
-        /// </summary>
-        public static bool IsVideoFile(string filePath)
-        {
-            if (string.IsNullOrWhiteSpace(filePath))
-                return false;
+                /// Checks if a file path is a video file.
+                /// </summary>
+                public static bool IsVideoFile(string filePath) => SupportedMediaTypes.IsVideoFile(filePath);
 
-            var extension = Path.GetExtension(filePath);
-            return VideoExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+                /// <summary>
+                /// Checks if a file path is an image file.
+                /// </summary>
+                public static bool IsImageFile(string filePath) => SupportedMediaTypes.IsImageFile(filePath);
+
+                /// <summary>
+                /// Checks if a file path is a media file (image or video).
+                /// </summary>
+                public static bool IsMediaFile(string filePath) => SupportedMediaTypes.IsMediaFile(filePath);
+            }
         }
-
-        /// <summary>
-        /// Checks if a file path is an image file.
-        /// </summary>
-        public static bool IsImageFile(string filePath)
-        {
-            if (string.IsNullOrWhiteSpace(filePath))
-                return false;
-
-            var extension = Path.GetExtension(filePath);
-            return ImageExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
-        }
-
-        /// <summary>
-        /// Checks if a file path is a media file (image or video).
-        /// </summary>
-        public static bool IsMediaFile(string filePath)
-        {
-            if (string.IsNullOrWhiteSpace(filePath))
-                return false;
-
-            var extension = Path.GetExtension(filePath);
-            return MediaExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
-        }
-    }
-}

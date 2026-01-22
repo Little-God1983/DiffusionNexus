@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Entities\**" />
+    <Compile Remove="Repositories\**" />
+    <EmbeddedResource Remove="Entities\**" />
+    <EmbeddedResource Remove="Repositories\**" />
+    <None Remove="Entities\**" />
+    <None Remove="Repositories\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.*">
@@ -17,11 +26,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.Domain\DiffusionNexus.Domain.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Entities\" />
-    <Folder Include="Repositories\" />
   </ItemGroup>
 
 </Project>

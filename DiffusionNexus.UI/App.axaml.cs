@@ -231,6 +231,7 @@ public partial class App : Application
             sp.GetService<IActivityLogService>()));
         
         services.AddScoped<LoraViewerViewModel>();
+        services.AddScoped<GenerationGalleryViewModel>();
         
         // LoraDatasetHelperViewModel - use factory to inject all required services
         services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(
@@ -265,6 +266,15 @@ public partial class App : Application
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
             loraViewerView));
 
+        // Generation Gallery module
+        var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
+        var generationGalleryView = new GenerationGalleryView { DataContext = generationGalleryVm };
+
+        mainViewModel.RegisterModule(new ModuleItem(
+            "Generation Gallery",
+            "avares://DiffusionNexus.UI/Assets/GalleryView.png",
+            generationGalleryView));
+
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
         var settingsView = new SettingsView { DataContext = settingsVm };
@@ -288,6 +298,9 @@ public partial class App : Application
 
         // Load models on startup
         loraViewerVm.RefreshCommand.Execute(null);
+
+        // Load Generation Gallery on startup
+        generationGalleryVm.LoadMediaCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

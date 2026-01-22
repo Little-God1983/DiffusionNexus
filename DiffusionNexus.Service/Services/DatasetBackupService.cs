@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Compression;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using Serilog;
 
@@ -18,16 +19,6 @@ public class DatasetBackupService : IDatasetBackupService
     /// Pattern used to identify backup files created by this service.
     /// </summary>
     private const string BackupFilePattern = "DatasetBackup_*.zip";
-
-    /// <summary>
-    /// Image file extensions to count.
-    /// </summary>
-    private static readonly HashSet<string> ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
-
-    /// <summary>
-    /// Video file extensions to count.
-    /// </summary>
-    private static readonly HashSet<string> VideoExtensions = [".mp4", ".webm", ".mov", ".avi", ".mkv"];
 
     private bool _isOperationInProgress;
 
@@ -351,17 +342,17 @@ public class DatasetBackupService : IDatasetBackupService
                 }
 
                 // Categorize by extension
-                var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                var ext = Path.GetExtension(entry.Name);
                 
-                if (ImageExtensions.Contains(ext))
+                if (SupportedMediaTypes.ImageExtensionSet.Contains(ext))
                 {
                     imageCount++;
                 }
-                else if (VideoExtensions.Contains(ext))
+                else if (SupportedMediaTypes.VideoExtensionSet.Contains(ext))
                 {
                     videoCount++;
                 }
-                else if (ext == ".txt")
+                else if (SupportedMediaTypes.CaptionExtensionSet.Contains(ext))
                 {
                     captionCount++;
                 }
@@ -408,17 +399,17 @@ public class DatasetBackupService : IDatasetBackupService
             var fileInfo = new FileInfo(file);
             totalSize += fileInfo.Length;
 
-            var ext = Path.GetExtension(file).ToLowerInvariant();
+            var ext = Path.GetExtension(file);
             
-            if (ImageExtensions.Contains(ext))
+            if (SupportedMediaTypes.ImageExtensionSet.Contains(ext))
             {
                 imageCount++;
             }
-            else if (VideoExtensions.Contains(ext))
+            else if (SupportedMediaTypes.VideoExtensionSet.Contains(ext))
             {
                 videoCount++;
             }
-            else if (ext == ".txt")
+            else if (SupportedMediaTypes.CaptionExtensionSet.Contains(ext))
             {
                 captionCount++;
             }
