@@ -272,7 +272,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(new ModuleItem(
             "Generation Gallery",
-            "avares://DiffusionNexus.UI/Assets/PromptEdit.png",
+            "avares://DiffusionNexus.UI/Assets/GalleryView.png",
             generationGalleryView));
 
         // Settings module
