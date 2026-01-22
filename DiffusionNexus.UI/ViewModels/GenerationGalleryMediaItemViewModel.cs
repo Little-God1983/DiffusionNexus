@@ -15,11 +15,12 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     private bool _isThumbnailLoading;
     private bool _isSelected;
 
-    public GenerationGalleryMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc)
+    public GenerationGalleryMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc, string? sourceRoot = null)
     {
         FilePath = filePath;
         IsVideo = isVideo;
         CreatedAtUtc = createdAtUtc;
+        SourceRoot = sourceRoot;
     }
 
     /// <summary>
@@ -56,6 +57,11 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     /// Creation timestamp for sorting.
     /// </summary>
     public DateTime CreatedAtUtc { get; }
+
+    /// <summary>
+    /// The gallery root folder this item came from.
+    /// </summary>
+    public string? SourceRoot { get; }
 
     /// <summary>
     /// Whether this item is selected in the gallery.
