@@ -228,7 +228,7 @@
       <Border Grid.Row="2"
               Background="#CC1A1A1A"
               Padding="16,12">
-        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" IsVisible="{Binding ShowRatingControls}">
           
           <!-- Caption editor (editable) -->
           <Grid Grid.Row="0" Grid.ColumnSpan="2"
