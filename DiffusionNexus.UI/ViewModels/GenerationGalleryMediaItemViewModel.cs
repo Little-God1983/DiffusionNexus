@@ -7,14 +7,14 @@ using DiffusionNexus.UI.Services;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel representing a single media item in the Viewer gallery.
+/// ViewModel representing a single media item in the Generation Gallery.
 /// </summary>
-public partial class ViewerMediaItemViewModel : ObservableObject
+public partial class GenerationGalleryMediaItemViewModel : ObservableObject
 {
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
 
-    public ViewerMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc)
+    public GenerationGalleryMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc)
     {
         FilePath = filePath;
         IsVideo = isVideo;

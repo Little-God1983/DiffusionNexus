@@ -3,9 +3,9 @@
            xmlns:vm="using:DiffusionNexus.UI.ViewModels"
            xmlns:converters="using:DiffusionNexus.UI.Converters"
            x:Class="DiffusionNexus.UI.Views.GenerationGalleryView"
-           x:DataType="vm:ViewerViewModel">
+           x:DataType="vm:GenerationGalleryViewModel">
 <Design.DataContext>
-    <vm:ViewerViewModel/>
+    <vm:GenerationGalleryViewModel/>
   </Design.DataContext>
 
   <UserControl.Resources>
@@ -72,9 +72,9 @@
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:ViewerMediaItemViewModel">
-              <Border Width="{Binding $parent[ItemsControl].((vm:ViewerViewModel)DataContext).TileWidth}"
-                      Height="{Binding $parent[ItemsControl].((vm:ViewerViewModel)DataContext).TileWidth}"
+            <DataTemplate x:DataType="vm:GenerationGalleryMediaItemViewModel">
+              <Border Width="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
+                      Height="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).TileWidth}"
                       Background="#2A2A2A"
                       CornerRadius="8"
                       ClipToBounds="True"

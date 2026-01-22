@@ -11,22 +11,22 @@ using DiffusionNexus.UI.Services;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel for the Viewer mosaic gallery.
+/// ViewModel for the Generation Gallery mosaic gallery.
 /// </summary>
-public partial class ViewerViewModel : BusyViewModelBase
+public partial class GenerationGalleryViewModel : BusyViewModelBase
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
-    private readonly List<ViewerMediaItemViewModel> _allMediaItems = [];
+    private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
 
-    public ViewerViewModel()
+    public GenerationGalleryViewModel()
     {
         _settingsService = null;
         _eventAggregator = null;
         LoadDesignData();
     }
 
-    public ViewerViewModel(IAppSettingsService settingsService, IDatasetEventAggregator eventAggregator)
+    public GenerationGalleryViewModel(IAppSettingsService settingsService, IDatasetEventAggregator eventAggregator)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
@@ -40,7 +40,7 @@ public partial class ViewerViewModel : BusyViewModelBase
         LoadMediaCommand.Execute(null);
     }
 
-    public ObservableCollection<ViewerMediaItemViewModel> MediaItems { get; } = [];
+    public ObservableCollection<GenerationGalleryMediaItemViewModel> MediaItems { get; } = [];
 
     public IReadOnlyList<string> SortOptions { get; } = ["Name", "Creation date"];
 
@@ -49,7 +49,7 @@ public partial class ViewerViewModel : BusyViewModelBase
     public string VideoExtensionsDisplay => SupportedMediaTypes.VideoExtensionsDisplay;
 
     [ObservableProperty]
-    private string _selectedSortOption = "Name";
+    private string _selectedSortOption = "Creation date";
 
     [ObservableProperty]
     private double _tileWidth = 220;
@@ -95,9 +95,9 @@ public partial class ViewerViewModel : BusyViewModelBase
             .ToList();
     }
 
-    private static List<ViewerMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths)
+    private static List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths)
     {
-        var items = new List<ViewerMediaItemViewModel>();
+        var items = new List<GenerationGalleryMediaItemViewModel>();
         foreach (var root in paths)
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
@@ -109,7 +109,7 @@ public partial class ViewerViewModel : BusyViewModelBase
             {
                 var isVideo = SupportedMediaTypes.IsVideoFile(file);
                 var createdAt = File.GetCreationTimeUtc(file);
-                items.Add(new ViewerMediaItemViewModel(file, isVideo, createdAt));
+                items.Add(new GenerationGalleryMediaItemViewModel(file, isVideo, createdAt));
             }
         }
 
@@ -176,7 +176,7 @@ public partial class ViewerViewModel : BusyViewModelBase
         }
     }
 
-    private async Task ApplyMediaItemsAsync(List<ViewerMediaItemViewModel> items, int enabledSourceCount)
+    private async Task ApplyMediaItemsAsync(List<GenerationGalleryMediaItemViewModel> items, int enabledSourceCount)
     {
         if (Dispatcher.UIThread.CheckAccess())
         {
@@ -187,7 +187,7 @@ public partial class ViewerViewModel : BusyViewModelBase
         await Dispatcher.UIThread.InvokeAsync(() => ApplyMediaItems(items, enabledSourceCount));
     }
 
-    private void ApplyMediaItems(List<ViewerMediaItemViewModel> items, int enabledSourceCount)
+    private void ApplyMediaItems(List<GenerationGalleryMediaItemViewModel> items, int enabledSourceCount)
     {
         _allMediaItems.Clear();
         _allMediaItems.AddRange(items);
@@ -204,7 +204,7 @@ public partial class ViewerViewModel : BusyViewModelBase
 
     private void ApplySorting()
     {
-        IEnumerable<ViewerMediaItemViewModel> sorted = _allMediaItems;
+        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = _allMediaItems;
 
         if (string.Equals(SelectedSortOption, "Creation date", StringComparison.OrdinalIgnoreCase))
         {
@@ -229,9 +229,9 @@ public partial class ViewerViewModel : BusyViewModelBase
     private void LoadDesignData()
     {
         _allMediaItems.Clear();
-        _allMediaItems.Add(new ViewerMediaItemViewModel("C:\\Images\\Sample-01.png", false, DateTime.UtcNow.AddDays(-1)));
-        _allMediaItems.Add(new ViewerMediaItemViewModel("C:\\Images\\Sample-02.jpg", false, DateTime.UtcNow));
-        _allMediaItems.Add(new ViewerMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4)));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-01.png", false, DateTime.UtcNow.AddDays(-1)));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Images\\Sample-02.jpg", false, DateTime.UtcNow));
+        _allMediaItems.Add(new GenerationGalleryMediaItemViewModel("C:\\Videos\\Sample-03.mp4", true, DateTime.UtcNow.AddHours(-4)));
 
         ApplySorting();
     }

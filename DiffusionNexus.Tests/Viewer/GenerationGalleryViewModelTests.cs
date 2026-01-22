@@ -8,9 +8,9 @@ using Moq;
 namespace DiffusionNexus.Tests.Viewer;
 
 /// <summary>
-/// Unit tests for <see cref="ViewerViewModel"/>.
+/// Unit tests for <see cref="GenerationGalleryViewModel"/>.
 /// </summary>
-public class ViewerViewModelTests : IDisposable
+public class GenerationGalleryViewModelTests : IDisposable
 {
     private readonly List<string> _tempPaths = [];
 
@@ -30,7 +30,7 @@ public class ViewerViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -67,7 +67,7 @@ public class ViewerViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
@@ -104,7 +104,7 @@ public class ViewerViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var viewModel = new ViewerViewModel(mockSettings.Object, mockEventAggregator.Object);
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object);
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
         viewModel.SelectedSortOption = "Name";
