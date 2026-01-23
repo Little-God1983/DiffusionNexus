@@ -267,7 +267,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
         string? firstTempPath = null;
 
-        await RunBusyAsync(() =>
+        await RunBusyAsync(async () =>
         {
             var tempDataset = EnsureTemporaryDataset();
             var versionPath = tempDataset.GetVersionFolderPath(tempDataset.CurrentVersion);
