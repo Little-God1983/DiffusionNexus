@@ -1,0 +1,34 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Controls.ImageCompareControl">
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter" />
+  </UserControl.Resources>
+
+  <Grid>
+    <Border Background="#111" CornerRadius="6" ClipToBounds="True">
+      <Grid ClipToBounds="True">
+        <Image x:Name="AfterImageControl"
+               Stretch="Uniform"
+               Source="{Binding AfterImage, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource PathToBitmapConverter}, ConverterParameter=full}" />
+        <Image x:Name="BeforeImageControl"
+               Stretch="Uniform"
+               Source="{Binding BeforeImage, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource PathToBitmapConverter}, ConverterParameter=full}" />
+      </Grid>
+    </Border>
+
+    <Canvas x:Name="SliderCanvas" IsHitTestVisible="False">
+      <Border x:Name="SliderLine" Width="2" Background="#FFFFFF" Opacity="0.9" />
+      <Border x:Name="SliderThumb" Width="18" Height="18" Background="#FFFFFF" CornerRadius="9" BorderBrush="#1E1E1E" BorderThickness="1" />
+    </Canvas>
+
+    <Border x:Name="InputLayer"
+            Background="Transparent"
+            Cursor="SizeWestEast"
+            PointerPressed="OnInputPointerPressed"
+            PointerMoved="OnInputPointerMoved"
+            PointerReleased="OnInputPointerReleased"
+            PointerCaptureLost="OnInputPointerCaptureLost" />
+  </Grid>
+</UserControl>

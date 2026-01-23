@@ -1,0 +1,116 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="clr-namespace:DiffusionNexus.UI.Controls"
+             xmlns:converters="clr-namespace:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.ImageCompareView"
+             x:DataType="vm:ImageCompareViewModel"
+             mc:Ignorable="d">
+  <UserControl.Resources>
+    <converters:PathToBitmapConverter x:Key="PathToBitmapConverter" />
+  </UserControl.Resources>
+
+  <Grid RowDefinitions="Auto,*,Auto" Background="#0E0E0E" ClipToBounds="True">
+    <Border Grid.Row="0" Background="#1A1A1A" Padding="12,8" BorderBrush="#2E2E2E" BorderThickness="0,0,0,1">
+      <DockPanel LastChildFill="False">
+        <TextBlock Text="Compare" FontWeight="SemiBold" FontSize="16" Foreground="White" DockPanel.Dock="Left" />
+        <StackPanel Orientation="Horizontal" Spacing="8" DockPanel.Dock="Right">
+          <Button Content="⇄ Swap" Command="{Binding SwapImagesCommand}" />
+          <Button Content="⟳ Reset" Command="{Binding ResetSliderCommand}" />
+          <ComboBox ItemsSource="{Binding FitModeOptions}" SelectedItem="{Binding FitMode}" MinWidth="120" />
+          <Button Content="1:1" Command="{Binding SetFitModeCommand}" CommandParameter="{x:Static controls:ImageCompareFitMode.OneToOne}" />
+          <Button Content="⋯" IsEnabled="False" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Row="1">
+      <controls:ImageCompareControl BeforeImage="{Binding BeforeImagePath}"
+                                    AfterImage="{Binding AfterImagePath}"
+                                    SliderValue="{Binding SliderValue, Mode=TwoWay}"
+                                    FitMode="{Binding FitMode}" />
+
+      <Grid Margin="20" RowDefinitions="Auto,*,Auto" IsHitTestVisible="False">
+        <Grid ColumnDefinitions="*,Auto,*">
+          <TextBlock Text="{Binding BeforeImageLabel, TargetNullValue=Before}" Foreground="#D8D8D8" FontWeight="SemiBold" />
+          <TextBlock Grid.Column="2" Text="{Binding AfterImageLabel, TargetNullValue=After}" Foreground="#D8D8D8" FontWeight="SemiBold" HorizontalAlignment="Right" />
+        </Grid>
+        <TextBlock Grid.Row="2" Text="Tip: Click thumbnail → assigns to the side you’ve selected below"
+                   Foreground="#8F8F8F" FontStyle="Italic" HorizontalAlignment="Center" />
+      </Grid>
+    </Grid>
+
+    <Border x:Name="TrayHost"
+            Grid.Row="2"
+            Height="{Binding TrayHeight}"
+            Background="#151515"
+            BorderBrush="#2E2E2E"
+            BorderThickness="1,1,1,0"
+            ClipToBounds="True"
+            PointerEntered="OnTrayPointerEntered"
+            PointerExited="OnTrayPointerExited">
+      <Border.Transitions>
+        <Transitions>
+          <DoubleTransition Property="Height" Duration="0:0:0.25" />
+        </Transitions>
+      </Border.Transitions>
+      <Grid RowDefinitions="Auto,Auto,Auto,Auto" Margin="12,8" RowSpacing="8">
+        <Grid ColumnDefinitions="*,Auto" Height="24">
+          <TextBlock Text="Auto-hide tray" Foreground="#AFAFAF" VerticalAlignment="Center" />
+          <ToggleButton Grid.Column="1" Content="📌" IsChecked="{Binding IsTrayPinned}" />
+        </Grid>
+
+        <WrapPanel Grid.Row="1" Spacing="12" IsVisible="{Binding IsTrayOpen}">
+          <StackPanel Orientation="Vertical" Spacing="4" Width="220">
+            <TextBlock Text="Before dataset" Foreground="#8F8F8F" FontSize="11" />
+            <ComboBox ItemsSource="{Binding AvailableDatasets}" SelectedItem="{Binding BeforeDataset}" DisplayMemberBinding="{Binding Name}" />
+          </StackPanel>
+          <StackPanel Orientation="Vertical" Spacing="4" Width="220">
+            <TextBlock Text="After dataset" Foreground="#8F8F8F" FontSize="11" />
+            <ComboBox ItemsSource="{Binding AvailableDatasets}" SelectedItem="{Binding AfterDataset}" DisplayMemberBinding="{Binding Name}" />
+          </StackPanel>
+        </WrapPanel>
+
+        <WrapPanel Grid.Row="2" Spacing="12" IsVisible="{Binding IsTrayOpen}">
+          <TextBlock Text="Assign on click:" Foreground="#8F8F8F" VerticalAlignment="Center" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <RadioButton Content="Before" GroupName="AssignTarget" IsChecked="{Binding IsAssignBefore}" />
+            <RadioButton Content="After" GroupName="AssignTarget" IsChecked="{Binding IsAssignAfter}" />
+          </StackPanel>
+          <TextBox Width="220" Watermark="Search" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+        </WrapPanel>
+
+        <Border Grid.Row="3" Background="#101010" BorderBrush="#2E2E2E" BorderThickness="1" CornerRadius="6" Padding="8" IsVisible="{Binding IsTrayOpen}">
+          <ListBox ItemsSource="{Binding FilmstripItems}" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+            <ListBox.ItemsPanel>
+              <ItemsPanelTemplate>
+                <VirtualizingStackPanel Orientation="Horizontal" Spacing="6" />
+              </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Button Padding="0" Background="Transparent" BorderThickness="0"
+                        Command="{Binding DataContext.AssignFilmstripItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        CommandParameter="{Binding}">
+                  <Grid Width="96" Height="64">
+                    <Border CornerRadius="4" BorderBrush="#444" BorderThickness="1">
+                      <Image Source="{Binding ImagePath, Converter={StaticResource PathToBitmapConverter}}" Stretch="UniformToFill" />
+                    </Border>
+                    <Border Background="#3A6EA5" CornerRadius="10" Padding="4,2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsVisible="{Binding IsBeforeSelected}">
+                      <TextBlock Text="B" Foreground="White" FontSize="10" />
+                    </Border>
+                    <Border Background="#8A3FFC" CornerRadius="10" Padding="4,2" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4" IsVisible="{Binding IsAfterSelected}">
+                      <TextBlock Text="A" Foreground="White" FontSize="10" />
+                    </Border>
+                  </Grid>
+                </Button>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Border>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
