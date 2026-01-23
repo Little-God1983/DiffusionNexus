@@ -197,11 +197,54 @@ public class DialogService : IDialogService
 
     public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath)
     {
-        var dialog = new SaveAsDialog()
-            .WithOriginalFile(originalFilePath);
+        FileLogger.LogEntry($"originalFilePath={originalFilePath}");
+        
+        try
+        {
+            if (_window is null)
+            {
+                FileLogger.LogError("ShowSaveAsDialogAsync: _window is null!");
+                return SaveAsResult.Cancelled();
+            }
 
-        var result = await dialog.ShowDialog<SaveAsResult>(_window);
-        return result ?? SaveAsResult.Cancelled();
+            // Ensure we are on UI thread
+            if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+            {
+                FileLogger.LogWarning($"ShowSaveAsDialogAsync called from non-UI thread (ThreadID: {Environment.CurrentManagedThreadId}). switching to UI thread.");
+                return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => ShowSaveAsDialogAsync(originalFilePath));
+            }
+
+            FileLogger.Log("Creating SaveAsDialog...");
+            var dialog = new SaveAsDialog();
+            
+            FileLogger.Log("Calling WithOriginalFile...");
+            dialog.WithOriginalFile(originalFilePath);
+            
+            // Simplified logging to avoid accessing properties that might cause issues if window state is unstable
+            FileLogger.Log($"Showing dialog on window type: {_window.GetType().Name}");
+            
+            SaveAsResult? result = null;
+            try
+            {
+                FileLogger.Log("Calling dialog.ShowDialog(_window)...");
+                result = await dialog.ShowDialog<SaveAsResult>(_window);
+                FileLogger.Log("ShowDialog returned.");
+            }
+            catch (Exception showEx)
+            {
+                FileLogger.LogError("FATAL ERROR in dialog.ShowDialog", showEx);
+                return SaveAsResult.Cancelled();
+            }
+            
+            FileLogger.Log($"Dialog result: {(result is null ? "null" : $"IsCancelled={result.IsCancelled}")}");
+            FileLogger.LogExit();
+            return result ?? SaveAsResult.Cancelled();
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in ShowSaveAsDialogAsync", ex);
+            return SaveAsResult.Cancelled();
+        }
     }
 
     public async Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage)

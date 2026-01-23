@@ -369,23 +369,55 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
     {
-        // Refresh the thumbnail list when an image is saved
-        if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
+        FileLogger.LogEntry($"ImagePath={e.ImagePath ?? "(null)"}, OriginalPath={e.OriginalPath ?? "(null)"}");
+        
+        try
         {
+            // Skip refresh for temporary datasets - saved images go to their original location,
+            // not to the temp dataset folder
+            if (_selectedEditorDataset is null)
+            {
+                FileLogger.Log("_selectedEditorDataset is null, returning early");
+                return;
+            }
+            
+            if (_selectedEditorVersion is null)
+            {
+                FileLogger.Log("_selectedEditorVersion is null, returning early");
+                return;
+            }
+
+            FileLogger.Log($"Dataset: {_selectedEditorDataset.Name}, IsTemporary={_selectedEditorDataset.IsTemporary}");
+
+            if (_selectedEditorDataset.IsTemporary)
+            {
+                // For temporary datasets, the image is saved to its original folder.
+                // No need to refresh the temp dataset's thumbnail list.
+                FileLogger.Log("Dataset is temporary, skipping refresh");
+                return;
+            }
+
             var currentVersionNumber = _selectedEditorVersion.Version;
+            FileLogger.Log($"Current version: {currentVersionNumber}");
 
             // Reload the version items (to update image counts)
+            FileLogger.Log("Refreshing version items...");
             await RefreshVersionItemsAsync(currentVersionNumber);
+            FileLogger.Log("Version items refreshed");
 
             // Reload images for the current version
+            FileLogger.Log("Loading editor dataset images...");
             await LoadEditorDatasetImagesAsync();
+            FileLogger.Log("Editor dataset images loaded");
 
             // Find and select the saved image in the list
+            FileLogger.Log($"Looking for saved image in list: {e.ImagePath}");
             var savedImageVm = EditorDatasetImages.FirstOrDefault(img =>
                 string.Equals(img.ImagePath, e.ImagePath, StringComparison.OrdinalIgnoreCase));
 
             if (savedImageVm is not null)
             {
+                FileLogger.Log("Found saved image, selecting it");
                 // Clear previous selection
                 foreach (var img in EditorDatasetImages)
                 {
@@ -397,14 +429,33 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 OnPropertyChanged(nameof(SelectedEditorImage));
                 _state.SelectedEditorImage = savedImageVm;
             }
+            else
+            {
+                FileLogger.Log("Saved image not found in list");
+            }
+            
+            FileLogger.LogExit("success");
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in OnImageSaved", ex);
+            StatusMessage = $"Error refreshing images: {ex.Message}";
         }
     }
 
     private async void OnImageDeleted(object? sender, ImageDeletedEventArgs e)
     {
-        // Refresh the thumbnail list when an image is deleted
-        if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
+        FileLogger.LogEntry($"ImagePath={e.ImagePath ?? "(null)"}");
+        
+        try
         {
+            // Skip refresh for temporary datasets
+            if (_selectedEditorDataset is null || _selectedEditorVersion is null || _selectedEditorDataset.IsTemporary)
+            {
+                FileLogger.Log("Skipping - dataset/version is null or temporary");
+                return;
+            }
+
             var currentVersionNumber = _selectedEditorVersion.Version;
 
             // Check if the deleted image was in our current dataset/version
@@ -427,6 +478,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                     ImageEditor.ClearImageCommand.Execute(null);
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing images: {ex.Message}";
         }
     }
 
@@ -611,6 +666,13 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private async Task RefreshVersionItemsAsync(int versionToSelect)
     {
         if (_selectedEditorDataset is null) return;
+
+        // For temporary datasets, use the special population method
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            PopulateTemporaryVersionItems();
+            return;
+        }
 
         EditorVersionItems.Clear();
         await PopulateVersionItemsAsync(_selectedEditorDataset, EditorVersionItems);

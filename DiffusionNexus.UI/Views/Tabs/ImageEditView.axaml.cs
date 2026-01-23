@@ -15,11 +15,17 @@ namespace DiffusionNexus.UI.Views.Tabs;
 /// </summary>
 public partial class ImageEditView : UserControl
 {
+    private static int _instanceCounter;
+    private readonly int _instanceId;
     private ImageEditorControl? _imageEditorCanvas;
     private bool _eventsWired;
 
+
     public ImageEditView()
     {
+        _instanceId = Interlocked.Increment(ref _instanceCounter);
+        FileLogger.Log($"ImageEditView instance #{_instanceId} created - Stack: {Environment.StackTrace}");
+        
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
     }
@@ -32,7 +38,13 @@ public partial class ImageEditView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_eventsWired) return;
+        FileLogger.Log($"[Instance #{_instanceId}] OnDataContextChanged called, _eventsWired={_eventsWired}, DataContext type={(DataContext?.GetType().Name ?? "null")}");
+        
+        if (_eventsWired)
+        {
+            FileLogger.Log($"[Instance #{_instanceId}] Already wired, skipping");
+            return;
+        }
 
         if (DataContext is ImageEditTabViewModel vm)
         {
@@ -42,7 +54,13 @@ public partial class ImageEditView : UserControl
 
     private void TryWireUpImageEditorEvents(ImageEditTabViewModel vm)
     {
-        if (_eventsWired) return;
+        FileLogger.Log($"[Instance #{_instanceId}] TryWireUpImageEditorEvents called, _eventsWired={_eventsWired}");
+        
+        if (_eventsWired)
+        {
+            FileLogger.Log($"[Instance #{_instanceId}] Already wired in TryWireUp, skipping");
+            return;
+        }
 
         _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
 
@@ -52,13 +70,20 @@ public partial class ImageEditView : UserControl
         }
         else
         {
+            FileLogger.Log($"[Instance #{_instanceId}] Canvas not found, subscribing to LayoutUpdated");
             LayoutUpdated += OnLayoutUpdatedForEditorInit;
         }
     }
 
     private void OnLayoutUpdatedForEditorInit(object? sender, EventArgs e)
     {
-        if (_eventsWired) return;
+        FileLogger.Log($"[Instance #{_instanceId}] OnLayoutUpdatedForEditorInit called, _eventsWired={_eventsWired}");
+        
+        if (_eventsWired)
+        {
+            LayoutUpdated -= OnLayoutUpdatedForEditorInit;
+            return;
+        }
 
         _imageEditorCanvas ??= this.FindControl<ImageEditorControl>("ImageEditorCanvas");
 
@@ -71,10 +96,29 @@ public partial class ImageEditView : UserControl
 
     private void WireUpImageEditorEvents(ImageEditTabViewModel vm)
     {
-        if (_imageEditorCanvas is null || _eventsWired) return;
-
+        FileLogger.Log($">>> WireUpImageEditorEvents ENTRY - Instance #{_instanceId}, _eventsWired={_eventsWired}");
+        
+        // Double-check guard with logging
+        if (_eventsWired)
+        {
+            FileLogger.LogWarning($"[Instance #{_instanceId}] WireUpImageEditorEvents called but already wired! Skipping.");
+            return;
+        }
+        
+        if (_imageEditorCanvas is null)
+        {
+            FileLogger.LogWarning($"[Instance #{_instanceId}] WireUpImageEditorEvents called but canvas is null! Skipping.");
+            return;
+        }
+        
+        // Set flag FIRST before doing anything else
         _eventsWired = true;
+        
         var imageEditor = vm.ImageEditor;
+        
+        FileLogger.Log($"[Instance #{_instanceId}] Wiring events for CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
+        FileLogger.Log($"[Instance #{_instanceId}] _imageEditorCanvas is valid: {_imageEditorCanvas is not null}");
+
 
         // Update dimensions and file info when image changes
         _imageEditorCanvas.ImageChanged += (_, _) =>
@@ -336,78 +380,169 @@ public partial class ImageEditView : UserControl
             }
         };
 
+
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
         {
+            FileLogger.Log($"[Instance #{_instanceId}] SaveAsDialogRequested handler invoked");
+            FileLogger.Log($"[Instance #{_instanceId}] CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
+            FileLogger.Log($"[Instance #{_instanceId}] About to show dialog...");
+            
             if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
             {
+                FileLogger.LogWarning($"[Instance #{_instanceId}] DialogService or CurrentImagePath is null, returning Cancelled");
                 return SaveAsResult.Cancelled();
             }
-            return await vm.DialogService.ShowSaveAsDialogAsync(imageEditor.CurrentImagePath);
+            var result = await vm.DialogService.ShowSaveAsDialogAsync(imageEditor.CurrentImagePath);
+            FileLogger.LogExit($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
+            return result;
         };
 
         // Handle actual save after dialog confirmation
         imageEditor.SaveAsRequested += (_, result) =>
         {
-            if (result.IsCancelled || string.IsNullOrWhiteSpace(result.FileName) || imageEditor.CurrentImagePath is null)
+            FileLogger.LogEntry($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}, Rating={result.Rating}");
+            FileLogger.Log($"CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
+            
+            if (result.IsCancelled)
             {
+                FileLogger.Log("Result is cancelled, returning");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(result.FileName))
+            {
+                FileLogger.LogWarning("FileName is null or whitespace, returning");
+                return;
+            }
+            
+            if (imageEditor.CurrentImagePath is null)
+            {
+                FileLogger.LogWarning("CurrentImagePath is null, returning");
                 return;
             }
 
+            // Verify the canvas control is available
+            if (_imageEditorCanvas is null)
+            {
+                FileLogger.LogError("_imageEditorCanvas is null");
+                imageEditor.StatusMessage = "Image editor not initialized.";
+                return;
+            }
+            
+            FileLogger.Log($"_imageEditorCanvas is valid, EditorCore is {(_imageEditorCanvas.EditorCore is null ? "null" : "valid")}");
+
             // Build the new file path
             var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
+            FileLogger.Log($"Directory from path: {directory ?? "(null)"}");
+            
+            if (string.IsNullOrEmpty(directory))
+            {
+                FileLogger.LogError("Cannot determine save location - directory is null/empty");
+                imageEditor.StatusMessage = "Cannot determine save location.";
+                return;
+            }
+
             var extension = Path.GetExtension(imageEditor.CurrentImagePath);
-            var newPath = Path.Combine(directory ?? string.Empty, result.FileName + extension);
+            var newPath = Path.Combine(directory, result.FileName + extension);
+            FileLogger.Log($"New path to save: {newPath}");
 
             // Safety check: file existence is validated in dialog, but check again for race conditions
             if (File.Exists(newPath))
             {
+                FileLogger.LogWarning($"File already exists: {newPath}");
                 imageEditor.StatusMessage = $"File '{result.FileName}{extension}' already exists.";
                 return;
             }
 
             // Save the image
-            if (_imageEditorCanvas.EditorCore.SaveImage(newPath))
+            try
             {
-                // Save rating to .rating file if not Unrated
-                SaveRatingToFile(newPath, result.Rating);
-                
-                imageEditor.OnSaveAsNewCompleted(newPath, result.Rating);
+                FileLogger.Log("Calling EditorCore.SaveImage...");
+                if (_imageEditorCanvas.EditorCore.SaveImage(newPath))
+                {
+                    FileLogger.Log("SaveImage succeeded");
+                    // Save rating to .rating file if not Unrated
+                    SaveRatingToFile(newPath, result.Rating);
+                    
+                    FileLogger.Log("Calling OnSaveAsNewCompleted...");
+                    imageEditor.OnSaveAsNewCompleted(newPath, result.Rating);
+                    FileLogger.Log("OnSaveAsNewCompleted returned");
+                }
+                else
+                {
+                    FileLogger.LogError("SaveImage returned false");
+                    imageEditor.StatusMessage = "Failed to save image.";
+                }
             }
-            else
+            catch (Exception ex)
             {
-                imageEditor.StatusMessage = "Failed to save image.";
+                FileLogger.LogError("Exception during save", ex);
+                imageEditor.StatusMessage = $"Error saving image: {ex.Message}";
             }
+            
+            FileLogger.LogExit();
         };
 
         imageEditor.SaveOverwriteConfirmRequested += async () =>
         {
+            FileLogger.LogEntry();
             if (vm.DialogService is not null)
             {
-                return await vm.DialogService.ShowConfirmAsync(
+                var result = await vm.DialogService.ShowConfirmAsync(
                     "Overwrite Image",
                     "Do you really want to overwrite your original image? This cannot be undone.");
+                FileLogger.LogExit(result.ToString());
+                return result;
             }
+            FileLogger.LogExit("false (DialogService is null)");
             return false;
         };
 
         imageEditor.SaveOverwriteRequested += (_, _) =>
         {
-            if (_imageEditorCanvas.EditorCore.SaveOverwrite())
+            FileLogger.LogEntry();
+            
+            if (_imageEditorCanvas is null)
             {
-                imageEditor.OnSaveOverwriteCompleted();
+                FileLogger.LogError("_imageEditorCanvas is null");
+                imageEditor.StatusMessage = "Image editor not initialized.";
+                return;
             }
-            else
+
+            try
             {
-                imageEditor.StatusMessage = "Failed to save image.";
+                FileLogger.Log("Calling EditorCore.SaveOverwrite...");
+                if (_imageEditorCanvas.EditorCore.SaveOverwrite())
+                {
+                    FileLogger.Log("SaveOverwrite succeeded");
+                    FileLogger.Log("Calling OnSaveOverwriteCompleted...");
+                    imageEditor.OnSaveOverwriteCompleted();
+                    FileLogger.Log("OnSaveOverwriteCompleted returned");
+                }
+                else
+                {
+                    FileLogger.LogError("SaveOverwrite returned false");
+                    imageEditor.StatusMessage = "Failed to save image.";
+                }
             }
+            catch (Exception ex)
+            {
+                FileLogger.LogError("Exception during save overwrite", ex);
+                imageEditor.StatusMessage = $"Error saving image: {ex.Message}";
+            }
+            
+            FileLogger.LogExit();
         };
 
         // Handle export requests
         imageEditor.ExportRequested += async (_, args) =>
         {
+            FileLogger.LogEntry($"SuggestedFileName={args.SuggestedFileName}, FileExtension={args.FileExtension}");
+            
             if (vm.DialogService is null)
             {
+                FileLogger.LogError("DialogService is null");
                 imageEditor.StatusMessage = "Export not available";
                 return;
             }
@@ -417,18 +552,34 @@ public partial class ImageEditView : UserControl
                 args.SuggestedFileName,
                 $"*{args.FileExtension}");
 
+            FileLogger.Log($"Export path from dialog: {exportPath ?? "(null/cancelled)"}");
+
             if (string.IsNullOrEmpty(exportPath))
             {
+                FileLogger.Log("User cancelled export");
                 return; // User cancelled
             }
 
-            if (_imageEditorCanvas.EditorCore.SaveImage(exportPath))
+            if (_imageEditorCanvas is null)
             {
-                imageEditor.OnExportCompleted(exportPath);
+                imageEditor.StatusMessage = "Image editor not initialized.";
+                return;
             }
-            else
+
+            try
             {
-                imageEditor.StatusMessage = "Failed to export image.";
+                if (_imageEditorCanvas.EditorCore.SaveImage(exportPath))
+                {
+                    imageEditor.OnExportCompleted(exportPath);
+                }
+                else
+                {
+                    imageEditor.StatusMessage = "Failed to export image.";
+                }
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Error exporting image: {ex.Message}";
             }
         };
 
@@ -438,7 +589,7 @@ public partial class ImageEditView : UserControl
         {
             zoomSlider.PropertyChanged += (_, args) =>
             {
-                if (args.Property.Name == nameof(Slider.Value))
+                if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
                     var percentage = (int)zoomSlider.Value;
                     _imageEditorCanvas.SetZoom(percentage / 100f);

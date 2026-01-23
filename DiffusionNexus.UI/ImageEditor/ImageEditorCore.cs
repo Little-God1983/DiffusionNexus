@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.Services;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor;
@@ -420,23 +421,71 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if saved successfully.</returns>
     public bool SaveImage(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
     {
-        if (_workingBitmap is null || string.IsNullOrWhiteSpace(filePath))
+        FileLogger.LogEntry($"filePath={filePath}, format={format}, quality={quality}");
+        
+        if (_workingBitmap is null)
+        {
+            FileLogger.LogWarning("_workingBitmap is null, cannot save");
+            FileLogger.LogExit("false");
             return false;
+        }
+        
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            FileLogger.LogWarning("filePath is null or whitespace, cannot save");
+            FileLogger.LogExit("false");
+            return false;
+        }
+
+        FileLogger.Log($"Working bitmap size: {_workingBitmap.Width}x{_workingBitmap.Height}");
 
         try
         {
+            // Ensure the directory exists
+            var directory = Path.GetDirectoryName(filePath);
+            FileLogger.Log($"Directory: {directory ?? "(null)"}");
+            
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                FileLogger.Log($"Creating directory: {directory}");
+                Directory.CreateDirectory(directory);
+            }
+
+            FileLogger.Log("Creating SKImage from bitmap...");
             using var image = SKImage.FromBitmap(_workingBitmap);
+            if (image is null)
+            {
+                FileLogger.LogError("SKImage.FromBitmap returned null");
+                FileLogger.LogExit("false");
+                return false;
+            }
+            
+            FileLogger.Log($"Encoding image as {format}...");
             using var data = image.Encode(format, quality);
             
             if (data is null)
+            {
+                FileLogger.LogError("image.Encode returned null");
+                FileLogger.LogExit("false");
                 return false;
+            }
 
-            using var stream = File.OpenWrite(filePath);
+            FileLogger.Log($"Encoded data size: {data.Size} bytes");
+            FileLogger.Log($"Opening file stream for writing: {filePath}");
+            
+            // Use FileMode.Create to truncate existing file or create new
+            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+            FileLogger.Log("Saving data to stream...");
             data.SaveTo(stream);
+            
+            FileLogger.Log("Save completed successfully");
+            FileLogger.LogExit("true");
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            FileLogger.LogError($"Exception during save to {filePath}", ex);
+            FileLogger.LogExit("false");
             return false;
         }
     }
@@ -447,11 +496,20 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if saved successfully.</returns>
     public bool SaveOverwrite()
     {
+        FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
+        
         if (string.IsNullOrWhiteSpace(CurrentImagePath))
+        {
+            FileLogger.LogWarning("CurrentImagePath is null or whitespace");
+            FileLogger.LogExit("false");
             return false;
+        }
 
         var format = GetFormatFromExtension(CurrentImagePath);
-        return SaveImage(CurrentImagePath, format);
+        FileLogger.Log($"Detected format: {format}");
+        var result = SaveImage(CurrentImagePath, format);
+        FileLogger.LogExit(result.ToString());
+        return result;
     }
 
     /// <summary>

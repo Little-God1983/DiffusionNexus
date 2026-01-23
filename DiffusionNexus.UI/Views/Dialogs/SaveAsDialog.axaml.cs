@@ -23,13 +23,22 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
 
     public SaveAsDialog()
     {
+        FileLogger.Log("SaveAsDialog constructor called");
         InitializeComponent();
         DataContext = this;
+        
+        this.Opened += (s, e) => FileLogger.Log("SaveAsDialog Opened event fired");
+        this.Closing += (s, e) => FileLogger.Log($"SaveAsDialog Closing event fired (Cancel={e.Cancel})");
+        this.Closed += (s, e) => FileLogger.Log("SaveAsDialog Closed event fired");
+        
+        FileLogger.Log("SaveAsDialog constructor completed");
     }
 
     private void InitializeComponent()
     {
+        FileLogger.Log("SaveAsDialog.InitializeComponent called");
         AvaloniaXamlLoader.Load(this);
+        FileLogger.Log("SaveAsDialog.InitializeComponent completed");
     }
 
     /// <summary>
@@ -223,19 +232,34 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// <returns>This dialog for fluent configuration.</returns>
     public SaveAsDialog WithOriginalFile(string originalFilePath)
     {
-        var fileName = Path.GetFileNameWithoutExtension(originalFilePath);
-        var extension = Path.GetExtension(originalFilePath);
-        var directory = Path.GetDirectoryName(originalFilePath) ?? string.Empty;
+        FileLogger.LogEntry($"originalFilePath={originalFilePath}");
+        
+        try
+        {
+            var fileName = Path.GetFileNameWithoutExtension(originalFilePath);
+            var extension = Path.GetExtension(originalFilePath);
+            var directory = Path.GetDirectoryName(originalFilePath) ?? string.Empty;
+            
+            FileLogger.Log($"Parsed: fileName={fileName}, extension={extension}, directory={directory}");
 
-        OriginalFileName = fileName;
-        FileName = fileName;
-        FileExtension = extension;
-        _directoryPath = directory;
+            OriginalFileName = fileName;
+            FileName = fileName;
+            FileExtension = extension;
+            _directoryPath = directory;
 
-        // Load all existing filenames in the directory (without extensions)
-        LoadExistingFileNames(directory, extension);
-
-        return this;
+            // Load all existing filenames in the directory (without extensions)
+            FileLogger.Log("Loading existing file names...");
+            LoadExistingFileNames(directory, extension);
+            FileLogger.Log($"Loaded {_existingFileNames.Count} existing file names");
+            
+            FileLogger.LogExit();
+            return this;
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in WithOriginalFile", ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -270,21 +294,18 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         }
     }
 
-    private void OnRatingChanged(object? sender, ImageRatingStatus newRating)
-    {
-        Rating = newRating;
-    }
-
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
         Result = SaveAsResult.Success(FileName.Trim(), Rating);
-        Close(true);
+        FileLogger.Log($"OnSaveClick: Closing dialog with Success result: {Result.FileName}");
+        Close(Result);
     }
 
     private void OnCancelClick(object? sender, RoutedEventArgs e)
     {
         Result = SaveAsResult.Cancelled();
-        Close(false);
+        FileLogger.Log("OnCancelClick: Closing dialog with Cancelled result");
+        Close(Result);
     }
 
     public new event PropertyChangedEventHandler? PropertyChanged;

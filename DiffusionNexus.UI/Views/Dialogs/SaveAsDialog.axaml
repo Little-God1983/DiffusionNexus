@@ -46,8 +46,7 @@
         <StackPanel Spacing="8">
             <controls:RatingButtonsControl x:Name="RatingButtons"
                                            Rating="{Binding Rating, Mode=TwoWay}"
-                                           ShowLabel="True"
-                                           RatingChanged="OnRatingChanged"/>
+                                           ShowLabel="True"/>
         </StackPanel>
 
         <!-- Buttons -->

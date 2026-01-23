@@ -93,6 +93,12 @@ public partial class RatingButtonsControl : UserControl
     public RatingButtonsControl()
     {
         InitializeComponent();
+        
+        this.AttachedToVisualTree += (s, e) => 
+        {
+            // Simple check to ensure resources are available
+            if (Application.Current is null) return;
+        };
     }
 
     private void InitializeComponent()
