@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d"
              d:DesignWidth="800"
@@ -9,16 +10,16 @@
              x:Class="DiffusionNexus.UI.Views.Controls.ImageCompareControl">
 
   <Grid Background="#121212" ClipToBounds="True">
-    <Image x:Name="BeforeImage"
-           Source="{Binding BeforeImage, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+    <Image x:Name="BeforeImageControl"
+           Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
            StretchDirection="Both"
            HorizontalAlignment="Center"
            VerticalAlignment="Center"/>
 
-    <Image x:Name="AfterImage"
-           Source="{Binding AfterImage, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+    <Image x:Name="AfterImageControl"
+           Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
            StretchDirection="Both"
            HorizontalAlignment="Center"
            VerticalAlignment="Center"/>
@@ -32,16 +33,21 @@
       <Thumb x:Name="SliderThumb"
              Width="28"
              Height="28"
-             Background="#1D1D1D"
-             BorderBrush="#CCFFFFFF"
-             BorderThickness="1"
-             CornerRadius="14"
              Cursor="SizeWestEast">
-        <TextBlock Text="⇄"
-                   FontSize="12"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Foreground="#CCFFFFFF"/>
+        <Thumb.Template>
+          <ControlTemplate>
+            <Border Background="#1D1D1D"
+                    BorderBrush="#CCFFFFFF"
+                    BorderThickness="1"
+                    CornerRadius="14">
+              <TextBlock Text="⇄"
+                         FontSize="12"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         Foreground="#CCFFFFFF"/>
+            </Border>
+          </ControlTemplate>
+        </Thumb.Template>
       </Thumb>
     </Canvas>
   </Grid>

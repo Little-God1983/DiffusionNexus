@@ -37,10 +37,11 @@
 
     <!-- Comparer Canvas -->
     <Grid Grid.Row="1">
-      <controls:ImageCompareControl BeforeImage="{Binding BeforeImagePath}"
-                                    AfterImage="{Binding AfterImagePath}"
+      <controls:ImageCompareControl BeforeImagePath="{Binding BeforeImagePath}"
+                                    AfterImagePath="{Binding AfterImagePath}"
                                     SliderValue="{Binding SliderValue, Mode=TwoWay}"
                                     FitMode="{Binding FitMode}"/>
+
 
       <Grid ColumnDefinitions="*,*" Margin="24" VerticalAlignment="Top" IsHitTestVisible="False">
         <Border Background="#66000000" CornerRadius="6" Padding="8" HorizontalAlignment="Left">
@@ -82,8 +83,9 @@
           </DockPanel>
         </Border>
 
-        <WrapPanel Grid.Row="1" Spacing="12">
-          <StackPanel MinWidth="220">
+        <WrapPanel Grid.Row="1">
+          <StackPanel MinWidth="220" Margin="0,0,12,0">
+
             <TextBlock Text="Before dataset" FontSize="11" Opacity="0.7"/>
             <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedBeforeDataset}"/>
           </StackPanel>
@@ -94,18 +96,19 @@
         </WrapPanel>
 
         <StackPanel Grid.Row="2" Spacing="10">
-          <WrapPanel Spacing="12" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
               <TextBlock Text="Assign on click:" VerticalAlignment="Center" Opacity="0.7"/>
               <RadioButton Content="Before" IsChecked="{Binding IsAssigningBefore, Mode=TwoWay}"/>
               <RadioButton Content="After" IsChecked="{Binding IsAssigningAfter, Mode=TwoWay}"/>
             </StackPanel>
             <TextBox Width="240" Watermark="Search" Text="{Binding SearchText}" />
-          </WrapPanel>
+          </StackPanel>
 
           <Border Background="#101010" CornerRadius="6" Padding="6">
             <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-              <ListBox ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="None">
+              <ListBox ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="Single">
+
                 <ListBox.ItemsPanel>
                   <ItemsPanelTemplate>
                     <VirtualizingStackPanel Orientation="Horizontal"/>
@@ -113,8 +116,9 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:ImageCompareItem">
-                    <Button Command="{Binding DataContext.AssignImageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    <Button Command="{Binding $parent[UserControl].((vm:ImageCompareViewModel)DataContext).AssignImageCommand}"
                             CommandParameter="{Binding}"
+
                             Background="Transparent"
                             BorderThickness="0"
                             Padding="0">

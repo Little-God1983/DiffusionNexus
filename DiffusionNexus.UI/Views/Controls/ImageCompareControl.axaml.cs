@@ -10,11 +10,11 @@ namespace DiffusionNexus.UI.Views.Controls;
 
 public partial class ImageCompareControl : UserControl
 {
-    public static readonly StyledProperty<string?> BeforeImageProperty =
-        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(BeforeImage));
+    public static readonly StyledProperty<string?> BeforeImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(BeforeImagePath));
 
-    public static readonly StyledProperty<string?> AfterImageProperty =
-        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(AfterImage));
+    public static readonly StyledProperty<string?> AfterImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(AfterImagePath));
 
     public static readonly StyledProperty<double> SliderValueProperty =
         AvaloniaProperty.Register<ImageCompareControl, double>(nameof(SliderValue), 50d);
@@ -31,10 +31,11 @@ public partial class ImageCompareControl : UserControl
     {
         InitializeComponent();
 
-        _afterImage = this.FindControl<Image>("AfterImage");
+        _afterImage = this.FindControl<Image>("AfterImageControl");
         _overlayCanvas = this.FindControl<Canvas>("OverlayCanvas");
         _sliderLine = this.FindControl<Border>("SliderLine");
         _sliderThumb = this.FindControl<Thumb>("SliderThumb");
+
 
         if (_overlayCanvas is not null)
         {
@@ -46,20 +47,25 @@ public partial class ImageCompareControl : UserControl
             _sliderThumb.DragDelta += OnSliderThumbDragDelta;
         }
 
-        this.GetObservable(SliderValueProperty).Subscribe(_ => UpdateVisuals());
-        this.GetObservable(BoundsProperty).Subscribe(_ => UpdateVisuals());
+        PropertyChanged += (s, e) =>
+        {
+            if (e.Property == SliderValueProperty || e.Property == BoundsProperty)
+            {
+                UpdateVisuals();
+            }
+        };
     }
 
-    public string? BeforeImage
+    public string? BeforeImagePath
     {
-        get => GetValue(BeforeImageProperty);
-        set => SetValue(BeforeImageProperty, value);
+        get => GetValue(BeforeImagePathProperty);
+        set => SetValue(BeforeImagePathProperty, value);
     }
 
-    public string? AfterImage
+    public string? AfterImagePath
     {
-        get => GetValue(AfterImageProperty);
-        set => SetValue(AfterImageProperty, value);
+        get => GetValue(AfterImagePathProperty);
+        set => SetValue(AfterImagePathProperty, value);
     }
 
     public double SliderValue
