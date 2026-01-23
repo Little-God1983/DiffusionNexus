@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -45,9 +46,12 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IImageUpscalingService? _upscalingService;
     private bool _disposed;
 
+    private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
     private DatasetCardViewModel? _selectedEditorDataset;
     private EditorVersionItem? _selectedEditorVersion;
     private DatasetImageViewModel? _selectedEditorImage;
+    private DatasetCardViewModel? _temporaryEditorDataset;
+    private readonly List<DatasetImageViewModel> _temporaryEditorImages = [];
     
     // Filter properties - all default to true (show all)
     private bool _showReady = true;
@@ -192,7 +196,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// <summary>
     /// Collection of all datasets for the dropdown.
     /// </summary>
-    public ObservableCollection<DatasetCardViewModel> Datasets => _state.Datasets;
+    public ObservableCollection<DatasetCardViewModel> EditorDatasets => _editorDatasets;
 
     /// <summary>
     /// Version items for the version dropdown.
@@ -252,6 +256,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
+        _state.Datasets.CollectionChanged += OnDatasetsCollectionChanged;
+
+        InitializeEditorDatasets();
 
         // Initialize commands
         LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
@@ -280,8 +287,23 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnNavigateToImageEditorRequested(object? sender, NavigateToImageEditorEventArgs e)
     {
+        if (e.Dataset.IsTemporary || e.Images is not null)
+        {
+            var tempImages = e.Images?.Where(img => !img.IsVideo).ToList()
+                ?? new List<DatasetImageViewModel> { e.Image };
+
+            if (tempImages.Count == 0)
+            {
+                StatusMessage = "No images available for editing.";
+                return;
+            }
+
+            LoadTemporaryEditorDataset(e.Dataset, tempImages, e.Image);
+            return;
+        }
+
         // Find the matching dataset in the Datasets collection
-        var editorDataset = Datasets.FirstOrDefault(d =>
+        var editorDataset = EditorDatasets.FirstOrDefault(d =>
             string.Equals(d.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
 
         if (editorDataset is null) return;
@@ -442,7 +464,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     {
         // The Datasets collection is shared via IDatasetState, so it's already updated.
         // We just need to notify the UI that the collection may have changed.
-        OnPropertyChanged(nameof(Datasets));
+        OnPropertyChanged(nameof(EditorDatasets));
     }
 
     /// <summary>
@@ -561,6 +583,11 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         OnPropertyChanged(nameof(FilterStatusText));
 
         if (_selectedEditorDataset is null) return;
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            PopulateTemporaryVersionItems();
+            return;
+        }
 
         try
         {
@@ -638,6 +665,17 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             return Task.CompletedTask;
         }
 
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            foreach (var image in _temporaryEditorImages)
+            {
+                EditorDatasetImages.Add(image);
+            }
+
+            ApplyFilters();
+            return Task.CompletedTask;
+        }
+
         try
         {
             var versionPath = _selectedEditorDataset.GetVersionFolderPath(_selectedEditorVersion.Version);
@@ -703,9 +741,84 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.VersionCreated -= OnVersionCreated;
             _eventAggregator.ImageAdded -= OnImageAdded;
             _state.StateChanged -= OnStateChanged;
+            _state.Datasets.CollectionChanged -= OnDatasetsCollectionChanged;
         }
 
         _disposed = true;
+    }
+
+    private void InitializeEditorDatasets()
+    {
+        _editorDatasets.Clear();
+        foreach (var dataset in _state.Datasets)
+        {
+            _editorDatasets.Add(dataset);
+        }
+
+        if (_temporaryEditorDataset is not null && !_editorDatasets.Contains(_temporaryEditorDataset))
+        {
+            _editorDatasets.Add(_temporaryEditorDataset);
+        }
+    }
+
+    private void OnDatasetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        InitializeEditorDatasets();
+    }
+
+    private void PopulateTemporaryVersionItems()
+    {
+        EditorVersionItems.Clear();
+        var imageCount = _temporaryEditorImages.Count;
+        var versionItem = EditorVersionItem.Create(1, imageCount);
+        EditorVersionItems.Add(versionItem);
+        SelectedEditorVersion = versionItem;
+    }
+
+    private void LoadTemporaryEditorDataset(
+        DatasetCardViewModel dataset,
+        IReadOnlyList<DatasetImageViewModel> images,
+        DatasetImageViewModel selectedImage)
+    {
+        _temporaryEditorDataset = dataset;
+        _temporaryEditorDataset.IsTemporary = true;
+        _temporaryEditorDataset.CurrentVersion = 1;
+        _temporaryEditorDataset.TotalVersions = 1;
+        _temporaryEditorDataset.ImageCount = images.Count;
+        _temporaryEditorDataset.TotalImageCountAllVersions = images.Count;
+
+        if (!_editorDatasets.Contains(_temporaryEditorDataset))
+        {
+            _editorDatasets.Add(_temporaryEditorDataset);
+        }
+
+        _temporaryEditorImages.Clear();
+        _temporaryEditorImages.AddRange(images);
+
+        _selectedEditorDataset = _temporaryEditorDataset;
+        OnPropertyChanged(nameof(SelectedEditorDataset));
+        _state.SelectedEditorDataset = _temporaryEditorDataset;
+
+        PopulateTemporaryVersionItems();
+
+        var selected = _temporaryEditorImages.FirstOrDefault(img =>
+            string.Equals(img.ImagePath, selectedImage.ImagePath, StringComparison.OrdinalIgnoreCase))
+            ?? _temporaryEditorImages.First();
+
+        foreach (var image in _temporaryEditorImages)
+        {
+            image.IsEditorSelected = false;
+        }
+
+        selected.IsEditorSelected = true;
+        _selectedEditorImage = selected;
+        OnPropertyChanged(nameof(SelectedEditorImage));
+        _state.SelectedEditorImage = selected;
+        ImageEditor.SelectedDatasetImage = selected;
+        ImageEditor.LoadImage(selected.ImagePath);
+
+        _state.SelectedTabIndex = 1;
+        StatusMessage = $"Editing: {selected.FullFileName}";
     }
 
     #endregion
