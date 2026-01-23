@@ -823,6 +823,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         }
     }
 
+
+
     private void OnDatasetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         InitializeEditorDatasets();

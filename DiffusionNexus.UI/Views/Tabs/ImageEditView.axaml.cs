@@ -393,32 +393,25 @@ public partial class ImageEditView : UserControl
                 FileLogger.LogWarning($"[Instance #{_instanceId}] DialogService or CurrentImagePath is null, returning Cancelled");
                 return SaveAsResult.Cancelled();
             }
-            var result = await vm.DialogService.ShowSaveAsDialogAsync(imageEditor.CurrentImagePath);
+            var result = await vm.DialogService.ShowSaveAsDialogAsync(
+                imageEditor.CurrentImagePath, 
+                vm.EditorDatasets.Where(d => !d.IsTemporary));
             FileLogger.LogExit($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
             return result;
+
+
         };
+
 
         // Handle actual save after dialog confirmation
         imageEditor.SaveAsRequested += (_, result) =>
         {
-            FileLogger.LogEntry($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}, Rating={result.Rating}");
+            FileLogger.LogEntry($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}, Rating={result.Rating}, Destination={result.Destination}");
             FileLogger.Log($"CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
             
-            if (result.IsCancelled)
+            if (result.IsCancelled || string.IsNullOrWhiteSpace(result.FileName) || imageEditor.CurrentImagePath is null)
             {
-                FileLogger.Log("Result is cancelled, returning");
-                return;
-            }
-            
-            if (string.IsNullOrWhiteSpace(result.FileName))
-            {
-                FileLogger.LogWarning("FileName is null or whitespace, returning");
-                return;
-            }
-            
-            if (imageEditor.CurrentImagePath is null)
-            {
-                FileLogger.LogWarning("CurrentImagePath is null, returning");
+                FileLogger.Log("Result is cancelled or invalid, returning");
                 return;
             }
 
@@ -430,21 +423,49 @@ public partial class ImageEditView : UserControl
                 return;
             }
             
-            FileLogger.Log($"_imageEditorCanvas is valid, EditorCore is {(_imageEditorCanvas.EditorCore is null ? "null" : "valid")}");
+            string newPath;
+            var extension = Path.GetExtension(imageEditor.CurrentImagePath);
 
-            // Build the new file path
-            var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
-            FileLogger.Log($"Directory from path: {directory ?? "(null)"}");
-            
-            if (string.IsNullOrEmpty(directory))
+            if (result.Destination == SaveAsDestination.OriginFolder)
             {
-                FileLogger.LogError("Cannot determine save location - directory is null/empty");
-                imageEditor.StatusMessage = "Cannot determine save location.";
-                return;
+                var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
+                if (string.IsNullOrEmpty(directory))
+                {
+                    FileLogger.LogError("Cannot determine save location - directory is null/empty");
+                    imageEditor.StatusMessage = "Cannot determine save location.";
+                    return;
+                }
+                newPath = Path.Combine(directory, result.FileName + extension);
+            }
+            else
+            {
+                var dataset = result.SelectedDataset;
+                if (dataset == null)
+                {
+                    FileLogger.LogError("SelectedDataset is null for ExistingDataset destination");
+                    imageEditor.StatusMessage = "No dataset selected.";
+                    return;
+                }
+                var version = result.SelectedVersion ?? 1;
+                var datasetFolderPath = dataset.GetVersionFolderPath(version);
+                
+                try
+                {
+                    if (!Directory.Exists(datasetFolderPath))
+                    {
+                        Directory.CreateDirectory(datasetFolderPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.LogError($"Failed to create dataset directory: {datasetFolderPath}", ex);
+                    imageEditor.StatusMessage = "Failed to create dataset directory.";
+                    return;
+                }
+                
+                newPath = Path.Combine(datasetFolderPath, result.FileName + extension);
             }
 
-            var extension = Path.GetExtension(imageEditor.CurrentImagePath);
-            var newPath = Path.Combine(directory, result.FileName + extension);
             FileLogger.Log($"New path to save: {newPath}");
 
             // Safety check: file existence is validated in dialog, but check again for race conditions
@@ -483,6 +504,7 @@ public partial class ImageEditView : UserControl
             
             FileLogger.LogExit();
         };
+
 
         imageEditor.SaveOverwriteConfirmRequested += async () =>
         {

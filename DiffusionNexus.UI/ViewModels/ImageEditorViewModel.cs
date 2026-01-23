@@ -1,4 +1,6 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
@@ -122,6 +124,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>
     /// Status message to display.
     /// </summary>
+
     public string? StatusMessage
     {
         get => _statusMessage;

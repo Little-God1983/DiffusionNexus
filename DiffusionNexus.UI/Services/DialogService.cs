@@ -195,9 +195,9 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
     }
 
-    public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath)
+    public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets)
     {
-        FileLogger.LogEntry($"originalFilePath={originalFilePath}");
+        FileLogger.LogEntry($"originalFilePath={originalFilePath}, datasetCount={availableDatasets.Count()}");
         
         try
         {
@@ -211,14 +211,16 @@ public class DialogService : IDialogService
             if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
             {
                 FileLogger.LogWarning($"ShowSaveAsDialogAsync called from non-UI thread (ThreadID: {Environment.CurrentManagedThreadId}). switching to UI thread.");
-                return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => ShowSaveAsDialogAsync(originalFilePath));
+                return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => ShowSaveAsDialogAsync(originalFilePath, availableDatasets));
             }
 
             FileLogger.Log("Creating SaveAsDialog...");
             var dialog = new SaveAsDialog();
             
-            FileLogger.Log("Calling WithOriginalFile...");
-            dialog.WithOriginalFile(originalFilePath);
+            FileLogger.Log("Calling WithOriginalFile and WithDatasets...");
+            dialog.WithOriginalFile(originalFilePath)
+                  .WithDatasets(availableDatasets);
+
             
             // Simplified logging to avoid accessing properties that might cause issues if window state is unstable
             FileLogger.Log($"Showing dialog on window type: {_window.GetType().Name}");

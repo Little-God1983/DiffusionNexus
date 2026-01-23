@@ -110,8 +110,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             bool showRatingControls = true) =>
             Task.CompletedTask;
 
-        public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath) =>
+        public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets) =>
             Task.FromResult(SaveAsResult.Cancelled());
+
 
         public Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage) =>
             Task.FromResult(ReplaceImageResult.Cancelled());

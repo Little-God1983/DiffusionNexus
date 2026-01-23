@@ -3,6 +3,15 @@ namespace DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
 /// <summary>
+/// Destination for the Save As operation.
+/// </summary>
+public enum SaveAsDestination
+{
+    OriginFolder,
+    ExistingDataset
+}
+
+/// <summary>
 /// Result from the Save As dialog containing the new filename and rating.
 /// </summary>
 public sealed record SaveAsResult
@@ -11,6 +20,11 @@ public sealed record SaveAsResult
     /// Gets whether the dialog was cancelled.
     /// </summary>
     public bool IsCancelled { get; init; }
+
+    /// <summary>
+    /// Gets the destination for the saved image.
+    /// </summary>
+    public SaveAsDestination Destination { get; init; } = SaveAsDestination.OriginFolder;
 
     /// <summary>
     /// Gets the new filename (without path or extension).
@@ -23,15 +37,41 @@ public sealed record SaveAsResult
     public ImageRatingStatus Rating { get; init; } = ImageRatingStatus.Unrated;
 
     /// <summary>
+    /// Gets the selected dataset when saving to a dataset.
+    /// </summary>
+    public DatasetCardViewModel? SelectedDataset { get; init; }
+
+    /// <summary>
+    /// Gets the selected version when saving to a dataset.
+    /// </summary>
+    public int? SelectedVersion { get; init; }
+
+    /// <summary>
     /// Creates a cancelled result.
     /// </summary>
     public static SaveAsResult Cancelled() => new() { IsCancelled = true };
 
     /// <summary>
-    /// Creates a successful result with the specified filename and rating.
+    /// Creates a successful result for saving to the origin folder.
     /// </summary>
-    /// <param name="fileName">The new filename (without path or extension).</param>
-    /// <param name="rating">The rating to apply.</param>
     public static SaveAsResult Success(string fileName, ImageRatingStatus rating) =>
-        new() { FileName = fileName, Rating = rating };
+        new()
+        {
+            Destination = SaveAsDestination.OriginFolder,
+            FileName = fileName,
+            Rating = rating
+        };
+
+    /// <summary>
+    /// Creates a successful result for saving to a dataset.
+    /// </summary>
+    public static SaveAsResult SuccessToDataset(string fileName, ImageRatingStatus rating, DatasetCardViewModel dataset, int? version) =>
+        new()
+        {
+            Destination = SaveAsDestination.ExistingDataset,
+            FileName = fileName,
+            Rating = rating,
+            SelectedDataset = dataset,
+            SelectedVersion = version
+        };
 }

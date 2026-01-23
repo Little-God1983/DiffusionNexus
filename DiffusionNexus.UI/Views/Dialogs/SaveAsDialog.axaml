@@ -2,16 +2,78 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         x:Class="DiffusionNexus.UI.Views.Dialogs.SaveAsDialog"
         x:DataType="local:SaveAsDialog"
-        Width="480"
+        Width="520"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        Title="Save As">
+        Title="Save As"
+        Background="#252526">
 
     <StackPanel Margin="20" Spacing="16">
         
+        <!-- Destination Selection -->
+        <StackPanel Spacing="12">
+            <TextBlock Text="Save Destination" FontWeight="SemiBold"/>
+            
+            <Border Background="#1A1A1A"
+                    CornerRadius="6"
+                    Padding="12"
+                    BorderThickness="1"
+                    BorderBrush="{Binding IsOriginSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+                <StackPanel Spacing="6">
+                    <RadioButton Content="Create new file in origin folder"
+                                 GroupName="DestinationOption"
+                                 IsChecked="{Binding IsOriginSelected, Mode=TwoWay}"/>
+                    <TextBlock Text="{Binding OriginFolderPath}"
+                               FontSize="12"
+                               Opacity="0.6"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Border Background="#1A1A1A"
+                    CornerRadius="6"
+                    Padding="12"
+                    BorderThickness="1"
+                    BorderBrush="{Binding IsDatasetSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}"
+                    IsEnabled="{Binding IsExistingDatasetEnabled}">
+                <StackPanel Spacing="8">
+                    <RadioButton Content="Add Image to existing Dataset"
+                                 GroupName="DestinationOption"
+                                 IsChecked="{Binding IsDatasetSelected, Mode=TwoWay}"/>
+                    
+                    <StackPanel Spacing="8" IsVisible="{Binding IsDatasetSelected}" Margin="24,0,0,0">
+                        <ComboBox ItemsSource="{Binding AvailableDatasets}"
+                                  SelectedItem="{Binding SelectedDataset, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                                    <TextBlock Text="{Binding Name}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="Version:" VerticalAlignment="Center" Opacity="0.7"/>
+                            <ComboBox ItemsSource="{Binding AvailableVersions}"
+                                      SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                                      MinWidth="80">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
         <!-- Filename Input -->
         <StackPanel Spacing="8">
             <TextBlock Text="New filename:" FontWeight="SemiBold"/>

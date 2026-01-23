@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -20,6 +21,10 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     private string _directoryPath = string.Empty;
     private HashSet<string> _existingFileNames = new(StringComparer.OrdinalIgnoreCase);
     private ImageRatingStatus _rating = ImageRatingStatus.Unrated;
+    
+    private SaveAsDestination _destination = SaveAsDestination.OriginFolder;
+    private DatasetCardViewModel? _selectedDataset;
+    private int? _selectedVersion;
 
     public SaveAsDialog()
     {
@@ -41,8 +46,13 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         FileLogger.Log("SaveAsDialog.InitializeComponent completed");
     }
 
+    public string OriginFolderPath => _directoryPath;
+
+    public bool IsExistingDatasetEnabled => AvailableDatasets.Count > 0;
+
     /// <summary>
     /// Gets or sets the filename (without extension).
+
     /// </summary>
     public string FileName
     {
@@ -182,10 +192,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// Gets whether there's any validation error to display.
     /// </summary>
     public bool HasValidationError => 
-        IsFilenameUnchanged || 
-        IsFilenameExists || 
-        HasInvalidCharacters ||
-        string.IsNullOrWhiteSpace(FileName);
+        (IsOriginSelected && (IsFilenameUnchanged || IsFilenameExists || HasInvalidCharacters || string.IsNullOrWhiteSpace(FileName))) ||
+        (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters));
 
     /// <summary>
     /// Gets the validation message to display.
@@ -200,11 +208,21 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             if (HasInvalidCharacters)
                 return $"Filename contains invalid characters: {InvalidCharactersFound}";
 
-            if (IsFilenameExists)
-                return $"A file named '{FileName.Trim()}{FileExtension}' already exists in this folder.";
+            if (IsOriginSelected)
+            {
+                if (IsFilenameExists)
+                    return $"A file named '{FileName.Trim()}{FileExtension}' already exists in this folder.";
             
-            if (IsFilenameUnchanged)
-                return "Filename must be different from the original to save as a new file.";
+                if (IsFilenameUnchanged)
+                    return "Filename must be different from the original to save as a new file.";
+            }
+            else if (IsDatasetSelected)
+            {
+                if (SelectedDataset == null)
+                    return "Please select a destination dataset.";
+                if (SelectedVersion == null)
+                    return "Please select a version.";
+            }
             
             return string.Empty;
         }
@@ -212,13 +230,12 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
 
     /// <summary>
     /// Gets whether the Save button should be enabled.
-    /// Disabled when filename is empty, unchanged from original, contains invalid chars, or already exists.
     /// </summary>
     public bool CanSave =>
         !string.IsNullOrWhiteSpace(FileName) &&
         !HasInvalidCharacters &&
-        !IsFilenameUnchanged &&
-        !IsFilenameExists;
+        (IsOriginSelected ? (!IsFilenameUnchanged && !IsFilenameExists) : (SelectedDataset != null && SelectedVersion != null));
+
 
     /// <summary>
     /// Gets the result after dialog closes.
@@ -263,6 +280,29 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Configures the dialog with available datasets.
+    /// </summary>
+    public SaveAsDialog WithDatasets(IEnumerable<DatasetCardViewModel> availableDatasets)
+    {
+        AvailableDatasets = availableDatasets.ToList();
+
+        if (AvailableDatasets.Count > 0)
+        {
+            SelectedDataset = AvailableDatasets.FirstOrDefault();
+        }
+        else
+        {
+            Destination = SaveAsDestination.OriginFolder;
+        }
+
+        OnPropertyChanged(nameof(AvailableDatasets));
+        OnPropertyChanged(nameof(IsExistingDatasetEnabled));
+        return this;
+    }
+
+
+
+    /// <summary>
     /// Loads all existing filenames in the directory that have the same extension.
     /// </summary>
     private void LoadExistingFileNames(string directory, string extension)
@@ -296,10 +336,19 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
 
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
-        Result = SaveAsResult.Success(FileName.Trim(), Rating);
-        FileLogger.Log($"OnSaveClick: Closing dialog with Success result: {Result.FileName}");
+        if (IsOriginSelected)
+        {
+            Result = SaveAsResult.Success(FileName.Trim(), Rating);
+        }
+        else
+        {
+            Result = SaveAsResult.SuccessToDataset(FileName.Trim(), Rating, SelectedDataset!, SelectedVersion);
+        }
+        
+        FileLogger.Log($"OnSaveClick: Closing dialog with result: {Result}");
         Close(Result);
     }
+
 
     private void OnCancelClick(object? sender, RoutedEventArgs e)
     {
@@ -307,6 +356,91 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         FileLogger.Log("OnCancelClick: Closing dialog with Cancelled result");
         Close(Result);
     }
+
+    public IReadOnlyList<DatasetCardViewModel> AvailableDatasets { get; private set; } = Array.Empty<DatasetCardViewModel>();
+    public ObservableCollection<int> AvailableVersions { get; } = [];
+
+
+    /// <summary>
+    /// Gets or sets the save destination.
+    /// </summary>
+    public SaveAsDestination Destination
+    {
+        get => _destination;
+        set
+        {
+            if (_destination != value)
+            {
+                _destination = value;
+                OnPropertyChanged(nameof(Destination));
+                OnPropertyChanged(nameof(IsOriginSelected));
+                OnPropertyChanged(nameof(IsDatasetSelected));
+                OnPropertyChanged(nameof(CanSave));
+                OnPropertyChanged(nameof(ValidationMessage));
+                OnPropertyChanged(nameof(HasValidationError));
+            }
+        }
+    }
+
+    public bool IsOriginSelected
+    {
+        get => Destination == SaveAsDestination.OriginFolder;
+        set { if (value) Destination = SaveAsDestination.OriginFolder; }
+    }
+
+    public bool IsDatasetSelected
+    {
+        get => Destination == SaveAsDestination.ExistingDataset;
+        set { if (value) Destination = SaveAsDestination.ExistingDataset; }
+    }
+
+    public DatasetCardViewModel? SelectedDataset
+    {
+        get => _selectedDataset;
+        set
+        {
+            if (_selectedDataset != value)
+            {
+                _selectedDataset = value;
+                OnPropertyChanged(nameof(SelectedDataset));
+                UpdateAvailableVersions();
+                OnPropertyChanged(nameof(CanSave));
+            }
+        }
+    }
+
+    public int? SelectedVersion
+    {
+        get => _selectedVersion;
+        set
+        {
+            if (_selectedVersion != value)
+            {
+                _selectedVersion = value;
+                OnPropertyChanged(nameof(SelectedVersion));
+                OnPropertyChanged(nameof(CanSave));
+            }
+        }
+    }
+
+    private void UpdateAvailableVersions()
+    {
+        AvailableVersions.Clear();
+        if (_selectedDataset != null)
+        {
+            var versions = _selectedDataset.GetAllVersionNumbers();
+            foreach (var version in versions)
+            {
+                AvailableVersions.Add(version);
+            }
+            SelectedVersion = AvailableVersions.LastOrDefault();
+        }
+        else
+        {
+            SelectedVersion = null;
+        }
+    }
+
 
     public new event PropertyChangedEventHandler? PropertyChanged;
 
