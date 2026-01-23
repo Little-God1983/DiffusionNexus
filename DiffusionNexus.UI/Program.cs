@@ -1,4 +1,5 @@
 using Avalonia;
+using DiffusionNexus.UI.Services;
 using Serilog;
 
 namespace DiffusionNexus.UI;
@@ -27,16 +28,19 @@ class Program
         try
         {
             Log.Information("DiffusionNexus application starting...");
+            FileLogger.Log("Application starting via Program.Main");
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)
         {
             Log.Fatal(ex, "Application crashed unexpectedly");
+            FileLogger.LogError("FATAL CRASH in Program.Main", ex);
             throw;
         }
         finally
         {
             Log.Information("DiffusionNexus application shutting down");
+            FileLogger.Log("Application shutting down");
             Log.CloseAndFlush();
         }
     }

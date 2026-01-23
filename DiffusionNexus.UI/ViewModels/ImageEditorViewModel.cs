@@ -1,4 +1,6 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
@@ -122,6 +124,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>
     /// Status message to display.
     /// </summary>
+
     public string? StatusMessage
     {
         get => _statusMessage;
@@ -1472,16 +1475,32 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <param name="rating">The rating applied to the saved image.</param>
     public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating)
     {
-        StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
-        ImageSaved?.Invoke(this, newPath);
-
-        // Publish event via aggregator
-        _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+        FileLogger.LogEntry($"newPath={newPath}, rating={rating}");
+        
+        try
         {
-            ImagePath = newPath,
-            OriginalPath = CurrentImagePath,
-            Rating = rating
-        });
+            StatusMessage = $"Saved as: {Path.GetFileName(newPath)}";
+            FileLogger.Log("Invoking ImageSaved event...");
+            ImageSaved?.Invoke(this, newPath);
+            FileLogger.Log("ImageSaved event invoked");
+
+            // Publish event via aggregator
+            FileLogger.Log($"Publishing to aggregator (aggregator is {(_eventAggregator is null ? "null" : "valid")})...");
+            _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+            {
+                ImagePath = newPath,
+                OriginalPath = CurrentImagePath,
+                Rating = rating
+            });
+            FileLogger.Log("Published to aggregator");
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in OnSaveAsNewCompleted", ex);
+            throw;
+        }
+        
+        FileLogger.LogExit();
     }
 
     /// <summary>
@@ -1489,18 +1508,34 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public void OnSaveOverwriteCompleted()
     {
-        StatusMessage = "Image saved";
-        if (CurrentImagePath is not null)
+        FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
+        
+        try
         {
-            ImageSaved?.Invoke(this, CurrentImagePath);
-
-            // Publish event via aggregator
-            _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+            StatusMessage = "Image saved";
+            if (CurrentImagePath is not null)
             {
-                ImagePath = CurrentImagePath,
-                OriginalPath = null
-            });
+                FileLogger.Log("Invoking ImageSaved event...");
+                ImageSaved?.Invoke(this, CurrentImagePath);
+                FileLogger.Log("ImageSaved event invoked");
+
+                // Publish event via aggregator
+                FileLogger.Log($"Publishing to aggregator (aggregator is {(_eventAggregator is null ? "null" : "valid")})...");
+                _eventAggregator?.PublishImageSaved(new ImageSavedEventArgs
+                {
+                    ImagePath = CurrentImagePath,
+                    OriginalPath = null
+                });
+                FileLogger.Log("Published to aggregator");
+            }
         }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in OnSaveOverwriteCompleted", ex);
+            throw;
+        }
+        
+        FileLogger.LogExit();
     }
 
     /// <summary>
@@ -1509,7 +1544,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <param name="exportPath">The path where the image was exported.</param>
     public void OnExportCompleted(string exportPath)
     {
+        FileLogger.LogEntry($"exportPath={exportPath}");
         StatusMessage = $"Exported to: {Path.GetFileName(exportPath)}";
+        FileLogger.LogExit();
     }
 
     /// <summary>
@@ -1665,28 +1702,53 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private async Task ExecuteSaveAsNewAsync()
     {
-        if (SaveAsDialogRequested is null) return;
+        FileLogger.LogEntry();
+        
+        if (SaveAsDialogRequested is null)
+        {
+            FileLogger.LogWarning("SaveAsDialogRequested is null");
+            return;
+        }
 
+        FileLogger.Log("Invoking SaveAsDialogRequested...");
         var result = await SaveAsDialogRequested.Invoke();
+        FileLogger.Log($"Dialog result: IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
+        
         if (!result.IsCancelled)
         {
+            FileLogger.Log("Invoking SaveAsRequested event...");
             SaveAsRequested?.Invoke(this, result);
+            FileLogger.Log("SaveAsRequested event completed");
         }
+        
+        FileLogger.LogExit();
     }
 
     private async Task ExecuteSaveOverwriteAsync()
     {
+        FileLogger.LogEntry();
+        
         if (SaveOverwriteConfirmRequested is null)
         {
+            FileLogger.Log("No confirmation requested, invoking SaveOverwriteRequested directly");
             SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
+            FileLogger.LogExit();
             return;
         }
 
+
+        FileLogger.Log("Requesting confirmation...");
         var confirmed = await SaveOverwriteConfirmRequested.Invoke();
+        FileLogger.Log($"Confirmation result: {confirmed}");
+        
         if (confirmed)
         {
+            FileLogger.Log("Invoking SaveOverwriteRequested...");
             SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
+            FileLogger.Log("SaveOverwriteRequested completed");
         }
+        
+        FileLogger.LogExit();
     }
 
     private Task ExecuteExportAsync()

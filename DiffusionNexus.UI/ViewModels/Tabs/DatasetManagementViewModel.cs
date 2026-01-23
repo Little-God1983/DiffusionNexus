@@ -673,12 +673,30 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
     {
-        // Refresh the current dataset if we're viewing it
-        if (ActiveDataset is not null && IsViewingDataset)
+        FileLogger.LogEntry($"ImagePath={e.ImagePath ?? "(null)"}");
+        FileLogger.Log($"ActiveDataset={ActiveDataset?.Name ?? "(null)"}, IsViewingDataset={IsViewingDataset}");
+        
+        try
         {
-            ActiveDataset.RefreshImageInfo();
-            await RefreshActiveDatasetAsync();
+            // Refresh the current dataset if we're viewing it
+            if (ActiveDataset is not null && IsViewingDataset)
+            {
+                FileLogger.Log("Refreshing active dataset...");
+                ActiveDataset.RefreshImageInfo();
+                await RefreshActiveDatasetAsync();
+                FileLogger.Log("Refresh completed");
+            }
+            else
+            {
+                FileLogger.Log("Not viewing a dataset, skipping refresh");
+            }
         }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in DatasetManagementViewModel.OnImageSaved", ex);
+        }
+        
+        FileLogger.LogExit();
     }
 
     private void OnImageRatingChanged(object? sender, ImageRatingChangedEventArgs e)

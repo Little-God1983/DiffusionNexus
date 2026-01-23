@@ -627,6 +627,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(SelectionText));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
+        SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
@@ -663,6 +664,56 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         catch
         {
         }
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToImageEditAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "The Image Editor only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var editorImages = imageItems
+            .Select(item => DatasetImageViewModel.FromFile(item.FilePath, _eventAggregator))
+            .ToList();
+
+        var tempDataset = new DatasetCardViewModel
+        {
+            Name = "Temp Dataset",
+            FolderPath = "TEMP://GenerationGallery",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = editorImages.Count,
+            TotalImageCountAllVersions = editorImages.Count,
+            IsTemporary = true
+        };
+
+        _eventAggregator.PublishNavigateToImageEditor(new NavigateToImageEditorEventArgs
+        {
+            Dataset = tempDataset,
+            Image = editorImages[0],
+            Images = editorImages
+        });
     }
 
     private void UpdateGroupingOptions()

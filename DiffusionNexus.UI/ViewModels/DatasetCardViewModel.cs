@@ -42,6 +42,7 @@ public class DatasetCardViewModel : ObservableObject
     private bool _isNsfw;
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
+    private bool _isTemporary;
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -59,6 +60,15 @@ public class DatasetCardViewModel : ObservableObject
     {
         get => _folderPath;
         set => SetProperty(ref _folderPath, value);
+    }
+
+    /// <summary>
+    /// Whether this dataset is temporary (in-memory only).
+    /// </summary>
+    public bool IsTemporary
+    {
+        get => _isTemporary;
+        set => SetProperty(ref _isTemporary, value);
     }
 
     /// <summary>

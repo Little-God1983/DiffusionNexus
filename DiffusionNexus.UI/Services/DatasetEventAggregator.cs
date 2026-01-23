@@ -249,6 +249,11 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
     /// The dataset containing the image.
     /// </summary>
     public required DatasetCardViewModel Dataset { get; init; }
+
+    /// <summary>
+    /// Optional collection of images to load into the editor.
+    /// </summary>
+    public IReadOnlyList<DatasetImageViewModel>? Images { get; init; }
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -45,9 +46,12 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IImageUpscalingService? _upscalingService;
     private bool _disposed;
 
+    private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
     private DatasetCardViewModel? _selectedEditorDataset;
     private EditorVersionItem? _selectedEditorVersion;
     private DatasetImageViewModel? _selectedEditorImage;
+    private DatasetCardViewModel? _temporaryEditorDataset;
+    private readonly List<DatasetImageViewModel> _temporaryEditorImages = [];
     
     // Filter properties - all default to true (show all)
     private bool _showReady = true;
@@ -192,7 +196,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// <summary>
     /// Collection of all datasets for the dropdown.
     /// </summary>
-    public ObservableCollection<DatasetCardViewModel> Datasets => _state.Datasets;
+    public ObservableCollection<DatasetCardViewModel> EditorDatasets => _editorDatasets;
 
     /// <summary>
     /// Version items for the version dropdown.
@@ -252,6 +256,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
+        _state.Datasets.CollectionChanged += OnDatasetsCollectionChanged;
+
+        InitializeEditorDatasets();
 
         // Initialize commands
         LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
@@ -280,8 +287,23 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnNavigateToImageEditorRequested(object? sender, NavigateToImageEditorEventArgs e)
     {
+        if (e.Dataset.IsTemporary || e.Images is not null)
+        {
+            var tempImages = e.Images?.Where(img => !img.IsVideo).ToList()
+                ?? new List<DatasetImageViewModel> { e.Image };
+
+            if (tempImages.Count == 0)
+            {
+                StatusMessage = "No images available for editing.";
+                return;
+            }
+
+            LoadTemporaryEditorDataset(e.Dataset, tempImages, e.Image);
+            return;
+        }
+
         // Find the matching dataset in the Datasets collection
-        var editorDataset = Datasets.FirstOrDefault(d =>
+        var editorDataset = EditorDatasets.FirstOrDefault(d =>
             string.Equals(d.FolderPath, e.Dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
 
         if (editorDataset is null) return;
@@ -347,23 +369,55 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnImageSaved(object? sender, ImageSavedEventArgs e)
     {
-        // Refresh the thumbnail list when an image is saved
-        if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
+        FileLogger.LogEntry($"ImagePath={e.ImagePath ?? "(null)"}, OriginalPath={e.OriginalPath ?? "(null)"}");
+        
+        try
         {
+            // Skip refresh for temporary datasets - saved images go to their original location,
+            // not to the temp dataset folder
+            if (_selectedEditorDataset is null)
+            {
+                FileLogger.Log("_selectedEditorDataset is null, returning early");
+                return;
+            }
+            
+            if (_selectedEditorVersion is null)
+            {
+                FileLogger.Log("_selectedEditorVersion is null, returning early");
+                return;
+            }
+
+            FileLogger.Log($"Dataset: {_selectedEditorDataset.Name}, IsTemporary={_selectedEditorDataset.IsTemporary}");
+
+            if (_selectedEditorDataset.IsTemporary)
+            {
+                // For temporary datasets, the image is saved to its original folder.
+                // No need to refresh the temp dataset's thumbnail list.
+                FileLogger.Log("Dataset is temporary, skipping refresh");
+                return;
+            }
+
             var currentVersionNumber = _selectedEditorVersion.Version;
+            FileLogger.Log($"Current version: {currentVersionNumber}");
 
             // Reload the version items (to update image counts)
+            FileLogger.Log("Refreshing version items...");
             await RefreshVersionItemsAsync(currentVersionNumber);
+            FileLogger.Log("Version items refreshed");
 
             // Reload images for the current version
+            FileLogger.Log("Loading editor dataset images...");
             await LoadEditorDatasetImagesAsync();
+            FileLogger.Log("Editor dataset images loaded");
 
             // Find and select the saved image in the list
+            FileLogger.Log($"Looking for saved image in list: {e.ImagePath}");
             var savedImageVm = EditorDatasetImages.FirstOrDefault(img =>
                 string.Equals(img.ImagePath, e.ImagePath, StringComparison.OrdinalIgnoreCase));
 
             if (savedImageVm is not null)
             {
+                FileLogger.Log("Found saved image, selecting it");
                 // Clear previous selection
                 foreach (var img in EditorDatasetImages)
                 {
@@ -375,14 +429,33 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 OnPropertyChanged(nameof(SelectedEditorImage));
                 _state.SelectedEditorImage = savedImageVm;
             }
+            else
+            {
+                FileLogger.Log("Saved image not found in list");
+            }
+            
+            FileLogger.LogExit("success");
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in OnImageSaved", ex);
+            StatusMessage = $"Error refreshing images: {ex.Message}";
         }
     }
 
     private async void OnImageDeleted(object? sender, ImageDeletedEventArgs e)
     {
-        // Refresh the thumbnail list when an image is deleted
-        if (_selectedEditorDataset is not null && _selectedEditorVersion is not null)
+        FileLogger.LogEntry($"ImagePath={e.ImagePath ?? "(null)"}");
+        
+        try
         {
+            // Skip refresh for temporary datasets
+            if (_selectedEditorDataset is null || _selectedEditorVersion is null || _selectedEditorDataset.IsTemporary)
+            {
+                FileLogger.Log("Skipping - dataset/version is null or temporary");
+                return;
+            }
+
             var currentVersionNumber = _selectedEditorVersion.Version;
 
             // Check if the deleted image was in our current dataset/version
@@ -405,6 +478,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                     ImageEditor.ClearImageCommand.Execute(null);
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error refreshing images: {ex.Message}";
         }
     }
 
@@ -442,7 +519,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     {
         // The Datasets collection is shared via IDatasetState, so it's already updated.
         // We just need to notify the UI that the collection may have changed.
-        OnPropertyChanged(nameof(Datasets));
+        OnPropertyChanged(nameof(EditorDatasets));
     }
 
     /// <summary>
@@ -561,6 +638,11 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         OnPropertyChanged(nameof(FilterStatusText));
 
         if (_selectedEditorDataset is null) return;
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            PopulateTemporaryVersionItems();
+            return;
+        }
 
         try
         {
@@ -584,6 +666,13 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private async Task RefreshVersionItemsAsync(int versionToSelect)
     {
         if (_selectedEditorDataset is null) return;
+
+        // For temporary datasets, use the special population method
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            PopulateTemporaryVersionItems();
+            return;
+        }
 
         EditorVersionItems.Clear();
         await PopulateVersionItemsAsync(_selectedEditorDataset, EditorVersionItems);
@@ -635,6 +724,17 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         if (_selectedEditorDataset is null || _selectedEditorVersion is null)
         {
             OnPropertyChanged(nameof(FilterStatusText));
+            return Task.CompletedTask;
+        }
+
+        if (_selectedEditorDataset.IsTemporary)
+        {
+            foreach (var image in _temporaryEditorImages)
+            {
+                EditorDatasetImages.Add(image);
+            }
+
+            ApplyFilters();
             return Task.CompletedTask;
         }
 
@@ -703,9 +803,86 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.VersionCreated -= OnVersionCreated;
             _eventAggregator.ImageAdded -= OnImageAdded;
             _state.StateChanged -= OnStateChanged;
+            _state.Datasets.CollectionChanged -= OnDatasetsCollectionChanged;
         }
 
         _disposed = true;
+    }
+
+    private void InitializeEditorDatasets()
+    {
+        _editorDatasets.Clear();
+        foreach (var dataset in _state.Datasets)
+        {
+            _editorDatasets.Add(dataset);
+        }
+
+        if (_temporaryEditorDataset is not null && !_editorDatasets.Contains(_temporaryEditorDataset))
+        {
+            _editorDatasets.Add(_temporaryEditorDataset);
+        }
+    }
+
+
+
+    private void OnDatasetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        InitializeEditorDatasets();
+    }
+
+    private void PopulateTemporaryVersionItems()
+    {
+        EditorVersionItems.Clear();
+        var imageCount = _temporaryEditorImages.Count;
+        var versionItem = EditorVersionItem.Create(1, imageCount);
+        EditorVersionItems.Add(versionItem);
+        SelectedEditorVersion = versionItem;
+    }
+
+    private void LoadTemporaryEditorDataset(
+        DatasetCardViewModel dataset,
+        IReadOnlyList<DatasetImageViewModel> images,
+        DatasetImageViewModel selectedImage)
+    {
+        _temporaryEditorDataset = dataset;
+        _temporaryEditorDataset.IsTemporary = true;
+        _temporaryEditorDataset.CurrentVersion = 1;
+        _temporaryEditorDataset.TotalVersions = 1;
+        _temporaryEditorDataset.ImageCount = images.Count;
+        _temporaryEditorDataset.TotalImageCountAllVersions = images.Count;
+
+        if (!_editorDatasets.Contains(_temporaryEditorDataset))
+        {
+            _editorDatasets.Add(_temporaryEditorDataset);
+        }
+
+        _temporaryEditorImages.Clear();
+        _temporaryEditorImages.AddRange(images);
+
+        _selectedEditorDataset = _temporaryEditorDataset;
+        OnPropertyChanged(nameof(SelectedEditorDataset));
+        _state.SelectedEditorDataset = _temporaryEditorDataset;
+
+        PopulateTemporaryVersionItems();
+
+        var selected = _temporaryEditorImages.FirstOrDefault(img =>
+            string.Equals(img.ImagePath, selectedImage.ImagePath, StringComparison.OrdinalIgnoreCase))
+            ?? _temporaryEditorImages.First();
+
+        foreach (var image in _temporaryEditorImages)
+        {
+            image.IsEditorSelected = false;
+        }
+
+        selected.IsEditorSelected = true;
+        _selectedEditorImage = selected;
+        OnPropertyChanged(nameof(SelectedEditorImage));
+        _state.SelectedEditorImage = selected;
+        ImageEditor.SelectedDatasetImage = selected;
+        ImageEditor.LoadImage(selected.ImagePath);
+
+        _state.SelectedTabIndex = 1;
+        StatusMessage = $"Editing: {selected.FullFileName}";
     }
 
     #endregion
