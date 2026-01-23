@@ -4,6 +4,7 @@ using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.Tabs;
 using DiffusionNexus.Domain.Services;
 
@@ -343,7 +344,9 @@ public partial class ImageEditView : UserControl
             {
                 return SaveAsResult.Cancelled();
             }
-            return await vm.DialogService.ShowSaveAsDialogAsync(imageEditor.CurrentImagePath);
+
+            var sourcePath = GetEffectiveSourcePath(imageEditor.CurrentImagePath);
+            return await vm.DialogService.ShowSaveAsDialogAsync(sourcePath);
         };
 
         // Handle actual save after dialog confirmation
@@ -354,9 +357,11 @@ public partial class ImageEditView : UserControl
                 return;
             }
 
+            var basePath = GetEffectiveSourcePath(imageEditor.CurrentImagePath);
+
             // Build the new file path
-            var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
-            var extension = Path.GetExtension(imageEditor.CurrentImagePath);
+            var directory = Path.GetDirectoryName(basePath);
+            var extension = Path.GetExtension(basePath);
             var newPath = Path.Combine(directory ?? string.Empty, result.FileName + extension);
 
             // Safety check: file existence is validated in dialog, but check again for race conditions
@@ -393,14 +398,26 @@ public partial class ImageEditView : UserControl
 
         imageEditor.SaveOverwriteRequested += (_, _) =>
         {
-            if (_imageEditorCanvas.EditorCore.SaveOverwrite())
-            {
-                imageEditor.OnSaveOverwriteCompleted();
-            }
-            else
+            if (!_imageEditorCanvas.EditorCore.SaveOverwrite())
             {
                 imageEditor.StatusMessage = "Failed to save image.";
+                return;
             }
+
+            if (imageEditor.CurrentImagePath is null)
+            {
+                imageEditor.StatusMessage = "Failed to locate original image.";
+                return;
+            }
+
+            if (TryResolveTemporarySourcePath(imageEditor.CurrentImagePath, out var sourcePath) &&
+                !_imageEditorCanvas.EditorCore.SaveImage(sourcePath))
+            {
+                imageEditor.StatusMessage = "Failed to save image to original location.";
+                return;
+            }
+
+            imageEditor.OnSaveOverwriteCompleted();
         };
 
         // Handle export requests
@@ -478,5 +495,48 @@ public partial class ImageEditView : UserControl
         {
             // No permission to write - rating will be lost on reload
         }
+    }
+
+    private static bool TryResolveTemporarySourcePath(string imagePath, out string sourcePath)
+    {
+        sourcePath = string.Empty;
+
+        if (!imagePath.StartsWith(TemporaryDatasetConstants.GenerationGalleryTempRootPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var metadataPath = imagePath + TemporaryDatasetConstants.SourceMetadataExtension;
+        if (!File.Exists(metadataPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var metadataValue = File.ReadAllText(metadataPath);
+            if (string.IsNullOrWhiteSpace(metadataValue))
+            {
+                return false;
+            }
+
+            sourcePath = metadataValue;
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetEffectiveSourcePath(string imagePath)
+    {
+        return TryResolveTemporarySourcePath(imagePath, out var sourcePath)
+            ? sourcePath
+            : imagePath;
     }
 }

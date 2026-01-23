@@ -109,6 +109,10 @@
         </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+          <Button Content="Send to Edit"
+                  Command="{Binding SendSelectedToImageEditCommand}"
+                  Padding="10,6"
+                  IsEnabled="{Binding HasSelection}"/>
           <Button Content="Open Viewer"
                   Command="{Binding OpenViewerCommand}"
                   Padding="10,6"

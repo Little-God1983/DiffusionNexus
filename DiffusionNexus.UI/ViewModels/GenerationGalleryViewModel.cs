@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -9,6 +11,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -238,6 +241,73 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         if (index < 0) return;
 
         await OpenImageViewerAtIndexAsync(index);
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToImageEditAsync()
+    {
+        if (DialogService is null || _datasetState is null || _eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        if (selectedItems.Any(item => item.IsVideo))
+        {
+            await DialogService.ShowMessageAsync(
+                "Unsupported Media",
+                "Video editing is not supported. Please select image files only.");
+            return;
+        }
+
+        string? firstTempPath = null;
+
+        await RunBusyAsync(() =>
+        {
+            var tempDataset = EnsureTemporaryDataset();
+            var versionPath = tempDataset.GetVersionFolderPath(tempDataset.CurrentVersion);
+            Directory.CreateDirectory(versionPath);
+
+            foreach (var item in selectedItems)
+            {
+                var destinationPath = Path.Combine(versionPath, BuildTemporaryFileName(item.FilePath));
+                var sourceMetadataPath = destinationPath + TemporaryDatasetConstants.SourceMetadataExtension;
+                if (!File.Exists(destinationPath))
+                {
+                    File.Copy(item.FilePath, destinationPath);
+                }
+
+                File.WriteAllText(sourceMetadataPath, item.FilePath);
+
+                firstTempPath ??= destinationPath;
+            }
+
+            tempDataset.RefreshImageInfo();
+
+            _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
+            {
+                Dataset = tempDataset,
+                AddedImages = []
+            });
+        }, "Preparing images for edit...");
+
+        if (firstTempPath is null)
+        {
+            return;
+        }
+
+        var datasetImage = DatasetImageViewModel.FromFile(firstTempPath, _eventAggregator);
+
+        _eventAggregator.PublishNavigateToImageEditor(new NavigateToImageEditorEventArgs
+        {
+            Dataset = EnsureTemporaryDataset(),
+            Image = datasetImage
+        });
     }
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
@@ -627,6 +697,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(SelectionText));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
+        SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
@@ -793,5 +864,55 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         }
 
         return $"{rootName}/{normalized}";
+    }
+
+    private DatasetCardViewModel EnsureTemporaryDataset()
+    {
+        if (_datasetState is null)
+        {
+            throw new InvalidOperationException("Dataset state is not available.");
+        }
+
+        var existing = _datasetState.Datasets.FirstOrDefault(dataset =>
+            string.Equals(dataset.FolderPath, TemporaryDatasetConstants.GenerationGalleryTempDatasetPath, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var tempDataset = new DatasetCardViewModel
+        {
+            Name = TemporaryDatasetConstants.GenerationGalleryTempDatasetName,
+            FolderPath = TemporaryDatasetConstants.GenerationGalleryTempDatasetPath,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = 0,
+            VideoCount = 0,
+            CategoryId = null,
+            CategoryOrder = null,
+            CategoryName = "Temporary",
+            Type = null,
+            IsNsfw = false
+        };
+
+        tempDataset.VersionNsfwFlags[1] = false;
+        _datasetState.Datasets.Add(tempDataset);
+
+        _eventAggregator?.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = tempDataset
+        });
+
+        return tempDataset;
+    }
+
+    private static string BuildTemporaryFileName(string originalPath)
+    {
+        var extension = Path.GetExtension(originalPath);
+        var fileName = Path.GetFileNameWithoutExtension(originalPath);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(originalPath)))[..12];
+        return $"{fileName}_{hash}{extension}";
     }
 }

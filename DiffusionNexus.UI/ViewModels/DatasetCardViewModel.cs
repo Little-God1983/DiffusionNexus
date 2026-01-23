@@ -861,6 +861,9 @@ public class DatasetCardViewModel : ObservableObject
     /// </summary>
     public List<int> GetAllVersionNumbers()
     {
+        if (IsTemporaryDataset)
+            return [1];
+
         if (!Directory.Exists(_folderPath))
             return [1];
 
@@ -878,6 +881,12 @@ public class DatasetCardViewModel : ObservableObject
     /// </summary>
     private void DetectAndLoadMedia()
     {
+        if (IsTemporaryDataset)
+        {
+            LoadTemporaryDatasetMedia();
+            return;
+        }
+
         if (!Directory.Exists(_folderPath))
         {
             ImageCount = 0;
@@ -1133,7 +1142,15 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Gets the folder path for a specific version.
     /// </summary>
-    public string GetVersionFolderPath(int version) => Path.Combine(_folderPath, $"V{version}");
+    public string GetVersionFolderPath(int version)
+    {
+        if (IsTemporaryDataset)
+        {
+            return Path.Combine(TemporaryDatasetConstants.GenerationGalleryTempRootPath, $"V{version}");
+        }
+
+        return Path.Combine(_folderPath, $"V{version}");
+    }
 
     /// <summary>
     /// Gets the next version number.
@@ -1204,6 +1221,56 @@ public class DatasetCardViewModel : ObservableObject
         TotalCaptionCountAllVersions = captions.Count;
         
         // Update thumbnail
+        if (images.Count > 0)
+        {
+            ThumbnailPath = images.First();
+        }
+        else if (videos.Count > 0)
+        {
+            var firstVideo = videos.First();
+            var videoThumbnail = GetVideoThumbnailPath(firstVideo);
+            ThumbnailPath = File.Exists(videoThumbnail) ? videoThumbnail : firstVideo;
+        }
+        else
+        {
+            ThumbnailPath = null;
+        }
+    }
+
+    private bool IsTemporaryDataset =>
+        string.Equals(_folderPath, TemporaryDatasetConstants.GenerationGalleryTempDatasetPath, StringComparison.OrdinalIgnoreCase);
+
+    private void LoadTemporaryDatasetMedia()
+    {
+        IsVersionedStructure = true;
+        TotalVersions = 1;
+        CurrentVersion = 1;
+
+        var versionPath = GetVersionFolderPath(1);
+        if (!Directory.Exists(versionPath))
+        {
+            ImageCount = 0;
+            VideoCount = 0;
+            CaptionCount = 0;
+            TotalImageCountAllVersions = 0;
+            TotalVideoCountAllVersions = 0;
+            TotalCaptionCountAllVersions = 0;
+            ThumbnailPath = null;
+            return;
+        }
+
+        var files = Directory.EnumerateFiles(versionPath).ToList();
+        var videos = files.Where(f => IsVideoFile(f)).ToList();
+        var images = files.Where(f => IsImageFile(f) && !IsVideoThumbnailFile(f)).ToList();
+        var captions = files.Where(f => IsCaptionFile(f)).ToList();
+
+        ImageCount = images.Count;
+        VideoCount = videos.Count;
+        CaptionCount = captions.Count;
+        TotalImageCountAllVersions = images.Count;
+        TotalVideoCountAllVersions = videos.Count;
+        TotalCaptionCountAllVersions = captions.Count;
+
         if (images.Count > 0)
         {
             ThumbnailPath = images.First();
