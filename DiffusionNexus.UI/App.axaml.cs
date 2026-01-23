@@ -268,11 +268,12 @@ public partial class App : Application
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
         var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
-
-        mainViewModel.RegisterModule(new ModuleItem(
+        var loraDatasetHelperModule = new ModuleItem(
             "LoRA Dataset Helper",
             "avares://DiffusionNexus.UI/Assets/LoraTrain.png",
-            loraDatasetHelperView));
+            loraDatasetHelperView);
+
+        mainViewModel.RegisterModule(loraDatasetHelperModule);
 
         // LoRA Viewer module
         var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
@@ -303,8 +304,19 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(settingsModule);
 
-        // Subscribe to navigate to settings event
+        // Subscribe to navigation events
         var eventAggregator = Services!.GetRequiredService<IDatasetEventAggregator>();
+        
+        eventAggregator.NavigateToImageEditorRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+        };
+
+        eventAggregator.NavigateToBatchCropScaleRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+        };
+
         eventAggregator.NavigateToSettingsRequested += (_, _) =>
         {
             mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
