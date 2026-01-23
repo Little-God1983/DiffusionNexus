@@ -284,21 +284,26 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// </summary>
     public SaveAsDialog WithDatasets(IEnumerable<DatasetCardViewModel> availableDatasets)
     {
-        AvailableDatasets = availableDatasets.ToList();
+        AvailableDatasets.Clear();
+        foreach (var dataset in availableDatasets)
+        {
+            AvailableDatasets.Add(dataset);
+        }
 
         if (AvailableDatasets.Count > 0)
         {
-            SelectedDataset = AvailableDatasets.FirstOrDefault();
+            SelectedDataset = AvailableDatasets[0];
+            Destination = SaveAsDestination.ExistingDataset;
         }
         else
         {
             Destination = SaveAsDestination.OriginFolder;
         }
 
-        OnPropertyChanged(nameof(AvailableDatasets));
         OnPropertyChanged(nameof(IsExistingDatasetEnabled));
         return this;
     }
+
 
 
 
@@ -357,8 +362,9 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         Close(Result);
     }
 
-    public IReadOnlyList<DatasetCardViewModel> AvailableDatasets { get; private set; } = Array.Empty<DatasetCardViewModel>();
+    public ObservableCollection<DatasetCardViewModel> AvailableDatasets { get; } = [];
     public ObservableCollection<int> AvailableVersions { get; } = [];
+
 
 
     /// <summary>
