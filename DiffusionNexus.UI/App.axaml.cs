@@ -294,7 +294,8 @@ public partial class App : Application
             generationGalleryView));
 
         // Image Comparer module
-        var imageCompareVm = new ImageCompareViewModel();
+        var datasetState = Services!.GetRequiredService<IDatasetState>();
+        var imageCompareVm = new ImageCompareViewModel(datasetState);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
         mainViewModel.RegisterModule(new ModuleItem(

@@ -1,56 +1,69 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Controls;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the before/after image comparer experience.
+/// Integrates with IDatasetState to load real datasets and their versions.
 /// </summary>
 public partial class ImageCompareViewModel : ViewModelBase
 {
-    private readonly Dictionary<string, ObservableCollection<ImageCompareItem>> _datasets;
+    private readonly IDatasetState? _datasetState;
     private ImageCompareItem? _selectedBeforeImage;
     private ImageCompareItem? _selectedAfterImage;
 
+    /// <summary>
+    /// Design-time constructor with empty datasets.
+    /// </summary>
     public ImageCompareViewModel()
-        : this(new Dictionary<string, IEnumerable<ImageCompareItem>>
-        {
-            { "Dataset A", [] },
-            { "Dataset B", [] }
-        })
+        : this(null)
     {
     }
 
-    public ImageCompareViewModel(IReadOnlyDictionary<string, IEnumerable<ImageCompareItem>> datasets)
+    /// <summary>
+    /// Runtime constructor with dataset state service.
+    /// </summary>
+    /// <param name="datasetState">The dataset state service for loading real datasets.</param>
+    public ImageCompareViewModel(IDatasetState? datasetState)
     {
-        _datasets = datasets.ToDictionary(
-            pair => pair.Key,
-            pair => new ObservableCollection<ImageCompareItem>(pair.Value));
+        _datasetState = datasetState;
 
-        DatasetOptions = new ObservableCollection<string>(_datasets.Keys);
-        FitModeOptions = new List<CompareFitMode> { CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne };
-        FilmstripItems = new ObservableCollection<ImageCompareItem>();
-
-        SelectedBeforeDataset = DatasetOptions.FirstOrDefault();
-        SelectedAfterDataset = DatasetOptions.Skip(1).FirstOrDefault() ?? SelectedBeforeDataset;
-
-        EnsureSelectedImages();
-        AssignSide = CompareAssignSide.Before;
-        FitMode = CompareFitMode.Fit;
-        SliderValue = 50d;
-        IsTrayOpen = false;
+        DatasetOptions = [];
+        BeforeVersionOptions = [];
+        AfterVersionOptions = [];
+        FitModeOptions = [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne];
+        FilmstripItems = [];
 
         SwapCommand = new RelayCommand(SwapImages, () => SelectedBeforeImage is not null || SelectedAfterImage is not null);
         ResetSliderCommand = new RelayCommand(ResetSlider);
         AssignImageCommand = new RelayCommand<ImageCompareItem?>(AssignImage);
 
-        RefreshFilmstrip();
+        AssignSide = CompareAssignSide.Before;
+        FitMode = CompareFitMode.Fit;
+        SliderValue = 50d;
+        IsTrayOpen = false;
+
+        // Subscribe to dataset collection changes to refresh when datasets are loaded
+        if (_datasetState is not null)
+        {
+            _datasetState.Datasets.CollectionChanged += OnDatasetsCollectionChanged;
+        }
+
+        LoadDatasets();
     }
 
-    public ObservableCollection<string> DatasetOptions { get; }
+    public ObservableCollection<DatasetCardViewModel> DatasetOptions { get; }
+
+    public ObservableCollection<int> BeforeVersionOptions { get; }
+
+    public ObservableCollection<int> AfterVersionOptions { get; }
 
     public ObservableCollection<ImageCompareItem> FilmstripItems { get; }
 
@@ -63,10 +76,16 @@ public partial class ImageCompareViewModel : ViewModelBase
     public IRelayCommand<ImageCompareItem?> AssignImageCommand { get; }
 
     [ObservableProperty]
-    private string? _selectedBeforeDataset;
+    private DatasetCardViewModel? _selectedBeforeDataset;
 
     [ObservableProperty]
-    private string? _selectedAfterDataset;
+    private int _selectedBeforeVersion = 1;
+
+    [ObservableProperty]
+    private DatasetCardViewModel? _selectedAfterDataset;
+
+    [ObservableProperty]
+    private int _selectedAfterVersion = 1;
 
     [ObservableProperty]
     private CompareAssignSide _assignSide;
@@ -120,9 +139,9 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     public string? AfterImagePath => SelectedAfterImage?.ImagePath;
 
-    public string BeforeLabel => BuildLabel(SelectedBeforeDataset, SelectedBeforeImage?.DisplayName, "Before");
+    public string BeforeLabel => BuildLabel(SelectedBeforeDataset?.Name, SelectedBeforeVersion, SelectedBeforeImage?.DisplayName, "Before");
 
-    public string AfterLabel => BuildLabel(SelectedAfterDataset, SelectedAfterImage?.DisplayName, "After");
+    public string AfterLabel => BuildLabel(SelectedAfterDataset?.Name, SelectedAfterVersion, SelectedAfterImage?.DisplayName, "After");
 
     public double TrayHeight => 260d;
 
@@ -154,25 +173,140 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
     }
 
-    partial void OnSelectedBeforeDatasetChanged(string? value)
+    /// <summary>
+    /// Handles changes to the datasets collection to refresh when datasets are loaded.
+    /// </summary>
+    private void OnDatasetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        EnsureSelectedImages();
-        if (AssignSide == CompareAssignSide.Before)
+        LoadDatasets();
+    }
+
+    /// <summary>
+    /// Loads datasets from the dataset state service.
+    /// </summary>
+    private void LoadDatasets()
+    {
+        if (_datasetState is null)
         {
-            RefreshFilmstrip();
+            return;
         }
 
+        // Preserve current selections if possible
+        var previousBeforeDataset = SelectedBeforeDataset?.Name;
+        var previousAfterDataset = SelectedAfterDataset?.Name;
+
+        DatasetOptions.Clear();
+
+        foreach (var dataset in _datasetState.Datasets)
+        {
+            DatasetOptions.Add(dataset);
+        }
+
+        // Restore or set initial selections
+        if (DatasetOptions.Count > 0)
+        {
+            // Try to restore previous selection
+            var restoredBefore = previousBeforeDataset is not null 
+                ? DatasetOptions.FirstOrDefault(d => d.Name == previousBeforeDataset) 
+                : null;
+            var restoredAfter = previousAfterDataset is not null 
+                ? DatasetOptions.FirstOrDefault(d => d.Name == previousAfterDataset) 
+                : null;
+
+            SelectedBeforeDataset = restoredBefore ?? DatasetOptions[0];
+            SelectedAfterDataset = restoredAfter ?? (DatasetOptions.Count > 1 ? DatasetOptions[1] : DatasetOptions[0]);
+        }
+        else
+        {
+            SelectedBeforeDataset = null;
+            SelectedAfterDataset = null;
+        }
+    }
+
+    /// <summary>
+    /// Loads available versions for a dataset.
+    /// </summary>
+    private void LoadVersionsForDataset(DatasetCardViewModel? dataset, ObservableCollection<int> versionOptions)
+    {
+        versionOptions.Clear();
+
+        if (dataset is null)
+        {
+            versionOptions.Add(1);
+            return;
+        }
+
+        var versions = dataset.GetAllVersionNumbers();
+        foreach (var version in versions)
+        {
+            versionOptions.Add(version);
+        }
+
+        if (versionOptions.Count == 0)
+        {
+            versionOptions.Add(1);
+        }
+    }
+
+    /// <summary>
+    /// Loads images from a dataset version folder.
+    /// </summary>
+    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int version)
+    {
+        var items = new List<ImageCompareItem>();
+
+        if (dataset is null)
+        {
+            return items;
+        }
+
+        var versionPath = dataset.IsVersionedStructure
+            ? dataset.GetVersionFolderPath(version)
+            : dataset.FolderPath;
+
+        if (!Directory.Exists(versionPath))
+        {
+            return items;
+        }
+
+        var imageFiles = Directory.EnumerateFiles(versionPath)
+            .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var imagePath in imageFiles)
+        {
+            var displayName = Path.GetFileName(imagePath);
+            items.Add(new ImageCompareItem(imagePath, displayName));
+        }
+
+        return items;
+    }
+
+    partial void OnSelectedBeforeDatasetChanged(DatasetCardViewModel? value)
+    {
+        LoadVersionsForDataset(value, BeforeVersionOptions);
+        SelectedBeforeVersion = BeforeVersionOptions.FirstOrDefault();
+        RefreshBeforeImages();
         OnPropertyChanged(nameof(BeforeLabel));
     }
 
-    partial void OnSelectedAfterDatasetChanged(string? value)
+    partial void OnSelectedBeforeVersionChanged(int value)
     {
-        EnsureSelectedImages();
-        if (AssignSide == CompareAssignSide.After)
-        {
-            RefreshFilmstrip();
-        }
+        RefreshBeforeImages();
+        OnPropertyChanged(nameof(BeforeLabel));
+    }
 
+    partial void OnSelectedAfterDatasetChanged(DatasetCardViewModel? value)
+    {
+        LoadVersionsForDataset(value, AfterVersionOptions);
+        SelectedAfterVersion = AfterVersionOptions.FirstOrDefault();
+        RefreshAfterImages();
+        OnPropertyChanged(nameof(AfterLabel));
+    }
+
+    partial void OnSelectedAfterVersionChanged(int value)
+    {
+        RefreshAfterImages();
         OnPropertyChanged(nameof(AfterLabel));
     }
 
@@ -198,6 +332,28 @@ public partial class ImageCompareViewModel : ViewModelBase
         if (value)
         {
             IsTrayOpen = true;
+        }
+    }
+
+    private void RefreshBeforeImages()
+    {
+        var images = LoadImagesFromDataset(SelectedBeforeDataset, SelectedBeforeVersion);
+        SelectedBeforeImage = images.FirstOrDefault();
+
+        if (AssignSide == CompareAssignSide.Before)
+        {
+            RefreshFilmstrip();
+        }
+    }
+
+    private void RefreshAfterImages()
+    {
+        var images = LoadImagesFromDataset(SelectedAfterDataset, SelectedAfterVersion);
+        SelectedAfterImage = images.FirstOrDefault();
+
+        if (AssignSide == CompareAssignSide.After)
+        {
+            RefreshFilmstrip();
         }
     }
 
@@ -231,39 +387,23 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
     }
 
-    private void EnsureSelectedImages()
-    {
-        if (SelectedBeforeDataset is not null && _datasets.TryGetValue(SelectedBeforeDataset, out var beforeImages))
-        {
-            if (SelectedBeforeImage is null || !beforeImages.Contains(SelectedBeforeImage))
-            {
-                SelectedBeforeImage = beforeImages.FirstOrDefault();
-            }
-        }
-
-        if (SelectedAfterDataset is not null && _datasets.TryGetValue(SelectedAfterDataset, out var afterImages))
-        {
-            if (SelectedAfterImage is null || !afterImages.Contains(SelectedAfterImage))
-            {
-                SelectedAfterImage = afterImages.FirstOrDefault();
-            }
-        }
-    }
-
     private void RefreshFilmstrip()
     {
         FilmstripItems.Clear();
-        var datasetName = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : SelectedAfterDataset;
-        if (datasetName is null || !_datasets.TryGetValue(datasetName, out var images))
-        {
-            return;
-        }
+
+        var dataset = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : SelectedAfterDataset;
+        var version = AssignSide == CompareAssignSide.Before ? SelectedBeforeVersion : SelectedAfterVersion;
+
+        var images = LoadImagesFromDataset(dataset, version);
 
         var query = SearchText?.Trim();
         foreach (var item in images)
         {
             if (string.IsNullOrWhiteSpace(query) || item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))
             {
+                // Update selection flags based on current selections
+                item.IsSelectedBefore = item.ImagePath == SelectedBeforeImage?.ImagePath;
+                item.IsSelectedAfter = item.ImagePath == SelectedAfterImage?.ImagePath;
                 FilmstripItems.Add(item);
             }
         }
@@ -271,47 +411,22 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     private void UpdateSelectionFlags(ImageCompareItem? newSelection, bool isBefore)
     {
-        if (isBefore)
+        foreach (var item in FilmstripItems)
         {
-            foreach (var dataset in _datasets.Values)
+            if (isBefore)
             {
-                foreach (var item in dataset)
-                {
-                    if (item.IsSelectedBefore)
-                    {
-                        item.IsSelectedBefore = false;
-                    }
-                }
+                item.IsSelectedBefore = item == newSelection || item.ImagePath == newSelection?.ImagePath;
             }
-
-            if (newSelection is not null)
+            else
             {
-                newSelection.IsSelectedBefore = true;
-            }
-        }
-        else
-        {
-            foreach (var dataset in _datasets.Values)
-            {
-                foreach (var item in dataset)
-                {
-                    if (item.IsSelectedAfter)
-                    {
-                        item.IsSelectedAfter = false;
-                    }
-                }
-            }
-
-            if (newSelection is not null)
-            {
-                newSelection.IsSelectedAfter = true;
+                item.IsSelectedAfter = item == newSelection || item.ImagePath == newSelection?.ImagePath;
             }
         }
     }
 
-    private static string BuildLabel(string? datasetName, string? imageName, string fallback)
+    private static string BuildLabel(string? datasetName, int version, string? imageName, string fallback)
     {
-        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : datasetName;
+        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{version}";
         var image = string.IsNullOrWhiteSpace(imageName) ? "Unassigned" : imageName;
         return $"{dataset} / {image}";
     }

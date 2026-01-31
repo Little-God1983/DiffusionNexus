@@ -1,5 +1,8 @@
+using System.Collections.ObjectModel;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Viewer;
 
@@ -9,7 +12,10 @@ public class ImageCompareViewModelTests
     public void AssignImageCommand_AssignsImageToSelectedSide()
     {
         var viewModel = BuildViewModel();
-        var targetItem = viewModel.FilmstripItems.Last();
+        
+        // Manually add items to test with since we're using a mock
+        var targetItem = new ImageCompareItem("target.png", "Target");
+        viewModel.FilmstripItems.Add(targetItem);
 
         viewModel.AssignSide = CompareAssignSide.After;
         viewModel.AssignImageCommand.Execute(targetItem);
@@ -21,13 +27,16 @@ public class ImageCompareViewModelTests
     public void SwapImagesCommand_SwapsBeforeAndAfter()
     {
         var viewModel = BuildViewModel();
-        var initialBefore = viewModel.SelectedBeforeImage;
-        var initialAfter = viewModel.SelectedAfterImage;
+        var beforeItem = new ImageCompareItem("before.png", "Before");
+        var afterItem = new ImageCompareItem("after.png", "After");
+        
+        viewModel.SelectedBeforeImage = beforeItem;
+        viewModel.SelectedAfterImage = afterItem;
 
         viewModel.SwapCommand.Execute(null);
 
-        viewModel.SelectedBeforeImage.Should().Be(initialAfter);
-        viewModel.SelectedAfterImage.Should().Be(initialBefore);
+        viewModel.SelectedBeforeImage.Should().Be(afterItem);
+        viewModel.SelectedAfterImage.Should().Be(beforeItem);
     }
 
     [Fact]
@@ -42,38 +51,39 @@ public class ImageCompareViewModelTests
     }
 
     [Fact]
-    public void SwitchingDataset_RefreshesFilmstripForAssignSide()
+    public void DefaultConstructor_InitializesEmptyCollections()
     {
-        var viewModel = BuildViewModel();
+        var viewModel = new ImageCompareViewModel();
 
-        viewModel.AssignSide = CompareAssignSide.Before;
-        viewModel.SelectedBeforeDataset = "Dataset B";
+        viewModel.DatasetOptions.Should().BeEmpty();
+        viewModel.BeforeVersionOptions.Should().BeEmpty();
+        viewModel.AfterVersionOptions.Should().BeEmpty();
+        viewModel.FilmstripItems.Should().BeEmpty();
+    }
 
-        viewModel.FilmstripItems.Should().OnlyContain(item => item.DisplayName.StartsWith("B"));
+    [Fact]
+    public void Constructor_WithDatasetState_LoadsDatasets()
+    {
+        var mockState = new Mock<IDatasetState>();
+        var datasets = new ObservableCollection<DatasetCardViewModel>
+        {
+            new() { Name = "Dataset A", FolderPath = "/path/a" },
+            new() { Name = "Dataset B", FolderPath = "/path/b" }
+        };
+        mockState.Setup(s => s.Datasets).Returns(datasets);
+
+        var viewModel = new ImageCompareViewModel(mockState.Object);
+
+        viewModel.DatasetOptions.Should().HaveCount(2);
+        viewModel.SelectedBeforeDataset.Should().NotBeNull();
+        viewModel.SelectedAfterDataset.Should().NotBeNull();
     }
 
     private static ImageCompareViewModel BuildViewModel()
     {
-        var datasets = new Dictionary<string, IEnumerable<ImageCompareItem>>
-        {
-            {
-                "Dataset A",
-                new List<ImageCompareItem>
-                {
-                    new("a1.png", "A-1"),
-                    new("a2.png", "A-2")
-                }
-            },
-            {
-                "Dataset B",
-                new List<ImageCompareItem>
-                {
-                    new("b1.png", "B-1"),
-                    new("b2.png", "B-2")
-                }
-            }
-        };
-
-        return new ImageCompareViewModel(datasets);
+        var mockState = new Mock<IDatasetState>();
+        mockState.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
+        
+        return new ImageCompareViewModel(mockState.Object);
     }
 }

@@ -83,15 +83,46 @@
           </DockPanel>
         </Border>
 
-        <WrapPanel Grid.Row="1">
+        <WrapPanel Grid.Row="1" Orientation="Horizontal">
           <StackPanel MinWidth="220" Margin="0,0,12,0">
-
             <TextBlock Text="Before dataset" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedBeforeDataset}"/>
+            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedBeforeDataset}" Width="200">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                  <TextBlock Text="{Binding Name}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
           </StackPanel>
-          <StackPanel MinWidth="220">
+          <StackPanel MinWidth="80" Margin="0,0,24,0">
+            <TextBlock Text="Version" FontSize="11" Opacity="0.7"/>
+            <ComboBox ItemsSource="{Binding BeforeVersionOptions}" SelectedItem="{Binding SelectedBeforeVersion}" Width="70">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+          <StackPanel MinWidth="220" Margin="0,0,12,0">
             <TextBlock Text="After dataset" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedAfterDataset}"/>
+            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedAfterDataset}" Width="200">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                  <TextBlock Text="{Binding Name}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+          <StackPanel MinWidth="80">
+            <TextBlock Text="Version" FontSize="11" Opacity="0.7"/>
+            <ComboBox ItemsSource="{Binding AfterVersionOptions}" SelectedItem="{Binding SelectedAfterVersion}" Width="70">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
           </StackPanel>
         </WrapPanel>
 
