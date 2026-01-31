@@ -1,0 +1,161 @@
+using System;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Media;
+using DiffusionNexus.UI.Controls;
+
+namespace DiffusionNexus.UI.Views.Controls;
+
+public partial class ImageCompareControl : UserControl
+{
+    public static readonly StyledProperty<string?> BeforeImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(BeforeImagePath));
+
+    public static readonly StyledProperty<string?> AfterImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(AfterImagePath));
+
+    public static readonly StyledProperty<double> SliderValueProperty =
+        AvaloniaProperty.Register<ImageCompareControl, double>(nameof(SliderValue), 50d);
+
+    public static readonly StyledProperty<CompareFitMode> FitModeProperty =
+        AvaloniaProperty.Register<ImageCompareControl, CompareFitMode>(nameof(FitMode), CompareFitMode.Fit);
+
+    private Control? _beforeContainer;
+    private Control? _afterContainer;
+    private Canvas? _overlayCanvas;
+    private Border? _sliderLine;
+    private Thumb? _sliderThumb;
+
+    public ImageCompareControl()
+    {
+        InitializeComponent();
+
+        _beforeContainer = this.FindControl<Control>("BeforeImageContainer");
+        _afterContainer = this.FindControl<Control>("AfterImageContainer");
+        _overlayCanvas = this.FindControl<Canvas>("OverlayCanvas");
+        _sliderLine = this.FindControl<Border>("SliderLine");
+        _sliderThumb = this.FindControl<Thumb>("SliderThumb");
+
+
+        if (_overlayCanvas is not null)
+        {
+            _overlayCanvas.PointerPressed += OnOverlayPointerPressed;
+        }
+
+        if (_sliderThumb is not null)
+        {
+            _sliderThumb.DragDelta += OnSliderThumbDragDelta;
+        }
+
+        PropertyChanged += (s, e) =>
+        {
+            if (e.Property == SliderValueProperty || e.Property == BoundsProperty)
+            {
+                UpdateVisuals();
+            }
+        };
+
+        // Update visuals when layout is complete
+        LayoutUpdated += OnLayoutUpdated;
+    }
+
+    private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        UpdateVisuals();
+    }
+
+    public string? BeforeImagePath
+    {
+        get => GetValue(BeforeImagePathProperty);
+        set => SetValue(BeforeImagePathProperty, value);
+    }
+
+    public string? AfterImagePath
+    {
+        get => GetValue(AfterImagePathProperty);
+        set => SetValue(AfterImagePathProperty, value);
+    }
+
+    public double SliderValue
+    {
+        get => GetValue(SliderValueProperty);
+        set => SetValue(SliderValueProperty, Math.Clamp(value, 0d, 100d));
+    }
+
+    public CompareFitMode FitMode
+    {
+        get => GetValue(FitModeProperty);
+        set => SetValue(FitModeProperty, value);
+    }
+
+    private void OnOverlayPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_overlayCanvas is null)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(_overlayCanvas);
+        SetSliderFromPosition(position.X);
+        e.Handled = true;
+    }
+
+    private void OnSliderThumbDragDelta(object? sender, VectorEventArgs e)
+    {
+        var width = Bounds.Width;
+        if (width <= 0)
+        {
+            return;
+        }
+
+        var sliderX = width * (SliderValue / 100d);
+        var updatedX = sliderX + e.Vector.X;
+        SliderValue = updatedX / width * 100d;
+    }
+
+    private void SetSliderFromPosition(double x)
+    {
+        var width = Bounds.Width;
+        if (width <= 0)
+        {
+            return;
+        }
+
+        SliderValue = x / width * 100d;
+    }
+
+    private void UpdateVisuals()
+    {
+        if (_beforeContainer is null || _afterContainer is null || _overlayCanvas is null || _sliderLine is null || _sliderThumb is null)
+        {
+            return;
+        }
+
+        var width = Bounds.Width;
+        var height = Bounds.Height;
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        var sliderX = width * (SliderValue / 100d);
+        
+        var afterClipRect = new Rect(sliderX, 0, Math.Max(0, width - sliderX), height);
+        _afterContainer.Clip = new RectangleGeometry(afterClipRect);
+
+        var beforeClipRect = new Rect(0, 0, sliderX, height);
+        _beforeContainer.Clip = new RectangleGeometry(beforeClipRect);
+
+        _sliderLine.Height = height;
+        Canvas.SetLeft(_sliderLine, sliderX - (_sliderLine.Width / 2));
+        Canvas.SetTop(_sliderLine, 0);
+
+        var thumbWidth = _sliderThumb.Bounds.Width > 0 ? _sliderThumb.Bounds.Width : _sliderThumb.Width;
+        var thumbHeight = _sliderThumb.Bounds.Height > 0 ? _sliderThumb.Bounds.Height : _sliderThumb.Height;
+
+        Canvas.SetLeft(_sliderThumb, sliderX - (thumbWidth / 2));
+        Canvas.SetTop(_sliderThumb, (height - thumbHeight) / 2);
+    }
+}

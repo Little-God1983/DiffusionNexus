@@ -293,6 +293,16 @@ public partial class App : Application
             "avares://DiffusionNexus.UI/Assets/GalleryView.png",
             generationGalleryView));
 
+        // Image Comparer module
+        var datasetState = Services!.GetRequiredService<IDatasetState>();
+        var imageCompareVm = new ImageCompareViewModel(datasetState);
+        var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
+
+        mainViewModel.RegisterModule(new ModuleItem(
+            "Image Comparer",
+            "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
+            imageCompareView));
+
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
         var settingsView = new SettingsView { DataContext = settingsVm };
