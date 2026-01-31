@@ -10,19 +10,23 @@
              x:Class="DiffusionNexus.UI.Views.Controls.ImageCompareControl">
 
   <Grid Background="#121212" ClipToBounds="True">
-    <Image x:Name="BeforeImageControl"
-           Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
-           StretchDirection="Both"
-           HorizontalAlignment="Center"
-           VerticalAlignment="Center"/>
+    <Panel x:Name="BeforeImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+      <Image x:Name="BeforeImageControl"
+             Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+             StretchDirection="Both"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"/>
+    </Panel>
 
-    <Image x:Name="AfterImageControl"
-           Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-           Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
-           StretchDirection="Both"
-           HorizontalAlignment="Center"
-           VerticalAlignment="Center"/>
+    <Panel x:Name="AfterImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+      <Image x:Name="AfterImageControl"
+             Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+             StretchDirection="Both"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"/>
+    </Panel>
 
     <Canvas x:Name="OverlayCanvas"
             Background="Transparent"

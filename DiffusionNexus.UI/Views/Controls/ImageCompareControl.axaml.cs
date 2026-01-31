@@ -22,7 +22,8 @@ public partial class ImageCompareControl : UserControl
     public static readonly StyledProperty<CompareFitMode> FitModeProperty =
         AvaloniaProperty.Register<ImageCompareControl, CompareFitMode>(nameof(FitMode), CompareFitMode.Fit);
 
-    private Image? _afterImage;
+    private Control? _beforeContainer;
+    private Control? _afterContainer;
     private Canvas? _overlayCanvas;
     private Border? _sliderLine;
     private Thumb? _sliderThumb;
@@ -31,7 +32,8 @@ public partial class ImageCompareControl : UserControl
     {
         InitializeComponent();
 
-        _afterImage = this.FindControl<Image>("AfterImageControl");
+        _beforeContainer = this.FindControl<Control>("BeforeImageContainer");
+        _afterContainer = this.FindControl<Control>("AfterImageContainer");
         _overlayCanvas = this.FindControl<Canvas>("OverlayCanvas");
         _sliderLine = this.FindControl<Border>("SliderLine");
         _sliderThumb = this.FindControl<Thumb>("SliderThumb");
@@ -54,6 +56,14 @@ public partial class ImageCompareControl : UserControl
                 UpdateVisuals();
             }
         };
+
+        // Update visuals when layout is complete
+        LayoutUpdated += OnLayoutUpdated;
+    }
+
+    private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        UpdateVisuals();
     }
 
     public string? BeforeImagePath
@@ -118,7 +128,7 @@ public partial class ImageCompareControl : UserControl
 
     private void UpdateVisuals()
     {
-        if (_afterImage is null || _overlayCanvas is null || _sliderLine is null || _sliderThumb is null)
+        if (_beforeContainer is null || _afterContainer is null || _overlayCanvas is null || _sliderLine is null || _sliderThumb is null)
         {
             return;
         }
@@ -131,8 +141,12 @@ public partial class ImageCompareControl : UserControl
         }
 
         var sliderX = width * (SliderValue / 100d);
-        var clipRect = new Rect(sliderX, 0, Math.Max(0, width - sliderX), height);
-        _afterImage.Clip = new RectangleGeometry(clipRect);
+        
+        var afterClipRect = new Rect(sliderX, 0, Math.Max(0, width - sliderX), height);
+        _afterContainer.Clip = new RectangleGeometry(afterClipRect);
+
+        var beforeClipRect = new Rect(0, 0, sliderX, height);
+        _beforeContainer.Clip = new RectangleGeometry(beforeClipRect);
 
         _sliderLine.Height = height;
         Canvas.SetLeft(_sliderLine, sliderX - (_sliderLine.Width / 2));
