@@ -35,17 +35,17 @@
               Width="2"
               Background="#CCFFFFFF"/>
       <Thumb x:Name="SliderThumb"
-             Width="28"
-             Height="28"
+             Width="44"
+             Height="44"
              Cursor="SizeWestEast">
         <Thumb.Template>
           <ControlTemplate>
             <Border Background="#1D1D1D"
                     BorderBrush="#CCFFFFFF"
-                    BorderThickness="1"
-                    CornerRadius="14">
+                    BorderThickness="2"
+                    CornerRadius="22">
               <TextBlock Text="⇄"
-                         FontSize="12"
+                         FontSize="18"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
                          Foreground="#CCFFFFFF"/>
