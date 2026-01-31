@@ -79,12 +79,24 @@
                                 <ItemsControl ItemsSource="{Binding Modules}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Button Width="196" 
-                                                    Height="48"
-                                                    Margin="2,2"
-                                                    Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
-                                                    CommandParameter="{Binding}"
-                                                    HorizontalContentAlignment="Left">
+                                        <Button Width="196" 
+                                                Height="48"
+                                                Margin="2,2"
+                                                IsVisible="{Binding IsVisible}"
+                                                Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
+                                                CommandParameter="{Binding}"
+                                                HorizontalContentAlignment="Left">
+                                                <Button.Styles>
+                                                    <Style Selector="Button">
+                                                        <Setter Property="Background" Value="Transparent"/>
+                                                    </Style>
+                                                    <Style Selector="Button[Tag=True]">
+                                                        <Setter Property="Background" Value="#0078D4"/>
+                                                    </Style>
+                                                </Button.Styles>
+                                                <Button.Tag>
+                                                    <Binding Path="IsSelected"/>
+                                                </Button.Tag>
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                                     <!-- Icon placeholder when no image -->
                                                     <Border Width="32" Height="32"

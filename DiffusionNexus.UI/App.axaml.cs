@@ -275,14 +275,15 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(loraDatasetHelperModule);
 
-        // LoRA Viewer module
+        // LoRA Viewer module (hidden for now)
         var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
         var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
 
         mainViewModel.RegisterModule(new ModuleItem(
             "LoRA Viewer",
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
-            loraViewerView));
+            loraViewerView,
+            isVisible: false));
 
         // Generation Gallery module
         var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
