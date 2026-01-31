@@ -1,4 +1,5 @@
 using System;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -9,6 +10,7 @@ namespace DiffusionNexus.UI.Views;
 public partial class ImageCompareView : UserControl
 {
     private readonly DispatcherTimer _collapseTimer;
+    private Border? _trayRoot;
 
     public ImageCompareView()
     {
@@ -21,19 +23,12 @@ public partial class ImageCompareView : UserControl
             SetTrayOpen(false);
         };
 
-        var trayRoot = this.FindControl<Border>("TrayRoot");
-        var trayHandle = this.FindControl<Border>("TrayHandle");
+        _trayRoot = this.FindControl<Border>("TrayRoot");
 
-        if (trayRoot is not null)
+        if (_trayRoot is not null)
         {
-            trayRoot.PointerEntered += OnTrayPointerEntered;
-            trayRoot.PointerExited += OnTrayPointerExited;
-        }
-
-        if (trayHandle is not null)
-        {
-            trayHandle.PointerEntered += OnTrayPointerEntered;
-            trayHandle.PointerExited += OnTrayPointerExited;
+            _trayRoot.PointerEntered += OnTrayPointerEntered;
+            _trayRoot.PointerExited += OnTrayPointerExited;
         }
     }
 
@@ -45,8 +40,20 @@ public partial class ImageCompareView : UserControl
 
     private void OnTrayPointerExited(object? sender, PointerEventArgs e)
     {
-        _collapseTimer.Stop();
-        _collapseTimer.Start();
+        // Only start collapse if pointer truly left the tray area
+        if (_trayRoot is null)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(_trayRoot);
+        var bounds = new Rect(0, 0, _trayRoot.Bounds.Width, _trayRoot.Bounds.Height);
+
+        if (!bounds.Contains(position))
+        {
+            _collapseTimer.Stop();
+            _collapseTimer.Start();
+        }
     }
 
     private void SetTrayOpen(bool isOpen)
