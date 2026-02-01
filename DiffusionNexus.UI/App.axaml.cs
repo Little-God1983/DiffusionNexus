@@ -301,7 +301,7 @@ public partial class App : Application
 
         var imageComparerModule = new ModuleItem(
             "Image Comparer",
-            "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
+            "avares://DiffusionNexus.UI/Assets/ImageComparer.png",
             imageCompareView);
 
         mainViewModel.RegisterModule(imageComparerModule);
