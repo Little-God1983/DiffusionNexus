@@ -84,6 +84,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _includeSubFolders = true;
 
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
     public int SelectionCount
     {
         get => _selectionCount;
@@ -141,6 +144,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     partial void OnIncludeSubFoldersChanged(bool value)
     {
         LoadMediaCommand.Execute(null);
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        ApplySortingAndGrouping();
     }
 
     public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
@@ -562,7 +570,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     private void ApplySortingAndGrouping()
     {
-        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = _allMediaItems;
+        IEnumerable<GenerationGalleryMediaItemViewModel> filtered = _allMediaItems;
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            filtered = filtered.Where(item =>
+                item.FileName.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
 
         if (string.Equals(SelectedSortOption, "Creation date", StringComparison.OrdinalIgnoreCase))
         {
