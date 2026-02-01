@@ -105,6 +105,13 @@ public partial class ImageCompareViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isTrayOpen;
 
+    /// <summary>
+    /// Gets or sets whether single dataset mode is enabled.
+    /// When enabled, the After dataset/version uses the same values as the Before dataset/version.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isSingleDatasetMode = true;
+
     public ImageCompareItem? SelectedBeforeImage
     {
         get => _selectedBeforeImage;
@@ -141,13 +148,23 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     public string BeforeLabel => BuildLabel(SelectedBeforeDataset?.Name, SelectedBeforeVersion, SelectedBeforeImage?.DisplayName, "Before");
 
-    public string AfterLabel => BuildLabel(SelectedAfterDataset?.Name, SelectedAfterVersion, SelectedAfterImage?.DisplayName, "After");
+    public string AfterLabel => BuildLabel(EffectiveAfterDataset?.Name, EffectiveAfterVersion, SelectedAfterImage?.DisplayName, "After");
 
     public double TrayHeight => 260d;
 
     public double TrayHandleHeight => 48d;
 
     public double TrayVisibleHeight => IsTrayOpen ? TrayHeight : TrayHandleHeight;
+
+    /// <summary>
+    /// Gets the effective After dataset (same as Before when in single dataset mode).
+    /// </summary>
+    public DatasetCardViewModel? EffectiveAfterDataset => IsSingleDatasetMode ? SelectedBeforeDataset : SelectedAfterDataset;
+
+    /// <summary>
+    /// Gets the effective After version (same as Before when in single dataset mode).
+    /// </summary>
+    public int? EffectiveAfterVersion => IsSingleDatasetMode ? SelectedBeforeVersion : SelectedAfterVersion;
 
     public bool IsAssigningBefore
     {
@@ -436,12 +453,29 @@ public partial class ImageCompareViewModel : ViewModelBase
         SelectedBeforeVersion = BeforeVersionOptions.FirstOrDefault();
         RefreshBeforeImages();
         OnPropertyChanged(nameof(BeforeLabel));
+
+        // In single dataset mode, the After side uses the same dataset
+        if (IsSingleDatasetMode)
+        {
+            OnPropertyChanged(nameof(EffectiveAfterDataset));
+            OnPropertyChanged(nameof(EffectiveAfterVersion));
+            RefreshAfterImages();
+            OnPropertyChanged(nameof(AfterLabel));
+        }
     }
 
     partial void OnSelectedBeforeVersionChanged(int? value)
     {
         RefreshBeforeImages();
         OnPropertyChanged(nameof(BeforeLabel));
+
+        // In single dataset mode, the After side uses the same version
+        if (IsSingleDatasetMode)
+        {
+            OnPropertyChanged(nameof(EffectiveAfterVersion));
+            RefreshAfterImages();
+            OnPropertyChanged(nameof(AfterLabel));
+        }
     }
 
     partial void OnSelectedAfterDatasetChanged(DatasetCardViewModel? value)
@@ -494,6 +528,17 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
     }
 
+    partial void OnIsSingleDatasetModeChanged(bool value)
+    {
+        // Update computed properties
+        OnPropertyChanged(nameof(EffectiveAfterDataset));
+        OnPropertyChanged(nameof(EffectiveAfterVersion));
+
+        // Refresh the After images based on the new mode
+        RefreshAfterImages();
+        OnPropertyChanged(nameof(AfterLabel));
+    }
+
     private void RefreshBeforeImages()
     {
         List<ImageCompareItem> images;
@@ -520,8 +565,11 @@ public partial class ImageCompareViewModel : ViewModelBase
     {
         List<ImageCompareItem> images;
 
+        var dataset = EffectiveAfterDataset;
+        var version = EffectiveAfterVersion;
+
         // Use external images if the selected dataset is the temp dataset
-        if (SelectedAfterDataset?.IsTemporary == true && ExternalImages.Count > 0)
+        if (dataset?.IsTemporary == true && ExternalImages.Count > 0)
         {
             images = ExternalImages;
             // For after, default to second image if available
@@ -529,7 +577,7 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
         else
         {
-            images = LoadImagesFromDataset(SelectedAfterDataset, SelectedAfterVersion);
+            images = LoadImagesFromDataset(dataset, version);
             SelectedAfterImage = images.FirstOrDefault();
         }
 
@@ -573,8 +621,8 @@ public partial class ImageCompareViewModel : ViewModelBase
     {
         FilmstripItems.Clear();
 
-        var dataset = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : SelectedAfterDataset;
-        var version = AssignSide == CompareAssignSide.Before ? SelectedBeforeVersion : SelectedAfterVersion;
+        var dataset = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : EffectiveAfterDataset;
+        var version = AssignSide == CompareAssignSide.Before ? SelectedBeforeVersion : EffectiveAfterVersion;
 
         List<ImageCompareItem> images;
 
