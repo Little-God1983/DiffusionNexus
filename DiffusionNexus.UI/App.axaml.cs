@@ -299,10 +299,12 @@ public partial class App : Application
         var imageCompareVm = new ImageCompareViewModel(datasetState);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
-        mainViewModel.RegisterModule(new ModuleItem(
+        var imageComparerModule = new ModuleItem(
             "Image Comparer",
             "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
-            imageCompareView));
+            imageCompareView);
+
+        mainViewModel.RegisterModule(imageComparerModule);
 
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
@@ -331,6 +333,12 @@ public partial class App : Application
         eventAggregator.NavigateToSettingsRequested += (_, _) =>
         {
             mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+        };
+
+        eventAggregator.NavigateToImageComparerRequested += (_, e) =>
+        {
+            imageCompareVm.LoadExternalImages(e.ImagePaths);
+            mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
         };
 
         // Load settings on startup

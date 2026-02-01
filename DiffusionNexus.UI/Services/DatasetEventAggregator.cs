@@ -280,6 +280,17 @@ public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when navigation to the Image Comparer is requested.
+/// </summary>
+public sealed class NavigateToImageComparerEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// The images to load into the comparer.
+    /// </summary>
+    public required IReadOnlyList<string> ImagePaths { get; init; }
+}
+
+/// <summary>
 /// Event raised when the dataset list should be refreshed.
 /// </summary>
 public sealed class RefreshDatasetsRequestedEventArgs : DatasetEventArgs
@@ -421,6 +432,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
 
+    /// <summary>
+    /// Raised when navigation to the Image Comparer is requested.
+    /// </summary>
+    event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
+
     #endregion
 
     #region Publish Methods
@@ -441,6 +457,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
+    void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
 
     #endregion
@@ -514,6 +531,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
 
     #endregion
 
@@ -629,6 +649,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToSettingsRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToImageComparerRequested, args);
     }
 
     /// <inheritdoc/>

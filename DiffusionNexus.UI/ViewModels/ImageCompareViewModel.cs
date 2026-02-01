@@ -174,6 +174,135 @@ public partial class ImageCompareViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Gets or sets whether external images are loaded (from Generation Gallery).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isExternalMode;
+
+    /// <summary>
+    /// Gets or sets the external images collection when loaded from Generation Gallery.
+    /// </summary>
+    public List<ImageCompareItem> ExternalImages { get; private set; } = [];
+
+    /// <summary>
+    /// The temporary dataset used for external images.
+    /// </summary>
+    private DatasetCardViewModel? _tempDataset;
+
+    /// <summary>
+    /// Loads images from external sources (e.g., Generation Gallery).
+    /// </summary>
+    /// <param name="imagePaths">The paths to the images to load.</param>
+    public void LoadExternalImages(IReadOnlyList<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+
+        if (imagePaths.Count < 2)
+        {
+            return;
+        }
+
+        // Clear previous external state
+        ExternalImages.Clear();
+
+        // Create items from image paths
+        foreach (var path in imagePaths)
+        {
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            var displayName = Path.GetFileName(path);
+            var item = new ImageCompareItem(path, displayName);
+            ExternalImages.Add(item);
+        }
+
+        if (ExternalImages.Count < 2)
+        {
+            return;
+        }
+
+        // Create temporary dataset and add to options
+        _tempDataset = new DatasetCardViewModel
+        {
+            Name = "Gallery Selection",
+            FolderPath = "TEMP://ImageComparer",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = ExternalImages.Count,
+            TotalImageCountAllVersions = ExternalImages.Count,
+            IsTemporary = true
+        };
+
+        // Remove any existing temp dataset and add the new one at the beginning
+        var existingTemp = DatasetOptions.FirstOrDefault(d => d.IsTemporary);
+        if (existingTemp is not null)
+        {
+            DatasetOptions.Remove(existingTemp);
+        }
+        DatasetOptions.Insert(0, _tempDataset);
+
+        IsExternalMode = true;
+
+        // Select the temp dataset for both sides (this will trigger the property changed handlers)
+        SelectedBeforeDataset = _tempDataset;
+        SelectedAfterDataset = _tempDataset;
+
+        IsTrayOpen = true;
+        AssignSide = CompareAssignSide.Before;
+    }
+
+    /// <summary>
+    /// Clears external mode and returns to dataset-based mode.
+    /// </summary>
+    public void ClearExternalMode()
+    {
+        if (!IsExternalMode)
+        {
+            return;
+        }
+
+        IsExternalMode = false;
+        ExternalImages.Clear();
+
+        // Remove temp dataset from options
+        if (_tempDataset is not null)
+        {
+            DatasetOptions.Remove(_tempDataset);
+            _tempDataset = null;
+        }
+
+        // Select first available real dataset if current selection was temp
+        if (SelectedBeforeDataset?.IsTemporary == true || SelectedBeforeDataset is null)
+        {
+            SelectedBeforeDataset = DatasetOptions.FirstOrDefault(d => !d.IsTemporary);
+        }
+        if (SelectedAfterDataset?.IsTemporary == true || SelectedAfterDataset is null)
+        {
+            SelectedAfterDataset = DatasetOptions.FirstOrDefault(d => !d.IsTemporary);
+        }
+    }
+
+    /// <summary>
+    /// Clears external mode state without changing dataset selections.
+    /// Used when both sides have switched away from the temp dataset.
+    /// </summary>
+    private void ClearExternalModeWithoutDatasetChange()
+    {
+        IsExternalMode = false;
+        ExternalImages.Clear();
+
+        // Remove temp dataset from options
+        if (_tempDataset is not null)
+        {
+            DatasetOptions.Remove(_tempDataset);
+            _tempDataset = null;
+        }
+    }
+
+    /// <summary>
     /// Handles changes to the datasets collection to refresh when datasets are loaded.
     /// </summary>
     private void OnDatasetsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -284,6 +413,17 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     partial void OnSelectedBeforeDatasetChanged(DatasetCardViewModel? value)
     {
+        // If switching from temp to a real dataset on this side, check if we should exit external mode
+        if (IsExternalMode && value is not null && !value.IsTemporary)
+        {
+            // Don't clear external mode here - just let this side use the real dataset
+            // Only clear when both sides are no longer using temp
+            if (SelectedAfterDataset is null || !SelectedAfterDataset.IsTemporary)
+            {
+                ClearExternalModeWithoutDatasetChange();
+            }
+        }
+
         LoadVersionsForDataset(value, BeforeVersionOptions);
         SelectedBeforeVersion = BeforeVersionOptions.FirstOrDefault();
         RefreshBeforeImages();
@@ -298,6 +438,17 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     partial void OnSelectedAfterDatasetChanged(DatasetCardViewModel? value)
     {
+        // If switching from temp to a real dataset on this side, check if we should exit external mode
+        if (IsExternalMode && value is not null && !value.IsTemporary)
+        {
+            // Don't clear external mode here - just let this side use the real dataset
+            // Only clear when both sides are no longer using temp
+            if (SelectedBeforeDataset is null || !SelectedBeforeDataset.IsTemporary)
+            {
+                ClearExternalModeWithoutDatasetChange();
+            }
+        }
+
         LoadVersionsForDataset(value, AfterVersionOptions);
         SelectedAfterVersion = AfterVersionOptions.FirstOrDefault();
         RefreshAfterImages();
@@ -337,7 +488,18 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     private void RefreshBeforeImages()
     {
-        var images = LoadImagesFromDataset(SelectedBeforeDataset, SelectedBeforeVersion);
+        List<ImageCompareItem> images;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (SelectedBeforeDataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+        }
+        else
+        {
+            images = LoadImagesFromDataset(SelectedBeforeDataset, SelectedBeforeVersion);
+        }
+
         SelectedBeforeImage = images.FirstOrDefault();
 
         if (AssignSide == CompareAssignSide.Before)
@@ -348,8 +510,20 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     private void RefreshAfterImages()
     {
-        var images = LoadImagesFromDataset(SelectedAfterDataset, SelectedAfterVersion);
-        SelectedAfterImage = images.FirstOrDefault();
+        List<ImageCompareItem> images;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (SelectedAfterDataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+            // For after, default to second image if available
+            SelectedAfterImage = images.Count > 1 ? images[1] : images.FirstOrDefault();
+        }
+        else
+        {
+            images = LoadImagesFromDataset(SelectedAfterDataset, SelectedAfterVersion);
+            SelectedAfterImage = images.FirstOrDefault();
+        }
 
         if (AssignSide == CompareAssignSide.After)
         {
@@ -394,7 +568,17 @@ public partial class ImageCompareViewModel : ViewModelBase
         var dataset = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : SelectedAfterDataset;
         var version = AssignSide == CompareAssignSide.Before ? SelectedBeforeVersion : SelectedAfterVersion;
 
-        var images = LoadImagesFromDataset(dataset, version);
+        List<ImageCompareItem> images;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (dataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+        }
+        else
+        {
+            images = LoadImagesFromDataset(dataset, version);
+        }
 
         var query = SearchText?.Trim();
         foreach (var item in images)
