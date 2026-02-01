@@ -7,5 +7,6 @@ public enum CompareFitMode
 {
     Fit,
     Fill,
-    OneToOne
+    OneToOne,
+    SideBySide
 }

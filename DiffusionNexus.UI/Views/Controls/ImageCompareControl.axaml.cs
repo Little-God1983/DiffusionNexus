@@ -36,6 +36,8 @@ public partial class ImageCompareControl : UserControl
     private Thumb? _sliderThumb;
     private Image? _beforeImage;
     private Image? _afterImage;
+    private Grid? _sliderCompareGrid;
+    private Grid? _sideBySideGrid;
 
     private double _panX;
     private double _panY;
@@ -59,6 +61,8 @@ public partial class ImageCompareControl : UserControl
         _sliderThumb = this.FindControl<Thumb>("SliderThumb");
         _beforeImage = this.FindControl<Image>("BeforeImageControl");
         _afterImage = this.FindControl<Image>("AfterImageControl");
+        _sliderCompareGrid = this.FindControl<Grid>("SliderCompareGrid");
+        _sideBySideGrid = this.FindControl<Grid>("SideBySideGrid");
 
         if (_overlayCanvas is not null)
         {
@@ -84,6 +88,10 @@ public partial class ImageCompareControl : UserControl
         if (e.Property == SliderValueProperty || e.Property == BoundsProperty || e.Property == ZoomLevelProperty)
         {
             UpdateVisuals();
+        }
+        else if (e.Property == FitModeProperty)
+        {
+            UpdateCompareMode();
         }
     }
 
@@ -237,6 +245,21 @@ public partial class ImageCompareControl : UserControl
         }
 
         SliderValue = x / width * 100d;
+    }
+
+    private void UpdateCompareMode()
+    {
+        var isSideBySide = FitMode == CompareFitMode.SideBySide;
+
+        if (_sliderCompareGrid is not null)
+        {
+            _sliderCompareGrid.IsVisible = !isSideBySide;
+        }
+
+        if (_sideBySideGrid is not null)
+        {
+            _sideBySideGrid.IsVisible = isSideBySide;
+        }
     }
 
     private void UpdateVisuals()

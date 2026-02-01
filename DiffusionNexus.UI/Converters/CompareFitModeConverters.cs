@@ -24,6 +24,7 @@ public class CompareFitModeToStretchConverter : IValueConverter
         {
             CompareFitMode.Fill => Stretch.UniformToFill,
             CompareFitMode.OneToOne => Stretch.None,
+            CompareFitMode.SideBySide => Stretch.Uniform,
             _ => Stretch.Uniform
         };
     }
@@ -52,6 +53,7 @@ public class CompareFitModeDisplayConverter : IValueConverter
         {
             CompareFitMode.Fill => "Fill",
             CompareFitMode.OneToOne => "1:1",
+            CompareFitMode.SideBySide => "Side by Side",
             _ => "Fit"
         };
     }

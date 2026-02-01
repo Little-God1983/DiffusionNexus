@@ -38,7 +38,7 @@ public partial class ImageCompareViewModel : ViewModelBase
         DatasetOptions = [];
         BeforeVersionOptions = [];
         AfterVersionOptions = [];
-        FitModeOptions = [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne];
+        FitModeOptions = [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne, CompareFitMode.SideBySide];
         FilmstripItems = [];
 
         SwapCommand = new RelayCommand(SwapImages, () => SelectedBeforeImage is not null || SelectedAfterImage is not null);
@@ -145,7 +145,7 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     public double TrayHeight => 260d;
 
-    public double TrayHandleHeight => 34d;
+    public double TrayHandleHeight => 48d;
 
     public double TrayVisibleHeight => IsTrayOpen ? TrayHeight : TrayHandleHeight;
 
