@@ -79,13 +79,13 @@ public partial class ImageCompareViewModel : ViewModelBase
     private DatasetCardViewModel? _selectedBeforeDataset;
 
     [ObservableProperty]
-    private int _selectedBeforeVersion = 1;
+    private int? _selectedBeforeVersion = 1;
 
     [ObservableProperty]
     private DatasetCardViewModel? _selectedAfterDataset;
 
     [ObservableProperty]
-    private int _selectedAfterVersion = 1;
+    private int? _selectedAfterVersion = 1;
 
     [ObservableProperty]
     private CompareAssignSide _assignSide;
@@ -365,6 +365,13 @@ public partial class ImageCompareViewModel : ViewModelBase
             return;
         }
 
+        // Temporary datasets always have version 1 only
+        if (dataset.IsTemporary)
+        {
+            versionOptions.Add(1);
+            return;
+        }
+
         var versions = dataset.GetAllVersionNumbers();
         foreach (var version in versions)
         {
@@ -380,7 +387,7 @@ public partial class ImageCompareViewModel : ViewModelBase
     /// <summary>
     /// Loads images from a dataset version folder.
     /// </summary>
-    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int version)
+    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int? version)
     {
         var items = new List<ImageCompareItem>();
 
@@ -389,8 +396,9 @@ public partial class ImageCompareViewModel : ViewModelBase
             return items;
         }
 
+        var versionNum = version ?? 1;
         var versionPath = dataset.IsVersionedStructure
-            ? dataset.GetVersionFolderPath(version)
+            ? dataset.GetVersionFolderPath(versionNum)
             : dataset.FolderPath;
 
         if (!Directory.Exists(versionPath))
@@ -430,7 +438,7 @@ public partial class ImageCompareViewModel : ViewModelBase
         OnPropertyChanged(nameof(BeforeLabel));
     }
 
-    partial void OnSelectedBeforeVersionChanged(int value)
+    partial void OnSelectedBeforeVersionChanged(int? value)
     {
         RefreshBeforeImages();
         OnPropertyChanged(nameof(BeforeLabel));
@@ -455,7 +463,7 @@ public partial class ImageCompareViewModel : ViewModelBase
         OnPropertyChanged(nameof(AfterLabel));
     }
 
-    partial void OnSelectedAfterVersionChanged(int value)
+    partial void OnSelectedAfterVersionChanged(int? value)
     {
         RefreshAfterImages();
         OnPropertyChanged(nameof(AfterLabel));
@@ -608,9 +616,10 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
     }
 
-    private static string BuildLabel(string? datasetName, int version, string? imageName, string fallback)
+    private static string BuildLabel(string? datasetName, int? version, string? imageName, string fallback)
     {
-        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{version}";
+        var versionStr = version?.ToString() ?? "1";
+        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{versionStr}";
         var image = string.IsNullOrWhiteSpace(imageName) ? "Unassigned" : imageName;
         return $"{dataset} / {image}";
     }
