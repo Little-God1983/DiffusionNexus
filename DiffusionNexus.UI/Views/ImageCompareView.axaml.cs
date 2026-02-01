@@ -11,6 +11,7 @@ public partial class ImageCompareView : UserControl
 {
     private readonly DispatcherTimer _collapseTimer;
     private Border? _trayRoot;
+    private ListBox? _filmstripListBox;
 
     public ImageCompareView()
     {
@@ -29,6 +30,13 @@ public partial class ImageCompareView : UserControl
         {
             _trayRoot.PointerEntered += OnTrayPointerEntered;
             _trayRoot.PointerExited += OnTrayPointerExited;
+        }
+
+        _filmstripListBox = this.FindControl<ListBox>("FilmstripListBox");
+        if (_filmstripListBox is not null)
+        {
+            // Subscribe to handled events too, to catch clicks on items
+            _filmstripListBox.AddHandler(PointerPressedEvent, OnFilmstripListBoxPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble, true);
         }
     }
 
@@ -64,13 +72,13 @@ public partial class ImageCompareView : UserControl
         }
     }
 
-    private void OnFilmstripItemPointerPressed(object? sender, PointerPressedEventArgs e)
+    private void OnFilmstripListBoxPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Control control &&
-            control.DataContext is ImageCompareItem item &&
+        if (e.Source is Control sourceControl &&
+            sourceControl.DataContext is ImageCompareItem item &&
             DataContext is ImageCompareViewModel viewModel)
         {
-            var properties = e.GetCurrentPoint(control).Properties;
+            var properties = e.GetCurrentPoint(sourceControl).Properties;
 
             if (properties.IsLeftButtonPressed)
             {

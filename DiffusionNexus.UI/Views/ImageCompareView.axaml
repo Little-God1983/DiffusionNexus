@@ -102,7 +102,7 @@
             <ComboBox ItemsSource="{Binding LeftVersionOptions}" SelectedItem="{Binding SelectedLeftVersion}" Width="70">
               <ComboBox.ItemTemplate>
                 <DataTemplate>
-                  <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                  <TextBlock Text="{Binding ., StringFormat='V{0}'}"/>
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
@@ -125,7 +125,7 @@
             <ComboBox ItemsSource="{Binding RightVersionOptions}" SelectedItem="{Binding SelectedRightVersion}" Width="70">
               <ComboBox.ItemTemplate>
                 <DataTemplate>
-                  <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                  <TextBlock Text="{Binding ., StringFormat='V{0}'}"/>
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
@@ -144,7 +144,7 @@
 
           <Border Background="#101010" CornerRadius="6" Padding="6">
             <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-              <ListBox ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="Single">
+              <ListBox x:Name="FilmstripListBox" ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="Single">
 
                 <ListBox.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -153,8 +153,7 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:ImageCompareItem">
-                    <Panel Background="Transparent"
-                           PointerPressed="OnFilmstripItemPointerPressed">
+                    <Panel Background="Transparent">
                       <Border CornerRadius="4" BorderBrush="#2F2F2F" BorderThickness="1" Margin="0,0,8,0">
                         <Grid>
                           <Border Background="#222" Width="90" Height="60" CornerRadius="4" ClipToBounds="True">

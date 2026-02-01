@@ -1,13 +1,15 @@
 <Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
-        x:Class="DiffusionNexus.UI.Views.DiffusionNexusMainWindow"
-        x:DataType="vm:DiffusionNexusMainWindowViewModel"
-        Title="{Binding AppVersion, StringFormat='Diffusion Nexus v{0}'}"
-        MinWidth="1300" MinHeight="800"
-        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico"
-        x:Name="MainWin">
+xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+x:Class="DiffusionNexus.UI.Views.DiffusionNexusMainWindow"
+x:DataType="vm:DiffusionNexusMainWindowViewModel"
+Title="{Binding AppVersion, StringFormat='Diffusion Nexus v{0}'}"
+MinWidth="1300" MinHeight="800"
+Width="1400" Height="900"
+WindowStartupLocation="CenterScreen"
+Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico"
+x:Name="MainWin">
     
     <Design.DataContext>
         <vm:DiffusionNexusMainWindowViewModel/>
