@@ -17,26 +17,26 @@ public class ImageCompareViewModelTests
         var targetItem = new ImageCompareItem("target.png", "Target");
         viewModel.FilmstripItems.Add(targetItem);
 
-        viewModel.AssignSide = CompareAssignSide.After;
+        viewModel.AssignSide = CompareAssignSide.Right;
         viewModel.AssignImageCommand.Execute(targetItem);
 
-        viewModel.SelectedAfterImage.Should().Be(targetItem);
+        viewModel.SelectedRightImage.Should().Be(targetItem);
     }
 
     [Fact]
-    public void SwapImagesCommand_SwapsBeforeAndAfter()
+    public void SwapImagesCommand_SwapsLeftAndRight()
     {
         var viewModel = BuildViewModel();
-        var beforeItem = new ImageCompareItem("before.png", "Before");
-        var afterItem = new ImageCompareItem("after.png", "After");
+        var leftItem = new ImageCompareItem("left.png", "Left");
+        var rightItem = new ImageCompareItem("right.png", "Right");
         
-        viewModel.SelectedBeforeImage = beforeItem;
-        viewModel.SelectedAfterImage = afterItem;
+        viewModel.SelectedLeftImage = leftItem;
+        viewModel.SelectedRightImage = rightItem;
 
         viewModel.SwapCommand.Execute(null);
 
-        viewModel.SelectedBeforeImage.Should().Be(afterItem);
-        viewModel.SelectedAfterImage.Should().Be(beforeItem);
+        viewModel.SelectedLeftImage.Should().Be(rightItem);
+        viewModel.SelectedRightImage.Should().Be(leftItem);
     }
 
     [Fact]
@@ -56,8 +56,8 @@ public class ImageCompareViewModelTests
         var viewModel = new ImageCompareViewModel();
 
         viewModel.DatasetOptions.Should().BeEmpty();
-        viewModel.BeforeVersionOptions.Should().BeEmpty();
-        viewModel.AfterVersionOptions.Should().BeEmpty();
+        viewModel.LeftVersionOptions.Should().BeEmpty();
+        viewModel.RightVersionOptions.Should().BeEmpty();
         viewModel.FilmstripItems.Should().BeEmpty();
     }
 
@@ -75,8 +75,8 @@ public class ImageCompareViewModelTests
         var viewModel = new ImageCompareViewModel(mockState.Object);
 
         viewModel.DatasetOptions.Should().HaveCount(2);
-        viewModel.SelectedBeforeDataset.Should().NotBeNull();
-        viewModel.SelectedAfterDataset.Should().NotBeNull();
+        viewModel.SelectedLeftDataset.Should().NotBeNull();
+        viewModel.SelectedRightDataset.Should().NotBeNull();
     }
 
     private static ImageCompareViewModel BuildViewModel()

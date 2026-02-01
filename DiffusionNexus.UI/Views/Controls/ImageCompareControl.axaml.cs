@@ -14,11 +14,11 @@ public partial class ImageCompareControl : UserControl
     private const double MaxZoom = 10.0;
     private const double ZoomStep = 0.1;
 
-    public static readonly StyledProperty<string?> BeforeImagePathProperty =
-        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(BeforeImagePath));
+    public static readonly StyledProperty<string?> LeftImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(LeftImagePath));
 
-    public static readonly StyledProperty<string?> AfterImagePathProperty =
-        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(AfterImagePath));
+    public static readonly StyledProperty<string?> RightImagePathProperty =
+        AvaloniaProperty.Register<ImageCompareControl, string?>(nameof(RightImagePath));
 
     public static readonly StyledProperty<double> SliderValueProperty =
         AvaloniaProperty.Register<ImageCompareControl, double>(nameof(SliderValue), 50d);
@@ -29,13 +29,13 @@ public partial class ImageCompareControl : UserControl
     public static readonly StyledProperty<double> ZoomLevelProperty =
         AvaloniaProperty.Register<ImageCompareControl, double>(nameof(ZoomLevel), 1.0);
 
-    private Control? _beforeContainer;
-    private Control? _afterContainer;
+    private Control? _leftContainer;
+    private Control? _rightContainer;
     private Canvas? _overlayCanvas;
     private Border? _sliderLine;
     private Thumb? _sliderThumb;
-    private Image? _beforeImage;
-    private Image? _afterImage;
+    private Image? _leftImage;
+    private Image? _rightImage;
     private Grid? _sliderCompareGrid;
     private Grid? _sideBySideGrid;
 
@@ -54,13 +54,13 @@ public partial class ImageCompareControl : UserControl
     {
         InitializeComponent();
 
-        _beforeContainer = this.FindControl<Control>("BeforeImageContainer");
-        _afterContainer = this.FindControl<Control>("AfterImageContainer");
+        _leftContainer = this.FindControl<Control>("LeftImageContainer");
+        _rightContainer = this.FindControl<Control>("RightImageContainer");
         _overlayCanvas = this.FindControl<Canvas>("OverlayCanvas");
         _sliderLine = this.FindControl<Border>("SliderLine");
         _sliderThumb = this.FindControl<Thumb>("SliderThumb");
-        _beforeImage = this.FindControl<Image>("BeforeImageControl");
-        _afterImage = this.FindControl<Image>("AfterImageControl");
+        _leftImage = this.FindControl<Image>("LeftImageControl");
+        _rightImage = this.FindControl<Image>("RightImageControl");
         _sliderCompareGrid = this.FindControl<Grid>("SliderCompareGrid");
         _sideBySideGrid = this.FindControl<Grid>("SideBySideGrid");
 
@@ -100,16 +100,16 @@ public partial class ImageCompareControl : UserControl
         UpdateVisuals();
     }
 
-    public string? BeforeImagePath
+    public string? LeftImagePath
     {
-        get => GetValue(BeforeImagePathProperty);
-        set => SetValue(BeforeImagePathProperty, value);
+        get => GetValue(LeftImagePathProperty);
+        set => SetValue(LeftImagePathProperty, value);
     }
 
-    public string? AfterImagePath
+    public string? RightImagePath
     {
-        get => GetValue(AfterImagePathProperty);
-        set => SetValue(AfterImagePathProperty, value);
+        get => GetValue(RightImagePathProperty);
+        set => SetValue(RightImagePathProperty, value);
     }
 
     public double SliderValue
@@ -264,7 +264,7 @@ public partial class ImageCompareControl : UserControl
 
     private void UpdateVisuals()
     {
-        if (_beforeContainer is null || _afterContainer is null || _overlayCanvas is null || _sliderLine is null || _sliderThumb is null)
+        if (_leftContainer is null || _rightContainer is null || _overlayCanvas is null || _sliderLine is null || _sliderThumb is null)
         {
             return;
         }
@@ -281,25 +281,25 @@ public partial class ImageCompareControl : UserControl
         zoomTransform.Children.Add(new ScaleTransform(ZoomLevel, ZoomLevel));
         zoomTransform.Children.Add(new TranslateTransform(_panX, _panY));
 
-        if (_beforeImage is not null)
+        if (_leftImage is not null)
         {
-            _beforeImage.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
-            _beforeImage.RenderTransform = zoomTransform;
+            _leftImage.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
+            _leftImage.RenderTransform = zoomTransform;
         }
 
-        if (_afterImage is not null)
+        if (_rightImage is not null)
         {
-            _afterImage.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
-            _afterImage.RenderTransform = zoomTransform;
+            _rightImage.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
+            _rightImage.RenderTransform = zoomTransform;
         }
 
         var sliderX = width * (SliderValue / 100d);
         
-        var afterClipRect = new Rect(sliderX, 0, Math.Max(0, width - sliderX), height);
-        _afterContainer.Clip = new RectangleGeometry(afterClipRect);
+        var rightClipRect = new Rect(sliderX, 0, Math.Max(0, width - sliderX), height);
+        _rightContainer.Clip = new RectangleGeometry(rightClipRect);
 
-        var beforeClipRect = new Rect(0, 0, sliderX, height);
-        _beforeContainer.Clip = new RectangleGeometry(beforeClipRect);
+        var leftClipRect = new Rect(0, 0, sliderX, height);
+        _leftContainer.Clip = new RectangleGeometry(leftClipRect);
 
         _sliderLine.Height = height;
         Canvas.SetLeft(_sliderLine, sliderX - (_sliderLine.Width / 2));

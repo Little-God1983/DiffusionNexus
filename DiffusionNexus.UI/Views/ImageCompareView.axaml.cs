@@ -63,4 +63,25 @@ public partial class ImageCompareView : UserControl
             viewModel.IsTrayOpen = isOpen;
         }
     }
+
+    private void OnFilmstripItemPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Control control &&
+            control.DataContext is ImageCompareItem item &&
+            DataContext is ImageCompareViewModel viewModel)
+        {
+            var properties = e.GetCurrentPoint(control).Properties;
+
+            if (properties.IsLeftButtonPressed)
+            {
+                viewModel.AssignLeftImage(item);
+                e.Handled = true;
+            }
+            else if (properties.IsRightButtonPressed)
+            {
+                viewModel.AssignRightImage(item);
+                e.Handled = true;
+            }
+        }
+    }
 }

@@ -12,18 +12,18 @@
   <Grid Background="#121212" ClipToBounds="True">
     <!-- Slider comparison mode (default) -->
     <Grid x:Name="SliderCompareGrid">
-      <Panel x:Name="BeforeImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-        <Image x:Name="BeforeImageControl"
-               Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+      <Panel x:Name="LeftImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Image x:Name="LeftImageControl"
+               Source="{Binding LeftImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
                Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
                StretchDirection="Both"
                HorizontalAlignment="Stretch"
                VerticalAlignment="Stretch"/>
       </Panel>
 
-      <Panel x:Name="AfterImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-        <Image x:Name="AfterImageControl"
-               Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+      <Panel x:Name="RightImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Image x:Name="RightImageControl"
+               Source="{Binding RightImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
                Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
                StretchDirection="Both"
                HorizontalAlignment="Stretch"
@@ -60,17 +60,17 @@
 
     <!-- Side by side comparison mode -->
     <Grid x:Name="SideBySideGrid" ColumnDefinitions="*,4,*" IsVisible="False">
-      <Image x:Name="SideBySideBeforeImage"
+      <Image x:Name="SideBySideLeftImage"
              Grid.Column="0"
-             Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Source="{Binding LeftImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
              Stretch="Uniform"
              StretchDirection="Both"
              HorizontalAlignment="Stretch"
              VerticalAlignment="Stretch"/>
       <Border Grid.Column="1" Background="#333333"/>
-      <Image x:Name="SideBySideAfterImage"
+      <Image x:Name="SideBySideRightImage"
              Grid.Column="2"
-             Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Source="{Binding RightImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
              Stretch="Uniform"
              StretchDirection="Both"
              HorizontalAlignment="Stretch"
