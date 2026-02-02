@@ -290,10 +290,12 @@ public class DialogService : IDialogService
     public async Task ShowCaptioningDialogAsync(
         ICaptioningService captioningService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
-        IDatasetEventAggregator? eventAggregator = null)
+        IDatasetEventAggregator? eventAggregator = null,
+        DatasetCardViewModel? initialDataset = null,
+        int? initialVersion = null)
     {
         var dialog = new CaptioningDialog()
-            .WithDependencies(captioningService, this, availableDatasets, eventAggregator);
+            .WithDependencies(captioningService, this, availableDatasets, eventAggregator, initialDataset, initialVersion);
 
         await dialog.ShowDialog(_window);
     }

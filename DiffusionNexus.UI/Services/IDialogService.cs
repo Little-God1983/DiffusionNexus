@@ -183,10 +183,14 @@ public interface IDialogService
     /// <param name="captioningService">The captioning service instance.</param>
     /// <param name="availableDatasets">List of available datasets to caption.</param>
     /// <param name="eventAggregator">Event aggregator for updates.</param>
+    /// <param name="initialDataset">The dataset to select initially.</param>
+    /// <param name="initialVersion">The version to select initially.</param>
     Task ShowCaptioningDialogAsync(
         ICaptioningService captioningService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
-        IDatasetEventAggregator? eventAggregator = null);
+        IDatasetEventAggregator? eventAggregator = null,
+        DatasetCardViewModel? initialDataset = null,
+        int? initialVersion = null);
 
     /// <summary>
     /// Shows the file conflict resolution dialog for handling duplicate filenames.

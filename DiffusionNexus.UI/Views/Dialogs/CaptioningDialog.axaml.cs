@@ -25,9 +25,18 @@ public partial class CaptioningDialog : Window
         ICaptioningService captioningService,
         IDialogService dialogService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
-        IDatasetEventAggregator? eventAggregator)
+        IDatasetEventAggregator? eventAggregator,
+        DatasetCardViewModel? initialDataset = null,
+        int? initialVersion = null)
     {
-        _viewModel = new CaptioningViewModel(captioningService, dialogService, availableDatasets, eventAggregator);
+        _viewModel = new CaptioningViewModel(
+            captioningService, 
+            dialogService, 
+            availableDatasets, 
+            eventAggregator,
+            initialDataset,
+            initialVersion);
+            
         DataContext = _viewModel;
         return this;
     }
