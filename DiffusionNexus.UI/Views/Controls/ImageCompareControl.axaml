@@ -10,49 +10,71 @@
              x:Class="DiffusionNexus.UI.Views.Controls.ImageCompareControl">
 
   <Grid Background="#121212" ClipToBounds="True">
-    <Panel x:Name="BeforeImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-      <Image x:Name="BeforeImageControl"
-             Source="{Binding BeforeImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-             Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+    <!-- Slider comparison mode (default) -->
+    <Grid x:Name="SliderCompareGrid">
+      <Panel x:Name="LeftImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Image x:Name="LeftImageControl"
+               Source="{Binding LeftImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+               Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+               StretchDirection="Both"
+               HorizontalAlignment="Stretch"
+               VerticalAlignment="Stretch"/>
+      </Panel>
+
+      <Panel x:Name="RightImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Image x:Name="RightImageControl"
+               Source="{Binding RightImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+               Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+               StretchDirection="Both"
+               HorizontalAlignment="Stretch"
+               VerticalAlignment="Stretch"/>
+      </Panel>
+
+      <Canvas x:Name="OverlayCanvas"
+              Background="Transparent"
+              IsHitTestVisible="True">
+        <Border x:Name="SliderLine"
+                Width="2"
+                Background="#CCFFFFFF"/>
+        <Thumb x:Name="SliderThumb"
+               Width="44"
+               Height="44"
+               Cursor="SizeWestEast">
+          <Thumb.Template>
+            <ControlTemplate>
+              <Border Background="#1D1D1D"
+                      BorderBrush="#CCFFFFFF"
+                      BorderThickness="2"
+                      CornerRadius="22">
+                <TextBlock Text="⇄"
+                           FontSize="18"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="#CCFFFFFF"/>
+              </Border>
+            </ControlTemplate>
+          </Thumb.Template>
+        </Thumb>
+      </Canvas>
+    </Grid>
+
+    <!-- Side by side comparison mode -->
+    <Grid x:Name="SideBySideGrid" ColumnDefinitions="*,4,*" IsVisible="False">
+      <Image x:Name="SideBySideLeftImage"
+             Grid.Column="0"
+             Source="{Binding LeftImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Stretch="Uniform"
              StretchDirection="Both"
              HorizontalAlignment="Stretch"
              VerticalAlignment="Stretch"/>
-    </Panel>
-
-    <Panel x:Name="AfterImageContainer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-      <Image x:Name="AfterImageControl"
-             Source="{Binding AfterImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
-             Stretch="{Binding FitMode, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:CompareFitModeToStretchConverter.Instance}}"
+      <Border Grid.Column="1" Background="#333333"/>
+      <Image x:Name="SideBySideRightImage"
+             Grid.Column="2"
+             Source="{Binding RightImagePath, RelativeSource={RelativeSource AncestorType=local:ImageCompareControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"
+             Stretch="Uniform"
              StretchDirection="Both"
              HorizontalAlignment="Stretch"
              VerticalAlignment="Stretch"/>
-    </Panel>
-
-    <Canvas x:Name="OverlayCanvas"
-            Background="Transparent"
-            IsHitTestVisible="True">
-      <Border x:Name="SliderLine"
-              Width="2"
-              Background="#CCFFFFFF"/>
-      <Thumb x:Name="SliderThumb"
-             Width="28"
-             Height="28"
-             Cursor="SizeWestEast">
-        <Thumb.Template>
-          <ControlTemplate>
-            <Border Background="#1D1D1D"
-                    BorderBrush="#CCFFFFFF"
-                    BorderThickness="1"
-                    CornerRadius="14">
-              <TextBlock Text="⇄"
-                         FontSize="12"
-                         HorizontalAlignment="Center"
-                         VerticalAlignment="Center"
-                         Foreground="#CCFFFFFF"/>
-            </Border>
-          </ControlTemplate>
-        </Thumb.Template>
-      </Thumb>
-    </Canvas>
+    </Grid>
   </Grid>
 </UserControl>

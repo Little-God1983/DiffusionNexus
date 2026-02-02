@@ -10,14 +10,14 @@ using DiffusionNexus.UI.Services;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel for the before/after image comparer experience.
+/// ViewModel for the left/right image comparer experience.
 /// Integrates with IDatasetState to load real datasets and their versions.
 /// </summary>
 public partial class ImageCompareViewModel : ViewModelBase
 {
     private readonly IDatasetState? _datasetState;
-    private ImageCompareItem? _selectedBeforeImage;
-    private ImageCompareItem? _selectedAfterImage;
+    private ImageCompareItem? _selectedLeftImage;
+    private ImageCompareItem? _selectedRightImage;
 
     /// <summary>
     /// Design-time constructor with empty datasets.
@@ -36,16 +36,16 @@ public partial class ImageCompareViewModel : ViewModelBase
         _datasetState = datasetState;
 
         DatasetOptions = [];
-        BeforeVersionOptions = [];
-        AfterVersionOptions = [];
-        FitModeOptions = [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne];
+        LeftVersionOptions = [];
+        RightVersionOptions = [];
+        FitModeOptions = [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne, CompareFitMode.SideBySide];
         FilmstripItems = [];
 
-        SwapCommand = new RelayCommand(SwapImages, () => SelectedBeforeImage is not null || SelectedAfterImage is not null);
+        SwapCommand = new RelayCommand(SwapImages, () => SelectedLeftImage is not null || SelectedRightImage is not null);
         ResetSliderCommand = new RelayCommand(ResetSlider);
         AssignImageCommand = new RelayCommand<ImageCompareItem?>(AssignImage);
 
-        AssignSide = CompareAssignSide.Before;
+        AssignSide = CompareAssignSide.Left;
         FitMode = CompareFitMode.Fit;
         SliderValue = 50d;
         IsTrayOpen = false;
@@ -61,9 +61,9 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     public ObservableCollection<DatasetCardViewModel> DatasetOptions { get; }
 
-    public ObservableCollection<int> BeforeVersionOptions { get; }
+    public ObservableCollection<int> LeftVersionOptions { get; }
 
-    public ObservableCollection<int> AfterVersionOptions { get; }
+    public ObservableCollection<int> RightVersionOptions { get; }
 
     public ObservableCollection<ImageCompareItem> FilmstripItems { get; }
 
@@ -76,16 +76,16 @@ public partial class ImageCompareViewModel : ViewModelBase
     public IRelayCommand<ImageCompareItem?> AssignImageCommand { get; }
 
     [ObservableProperty]
-    private DatasetCardViewModel? _selectedBeforeDataset;
+    private DatasetCardViewModel? _selectedLeftDataset;
 
     [ObservableProperty]
-    private int _selectedBeforeVersion = 1;
+    private int? _selectedLeftVersion = 1;
 
     [ObservableProperty]
-    private DatasetCardViewModel? _selectedAfterDataset;
+    private DatasetCardViewModel? _selectedRightDataset;
 
     [ObservableProperty]
-    private int _selectedAfterVersion = 1;
+    private int? _selectedRightVersion = 1;
 
     [ObservableProperty]
     private CompareAssignSide _assignSide;
@@ -105,71 +105,217 @@ public partial class ImageCompareViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isTrayOpen;
 
-    public ImageCompareItem? SelectedBeforeImage
+    /// <summary>
+    /// Gets or sets whether single dataset mode is enabled.
+    /// When enabled, the Right dataset/version uses the same values as the Left dataset/version.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isSingleDatasetMode = true;
+
+    public ImageCompareItem? SelectedLeftImage
     {
-        get => _selectedBeforeImage;
+        get => _selectedLeftImage;
         set
         {
-            if (SetProperty(ref _selectedBeforeImage, value))
+            if (SetProperty(ref _selectedLeftImage, value))
             {
-                UpdateSelectionFlags(value, isBefore: true);
-                OnPropertyChanged(nameof(BeforeImagePath));
-                OnPropertyChanged(nameof(BeforeLabel));
+                UpdateSelectionFlags(value, isLeft: true);
+                OnPropertyChanged(nameof(LeftImagePath));
+                OnPropertyChanged(nameof(LeftLabel));
                 SwapCommand.NotifyCanExecuteChanged();
             }
         }
     }
 
-    public ImageCompareItem? SelectedAfterImage
+    public ImageCompareItem? SelectedRightImage
     {
-        get => _selectedAfterImage;
+        get => _selectedRightImage;
         set
         {
-            if (SetProperty(ref _selectedAfterImage, value))
+            if (SetProperty(ref _selectedRightImage, value))
             {
-                UpdateSelectionFlags(value, isBefore: false);
-                OnPropertyChanged(nameof(AfterImagePath));
-                OnPropertyChanged(nameof(AfterLabel));
+                UpdateSelectionFlags(value, isLeft: false);
+                OnPropertyChanged(nameof(RightImagePath));
+                OnPropertyChanged(nameof(RightLabel));
                 SwapCommand.NotifyCanExecuteChanged();
             }
         }
     }
 
-    public string? BeforeImagePath => SelectedBeforeImage?.ImagePath;
+    public string? LeftImagePath => SelectedLeftImage?.ImagePath;
 
-    public string? AfterImagePath => SelectedAfterImage?.ImagePath;
+    public string? RightImagePath => SelectedRightImage?.ImagePath;
 
-    public string BeforeLabel => BuildLabel(SelectedBeforeDataset?.Name, SelectedBeforeVersion, SelectedBeforeImage?.DisplayName, "Before");
+    public string LeftLabel => BuildLabel(SelectedLeftDataset?.Name, SelectedLeftVersion, SelectedLeftImage?.DisplayName, "Left");
 
-    public string AfterLabel => BuildLabel(SelectedAfterDataset?.Name, SelectedAfterVersion, SelectedAfterImage?.DisplayName, "After");
+    public string RightLabel => BuildLabel(EffectiveRightDataset?.Name, EffectiveRightVersion, SelectedRightImage?.DisplayName, "Right");
 
     public double TrayHeight => 260d;
 
-    public double TrayHandleHeight => 34d;
+    public double TrayHandleHeight => 48d;
 
     public double TrayVisibleHeight => IsTrayOpen ? TrayHeight : TrayHandleHeight;
 
-    public bool IsAssigningBefore
+    /// <summary>
+    /// Gets the effective Right dataset (same as Left when in single dataset mode).
+    /// </summary>
+    public DatasetCardViewModel? EffectiveRightDataset => IsSingleDatasetMode ? SelectedLeftDataset : SelectedRightDataset;
+
+    /// <summary>
+    /// Gets the effective Right version (same as Left when in single dataset mode).
+    /// </summary>
+    public int? EffectiveRightVersion => IsSingleDatasetMode ? SelectedLeftVersion : SelectedRightVersion;
+
+    public bool IsAssigningLeft
     {
-        get => AssignSide == CompareAssignSide.Before;
+        get => AssignSide == CompareAssignSide.Left;
         set
         {
             if (value)
             {
-                AssignSide = CompareAssignSide.Before;
+                AssignSide = CompareAssignSide.Left;
             }
         }
     }
 
-    public bool IsAssigningAfter
+    public bool IsAssigningRight
     {
-        get => AssignSide == CompareAssignSide.After;
+        get => AssignSide == CompareAssignSide.Right;
         set
         {
             if (value)
             {
-                AssignSide = CompareAssignSide.After;
+                AssignSide = CompareAssignSide.Right;
             }
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether external images are loaded (from Generation Gallery).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isExternalMode;
+
+    /// <summary>
+    /// Gets or sets the external images collection when loaded from Generation Gallery.
+    /// </summary>
+    public List<ImageCompareItem> ExternalImages { get; private set; } = [];
+
+    /// <summary>
+    /// The temporary dataset used for external images.
+    /// </summary>
+    private DatasetCardViewModel? _tempDataset;
+
+    /// <summary>
+    /// Loads images from external sources (e.g., Generation Gallery).
+    /// </summary>
+    /// <param name="imagePaths">The paths to the images to load.</param>
+    public void LoadExternalImages(IReadOnlyList<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+
+        if (imagePaths.Count < 2)
+        {
+            return;
+        }
+
+        // Clear previous external state
+        ExternalImages.Clear();
+
+        // Create items from image paths
+        foreach (var path in imagePaths)
+        {
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            var displayName = Path.GetFileName(path);
+            var item = new ImageCompareItem(path, displayName);
+            ExternalImages.Add(item);
+        }
+
+        if (ExternalImages.Count < 2)
+        {
+            return;
+        }
+
+        // Create temporary dataset and add to options
+        _tempDataset = new DatasetCardViewModel
+        {
+            Name = "Gallery Selection",
+            FolderPath = "TEMP://ImageComparer",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = ExternalImages.Count,
+            TotalImageCountAllVersions = ExternalImages.Count,
+            IsTemporary = true
+        };
+
+        // Remove any existing temp dataset and add the new one at the beginning
+        var existingTemp = DatasetOptions.FirstOrDefault(d => d.IsTemporary);
+        if (existingTemp is not null)
+        {
+            DatasetOptions.Remove(existingTemp);
+        }
+        DatasetOptions.Insert(0, _tempDataset);
+
+        IsExternalMode = true;
+
+        // Select the temp dataset for both sides (this will trigger the property changed handlers)
+        SelectedLeftDataset = _tempDataset;
+        SelectedRightDataset = _tempDataset;
+
+        IsTrayOpen = true;
+        AssignSide = CompareAssignSide.Left;
+    }
+
+    /// <summary>
+    /// Clears external mode and returns to dataset-based mode.
+    /// </summary>
+    public void ClearExternalMode()
+    {
+        if (!IsExternalMode)
+        {
+            return;
+        }
+
+        IsExternalMode = false;
+        ExternalImages.Clear();
+
+        // Remove temp dataset from options
+        if (_tempDataset is not null)
+        {
+            DatasetOptions.Remove(_tempDataset);
+            _tempDataset = null;
+        }
+
+        // Select first available real dataset if current selection was temp
+        if (SelectedLeftDataset?.IsTemporary == true || SelectedLeftDataset is null)
+        {
+            SelectedLeftDataset = DatasetOptions.FirstOrDefault(d => !d.IsTemporary);
+        }
+        if (SelectedRightDataset?.IsTemporary == true || SelectedRightDataset is null)
+        {
+            SelectedRightDataset = DatasetOptions.FirstOrDefault(d => !d.IsTemporary);
+        }
+    }
+
+    /// <summary>
+    /// Clears external mode state without changing dataset selections.
+    /// Used when both sides have switched away from the temp dataset.
+    /// </summary>
+    private void ClearExternalModeWithoutDatasetChange()
+    {
+        IsExternalMode = false;
+        ExternalImages.Clear();
+
+        // Remove temp dataset from options
+        if (_tempDataset is not null)
+        {
+            DatasetOptions.Remove(_tempDataset);
+            _tempDataset = null;
         }
     }
 
@@ -192,8 +338,8 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
 
         // Preserve current selections if possible
-        var previousBeforeDataset = SelectedBeforeDataset?.Name;
-        var previousAfterDataset = SelectedAfterDataset?.Name;
+        var previousLeftDataset = SelectedLeftDataset?.Name;
+        var previousRightDataset = SelectedRightDataset?.Name;
 
         DatasetOptions.Clear();
 
@@ -206,20 +352,20 @@ public partial class ImageCompareViewModel : ViewModelBase
         if (DatasetOptions.Count > 0)
         {
             // Try to restore previous selection
-            var restoredBefore = previousBeforeDataset is not null 
-                ? DatasetOptions.FirstOrDefault(d => d.Name == previousBeforeDataset) 
+            var restoredLeft = previousLeftDataset is not null 
+                ? DatasetOptions.FirstOrDefault(d => d.Name == previousLeftDataset) 
                 : null;
-            var restoredAfter = previousAfterDataset is not null 
-                ? DatasetOptions.FirstOrDefault(d => d.Name == previousAfterDataset) 
+            var restoredRight = previousRightDataset is not null 
+                ? DatasetOptions.FirstOrDefault(d => d.Name == previousRightDataset) 
                 : null;
 
-            SelectedBeforeDataset = restoredBefore ?? DatasetOptions[0];
-            SelectedAfterDataset = restoredAfter ?? (DatasetOptions.Count > 1 ? DatasetOptions[1] : DatasetOptions[0]);
+            SelectedLeftDataset = restoredLeft ?? DatasetOptions[0];
+            SelectedRightDataset = restoredRight ?? (DatasetOptions.Count > 1 ? DatasetOptions[1] : DatasetOptions[0]);
         }
         else
         {
-            SelectedBeforeDataset = null;
-            SelectedAfterDataset = null;
+            SelectedLeftDataset = null;
+            SelectedRightDataset = null;
         }
     }
 
@@ -231,6 +377,13 @@ public partial class ImageCompareViewModel : ViewModelBase
         versionOptions.Clear();
 
         if (dataset is null)
+        {
+            versionOptions.Add(1);
+            return;
+        }
+
+        // Temporary datasets always have version 1 only
+        if (dataset.IsTemporary)
         {
             versionOptions.Add(1);
             return;
@@ -251,7 +404,7 @@ public partial class ImageCompareViewModel : ViewModelBase
     /// <summary>
     /// Loads images from a dataset version folder.
     /// </summary>
-    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int version)
+    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int? version)
     {
         var items = new List<ImageCompareItem>();
 
@@ -260,8 +413,9 @@ public partial class ImageCompareViewModel : ViewModelBase
             return items;
         }
 
+        var versionNum = version ?? 1;
         var versionPath = dataset.IsVersionedStructure
-            ? dataset.GetVersionFolderPath(version)
+            ? dataset.GetVersionFolderPath(versionNum)
             : dataset.FolderPath;
 
         if (!Directory.Exists(versionPath))
@@ -282,38 +436,77 @@ public partial class ImageCompareViewModel : ViewModelBase
         return items;
     }
 
-    partial void OnSelectedBeforeDatasetChanged(DatasetCardViewModel? value)
+    partial void OnSelectedLeftDatasetChanged(DatasetCardViewModel? value)
     {
-        LoadVersionsForDataset(value, BeforeVersionOptions);
-        SelectedBeforeVersion = BeforeVersionOptions.FirstOrDefault();
-        RefreshBeforeImages();
-        OnPropertyChanged(nameof(BeforeLabel));
+        // If switching from temp to a real dataset on this side, check if we should exit external mode
+        if (IsExternalMode && value is not null && !value.IsTemporary)
+        {
+            // Don't clear external mode here - just let this side use the real dataset
+            // Only clear when both sides are no longer using temp
+            if (SelectedRightDataset is null || !SelectedRightDataset.IsTemporary)
+            {
+                ClearExternalModeWithoutDatasetChange();
+            }
+        }
+
+        LoadVersionsForDataset(value, LeftVersionOptions);
+        SelectedLeftVersion = LeftVersionOptions.FirstOrDefault();
+        RefreshLeftImages();
+        OnPropertyChanged(nameof(LeftLabel));
+
+        // In single dataset mode, the Right side uses the same dataset
+        if (IsSingleDatasetMode)
+        {
+            OnPropertyChanged(nameof(EffectiveRightDataset));
+            OnPropertyChanged(nameof(EffectiveRightVersion));
+            RefreshRightImages();
+            OnPropertyChanged(nameof(RightLabel));
+        }
     }
 
-    partial void OnSelectedBeforeVersionChanged(int value)
+    partial void OnSelectedLeftVersionChanged(int? value)
     {
-        RefreshBeforeImages();
-        OnPropertyChanged(nameof(BeforeLabel));
+        RefreshLeftImages();
+        OnPropertyChanged(nameof(LeftLabel));
+
+        // In single dataset mode, the Right side uses the same version
+        if (IsSingleDatasetMode)
+        {
+            OnPropertyChanged(nameof(EffectiveRightVersion));
+            RefreshRightImages();
+            OnPropertyChanged(nameof(RightLabel));
+        }
     }
 
-    partial void OnSelectedAfterDatasetChanged(DatasetCardViewModel? value)
+    partial void OnSelectedRightDatasetChanged(DatasetCardViewModel? value)
     {
-        LoadVersionsForDataset(value, AfterVersionOptions);
-        SelectedAfterVersion = AfterVersionOptions.FirstOrDefault();
-        RefreshAfterImages();
-        OnPropertyChanged(nameof(AfterLabel));
+        // If switching from temp to a real dataset on this side, check if we should exit external mode
+        if (IsExternalMode && value is not null && !value.IsTemporary)
+        {
+            // Don't clear external mode here - just let this side use the real dataset
+            // Only clear when both sides are no longer using temp
+            if (SelectedLeftDataset is null || !SelectedLeftDataset.IsTemporary)
+            {
+                ClearExternalModeWithoutDatasetChange();
+            }
+        }
+
+        LoadVersionsForDataset(value, RightVersionOptions);
+        SelectedRightVersion = RightVersionOptions.FirstOrDefault();
+        RefreshRightImages();
+        OnPropertyChanged(nameof(RightLabel));
     }
 
-    partial void OnSelectedAfterVersionChanged(int value)
+    partial void OnSelectedRightVersionChanged(int? value)
     {
-        RefreshAfterImages();
-        OnPropertyChanged(nameof(AfterLabel));
+        RefreshRightImages();
+        OnPropertyChanged(nameof(RightLabel));
     }
 
     partial void OnAssignSideChanged(CompareAssignSide value)
     {
-        OnPropertyChanged(nameof(IsAssigningBefore));
-        OnPropertyChanged(nameof(IsAssigningAfter));
+        OnPropertyChanged(nameof(IsAssigningLeft));
+        OnPropertyChanged(nameof(IsAssigningRight));
         RefreshFilmstrip();
     }
 
@@ -335,23 +528,60 @@ public partial class ImageCompareViewModel : ViewModelBase
         }
     }
 
-    private void RefreshBeforeImages()
+    partial void OnIsSingleDatasetModeChanged(bool value)
     {
-        var images = LoadImagesFromDataset(SelectedBeforeDataset, SelectedBeforeVersion);
-        SelectedBeforeImage = images.FirstOrDefault();
+        // Update computed properties
+        OnPropertyChanged(nameof(EffectiveRightDataset));
+        OnPropertyChanged(nameof(EffectiveRightVersion));
 
-        if (AssignSide == CompareAssignSide.Before)
+        // Refresh the Right images based on the new mode
+        RefreshRightImages();
+        OnPropertyChanged(nameof(RightLabel));
+    }
+
+    private void RefreshLeftImages()
+    {
+        List<ImageCompareItem> images;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (SelectedLeftDataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+        }
+        else
+        {
+            images = LoadImagesFromDataset(SelectedLeftDataset, SelectedLeftVersion);
+        }
+
+        SelectedLeftImage = images.FirstOrDefault();
+
+        if (AssignSide == CompareAssignSide.Left)
         {
             RefreshFilmstrip();
         }
     }
 
-    private void RefreshAfterImages()
+    private void RefreshRightImages()
     {
-        var images = LoadImagesFromDataset(SelectedAfterDataset, SelectedAfterVersion);
-        SelectedAfterImage = images.FirstOrDefault();
+        List<ImageCompareItem> images;
 
-        if (AssignSide == CompareAssignSide.After)
+        var dataset = EffectiveRightDataset;
+        var version = EffectiveRightVersion;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (dataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+            // For right, default to second image if available
+            SelectedRightImage = images.Count > 1 ? images[1] : images.FirstOrDefault();
+        }
+        else
+        {
+            images = LoadImagesFromDataset(dataset, version);
+            SelectedRightImage = images.FirstOrDefault();
+        }
+
+        if (AssignSide == CompareAssignSide.Right)
         {
             RefreshFilmstrip();
         }
@@ -364,10 +594,10 @@ public partial class ImageCompareViewModel : ViewModelBase
 
     public void SwapImages()
     {
-        var before = SelectedBeforeImage;
-        var after = SelectedAfterImage;
-        SelectedBeforeImage = after;
-        SelectedAfterImage = before;
+        var left = SelectedLeftImage;
+        var right = SelectedRightImage;
+        SelectedLeftImage = right;
+        SelectedRightImage = left;
     }
 
     public void AssignImage(ImageCompareItem? item)
@@ -377,24 +607,46 @@ public partial class ImageCompareViewModel : ViewModelBase
             return;
         }
 
-        if (AssignSide == CompareAssignSide.Before)
+        if (AssignSide == CompareAssignSide.Left)
         {
-            SelectedBeforeImage = item;
+            SelectedLeftImage = item;
         }
         else
         {
-            SelectedAfterImage = item;
+            SelectedRightImage = item;
         }
+    }
+
+    public void AssignLeftImage(ImageCompareItem? item)
+    {
+        if (item is null) return;
+        SelectedLeftImage = item;
+    }
+
+    public void AssignRightImage(ImageCompareItem? item)
+    {
+        if (item is null) return;
+        SelectedRightImage = item;
     }
 
     private void RefreshFilmstrip()
     {
         FilmstripItems.Clear();
 
-        var dataset = AssignSide == CompareAssignSide.Before ? SelectedBeforeDataset : SelectedAfterDataset;
-        var version = AssignSide == CompareAssignSide.Before ? SelectedBeforeVersion : SelectedAfterVersion;
+        var dataset = AssignSide == CompareAssignSide.Left ? SelectedLeftDataset : EffectiveRightDataset;
+        var version = AssignSide == CompareAssignSide.Left ? SelectedLeftVersion : EffectiveRightVersion;
 
-        var images = LoadImagesFromDataset(dataset, version);
+        List<ImageCompareItem> images;
+
+        // Use external images if the selected dataset is the temp dataset
+        if (dataset?.IsTemporary == true && ExternalImages.Count > 0)
+        {
+            images = ExternalImages;
+        }
+        else
+        {
+            images = LoadImagesFromDataset(dataset, version);
+        }
 
         var query = SearchText?.Trim();
         foreach (var item in images)
@@ -402,31 +654,32 @@ public partial class ImageCompareViewModel : ViewModelBase
             if (string.IsNullOrWhiteSpace(query) || item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))
             {
                 // Update selection flags based on current selections
-                item.IsSelectedBefore = item.ImagePath == SelectedBeforeImage?.ImagePath;
-                item.IsSelectedAfter = item.ImagePath == SelectedAfterImage?.ImagePath;
+                item.IsSelectedLeft = item.ImagePath == SelectedLeftImage?.ImagePath;
+                item.IsSelectedRight = item.ImagePath == SelectedRightImage?.ImagePath;
                 FilmstripItems.Add(item);
             }
         }
     }
 
-    private void UpdateSelectionFlags(ImageCompareItem? newSelection, bool isBefore)
+    private void UpdateSelectionFlags(ImageCompareItem? newSelection, bool isLeft)
     {
         foreach (var item in FilmstripItems)
         {
-            if (isBefore)
+            if (isLeft)
             {
-                item.IsSelectedBefore = item == newSelection || item.ImagePath == newSelection?.ImagePath;
+                item.IsSelectedLeft = item == newSelection || item.ImagePath == newSelection?.ImagePath;
             }
             else
             {
-                item.IsSelectedAfter = item == newSelection || item.ImagePath == newSelection?.ImagePath;
+                item.IsSelectedRight = item == newSelection || item.ImagePath == newSelection?.ImagePath;
             }
         }
     }
 
-    private static string BuildLabel(string? datasetName, int version, string? imageName, string fallback)
+    private static string BuildLabel(string? datasetName, int? version, string? imageName, string fallback)
     {
-        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{version}";
+        var versionStr = version?.ToString() ?? "1";
+        var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{versionStr}";
         var image = string.IsNullOrWhiteSpace(imageName) ? "Unassigned" : imageName;
         return $"{dataset} / {image}";
     }
@@ -434,6 +687,6 @@ public partial class ImageCompareViewModel : ViewModelBase
 
 public enum CompareAssignSide
 {
-    Before,
-    After
+    Left,
+    Right
 }

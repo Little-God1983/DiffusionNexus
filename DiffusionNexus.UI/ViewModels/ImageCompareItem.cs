@@ -17,8 +17,8 @@ public partial class ImageCompareItem : ObservableObject
     public string DisplayName { get; }
 
     [ObservableProperty]
-    private bool _isSelectedBefore;
+    private bool _isSelectedLeft;
 
     [ObservableProperty]
-    private bool _isSelectedAfter;
+    private bool _isSelectedRight;
 }

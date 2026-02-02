@@ -27,10 +27,17 @@ public partial class ModuleItem : ObservableObject
     [ObservableProperty]
     private object? _view;
 
-    public ModuleItem(string name, string iconPath, object? view = null)
+    [ObservableProperty]
+    private bool _isVisible = true;
+
+    [ObservableProperty]
+    private bool _isSelected;
+
+    public ModuleItem(string name, string iconPath, object? view = null, bool isVisible = true)
     {
         _name = name;
         _view = view;
+        _isVisible = isVisible;
         
         if (!string.IsNullOrEmpty(iconPath))
         {
@@ -168,8 +175,18 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     {
         if (module is null) return;
         
+        // Clear previous selection
+        foreach (var m in Modules)
+        {
+            m.IsSelected = false;
+        }
+        
+        module.IsSelected = true;
         SelectedModule = module;
         CurrentModuleView = module.View;
+        
+        // Collapse the menu after selection
+        IsMenuOpen = false;
     }
 
     [RelayCommand]
@@ -205,16 +222,18 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 
     /// <summary>
-    /// Registers a module for navigation.
-    /// </summary>
-    public void RegisterModule(ModuleItem module)
-    {
-        Modules.Add(module);
-        
-        // Set first module as default
-        if (CurrentModuleView is null)
+        /// Registers a module for navigation.
+        /// </summary>
+        public void RegisterModule(ModuleItem module)
         {
-            NavigateToModule(module);
+            Modules.Add(module);
+        
+            // Set first module as default (without collapsing menu)
+            if (CurrentModuleView is null)
+            {
+                module.IsSelected = true;
+                SelectedModule = module;
+                CurrentModuleView = module.View;
+            }
         }
     }
-}

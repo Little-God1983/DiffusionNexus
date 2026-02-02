@@ -19,6 +19,8 @@ public class DiffusionNexusCoreDbContext : DbContext
     public DiffusionNexusCoreDbContext(DbContextOptions<DiffusionNexusCoreDbContext> options)
         : base(options)
     {
+        // Set SQLite pragmas for better performance and to prevent indefinite hangs
+        Database.SetCommandTimeout(TimeSpan.FromSeconds(30));
     }
 
     #region DbSets
@@ -429,7 +431,8 @@ public class DiffusionNexusCoreDbContext : DbContext
         var dir = directory ?? GetDatabaseDirectory();
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, DatabaseFileName);
-        return $"Data Source={path}";
+        // Use default timeout and disable pooling to prevent connection locking issues
+        return $"Data Source={path};Mode=ReadWriteCreate;Cache=Shared;Pooling=False;Default Timeout=30";
     }
 
     /// <summary>

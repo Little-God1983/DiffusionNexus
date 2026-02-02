@@ -84,6 +84,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _includeSubFolders = true;
 
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
     public int SelectionCount
     {
         get => _selectionCount;
@@ -91,6 +94,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     }
 
     public bool HasSelection => SelectionCount > 0;
+
+    public bool HasMultipleImagesSelected => SelectionCount >= 2 && MediaItems.Where(item => item.IsSelected && item.IsImage).Take(2).Count() >= 2;
 
     public string SelectionText => SelectionCount == 1 ? "1 selected" : $"{SelectionCount} selected";
 
@@ -139,6 +144,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     partial void OnIncludeSubFoldersChanged(bool value)
     {
         LoadMediaCommand.Execute(null);
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        ApplySortingAndGrouping();
     }
 
     public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
@@ -560,7 +570,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     private void ApplySortingAndGrouping()
     {
-        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = _allMediaItems;
+        IEnumerable<GenerationGalleryMediaItemViewModel> filtered = _allMediaItems;
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            filtered = filtered.Where(item =>
+                item.FileName.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
 
         if (string.Equals(SelectedSortOption, "Creation date", StringComparison.OrdinalIgnoreCase))
         {
@@ -625,9 +643,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     {
         SelectionCount = MediaItems.Count(item => item.IsSelected);
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(HasMultipleImagesSelected));
         OnPropertyChanged(nameof(SelectionText));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
+        SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
@@ -713,6 +733,46 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             Dataset = tempDataset,
             Image = editorImages[0],
             Images = editorImages
+        });
+    }
+
+    [RelayCommand(CanExecute = nameof(HasMultipleImagesSelected))]
+    private async Task SendSelectedToImageComparerAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count < 2)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "Selection Required",
+                    "Please select at least 2 images to compare.");
+            }
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count < 2)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "Not Enough Images Selected",
+                    "The Image Comparer requires at least 2 images. Please select at least 2 images (videos are not supported).");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToImageComparer(new NavigateToImageComparerEventArgs
+        {
+            ImagePaths = imagePaths
         });
     }
 

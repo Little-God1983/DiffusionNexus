@@ -32,68 +32,100 @@ public partial class App : Application
 
     public override void Initialize()
     {
+        Serilog.Log.Information("App.Initialize() starting...");
         AvaloniaXamlLoader.Load(this);
+        Serilog.Log.Information("App.Initialize() XAML loaded");
         
         // Set up global exception handlers
         AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
         {
             var ex = args.ExceptionObject as Exception;
+            Serilog.Log.Fatal(ex, "UNHANDLED DOMAIN EXCEPTION");
             FileLogger.LogError($"UNHANDLED DOMAIN EXCEPTION: {ex?.Message}", ex);
         };
         
         TaskScheduler.UnobservedTaskException += (sender, args) =>
         {
+            Serilog.Log.Error(args.Exception, "UNOBSERVED TASK EXCEPTION");
             FileLogger.LogError($"UNOBSERVED TASK EXCEPTION: {args.Exception?.Message}", args.Exception);
             args.SetObserved(); // Prevent the process from terminating
         };
+        Serilog.Log.Information("App.Initialize() completed");
     }
 
     public override void OnFrameworkInitializationCompleted()
     {
+        Serilog.Log.Information("OnFrameworkInitializationCompleted starting...");
+        
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Avoid duplicate validations from both Avalonia and the CommunityToolkit
-            DisableAvaloniaDataAnnotationValidation();
-
-            // Configure services
-            var services = new ServiceCollection();
-            ConfigureServices(services);
-            var rootProvider = services.BuildServiceProvider();
-
-            // Create a scope for the application lifetime
-            _appScope = rootProvider.CreateScope();
-            Services = _appScope.ServiceProvider;
-
-            // Initialize ThumbnailService for converters
-            InitializeThumbnailService();
-
-            // Ensure database is migrated
-            InitializeDatabase();
-
-            // Create main window with modules
-            var mainViewModel = new DiffusionNexusMainWindowViewModel();
-            
-            // Initialize status bar with activity log service
-            mainViewModel.InitializeStatusBar();
-            
-            RegisterModules(mainViewModel);
-
-            // Check disclaimer status after services are ready
-            _ = mainViewModel.CheckDisclaimerStatusAsync();
-
-            desktop.MainWindow = new DiffusionNexusMainWindow
+            try
             {
-                DataContext = mainViewModel
-            };
+                // Avoid duplicate validations from both Avalonia and the CommunityToolkit
+                Serilog.Log.Information("Disabling data annotation validation...");
+                DisableAvaloniaDataAnnotationValidation();
 
-            // Cleanup on shutdown
-            desktop.ShutdownRequested += (_, _) =>
+                // Configure services
+                Serilog.Log.Information("Configuring services...");
+                var services = new ServiceCollection();
+                ConfigureServices(services);
+                var rootProvider = services.BuildServiceProvider();
+
+                // Create a scope for the application lifetime
+                _appScope = rootProvider.CreateScope();
+                Services = _appScope.ServiceProvider;
+
+                // Initialize ThumbnailService for converters
+                Serilog.Log.Information("Initializing thumbnail service...");
+                InitializeThumbnailService();
+
+                // TEMPORARILY SKIP DATABASE - debugging invisible window issue
+                Serilog.Log.Information("SKIPPING database initialization for debugging...");
+                InitializeDatabase();
+
+                // Create main window with modules
+                Serilog.Log.Information("Creating main window view model...");
+                var mainViewModel = new DiffusionNexusMainWindowViewModel();
+                
+                // Initialize status bar with activity log service
+                Serilog.Log.Information("Initializing status bar...");
+                mainViewModel.InitializeStatusBar();
+                
+                Serilog.Log.Information("Registering modules...");
+                RegisterModules(mainViewModel);
+
+                // Check disclaimer status after services are ready
+                Serilog.Log.Information("Checking disclaimer status...");
+                _ = mainViewModel.CheckDisclaimerStatusAsync();
+
+                Serilog.Log.Information("Creating main window...");
+                var mainWindow = new DiffusionNexusMainWindow
+                {
+                    DataContext = mainViewModel
+                };
+                desktop.MainWindow = mainWindow;
+                Serilog.Log.Information("Main window assigned to desktop.MainWindow");
+                
+                // Force show the window explicitly
+                mainWindow.Show();
+                Serilog.Log.Information("Main window Show() called");
+
+                // Cleanup on shutdown
+                desktop.ShutdownRequested += (_, _) =>
+                {
+                    _appScope?.Dispose();
+                };
+            }
+            catch (Exception ex)
             {
-                _appScope?.Dispose();
-            };
+                Serilog.Log.Fatal(ex, "Failed during OnFrameworkInitializationCompleted");
+                throw;
+            }
         }
 
+        Serilog.Log.Information("Calling base.OnFrameworkInitializationCompleted...");
         base.OnFrameworkInitializationCompleted();
+        Serilog.Log.Information("OnFrameworkInitializationCompleted finished");
     }
 
     /// <summary>
@@ -107,44 +139,100 @@ public partial class App : Application
 
     private static void InitializeDatabase()
     {
-        var scope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        Serilog.Log.Information("InitializeDatabase: Creating scope...");
+        using var scope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
 
         try
         {
-            // Get pending migrations
+            // Get the database path for logging
+            var dbPath = DiffusionNexusCoreDbContext.GetConnectionString();
+            Serilog.Log.Information("InitializeDatabase: Connection string: {DbPath}", dbPath);
+            
+            // First verify we can connect
+            Serilog.Log.Information("InitializeDatabase: Testing connection...");
+            if (!dbContext.Database.CanConnect())
+            {
+                Serilog.Log.Warning("InitializeDatabase: Cannot connect to database - will try to create it");
+            }
+            
+            Serilog.Log.Information("InitializeDatabase: Getting pending migrations...");
             var pendingMigrations = dbContext.Database.GetPendingMigrations().ToList();
             
             if (pendingMigrations.Count > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"Applying {pendingMigrations.Count} pending migrations...");
+                Serilog.Log.Information("InitializeDatabase: Applying {Count} pending migrations...", pendingMigrations.Count);
                 foreach (var migration in pendingMigrations)
                 {
-                    System.Diagnostics.Debug.WriteLine($"  - {migration}");
+                    Serilog.Log.Information("InitializeDatabase:   - {Migration}", migration);
                 }
+                
+                Serilog.Log.Information("InitializeDatabase: Running Migrate()...");
+                dbContext.Database.Migrate();
+                Serilog.Log.Information("InitializeDatabase: Migration completed successfully");
             }
-            
-            dbContext.Database.Migrate();
+            else
+            {
+                Serilog.Log.Information("InitializeDatabase: No pending migrations - SKIPPING Migrate()");
+            }
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {
-            // Table already exists - this is usually fine, just continue
-            System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
+            Serilog.Log.Warning("InitializeDatabase: Table already exists (continuing): {Message}", ex.Message);
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
         {
-            // Table already exists - this is usually fine, just continue
-            System.Diagnostics.Debug.WriteLine($"Migration warning (continuing): {ex.Message}");
+            Serilog.Log.Warning("InitializeDatabase: Table already exists (continuing): {Message}", ex.Message);
         }
         catch (SqliteException ex) when (ex.Message.Contains("no such column"))
         {
-            // Missing column - database schema is out of date
-            // Try to add the missing column manually as a fallback
-            System.Diagnostics.Debug.WriteLine($"Schema mismatch detected: {ex.Message}");
+            Serilog.Log.Warning("InitializeDatabase: Schema mismatch detected: {Message}", ex.Message);
             TryFixMissingColumns(dbContext);
         }
+        catch (SqliteException ex) when (ex.Message.Contains("database is locked") || ex.Message.Contains("busy"))
+        {
+            Serilog.Log.Error(ex, "InitializeDatabase: Database is locked/busy - this may indicate another process is using the database");
+            // Don't throw - let app continue without fully initialized database
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "InitializeDatabase: Unexpected error during migration");
+            // Don't throw - let app continue
+        }
 
-        scope.Dispose();
+        Serilog.Log.Information("InitializeDatabase: Completed");
+    }
+
+    /// <summary>
+    /// Attempts to delete a locked database file so it can be recreated fresh.
+    /// </summary>
+    private static void TryDeleteLockedDatabase()
+    {
+        try
+        {
+            var dbDir = DiffusionNexusCoreDbContext.GetDatabaseDirectory();
+            var dbFile = Path.Combine(dbDir, "DiffusionNexusCore.sqlite");
+            
+            Serilog.Log.Warning("TryDeleteLockedDatabase: Attempting to delete locked database at {Path}", dbFile);
+            
+            if (File.Exists(dbFile))
+            {
+                // Try to delete the database file
+                File.Delete(dbFile);
+                Serilog.Log.Information("TryDeleteLockedDatabase: Database file deleted successfully");
+            }
+            
+            // Also delete journal/wal files if they exist
+            var walFile = dbFile + "-wal";
+            var shmFile = dbFile + "-shm";
+            
+            if (File.Exists(walFile)) File.Delete(walFile);
+            if (File.Exists(shmFile)) File.Delete(shmFile);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "TryDeleteLockedDatabase: Failed to delete database file");
+        }
     }
 
     /// <summary>
@@ -275,14 +363,15 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(loraDatasetHelperModule);
 
-        // LoRA Viewer module
+        // LoRA Viewer module (hidden for now)
         var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
         var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
 
         mainViewModel.RegisterModule(new ModuleItem(
             "LoRA Viewer",
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
-            loraViewerView));
+            loraViewerView,
+            isVisible: false));
 
         // Generation Gallery module
         var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
@@ -298,10 +387,12 @@ public partial class App : Application
         var imageCompareVm = new ImageCompareViewModel(datasetState);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
-        mainViewModel.RegisterModule(new ModuleItem(
+        var imageComparerModule = new ModuleItem(
             "Image Comparer",
-            "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
-            imageCompareView));
+            "avares://DiffusionNexus.UI/Assets/ImageComparer.png",
+            imageCompareView);
+
+        mainViewModel.RegisterModule(imageComparerModule);
 
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
@@ -330,6 +421,12 @@ public partial class App : Application
         eventAggregator.NavigateToSettingsRequested += (_, _) =>
         {
             mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+        };
+
+        eventAggregator.NavigateToImageComparerRequested += (_, e) =>
+        {
+            imageCompareVm.LoadExternalImages(e.ImagePaths);
+            mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
         };
 
         // Load settings on startup

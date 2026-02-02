@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using DiffusionNexus.UI.Services;
 using Serilog;
 
@@ -29,7 +30,12 @@ class Program
         {
             Log.Information("DiffusionNexus application starting...");
             FileLogger.Log("Application starting via Program.Main");
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            
+            Log.Information("Building Avalonia app...");
+            var app = BuildAvaloniaApp();
+            
+            Log.Information("Starting desktop lifetime...");
+            app.StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)
         {
@@ -48,6 +54,11 @@ class Program
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
+            // Force software rendering to diagnose GPU issues
+            .With(new Win32PlatformOptions
+            {
+                RenderingMode = [Win32RenderingMode.Software]
+            })
             .WithInterFont()
             .LogToTrace();
 }
