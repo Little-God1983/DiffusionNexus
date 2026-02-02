@@ -32,7 +32,7 @@ public partial class CaptioningViewModel : ObservableObject
     
     // Input Selection
     private DatasetCardViewModel? _selectedDataset;
-    private int _selectedDatasetVersion;
+    private int? _selectedDatasetVersion;
     private string? _singleImagePath;
     private bool _isSingleImageMode; // Toggle between Dataset and Single Image
     
@@ -215,16 +215,16 @@ public partial class CaptioningViewModel : ObservableObject
         }
     }
 
-    public int SelectedDatasetVersion
+    public int? SelectedDatasetVersion
     {
         get => _selectedDatasetVersion;
         set
         {
             if (SetProperty(ref _selectedDatasetVersion, value))
             {
-                if (SelectedDataset != null && SelectedDataset.CurrentVersion != value)
+                if (SelectedDataset != null && value.HasValue && SelectedDataset.CurrentVersion != value.Value)
                 {
-                    SelectedDataset.CurrentVersion = value;
+                    SelectedDataset.CurrentVersion = value.Value;
                 }
             }
         }
