@@ -219,6 +219,20 @@ public class Layer : IDisposable
     }
 
     /// <summary>
+    /// Replaces the layer's bitmap with a new one.
+    /// Used by image operations (color balance, brightness, etc.) to update the layer content.
+    /// </summary>
+    /// <param name="newBitmap">The new bitmap to use. This layer takes ownership.</param>
+    public void ReplaceBitmap(SKBitmap newBitmap)
+    {
+        ArgumentNullException.ThrowIfNull(newBitmap);
+
+        _bitmap?.Dispose();
+        _bitmap = newBitmap;
+        NotifyContentChanged();
+    }
+
+    /// <summary>
     /// Creates a copy of this layer.
     /// </summary>
     /// <returns>A new layer with copied content.</returns>
@@ -251,6 +265,28 @@ public class Layer : IDisposable
 
         using var canvas = new SKCanvas(newBitmap);
         canvas.DrawBitmap(_bitmap, 0, 0);
+
+        _bitmap.Dispose();
+        _bitmap = newBitmap;
+        UpdateThumbnail();
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Crops the layer to the specified rectangle.
+    /// </summary>
+    /// <param name="cropRect">The crop rectangle in pixel coordinates.</param>
+    public void Crop(SKRectI cropRect)
+    {
+        if (_bitmap == null || cropRect.Width <= 0 || cropRect.Height <= 0) return;
+
+        var newBitmap = new SKBitmap(cropRect.Width, cropRect.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        newBitmap.Erase(SKColors.Transparent);
+
+        using var canvas = new SKCanvas(newBitmap);
+        var srcRect = new SKRect(cropRect.Left, cropRect.Top, cropRect.Right, cropRect.Bottom);
+        var destRect = new SKRect(0, 0, cropRect.Width, cropRect.Height);
+        canvas.DrawBitmap(_bitmap, srcRect, destRect);
 
         _bitmap.Dispose();
         _bitmap = newBitmap;

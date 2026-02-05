@@ -1533,25 +1533,27 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
-    /// <summary>Whether the selected layer can be moved up.</summary>
+    /// <summary>Whether the selected layer can be moved up (towards the top of the visual list).</summary>
     public bool CanMoveLayerUp
     {
         get
         {
             if (_selectedLayer == null) return false;
             var index = _layers.IndexOf(_selectedLayer);
-            return index < _layers.Count - 1;
+            // In the UI, "up" means towards index 0 (top of list)
+            return index > 0;
         }
     }
 
-    /// <summary>Whether the selected layer can be moved down.</summary>
+    /// <summary>Whether the selected layer can be moved down (towards the bottom of the visual list).</summary>
     public bool CanMoveLayerDown
     {
         get
         {
             if (_selectedLayer == null) return false;
             var index = _layers.IndexOf(_selectedLayer);
-            return index > 0;
+            // In the UI, "down" means towards higher indices (bottom of list)
+            return index < _layers.Count - 1;
         }
     }
 

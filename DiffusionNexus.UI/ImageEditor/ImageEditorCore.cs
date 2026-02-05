@@ -225,6 +225,41 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Flattens all layers into a single layer while keeping layer mode active.
+    /// </summary>
+    public void FlattenAllLayers()
+    {
+        if (_layers == null || _layers.Count == 0) return;
+
+        var flattened = _layers.Flatten();
+        if (flattened == null) return;
+
+        // Get the name of the bottom layer or use "Flattened"
+        var layerName = _layers.Count > 0 ? _layers[0].Name : "Flattened";
+        if (_layers.Count > 1)
+        {
+            layerName = "Flattened";
+        }
+
+        // Clear all layers
+        _layers.ContentChanged -= OnLayersContentChanged;
+        _layers.LayersChanged -= OnLayersCollectionChanged;
+        _layers.Dispose();
+
+        // Create new layer stack with the flattened image
+        _layers = new LayerStack(flattened.Width, flattened.Height);
+        _layers.AddLayerFromBitmap(flattened, layerName);
+        _layers.ContentChanged += OnLayersContentChanged;
+        _layers.LayersChanged += OnLayersCollectionChanged;
+
+        // Clean up
+        flattened.Dispose();
+
+        OnImageChanged();
+        LayersChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
     /// Adds a new empty layer at the top of the stack.
     /// </summary>
     /// <param name="name">Optional layer name.</param>
@@ -600,13 +635,28 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Crops the image to the specified rectangle in image coordinates.
+    /// When in layer mode, crops all layers.
     /// </summary>
     /// <param name="cropRect">The crop rectangle in image pixel coordinates.</param>
     /// <returns>True if the crop was successful.</returns>
     public bool Crop(SKRectI cropRect)
     {
-        if (_workingBitmap is null)
+        // Get the current image dimensions
+        int currentWidth, currentHeight;
+        if (_isLayerMode && _layers != null && _layers.Count > 0)
+        {
+            currentWidth = _layers.Width;
+            currentHeight = _layers.Height;
+        }
+        else if (_workingBitmap is not null)
+        {
+            currentWidth = _workingBitmap.Width;
+            currentHeight = _workingBitmap.Height;
+        }
+        else
+        {
             return false;
+        }
 
         // Validate crop rectangle
         if (cropRect.Width <= 0 || cropRect.Height <= 0)
@@ -614,29 +664,35 @@ public class ImageEditorCore : IDisposable
 
         // Clamp to image bounds
         var clampedRect = new SKRectI(
-            Math.Clamp(cropRect.Left, 0, _workingBitmap.Width),
-            Math.Clamp(cropRect.Top, 0, _workingBitmap.Height),
-            Math.Clamp(cropRect.Right, 0, _workingBitmap.Width),
-            Math.Clamp(cropRect.Bottom, 0, _workingBitmap.Height));
+            Math.Clamp(cropRect.Left, 0, currentWidth),
+            Math.Clamp(cropRect.Top, 0, currentHeight),
+            Math.Clamp(cropRect.Right, 0, currentWidth),
+            Math.Clamp(cropRect.Bottom, 0, currentHeight));
 
         if (clampedRect.Width <= 0 || clampedRect.Height <= 0)
             return false;
 
         try
         {
-            // Create new bitmap with cropped dimensions
-            var croppedBitmap = new SKBitmap(clampedRect.Width, clampedRect.Height);
-
-            using (var canvas = new SKCanvas(croppedBitmap))
+            if (_isLayerMode && _layers != null)
             {
-                var srcRect = new SKRect(clampedRect.Left, clampedRect.Top, clampedRect.Right, clampedRect.Bottom);
-                var destRect = new SKRect(0, 0, clampedRect.Width, clampedRect.Height);
-                canvas.DrawBitmap(_workingBitmap, srcRect, destRect);
+                // Crop all layers
+                _layers.CropAll(clampedRect);
             }
-
-            // Replace working bitmap
-            _workingBitmap.Dispose();
-            _workingBitmap = croppedBitmap;
+            
+            // Also crop the working bitmap if it exists
+            if (_workingBitmap is not null)
+            {
+                var croppedBitmap = new SKBitmap(clampedRect.Width, clampedRect.Height);
+                using (var canvas = new SKCanvas(croppedBitmap))
+                {
+                    var srcRect = new SKRect(clampedRect.Left, clampedRect.Top, clampedRect.Right, clampedRect.Bottom);
+                    var destRect = new SKRect(0, 0, clampedRect.Width, clampedRect.Height);
+                    canvas.DrawBitmap(_workingBitmap, srcRect, destRect);
+                }
+                _workingBitmap.Dispose();
+                _workingBitmap = croppedBitmap;
+            }
 
             // Clear crop tool state
             CropTool.ClearCropRegion();
@@ -656,15 +712,35 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if the crop was successful.</returns>
     public bool ApplyCrop()
     {
-        if (!CropTool.HasCropRegion || _workingBitmap is null)
+        // Get current dimensions
+        int width, height;
+        if (_isLayerMode && _layers != null && _layers.Count > 0)
+        {
+            width = _layers.Width;
+            height = _layers.Height;
+        }
+        else if (_workingBitmap is not null)
+        {
+            width = _workingBitmap.Width;
+            height = _workingBitmap.Height;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!CropTool.HasCropRegion)
             return false;
 
-        var cropRect = CropTool.GetImageCropRect(_workingBitmap.Width, _workingBitmap.Height);
+        var cropRect = CropTool.GetImageCropRect(width, height);
         return Crop(cropRect);
     }
 
+
+
     /// <summary>
     /// Saves the current working image to a file.
+    /// If in layer mode, flattens all layers before saving.
     /// </summary>
     /// <param name="filePath">The file path to save to.</param>
     /// <param name="format">The image format (default: PNG).</param>
@@ -674,9 +750,24 @@ public class ImageEditorCore : IDisposable
     {
         FileLogger.LogEntry($"filePath={filePath}, format={format}, quality={quality}");
         
-        if (_workingBitmap is null)
+        // Get the bitmap to save - flatten layers if in layer mode
+        SKBitmap? bitmapToSave = null;
+        bool needsDispose = false;
+        
+        if (_isLayerMode && _layers != null && _layers.Count > 0)
         {
-            FileLogger.LogWarning("_workingBitmap is null, cannot save");
+            FileLogger.Log("Layer mode active, flattening layers for save...");
+            bitmapToSave = _layers.Flatten();
+            needsDispose = true; // We own this flattened bitmap
+        }
+        else
+        {
+            bitmapToSave = _workingBitmap;
+        }
+        
+        if (bitmapToSave is null)
+        {
+            FileLogger.LogWarning("No bitmap to save (working bitmap is null and no layers)");
             FileLogger.LogExit("false");
             return false;
         }
@@ -684,11 +775,12 @@ public class ImageEditorCore : IDisposable
         if (string.IsNullOrWhiteSpace(filePath))
         {
             FileLogger.LogWarning("filePath is null or whitespace, cannot save");
+            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.LogExit("false");
             return false;
         }
 
-        FileLogger.Log($"Working bitmap size: {_workingBitmap.Width}x{_workingBitmap.Height}");
+        FileLogger.Log($"Bitmap to save size: {bitmapToSave.Width}x{bitmapToSave.Height}");
 
         try
         {
@@ -703,10 +795,11 @@ public class ImageEditorCore : IDisposable
             }
 
             FileLogger.Log("Creating SKImage from bitmap...");
-            using var image = SKImage.FromBitmap(_workingBitmap);
+            using var image = SKImage.FromBitmap(bitmapToSave);
             if (image is null)
             {
                 FileLogger.LogError("SKImage.FromBitmap returned null");
+                if (needsDispose) bitmapToSave.Dispose();
                 FileLogger.LogExit("false");
                 return false;
             }
@@ -714,9 +807,11 @@ public class ImageEditorCore : IDisposable
             FileLogger.Log($"Encoding image as {format}...");
             using var data = image.Encode(format, quality);
             
+            
             if (data is null)
             {
                 FileLogger.LogError("image.Encode returned null");
+                if (needsDispose) bitmapToSave.Dispose();
                 FileLogger.LogExit("false");
                 return false;
             }
@@ -728,6 +823,9 @@ public class ImageEditorCore : IDisposable
             using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             FileLogger.Log("Saving data to stream...");
             data.SaveTo(stream);
+            
+            // Clean up flattened bitmap if we created one
+            if (needsDispose) bitmapToSave.Dispose();
             
             FileLogger.Log("Save completed successfully");
             FileLogger.LogExit("true");
@@ -1104,20 +1202,52 @@ public class ImageEditorCore : IDisposable
     #region Color Balance
 
     /// <summary>
+    /// Gets the bitmap to apply operations to (active layer bitmap when in layer mode, otherwise working bitmap).
+    /// </summary>
+    private SKBitmap? GetOperationTargetBitmap()
+    {
+        if (_isLayerMode && _layers?.ActiveLayer?.Bitmap != null)
+        {
+            return _layers.ActiveLayer.Bitmap;
+        }
+        return _workingBitmap;
+    }
+
+    /// <summary>
+    /// Replaces the operation target bitmap with a new one.
+    /// </summary>
+    private void SetOperationTargetBitmap(SKBitmap newBitmap)
+    {
+        if (_isLayerMode && _layers?.ActiveLayer != null)
+        {
+            // When in layer mode, we need to replace the active layer's bitmap
+            // The Layer class doesn't expose a bitmap setter, so we use the internal method
+            _layers.ActiveLayer.ReplaceBitmap(newBitmap);
+        }
+        else
+        {
+            _workingBitmap?.Dispose();
+            _workingBitmap = newBitmap;
+        }
+    }
+
+    /// <summary>
     /// Applies color balance adjustments to the image.
+    /// When in layer mode, applies to the active layer.
     /// </summary>
     public bool ApplyColorBalance(ColorBalanceSettings settings)
     {
-        if (_workingBitmap is null || settings is null || !settings.HasAdjustments)
+        var targetBitmap = GetOperationTargetBitmap();
+        if (targetBitmap is null || settings is null || !settings.HasAdjustments)
             return false;
 
         try
         {
-            var width = _workingBitmap.Width;
-            var height = _workingBitmap.Height;
+            var width = targetBitmap.Width;
+            var height = targetBitmap.Height;
             var result = new SKBitmap(width, height);
 
-            var srcPixels = _workingBitmap.Pixels;
+            var srcPixels = targetBitmap.Pixels;
             var dstPixels = new SKColor[srcPixels.Length];
 
             var shadowsCR = settings.ShadowsCyanRed / 100f;
@@ -1172,8 +1302,7 @@ public class ImageEditorCore : IDisposable
             }
 
             result.Pixels = dstPixels;
-            _workingBitmap.Dispose();
-            _workingBitmap = result;
+            SetOperationTargetBitmap(result);
             OnImageChanged();
             return true;
         }
@@ -1190,7 +1319,8 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            var targetBitmap = GetOperationTargetBitmap();
+            if (targetBitmap is null)
                 return false;
 
             // Dispose old preview
@@ -1205,8 +1335,9 @@ public class ImageEditorCore : IDisposable
                 return true;
             }
 
-            // Create new preview from working bitmap (not swapping)
-            var newPreview = CreateColorBalancePreview(_workingBitmap, settings);
+            // Create new preview from target bitmap (not swapping)
+            var newPreview = CreateColorBalancePreview(targetBitmap, settings);
+            
             
             // Only after new preview is ready, dispose old and assign new
             _previewBitmap = newPreview;
@@ -1354,20 +1485,21 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Applies brightness and contrast adjustments to the image.
+    /// When in layer mode, applies to the active layer.
     /// </summary>
     public bool ApplyBrightnessContrast(BrightnessContrastSettings settings)
     {
-        if (_workingBitmap is null || settings is null || !settings.HasAdjustments)
+        var targetBitmap = GetOperationTargetBitmap();
+        if (targetBitmap is null || settings is null || !settings.HasAdjustments)
             return false;
 
         try
         {
-            var result = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            var result = CreateBrightnessContrastPreview(targetBitmap, settings);
             if (result is null)
                 return false;
 
-            _workingBitmap.Dispose();
-            _workingBitmap = result;
+            SetOperationTargetBitmap(result);
             OnImageChanged();
             return true;
         }
@@ -1384,7 +1516,8 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            var targetBitmap = GetOperationTargetBitmap();
+            if (targetBitmap is null)
                 return false;
 
             // Dispose old preview
@@ -1399,8 +1532,8 @@ public class ImageEditorCore : IDisposable
                 return true;
             }
 
-            // Create new preview from working bitmap
-            var newPreview = CreateBrightnessContrastPreview(_workingBitmap, settings);
+            // Create new preview from target bitmap
+            var newPreview = CreateBrightnessContrastPreview(targetBitmap, settings);
             
             // Only after new preview is ready, dispose old and assign new
             _previewBitmap = newPreview;
@@ -1620,27 +1753,29 @@ public class ImageEditorCore : IDisposable
 
     #region Background Fill
 
+
     /// <summary>
     /// Fills transparent areas of the image with the specified solid color.
     /// Uses alpha compositing to blend the fill color behind the existing image.
+    /// When in layer mode, applies to the active layer.
     /// </summary>
     /// <param name="settings">The background fill settings containing the fill color.</param>
     /// <returns>True if the fill was applied successfully.</returns>
     public bool ApplyBackgroundFill(BackgroundFillSettings settings)
     {
-        if (_workingBitmap is null || settings is null)
+        var targetBitmap = GetOperationTargetBitmap();
+        if (targetBitmap is null || settings is null)
             return false;
 
         try
         {
-            var result = CreateBackgroundFillBitmap(_workingBitmap, settings);
+            var result = CreateBackgroundFillBitmap(targetBitmap, settings);
             if (result is null)
                 return false;
 
             lock (_bitmapLock)
             {
-                _workingBitmap.Dispose();
-                _workingBitmap = result;
+                SetOperationTargetBitmap(result);
             }
 
             OnImageChanged();
@@ -1665,17 +1800,19 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            var targetBitmap = GetOperationTargetBitmap();
+            if (targetBitmap is null)
                 return false;
 
             // Dispose old preview
             var oldPreview = _previewBitmap;
             _previewBitmap = null;
 
+
             try
             {
                 // Create new preview with background filled
-                var newPreview = CreateBackgroundFillBitmap(_workingBitmap, settings);
+                var newPreview = CreateBackgroundFillBitmap(targetBitmap, settings);
 
                 _previewBitmap = newPreview;
                 _isPreviewActive = _previewBitmap is not null;

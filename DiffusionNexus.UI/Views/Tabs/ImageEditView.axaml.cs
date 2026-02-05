@@ -678,9 +678,11 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.InvalidateVisual();
         };
 
+
         imageEditor.MoveLayerUpRequested += (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
+            // UI "up" means towards front (higher index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerUp(layer);
             imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
@@ -689,6 +691,7 @@ public partial class ImageEditView : UserControl
         imageEditor.MoveLayerDownRequested += (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
+            // UI "down" means towards back (lower index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerDown(layer);
             imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
@@ -713,9 +716,9 @@ public partial class ImageEditView : UserControl
         imageEditor.FlattenLayersRequested += (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
-            _imageEditorCanvas.EditorCore.DisableLayerMode();
-            imageEditor.IsLayerMode = false;
-            imageEditor.SyncLayers(null);
+            // Flatten all layers into one layer (keeps layer mode active)
+            _imageEditorCanvas.EditorCore.FlattenAllLayers();
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
 

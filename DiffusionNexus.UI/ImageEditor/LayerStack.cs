@@ -340,6 +340,25 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
+    /// Crops all layers to the specified rectangle.
+    /// </summary>
+    /// <param name="cropRect">The crop rectangle in pixel coordinates.</param>
+    public void CropAll(SKRectI cropRect)
+    {
+        if (cropRect.Width <= 0 || cropRect.Height <= 0) return;
+
+        _width = cropRect.Width;
+        _height = cropRect.Height;
+
+        foreach (var layer in _layers)
+        {
+            layer.Crop(cropRect);
+        }
+
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
     /// Gets a layer by index.
     /// </summary>
     public Layer this[int index] => _layers[index];
