@@ -359,6 +359,36 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
+    /// Applies a transformation function to all layers.
+    /// Used for rotate/flip operations that affect all layers.
+    /// </summary>
+    /// <param name="transform">Function that takes a layer and returns a transformed bitmap.</param>
+    public void TransformAll(Func<Layer, SKBitmap?> transform)
+    {
+        SKBitmap? firstResult = null;
+        
+        foreach (var layer in _layers)
+        {
+            var transformed = transform(layer);
+            if (transformed != null)
+            {
+                firstResult ??= transformed;
+                layer.ReplaceBitmap(transformed);
+            }
+        }
+
+        // Update stack dimensions from first transformed layer
+        if (firstResult != null)
+        {
+            _width = firstResult.Width;
+            _height = firstResult.Height;
+        }
+
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+
+    /// <summary>
     /// Gets a layer by index.
     /// </summary>
     public Layer this[int index] => _layers[index];

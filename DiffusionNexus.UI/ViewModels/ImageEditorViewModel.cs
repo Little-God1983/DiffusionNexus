@@ -2004,6 +2004,7 @@ public partial class ImageEditorViewModel : ObservableObject
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
+        NotifyLayerCommandsCanExecuteChanged();
     }
 
     private void NotifyRatingCommandsCanExecuteChanged()
