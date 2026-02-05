@@ -84,8 +84,9 @@ public class DatasetStorageService : IDatasetStorageService
 
             if (counter > maxIterations)
             {
+                var folderName = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
                 throw new InvalidOperationException(
-                    $"Unable to generate a unique file path after {maxIterations} attempts for file '{fileName}' in folder '{folderPath}'.");
+                    $"Unable to generate a unique file path after {maxIterations} attempts for file '{fileName}' in folder '{folderName}'.");
             }
         } while (File.Exists(newPath));
 
