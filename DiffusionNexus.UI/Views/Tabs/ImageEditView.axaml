@@ -653,30 +653,30 @@
                 <!-- Preset Colors for Freehand -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
                   <TextBlock Text="Presets" FontSize="11" Opacity="0.7"/>
-                  <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="White"
+                  <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="White">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="White"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Black"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Black">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Red"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Red">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FF0000"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Green"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Green">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#00FF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Blue"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Blue">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#0000FF"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Yellow"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
                             Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Yellow">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FFFF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
                 </StackPanel>
@@ -684,30 +684,30 @@
                 <!-- Preset Colors for Shape Stroke -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeMode}">
                   <TextBlock Text="Stroke Presets" FontSize="11" Opacity="0.7"/>
-                  <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="White"
+                  <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="White">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="White"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Black"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Black">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Red"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Red">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FF0000"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Green"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Green">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#00FF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Blue"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Blue">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#0000FF"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Yellow"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
                             Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Yellow">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FFFF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
                 </StackPanel>
@@ -721,30 +721,30 @@
                     </MultiBinding>
                   </StackPanel.IsVisible>
                   <TextBlock Text="Fill Presets" FontSize="11" Opacity="0.7"/>
-                  <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="White"
+                  <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="White">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="White"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Black"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Black">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Red"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Red">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FF0000"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Green"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Green">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#00FF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Blue"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Blue">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#0000FF"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
-                    <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Yellow"
+                    <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
                             Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Yellow">
-                      <Border Width="24" Height="24" CornerRadius="2" Background="#FFFF00"/>
+                      <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
                 </StackPanel>
