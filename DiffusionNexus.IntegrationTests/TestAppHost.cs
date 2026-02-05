@@ -117,5 +117,6 @@ public sealed class TestAppHost : IAsyncLifetime, IDisposable
 
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();
+        services.AddSingleton<IDatasetStorageService, DatasetStorageService>();
     }
 }
