@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
+using Avalonia.Media;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -87,6 +88,23 @@ public partial class ImageEditorViewModel : ObservableObject
     private byte _drawingBrushBlue = 255;
     private float _drawingBrushSize = 10f;
     private ImageEditor.BrushShape _drawingBrushShape = ImageEditor.BrushShape.Round;
+
+    // Shape tool fields
+    private ImageEditor.ShapeType _selectedShapeType = ImageEditor.ShapeType.Freehand;
+    private ImageEditor.ShapeFillMode _shapeFillMode = ImageEditor.ShapeFillMode.Stroke;
+    private byte _shapeFillRed = 255;
+    private byte _shapeFillGreen = 255;
+    private byte _shapeFillBlue = 255;
+    private byte _shapeStrokeRed = 255;
+    private byte _shapeStrokeGreen = 255;
+    private byte _shapeStrokeBlue = 255;
+    private float _shapeStrokeWidth = 3f;
+
+    // Layer fields
+    private bool _isLayerPanelOpen;
+    private bool _isLayerMode;
+    private LayerViewModel? _selectedLayer;
+    private ObservableCollection<LayerViewModel> _layers = new();
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -1026,6 +1044,332 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Shape Tool Properties
+
+    /// <summary>The currently selected shape type.</summary>
+    public ImageEditor.ShapeType SelectedShapeType
+    {
+        get => _selectedShapeType;
+        set
+        {
+            if (SetProperty(ref _selectedShapeType, value))
+            {
+                OnPropertyChanged(nameof(IsShapeFreehand));
+                OnPropertyChanged(nameof(IsShapeRectangle));
+                OnPropertyChanged(nameof(IsShapeEllipse));
+                OnPropertyChanged(nameof(IsShapeArrow));
+                OnPropertyChanged(nameof(IsShapeLine));
+                OnPropertyChanged(nameof(IsShapeMode));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+                UpdateDrawingModeStatus();
+            }
+        }
+    }
+
+    /// <summary>Whether freehand drawing is selected.</summary>
+    public bool IsShapeFreehand
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Freehand;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Freehand; }
+    }
+
+    /// <summary>Whether rectangle shape is selected.</summary>
+    public bool IsShapeRectangle
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Rectangle;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Rectangle; }
+    }
+
+    /// <summary>Whether ellipse shape is selected.</summary>
+    public bool IsShapeEllipse
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Ellipse;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Ellipse; }
+    }
+
+    /// <summary>Whether arrow shape is selected.</summary>
+    public bool IsShapeArrow
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Arrow;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Arrow; }
+    }
+
+    /// <summary>Whether line shape is selected.</summary>
+    public bool IsShapeLine
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Line;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Line; }
+    }
+
+    /// <summary>Whether a shape mode (not freehand) is selected.</summary>
+    public bool IsShapeMode => _selectedShapeType != ImageEditor.ShapeType.Freehand;
+
+    /// <summary>The shape fill mode.</summary>
+    public ImageEditor.ShapeFillMode ShapeFillMode
+    {
+        get => _shapeFillMode;
+        set
+        {
+            if (SetProperty(ref _shapeFillMode, value))
+            {
+                OnPropertyChanged(nameof(IsShapeStrokeOnly));
+                OnPropertyChanged(nameof(IsShapeFillOnly));
+                OnPropertyChanged(nameof(IsShapeFillAndStroke));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Whether stroke only mode is selected.</summary>
+    public bool IsShapeStrokeOnly
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.Stroke;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.Stroke; }
+    }
+
+    /// <summary>Whether fill only mode is selected.</summary>
+    public bool IsShapeFillOnly
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.Fill;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.Fill; }
+    }
+
+    /// <summary>Whether fill and stroke mode is selected.</summary>
+    public bool IsShapeFillAndStroke
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.FillAndStroke;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.FillAndStroke; }
+    }
+
+    /// <summary>Red component of the shape fill color (0-255).</summary>
+    public byte ShapeFillRed
+    {
+        get => _shapeFillRed;
+        set
+        {
+            if (SetProperty(ref _shapeFillRed, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Green component of the shape fill color (0-255).</summary>
+    public byte ShapeFillGreen
+    {
+        get => _shapeFillGreen;
+        set
+        {
+            if (SetProperty(ref _shapeFillGreen, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Blue component of the shape fill color (0-255).</summary>
+    public byte ShapeFillBlue
+    {
+        get => _shapeFillBlue;
+        set
+        {
+            if (SetProperty(ref _shapeFillBlue, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>The shape fill color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color ShapeFillColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_shapeFillRed, _shapeFillGreen, _shapeFillBlue);
+        set
+        {
+            if (_shapeFillRed != value.R || _shapeFillGreen != value.G || _shapeFillBlue != value.B)
+            {
+                _shapeFillRed = value.R;
+                _shapeFillGreen = value.G;
+                _shapeFillBlue = value.B;
+                OnPropertyChanged(nameof(ShapeFillRed));
+                OnPropertyChanged(nameof(ShapeFillGreen));
+                OnPropertyChanged(nameof(ShapeFillBlue));
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the fill color.</summary>
+    public string ShapeFillColorHex => $"#{_shapeFillRed:X2}{_shapeFillGreen:X2}{_shapeFillBlue:X2}";
+
+    /// <summary>Red component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeRed
+    {
+        get => _shapeStrokeRed;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeRed, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Green component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeGreen
+    {
+        get => _shapeStrokeGreen;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeGreen, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Blue component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeBlue
+    {
+        get => _shapeStrokeBlue;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeBlue, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>The shape stroke color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color ShapeStrokeColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_shapeStrokeRed, _shapeStrokeGreen, _shapeStrokeBlue);
+        set
+        {
+            if (_shapeStrokeRed != value.R || _shapeStrokeGreen != value.G || _shapeStrokeBlue != value.B)
+            {
+                _shapeStrokeRed = value.R;
+                _shapeStrokeGreen = value.G;
+                _shapeStrokeBlue = value.B;
+                OnPropertyChanged(nameof(ShapeStrokeRed));
+                OnPropertyChanged(nameof(ShapeStrokeGreen));
+                OnPropertyChanged(nameof(ShapeStrokeBlue));
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the stroke color.</summary>
+    public string ShapeStrokeColorHex => $"#{_shapeStrokeRed:X2}{_shapeStrokeGreen:X2}{_shapeStrokeBlue:X2}";
+
+    /// <summary>Shape stroke width in pixels (1-50).</summary>
+    public float ShapeStrokeWidth
+    {
+        get => _shapeStrokeWidth;
+        set
+        {
+            var clamped = Math.Clamp(value, 1f, 50f);
+            if (SetProperty(ref _shapeStrokeWidth, clamped))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeWidthText));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Formatted stroke width for display.</summary>
+    public string ShapeStrokeWidthText => $"{(int)_shapeStrokeWidth} px";
+
+    /// <summary>Sets the shape fill color from a preset.</summary>
+    public void SetShapeFillPreset(string? preset)
+    {
+        if (preset is null) return;
+
+        (byte r, byte g, byte b) = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ((byte)255, (byte)255, (byte)255),
+            "BLACK" => ((byte)0, (byte)0, (byte)0),
+            "RED" => ((byte)255, (byte)0, (byte)0),
+            "GREEN" => ((byte)0, (byte)255, (byte)0),
+            "BLUE" => ((byte)0, (byte)0, (byte)255),
+            "YELLOW" => ((byte)255, (byte)255, (byte)0),
+            "ORANGE" => ((byte)255, (byte)165, (byte)0),
+            "PURPLE" => ((byte)128, (byte)0, (byte)128),
+            "CYAN" => ((byte)0, (byte)255, (byte)255),
+            "MAGENTA" => ((byte)255, (byte)0, (byte)255),
+            "GRAY" or "GREY" => ((byte)128, (byte)128, (byte)128),
+            "TRANSPARENT" or "NONE" => ((byte)0, (byte)0, (byte)0),
+            _ => (_shapeFillRed, _shapeFillGreen, _shapeFillBlue)
+        };
+
+        ShapeFillRed = r;
+        ShapeFillGreen = g;
+        ShapeFillBlue = b;
+    }
+
+    /// <summary>Sets the shape stroke color from a preset.</summary>
+    public void SetShapeStrokePreset(string? preset)
+    {
+        if (preset is null) return;
+
+        (byte r, byte g, byte b) = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ((byte)255, (byte)255, (byte)255),
+            "BLACK" => ((byte)0, (byte)0, (byte)0),
+            "RED" => ((byte)255, (byte)0, (byte)0),
+            "GREEN" => ((byte)0, (byte)255, (byte)0),
+            "BLUE" => ((byte)0, (byte)0, (byte)255),
+            "YELLOW" => ((byte)255, (byte)255, (byte)0),
+            "ORANGE" => ((byte)255, (byte)165, (byte)0),
+            "PURPLE" => ((byte)128, (byte)0, (byte)128),
+            "CYAN" => ((byte)0, (byte)255, (byte)255),
+            "MAGENTA" => ((byte)255, (byte)0, (byte)255),
+            "GRAY" or "GREY" => ((byte)128, (byte)128, (byte)128),
+            _ => (_shapeStrokeRed, _shapeStrokeGreen, _shapeStrokeBlue)
+        };
+
+        ShapeStrokeRed = r;
+        ShapeStrokeGreen = g;
+        ShapeStrokeBlue = b;
+    }
+
+    /// <summary>Event raised when shape settings change.</summary>
+    public event EventHandler? ShapeSettingsChanged;
+
+    private void UpdateDrawingModeStatus()
+    {
+        if (!IsDrawingToolActive) return;
+
+        StatusMessage = _selectedShapeType switch
+        {
+            ImageEditor.ShapeType.Freehand => "Draw: Click and drag to draw. Hold Shift for straight lines.",
+            ImageEditor.ShapeType.Rectangle => "Rectangle: Click and drag to draw a rectangle.",
+            ImageEditor.ShapeType.Ellipse => "Ellipse: Click and drag to draw an ellipse.",
+            ImageEditor.ShapeType.Arrow => "Arrow: Click and drag to draw an arrow.",
+            ImageEditor.ShapeType.Line => "Line: Click and drag to draw a straight line.",
+            _ => null
+        };
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -1141,6 +1485,167 @@ public partial class ImageEditorViewModel : ObservableObject
         ? $"Size: {ImageWidth} � {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
+    #region Layer Properties
+
+    /// <summary>Whether the layer panel is open (always true - panel is always visible).</summary>
+    public bool IsLayerPanelOpen
+    {
+        get => true;
+        set { } // No-op, panel is always visible
+    }
+
+    /// <summary>Whether layer mode is enabled.</summary>
+    public bool IsLayerMode
+    {
+        get => _isLayerMode;
+        set
+        {
+            if (SetProperty(ref _isLayerMode, value))
+            {
+                NotifyLayerCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Collection of layer view models.</summary>
+    public ObservableCollection<LayerViewModel> Layers
+    {
+        get => _layers;
+        set => SetProperty(ref _layers, value);
+    }
+
+    /// <summary>Currently selected layer.</summary>
+    public LayerViewModel? SelectedLayer
+    {
+        get => _selectedLayer;
+        set
+        {
+            if (SetProperty(ref _selectedLayer, value))
+            {
+                // Update selection state on all layers
+                foreach (var layer in _layers)
+                {
+                    layer.IsSelected = layer == value;
+                }
+                NotifyLayerCommandsCanExecuteChanged();
+                LayerSelectionChanged?.Invoke(this, value?.Layer);
+            }
+        }
+    }
+
+    /// <summary>Whether the selected layer can be moved up (towards the top of the visual list).</summary>
+    public bool CanMoveLayerUp
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            // In the UI, "up" means towards index 0 (top of list)
+            return index > 0;
+        }
+    }
+
+    /// <summary>Whether the selected layer can be moved down (towards the bottom of the visual list).</summary>
+    public bool CanMoveLayerDown
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            // In the UI, "down" means towards higher indices (bottom of list)
+            return index < _layers.Count - 1;
+        }
+    }
+
+    /// <summary>Whether the selected layer can be merged down (with the layer below in the visual list).</summary>
+    public bool CanMergeDown
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            // In the UI, "down" means towards higher ViewModel indices (bottom of visual list)
+            // A layer can merge down if there's a layer below it
+            return index < _layers.Count - 1;
+        }
+    }
+
+    /// <summary>Event raised when layer selection changes.</summary>
+    public event EventHandler<Layer?>? LayerSelectionChanged;
+
+    /// <summary>Event raised when layers need to be synchronized.</summary>
+    public event EventHandler? SyncLayersRequested;
+
+    /// <summary>Event raised when a layered TIFF save is requested.</summary>
+    public event Func<string, Task<bool>>? SaveLayeredTiffRequested;
+
+    private void NotifyLayerCommandsCanExecuteChanged()
+    {
+        AddLayerCommand?.NotifyCanExecuteChanged();
+        DeleteLayerCommand?.NotifyCanExecuteChanged();
+        DuplicateLayerCommand?.NotifyCanExecuteChanged();
+        MoveLayerUpCommand?.NotifyCanExecuteChanged();
+        MoveLayerDownCommand?.NotifyCanExecuteChanged();
+        MergeLayerDownCommand?.NotifyCanExecuteChanged();
+        MergeVisibleLayersCommand?.NotifyCanExecuteChanged();
+        FlattenLayersCommand?.NotifyCanExecuteChanged();
+        SaveLayeredTiffCommand?.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanMoveLayerUp));
+        OnPropertyChanged(nameof(CanMoveLayerDown));
+        OnPropertyChanged(nameof(CanMergeDown));
+    }
+
+    /// <summary>
+    /// Synchronizes the layer view models with the editor core's layer stack.
+    /// </summary>
+    public void SyncLayers(LayerStack? layerStack)
+    {
+        // Clear existing
+        foreach (var vm in _layers)
+        {
+            vm.Dispose();
+        }
+        _layers.Clear();
+
+        if (layerStack == null || layerStack.Count == 0)
+        {
+            SelectedLayer = null;
+            return;
+        }
+
+        // Create view models for each layer (reversed for UI - top layer first)
+        for (var i = layerStack.Count - 1; i >= 0; i--)
+        {
+            var layer = layerStack[i];
+            var vm = new LayerViewModel(layer, OnLayerSelectionRequested, OnLayerDeleteRequested);
+            _layers.Add(vm);
+        }
+
+        // Select active layer
+        if (layerStack.ActiveLayer != null)
+        {
+            var activeVm = _layers.FirstOrDefault(vm => vm.Layer == layerStack.ActiveLayer);
+            SelectedLayer = activeVm;
+        }
+        else if (_layers.Count > 0)
+        {
+            SelectedLayer = _layers[0];
+        }
+    }
+
+    private void OnLayerSelectionRequested(LayerViewModel vm)
+    {
+        SelectedLayer = vm;
+    }
+
+    private void OnLayerDeleteRequested(LayerViewModel vm)
+    {
+        if (_layers.Count <= 1) return;
+        ExecuteDeleteLayer();
+    }
+
+    #endregion Layer Properties
+
     #region Commands
 
     public IRelayCommand ClearImageCommand { get; }
@@ -1170,6 +1675,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ApplyBrightnessContrastCommand { get; }
     public IRelayCommand ResetBrightnessContrastCommand { get; }
     public IAsyncRelayCommand RemoveBackgroundCommand { get; }
+    public IAsyncRelayCommand RemoveBackgroundToLayerCommand { get; }
     public IAsyncRelayCommand DownloadBackgroundRemovalModelCommand { get; }
     public IRelayCommand ToggleBackgroundFillCommand { get; }
     public IRelayCommand ApplyBackgroundFillCommand { get; }
@@ -1178,6 +1684,20 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand DownloadUpscalingModelCommand { get; }
     public IRelayCommand ToggleDrawingToolCommand { get; }
     public IRelayCommand<string> SetDrawingColorPresetCommand { get; }
+    public IRelayCommand<string> SetShapeFillPresetCommand { get; }
+    public IRelayCommand<string> SetShapeStrokePresetCommand { get; }
+
+    // Layer commands
+    public IRelayCommand ToggleLayerModeCommand { get; }
+    public IRelayCommand AddLayerCommand { get; }
+    public IRelayCommand DeleteLayerCommand { get; }
+    public IRelayCommand DuplicateLayerCommand { get; }
+    public IRelayCommand MoveLayerUpCommand { get; }
+    public IRelayCommand MoveLayerDownCommand { get; }
+    public IRelayCommand MergeLayerDownCommand { get; }
+    public IRelayCommand MergeVisibleLayersCommand { get; }
+    public IRelayCommand FlattenLayersCommand { get; }
+    public IAsyncRelayCommand SaveLayeredTiffCommand { get; }
 
     #endregion
 
@@ -1227,10 +1747,22 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? RemoveBackgroundRequested;
 
     /// <summary>
+    /// Event raised to request layer-based background removal.
+    /// The View should respond by calling ProcessBackgroundRemovalToLayerAsync with the image data.
+    /// </summary>
+    public event EventHandler? RemoveBackgroundToLayerRequested;
+
+    /// <summary>
     /// Event raised when background removal completes with result.
     /// The View should apply the mask to the image editor.
     /// </summary>
     public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalCompleted;
+
+    /// <summary>
+    /// Event raised when layer-based background removal completes with result.
+    /// The View should apply the mask as layers to the image editor.
+    /// </summary>
+    public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalToLayerCompleted;
 
     /// <summary>
     /// Event raised to request background fill preview.
@@ -1480,6 +2012,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
+        RemoveBackgroundToLayerCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
@@ -1487,6 +2020,7 @@ public partial class ImageEditorViewModel : ObservableObject
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
+        NotifyLayerCommandsCanExecuteChanged();
     }
 
     private void NotifyRatingCommandsCanExecuteChanged()
@@ -1560,12 +2094,14 @@ public partial class ImageEditorViewModel : ObservableObject
 
         // Background Removal commands
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
+        RemoveBackgroundToLayerCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundToLayerAsync, CanExecuteRemoveBackground);
         DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
 
         // Background Fill commands
         ToggleBackgroundFillCommand = new RelayCommand(ExecuteToggleBackgroundFill, () => HasImage);
         ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
         SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
+
 
         // AI Upscaling commands
         UpscaleImageCommand = new AsyncRelayCommand(ExecuteUpscaleImageAsync, CanExecuteUpscaleImage);
@@ -1574,6 +2110,22 @@ public partial class ImageEditorViewModel : ObservableObject
         // Drawing tool commands
         ToggleDrawingToolCommand = new RelayCommand(ExecuteToggleDrawingTool, () => HasImage);
         SetDrawingColorPresetCommand = new RelayCommand<string>(SetDrawingColorPreset);
+
+        // Shape tool commands
+        SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
+        SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
+
+        // Layer commands (layers are always enabled when an image is loaded)
+        ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);
+        AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => HasImage);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1);
+        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null);
+        MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => HasImage && SelectedLayer != null && CanMoveLayerUp);
+        MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => HasImage && SelectedLayer != null && CanMoveLayerDown);
+        MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => HasImage && SelectedLayer != null && CanMergeDown);
+        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => HasImage && Layers.Count > 1);
+        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => HasImage && Layers.Count > 1);
+        SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => HasImage);
     }
 
     #region Public Methods (View wiring)
@@ -1651,6 +2203,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnBackgroundRemovalApplied()
     {
         StatusMessage = "Background removed";
+    }
+
+    /// <summary>
+    /// Called when layer-based background removal is applied successfully.
+    /// Triggers layer synchronization.
+    /// </summary>
+    public void OnBackgroundRemovalToLayerApplied()
+    {
+        StatusMessage = "Background separated to layers";
+        // Request synchronization of layer ViewModels
+        SyncLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -1779,6 +2342,55 @@ public partial class ImageEditorViewModel : ObservableObject
             if (result.Success)
             {
                 BackgroundRemovalCompleted?.Invoke(this, result);
+            }
+            else
+            {
+                StatusMessage = result.ErrorMessage ?? "Background removal failed";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Background removal cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Processes layer-based background removal with the provided image data.
+    /// Called by the View after responding to RemoveBackgroundToLayerRequested.
+    /// </summary>
+    /// <param name="imageData">Raw RGBA image data.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="height">Image height in pixels.</param>
+    public async Task ProcessBackgroundRemovalToLayerAsync(byte[] imageData, int width, int height)
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            IsBackgroundRemovalBusy = false;
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Processing for layers...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            var result = await _backgroundRemovalService.RemoveBackgroundAsync(imageData, width, height);
+
+            if (result.Success)
+            {
+                BackgroundRemovalToLayerCompleted?.Invoke(this, result);
             }
             else
             {
@@ -2045,6 +2657,39 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    private async Task ExecuteRemoveBackgroundToLayerAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsBackgroundRemovalModelReady)
+        {
+            StatusMessage = "Please download the RMBG-1.4 model first";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Preparing image for layer-based removal...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            // Request image data from the View for layer-based removal
+            RemoveBackgroundToLayerRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
     private async Task ExecuteDownloadBackgroundRemovalModelAsync()
     {
         if (_backgroundRemovalService is null)
@@ -2261,6 +2906,89 @@ public partial class ImageEditorViewModel : ObservableObject
 
         // Add more tools here as they are added in the future
     }
+
+
+    #endregion
+
+    #region Layer Command Implementations
+
+    private void ExecuteToggleLayerMode()
+    {
+        IsLayerMode = !IsLayerMode;
+        EnableLayerModeRequested?.Invoke(this, IsLayerMode);
+    }
+
+    private void ExecuteAddLayer()
+    {
+        AddLayerRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+
+    private void ExecuteDeleteLayer()
+    {
+        if (SelectedLayer == null) return;
+        DeleteLayerRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteDuplicateLayer()
+    {
+        if (SelectedLayer == null) return;
+        DuplicateLayerRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMoveLayerUp()
+    {
+        if (SelectedLayer == null) return;
+        MoveLayerUpRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMoveLayerDown()
+    {
+        if (SelectedLayer == null) return;
+        MoveLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMergeLayerDown()
+    {
+        if (SelectedLayer == null) return;
+        MergeLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMergeVisibleLayers()
+    {
+        MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteFlattenLayers()
+    {
+        FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task ExecuteSaveLayeredTiffAsync()
+    {
+        if (CurrentImagePath == null) return;
+
+        var directory = Path.GetDirectoryName(CurrentImagePath);
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedPath = Path.Combine(directory ?? "", $"{fileName}_layered.tif");
+
+        if (SaveLayeredTiffRequested != null)
+        {
+            var success = await SaveLayeredTiffRequested.Invoke(suggestedPath);
+            StatusMessage = success ? "Layered TIFF saved successfully" : "Failed to save layered TIFF";
+        }
+    }
+
+    // Layer events for View wiring
+    public event EventHandler<bool>? EnableLayerModeRequested;
+    public event EventHandler? AddLayerRequested;
+    public event EventHandler<Layer>? DeleteLayerRequested;
+    public event EventHandler<Layer>? DuplicateLayerRequested;
+    public event EventHandler<Layer>? MoveLayerUpRequested;
+    public event EventHandler<Layer>? MoveLayerDownRequested;
+    public event EventHandler<Layer>? MergeLayerDownRequested;
+    public event EventHandler? MergeVisibleLayersRequested;
+    public event EventHandler? FlattenLayersRequested;
 
     #endregion
 }
