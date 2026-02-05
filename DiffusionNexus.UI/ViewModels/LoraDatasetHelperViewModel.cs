@@ -105,6 +105,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
     public LoraDatasetHelperViewModel(
         IAppSettingsService settingsService,
+        IDatasetStorageService datasetStorageService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         ICaptioningService? captioningService = null, // New
@@ -122,7 +123,15 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded");
 
         // Create tab ViewModels - pass activity log for comprehensive logging
-        DatasetManagement = new DatasetManagementViewModel(settingsService, eventAggregator, state, captioningService, videoThumbnailService, backupService, activityLog);
+        DatasetManagement = new DatasetManagementViewModel(
+            settingsService,
+            datasetStorageService,
+            eventAggregator,
+            state,
+            captioningService,
+            videoThumbnailService,
+            backupService,
+            activityLog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
 
@@ -137,7 +146,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null)
     {
     }
 

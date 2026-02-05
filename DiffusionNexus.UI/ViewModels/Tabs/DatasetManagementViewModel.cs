@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.IO.Compression;
+using System.IO;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -46,6 +46,7 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IDisposable
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IDatasetStorageService _datasetStorageService;
     private readonly IDatasetBackupService? _backupService;
     private readonly ICaptioningService? _captioningService; // Made optional to avoid breaking existing tests/instantiation if any
     private readonly IVideoThumbnailService? _videoThumbnailService;
@@ -542,6 +543,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     public DatasetManagementViewModel(
         IAppSettingsService settingsService,
+        IDatasetStorageService datasetStorageService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         ICaptioningService? captioningService = null, // Added as optional
@@ -550,6 +552,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IActivityLogService? activityLog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
@@ -609,7 +612,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null)
     {
     }
 
@@ -730,7 +733,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         var settings = await _settingsService.GetSettingsAsync();
         var isConfigured = !string.IsNullOrWhiteSpace(settings.DatasetStoragePath)
-                           && Directory.Exists(settings.DatasetStoragePath);
+                           && _datasetStorageService.DirectoryExists(settings.DatasetStoragePath);
         _state.SetStorageConfigured(isConfigured);
 
         // Update backup status
@@ -755,7 +758,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         var isBackupConfigured = settings.AutoBackupEnabled
             && !string.IsNullOrWhiteSpace(settings.AutoBackupLocation)
-            && Directory.Exists(settings.AutoBackupLocation);
+            && _datasetStorageService.DirectoryExists(settings.AutoBackupLocation);
 
         IsAutoBackupConfigured = isBackupConfigured;
 
@@ -1081,7 +1084,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         try
         {
             var settings = await _settingsService.GetSettingsAsync();
-            if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+            if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !_datasetStorageService.DirectoryExists(settings.DatasetStoragePath))
             {
                 _state.SetStorageConfigured(false);
                 return;
@@ -1094,7 +1097,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Build lookup from Order to Category for resolving CategoryId from CategoryOrder
             var categoryByOrder = AvailableCategories.ToDictionary(c => c.Order);
 
-            var folders = Directory.GetDirectories(settings.DatasetStoragePath);
+            var folders = _datasetStorageService.GetDirectories(settings.DatasetStoragePath);
             foreach (var folder in folders.OrderBy(f => Path.GetFileName(f)))
             {
                 var card = DatasetCardViewModel.FromFolder(folder);
@@ -1218,11 +1221,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             OnPropertyChanged(nameof(SelectedVersion));
 
             var mediaFolderPath = dataset.CurrentVersionFolderPath;
-            if (!Directory.Exists(mediaFolderPath))
-            {
-                // Create the folder structure for new datasets
-                Directory.CreateDirectory(mediaFolderPath);
-            }
+            // Create the folder structure for new datasets
+            _datasetStorageService.CreateDirectory(mediaFolderPath);
 
             // Initialize sub-tab ViewModels with the current version folder
             EpochsTab.Initialize(dataset.CurrentVersionFolderPath);
@@ -1230,10 +1230,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             PresentationTab.Initialize(dataset.CurrentVersionFolderPath);
 
             // Ensure sub-folders exist (Epochs, Notes, Presentation)
-            EnsureVersionSubfoldersExist(dataset.CurrentVersionFolderPath);
+            _datasetStorageService.EnsureVersionSubfolders(dataset.CurrentVersionFolderPath);
 
             // Load media files using the shared MediaFileExtensions utility
-            var allFiles = Directory.EnumerateFiles(mediaFolderPath).ToList();
+            var allFiles = _datasetStorageService.EnumerateFiles(mediaFolderPath).ToList();
             var mediaFiles = allFiles
                 .Where(f => MediaFileExtensions.IsDisplayableMediaFile(f))
                 .OrderBy(f => f)
@@ -1299,20 +1299,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Ensures the sub-folders (Epochs, Notes, Presentation) exist within a version folder.
     /// </summary>
-    private static void EnsureVersionSubfoldersExist(string versionFolderPath)
-    {
-        var epochsPath = Path.Combine(versionFolderPath, "Epochs");
-        var notesPath = Path.Combine(versionFolderPath, "Notes");
-        var presentationPath = Path.Combine(versionFolderPath, "Presentation");
-
-        if (!Directory.Exists(epochsPath))
-            Directory.CreateDirectory(epochsPath);
-        if (!Directory.Exists(notesPath))
-            Directory.CreateDirectory(notesPath);
-        if (!Directory.Exists(presentationPath))
-            Directory.CreateDirectory(presentationPath);
-    }
-
     private async Task GenerateVideoThumbnailAsync(DatasetImageViewModel mediaVm)
     {
         if (_videoThumbnailService is null || !mediaVm.IsVideo) return;
@@ -1367,7 +1353,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        if (!Directory.Exists(settings.DatasetStoragePath))
+        if (!_datasetStorageService.DirectoryExists(settings.DatasetStoragePath))
         {
             StatusMessage = "The configured Dataset Storage Path does not exist. Please update it in Settings.";
             _activityLog?.LogError("Dataset", $"Storage path does not exist: {settings.DatasetStoragePath}");
@@ -1383,7 +1369,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var sanitizedName = result.Name;
         var datasetPath = Path.Combine(settings.DatasetStoragePath, sanitizedName);
 
-        if (Directory.Exists(datasetPath))
+        if (_datasetStorageService.DirectoryExists(datasetPath))
         {
             StatusMessage = $"A dataset named '{sanitizedName}' already exists.";
             _activityLog?.LogWarning("Dataset", $"Dataset '{sanitizedName}' already exists");
@@ -1392,9 +1378,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
-            Directory.CreateDirectory(datasetPath);
+            _datasetStorageService.CreateDirectory(datasetPath);
             var v1Path = Path.Combine(datasetPath, "V1");
-            Directory.CreateDirectory(v1Path);
+            _datasetStorageService.CreateDirectory(v1Path);
 
             var newDataset = new DatasetCardViewModel
             {
@@ -1444,10 +1430,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         try
         {
             var destFolderPath = ActiveDataset.CurrentVersionFolderPath;
-            Directory.CreateDirectory(destFolderPath);
+            _datasetStorageService.CreateDirectory(destFolderPath);
 
             // Get existing filenames for immediate conflict detection
-            var existingFileNames = Directory.GetFiles(destFolderPath)
+            var existingFileNames = _datasetStorageService.GetFiles(destFolderPath)
                 .Select(Path.GetFileName)
                 .Where(n => !string.IsNullOrEmpty(n))
                 .Cast<string>()
@@ -1538,26 +1524,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         }
     }
 
-    /// <summary>
-    /// Generates a unique file name by appending a number suffix.
-    /// </summary>
-    private static string GenerateUniqueFileName(string folderPath, string fileName)
-    {
-        var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-        var extension = Path.GetExtension(fileName);
-        var counter = 1;
-        string newPath;
-
-        do
-        {
-            var newName = $"{nameWithoutExt}_{counter}{extension}";
-            newPath = Path.Combine(folderPath, newName);
-            counter++;
-        } while (File.Exists(newPath));
-
-        return newPath;
-    }
-
     private void SaveAllCaptions()
     {
         var saved = 0;
@@ -1597,12 +1563,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (ActiveDataset is null) return;
 
         var folderPath = ActiveDataset.CurrentVersionFolderPath;
-        if (!Directory.Exists(folderPath))
+        if (!_datasetStorageService.DirectoryExists(folderPath))
         {
             folderPath = ActiveDataset.FolderPath;
         }
 
-        if (!Directory.Exists(folderPath)) return;
+        if (!_datasetStorageService.DirectoryExists(folderPath)) return;
 
         try
         {
@@ -1700,24 +1666,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
-            if (File.Exists(image.ImagePath))
-            {
-                File.Delete(image.ImagePath);
-            }
-
-            if (File.Exists(image.CaptionFilePath))
-            {
-                File.Delete(image.CaptionFilePath);
-            }
-
-            if (image.IsVideo)
-            {
-                var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
-                if (File.Exists(thumbnailPath))
-                {
-                    File.Delete(thumbnailPath);
-                }
-            }
+            var thumbnailPath = image.IsVideo
+                ? DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath)
+                : null;
+            _datasetStorageService.DeleteMediaFiles(image.ImagePath, image.CaptionFilePath, thumbnailPath);
 
             DatasetImages.Remove(image);
 
@@ -1772,7 +1724,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 bool samePath = string.Equals(image.ImagePath, newDestPath, StringComparison.OrdinalIgnoreCase);
 
                 // If target exists and is not the file we currently point to
-                if (!samePath && File.Exists(newDestPath))
+                if (!samePath && _datasetStorageService.FileExists(newDestPath))
                 {
                     var overwrite = await DialogService.ShowConfirmAsync("File Exists", 
                         $"File '{Path.GetFileName(newDestPath)}' already exists. Overwrite it?");
@@ -1780,12 +1732,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 }
 
                 // If path changed (extension changed), delete the old file
-                if (!samePath && File.Exists(image.ImagePath))
+                if (!samePath)
                 {
-                    File.Delete(image.ImagePath);
+                    _datasetStorageService.DeleteFile(image.ImagePath);
                 }
 
-                File.Copy(sourcePath, newDestPath, true);
+                _datasetStorageService.CopyFile(sourcePath, newDestPath, true);
 
                 if (!samePath)
                 {
@@ -1798,9 +1750,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             else if (result.Action == ReplaceAction.AddAsNew)
             {
                 var newFileName = Path.GetFileName(sourcePath);
-                var uniquePath = GenerateUniqueFileName(destFolder, newFileName);
+                var uniquePath = _datasetStorageService.GetUniqueFilePath(destFolder, newFileName);
                 
-                File.Copy(sourcePath, uniquePath);
+                _datasetStorageService.CopyFile(sourcePath, uniquePath, false);
                 
                 var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator);
                 if (newImageVm.IsVideo && _videoThumbnailService != null)
@@ -1851,7 +1803,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             try
             {
-                Directory.Delete(dataset.FolderPath, recursive: true);
+                _datasetStorageService.DeleteDirectory(dataset.FolderPath, recursive: true);
                 Datasets.Remove(dataset);
 
                 foreach (var group in GroupedDatasets)
@@ -1894,7 +1846,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Delete the entire dataset
             try
             {
-                Directory.Delete(dataset.FolderPath, recursive: true);
+                _datasetStorageService.DeleteDirectory(dataset.FolderPath, recursive: true);
                 Datasets.Remove(dataset);
 
                 foreach (var group in GroupedDatasets)
@@ -1935,10 +1887,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 try
                 {
                     var versionPath = dataset.GetVersionFolderPath(version);
-                    if (Directory.Exists(versionPath))
-                    {
-                        Directory.Delete(versionPath, recursive: true);
-                    }
+                    _datasetStorageService.DeleteDirectory(versionPath, recursive: true);
 
                     // Clean up metadata
                     dataset.VersionBranchedFrom.Remove(version);
@@ -2010,7 +1959,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             if (isLastVersion)
             {
-                Directory.Delete(dataset.FolderPath, recursive: true);
+                _datasetStorageService.DeleteDirectory(dataset.FolderPath, recursive: true);
                 var parentDataset = Datasets.FirstOrDefault(d => d.FolderPath == dataset.FolderPath);
                 if (parentDataset is not null)
                 {
@@ -2019,10 +1968,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             }
             else
             {
-                if (Directory.Exists(versionPath))
-                {
-                    Directory.Delete(versionPath, recursive: true);
-                }
+                _datasetStorageService.DeleteDirectory(versionPath, recursive: true);
 
                 dataset.VersionBranchedFrom.Remove(version);
                 dataset.VersionDescriptions.Remove(version);
@@ -2117,7 +2063,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 await DatasetVersionUtilities.EnsureVersionedStructureAsync(ActiveDataset);
             }
 
-            Directory.CreateDirectory(destPath);
+            _datasetStorageService.CreateDirectory(destPath);
 
             var copied = 0;
             if (copyFiles)
@@ -2142,7 +2088,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     }
                 }
 
-                var files = Directory.EnumerateFiles(sourcePath)
+                var files = _datasetStorageService.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
 
@@ -2178,7 +2124,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     {
                         var fileName = Path.GetFileName(sourceFile);
                         var destFile = Path.Combine(destPath, fileName);
-                        File.Copy(sourceFile, destFile, overwrite: false);
+                        _datasetStorageService.CopyFile(sourceFile, destFile, overwrite: false);
                         copied++;
                     }
                 }
@@ -2194,10 +2140,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                             var sourceRatingFile = Path.Combine(sourcePath, baseName + ".rating");
                             var destRatingFile = Path.Combine(destPath, baseName + ".rating");
                             
-                            if (File.Exists(sourceRatingFile) && !File.Exists(destRatingFile))
-                            {
-                                File.Copy(sourceRatingFile, destRatingFile, overwrite: false);
-                            }
+                            _datasetStorageService.CopyFileIfExists(sourceRatingFile, destRatingFile, overwrite: false);
                         }
                     }
                 }
@@ -2273,9 +2216,17 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IsLoading = true;
         try
         {
+            var exportItems = result.FilesToExport
+                .Select(file => new DatasetExportItem(
+                    file.ImagePath,
+                    file.FullFileName,
+                    file.CaptionFilePath,
+                    Path.GetFileName(file.CaptionFilePath)))
+                .ToList();
+
             var exportedCount = result.ExportType == ExportType.Zip
-                ? ExportAsZip(result.FilesToExport, destinationPath)
-                : ExportAsSingleFiles(result.FilesToExport, destinationPath);
+                ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
+                : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
 
             StatusMessage = $"Exported {exportedCount} files successfully.";
             _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
@@ -2298,11 +2249,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// Opens the specified path in Windows Explorer.
     /// If isFile is true, opens the containing folder and selects the file.
     /// </summary>
-    private static void OpenFolderInExplorer(string path, bool isFile)
+    private void OpenFolderInExplorer(string path, bool isFile)
     {
         try
         {
-            if (isFile && File.Exists(path))
+            if (isFile && _datasetStorageService.FileExists(path))
             {
                 // Open Explorer and select the file
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -2312,7 +2263,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     UseShellExecute = true
                 });
             }
-            else if (Directory.Exists(path))
+            else if (_datasetStorageService.DirectoryExists(path))
             {
                 // Open the folder
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -2326,61 +2277,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             // Ignore errors opening Explorer - not critical
         }
-    }
-
-    private int ExportAsSingleFiles(List<DatasetImageViewModel> files, string destinationFolder)
-    {
-        var exportedCount = 0;
-        Directory.CreateDirectory(destinationFolder);
-
-        foreach (var mediaFile in files)
-        {
-            if (File.Exists(mediaFile.ImagePath))
-            {
-                var destMediaPath = Path.Combine(destinationFolder, mediaFile.FullFileName);
-                File.Copy(mediaFile.ImagePath, destMediaPath, overwrite: true);
-                exportedCount++;
-            }
-
-            if (File.Exists(mediaFile.CaptionFilePath))
-            {
-                var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
-                var destCaptionPath = Path.Combine(destinationFolder, captionFileName);
-                File.Copy(mediaFile.CaptionFilePath, destCaptionPath, overwrite: true);
-            }
-        }
-
-        return exportedCount;
-    }
-
-    private int ExportAsZip(List<DatasetImageViewModel> files, string zipPath)
-    {
-        var exportedCount = 0;
-
-        if (File.Exists(zipPath))
-        {
-            File.Delete(zipPath);
-        }
-
-        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
-        {
-            foreach (var mediaFile in files)
-            {
-                if (File.Exists(mediaFile.ImagePath))
-                {
-                    archive.CreateEntryFromFile(mediaFile.ImagePath, mediaFile.FullFileName);
-                    exportedCount++;
-                }
-
-                if (File.Exists(mediaFile.CaptionFilePath))
-                {
-                    var captionFileName = Path.GetFileName(mediaFile.CaptionFilePath);
-                    archive.CreateEntryFromFile(mediaFile.CaptionFilePath, captionFileName);
-                }
-            }
-        }
-
-        return exportedCount;
     }
 
     #endregion
@@ -2652,24 +2548,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             foreach (var image in selectedImages)
             {
-                if (File.Exists(image.ImagePath))
-                {
-                    File.Delete(image.ImagePath);
-                }
-
-                if (File.Exists(image.CaptionFilePath))
-                {
-                    File.Delete(image.CaptionFilePath);
-                }
-
-                if (image.IsVideo)
-                {
-                    var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
-                    if (File.Exists(thumbnailPath))
-                    {
-                        File.Delete(thumbnailPath);
-                    }
-                }
+                var thumbnailPath = image.IsVideo
+                    ? DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath)
+                    : null;
+                _datasetStorageService.DeleteMediaFiles(image.ImagePath, image.CaptionFilePath, thumbnailPath);
 
                 DatasetImages.Remove(image);
 
@@ -2710,24 +2592,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
-            if (File.Exists(image.ImagePath))
-            {
-                File.Delete(image.ImagePath);
-            }
-
-            if (File.Exists(image.CaptionFilePath))
-            {
-                File.Delete(image.CaptionFilePath);
-            }
-
-            if (image.IsVideo)
-            {
-                var thumbnailPath = DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath);
-                if (File.Exists(thumbnailPath))
-                {
-                    File.Delete(thumbnailPath);
-                }
-            }
+            var thumbnailPath = image.IsVideo
+                ? DatasetCardViewModel.GetVideoThumbnailPath(image.ImagePath)
+                : null;
+            _datasetStorageService.DeleteMediaFiles(image.ImagePath, image.CaptionFilePath, thumbnailPath);
 
             DatasetImages.Remove(image);
 

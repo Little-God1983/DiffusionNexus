@@ -135,8 +135,9 @@ public sealed class CaptioningService : ICaptioningService
         var status = _modelManager.GetModelStatus(modelType);
         if (status != CaptioningModelStatus.Ready)
         {
-            Log.Warning("Cannot load model {ModelType}: status is {Status}", modelType, status);
-            return false;
+            var msg = $"Cannot load model {modelType}: status is {status}. Please ensure the model is downloaded and not corrupted.";
+            Log.Warning(msg);
+            throw new InvalidOperationException(msg);
         }
 
         await _inferencelock.WaitAsync(cancellationToken);
@@ -179,7 +180,7 @@ public sealed class CaptioningService : ICaptioningService
         {
             Log.Error(ex, "Failed to load model {ModelType}", modelType);
             UnloadModelInternal();
-            return false;
+            throw;
         }
         finally
         {

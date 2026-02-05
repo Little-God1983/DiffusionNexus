@@ -22,10 +22,11 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
     public async Task AddImagesCommand_AddsImageToDatasetAndCopiesFile()
     {
         var settingsService = _host.Services.GetRequiredService<IAppSettingsService>();
+        var storageService = _host.Services.GetRequiredService<IDatasetStorageService>();
         var eventAggregator = _host.Services.GetRequiredService<IDatasetEventAggregator>();
         var datasetState = _host.Services.GetRequiredService<IDatasetState>();
 
-        var viewModel = new DatasetManagementViewModel(settingsService, eventAggregator, datasetState)
+        var viewModel = new DatasetManagementViewModel(settingsService, storageService, eventAggregator, datasetState)
         {
             DialogService = new StubDialogService()
         };
@@ -39,11 +40,17 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         await viewModel.AddImagesCommand.ExecuteAsync(null);
 
-        viewModel.DatasetImages.Should().ContainSingle(image =>
-            string.Equals(Path.GetFileName(image.ImagePath), Path.GetFileName(sourceImagePath), StringComparison.Ordinal));
+        // Check for any reported errors
+        viewModel.StatusMessage.Should().NotContain("Error", because: viewModel.StatusMessage);
 
         var expectedPath = Path.Combine(datasetCard.CurrentVersionFolderPath, Path.GetFileName(sourceImagePath));
         File.Exists(expectedPath).Should().BeTrue("the file should be copied into the managed dataset folder");
+
+        // Ensure the view model has processed the file system changes
+        await viewModel.RefreshActiveDatasetAsync();
+
+        viewModel.DatasetImages.Should().ContainSingle(image =>
+            string.Equals(Path.GetFileName(image.ImagePath), Path.GetFileName(sourceImagePath), StringComparison.OrdinalIgnoreCase));
     }
 
     private static string CreateTempPng(string rootPath)
