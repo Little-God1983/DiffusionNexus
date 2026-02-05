@@ -343,6 +343,9 @@ public class ImageEditorControl : Control
         // Shape tool takes priority when active
         if (_editorCore.ShapeTool.IsActive && props.IsLeftButtonPressed)
         {
+            // Track Ctrl key for constraining proportions (square/circle)
+            _editorCore.ShapeTool.ConstrainProportions = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            
             if (_editorCore.ShapeTool.OnPointerPressed(skPoint))
             {
                 e.Handled = true;
@@ -397,6 +400,9 @@ public class ImageEditorControl : Control
         // Shape tool takes priority when active
         if (_editorCore.ShapeTool.IsActive)
         {
+            // Track Ctrl key for constraining proportions (square/circle)
+            _editorCore.ShapeTool.ConstrainProportions = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            
             if (_editorCore.ShapeTool.OnPointerMoved(skPoint))
             {
                 e.Handled = true;
@@ -499,6 +505,13 @@ public class ImageEditorControl : Control
             InvalidateVisual();
         }
 
+        // Handle Ctrl key for constraining shape proportions (square/circle)
+        if (e.Key == Key.LeftCtrl || e.Key == Key.RightCtrl)
+        {
+            _editorCore.ShapeTool.ConstrainProportions = true;
+            InvalidateVisual();
+        }
+
         // Apply crop with C or Enter when crop tool is active
         if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
         {
@@ -524,6 +537,13 @@ public class ImageEditorControl : Control
         if (e.Key == Key.LeftShift || e.Key == Key.RightShift)
         {
             _editorCore.DrawingTool.IsShiftHeld = false;
+            InvalidateVisual();
+        }
+
+        // Handle Ctrl key release for shape constraint
+        if (e.Key == Key.LeftCtrl || e.Key == Key.RightCtrl)
+        {
+            _editorCore.ShapeTool.ConstrainProportions = false;
             InvalidateVisual();
         }
     }

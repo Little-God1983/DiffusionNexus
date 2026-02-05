@@ -92,6 +92,12 @@ public class ShapeTool
     public float ArrowHeadSize { get; set; } = 4f;
 
     /// <summary>
+    /// Gets or sets whether to constrain proportions (Ctrl held).
+    /// When true, rectangles become squares and ellipses become circles.
+    /// </summary>
+    public bool ConstrainProportions { get; set; }
+
+    /// <summary>
     /// Gets whether the user is currently drawing a shape.
     /// </summary>
     public bool IsDrawing => _isDrawing;
@@ -170,9 +176,14 @@ public class ShapeTool
 
         _isDrawing = false;
 
+        // Apply constraints if active
+        var endPoint = ConstrainProportions 
+            ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType) 
+            : _currentPoint;
+
         // Convert screen points to normalized image coordinates
         var normalizedStart = ScreenToNormalized(_startPoint);
-        var normalizedEnd = ScreenToNormalized(_currentPoint);
+        var normalizedEnd = ScreenToNormalized(endPoint);
 
         // Create shape data
         var shapeData = new ShapeData
@@ -213,7 +224,11 @@ public class ShapeTool
     {
         if (!_isActive || !_isDrawing) return;
 
-        RenderShape(canvas, _startPoint, _currentPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
+        var endPoint = ConstrainProportions 
+            ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType) 
+            : _currentPoint;
+
+        RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
     }
 
     /// <summary>
@@ -384,6 +399,29 @@ public class ShapeTool
     private float GetCurrentScale()
     {
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
+    }
+
+    /// <summary>
+    /// Calculates a constrained end point to create squares from rectangles
+    /// and circles from ellipses.
+    /// </summary>
+    private static SKPoint GetConstrainedEndPoint(SKPoint start, SKPoint current, ShapeType shapeType)
+    {
+        // Only constrain for Rectangle and Ellipse shapes
+        if (shapeType != ShapeType.Rectangle && shapeType != ShapeType.Ellipse)
+            return current;
+
+        var dx = current.X - start.X;
+        var dy = current.Y - start.Y;
+
+        // Use the larger dimension to create a square/circle
+        var size = Math.Max(Math.Abs(dx), Math.Abs(dy));
+
+        // Preserve the direction (sign) of the original delta
+        var constrainedX = start.X + (dx >= 0 ? size : -size);
+        var constrainedY = start.Y + (dy >= 0 ? size : -size);
+
+        return new SKPoint(constrainedX, constrainedY);
     }
 }
 

@@ -582,7 +582,7 @@
                 <TextBlock Text="Click and drag to draw. Hold Shift for straight lines." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"
                            IsVisible="{Binding ImageEditor.IsShapeFreehand}"/>
-                <TextBlock Text="Click and drag to draw the shape." 
+                <TextBlock Text="Click and drag to draw. Hold Ctrl for square/circle." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"
                            IsVisible="{Binding ImageEditor.IsShapeMode}"/>
                 
