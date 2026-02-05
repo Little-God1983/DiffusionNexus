@@ -231,4 +231,17 @@ public static class BoolConverters
                          : "Automatic backup is not configured. Click to set up backup.");
 
     #endregion
+
+    #region Layer Converters
+
+    private static readonly IBrush SelectedLayerBrush = new SolidColorBrush(Color.Parse("#3A5E9C"));
+    private static readonly IBrush UnselectedLayerBrush = Brushes.Transparent;
+
+    /// <summary>
+    /// Converts layer selection state to background brush.
+    /// </summary>
+    public static readonly IValueConverter BoolToLayerBackground =
+        new FuncValueConverter<bool, IBrush>(isSelected => isSelected ? SelectedLayerBrush : UnselectedLayerBrush);
+
+    #endregion
 }

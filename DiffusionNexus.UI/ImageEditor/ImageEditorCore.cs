@@ -5,13 +5,14 @@ namespace DiffusionNexus.UI.ImageEditor;
 
 /// <summary>
 /// Platform-independent image editor core using SkiaSharp.
-/// Can be reused in any .NET project (WPF, MAUI, Avalonia, etc.)
+/// Supports layer-based editing with compositing.
 /// </summary>
 public class ImageEditorCore : IDisposable
 {
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
     private SKBitmap? _previewBitmap;
+    private LayerStack? _layers;
     private bool _isPreviewActive;
     private bool _disposed;
     private float _zoomLevel = 1f;
@@ -20,6 +21,7 @@ public class ImageEditorCore : IDisposable
     private bool _isFitMode = true;
     private int _imageDpi = 72;
     private readonly object _bitmapLock = new();
+    private bool _isLayerMode;
 
     private const float MinZoom = 0.1f;
     private const float MaxZoom = 10f;
@@ -41,19 +43,44 @@ public class ImageEditorCore : IDisposable
     public ShapeTool ShapeTool { get; } = new();
 
     /// <summary>
+    /// Gets the layer stack for layer-based editing.
+    /// </summary>
+    public LayerStack? Layers => _layers;
+
+    /// <summary>
+    /// Gets or sets whether layer mode is enabled.
+    /// </summary>
+    public bool IsLayerMode
+    {
+        get => _isLayerMode;
+        set
+        {
+            if (_isLayerMode != value)
+            {
+                _isLayerMode = value;
+                if (value && _layers == null && _workingBitmap != null)
+                {
+                    EnableLayerMode();
+                }
+                LayerModeChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets the current working bitmap width.
     /// </summary>
-    public int Width => _workingBitmap?.Width ?? 0;
+    public int Width => _isLayerMode ? (_layers?.Width ?? 0) : (_workingBitmap?.Width ?? 0);
 
     /// <summary>
     /// Gets the current working bitmap height.
     /// </summary>
-    public int Height => _workingBitmap?.Height ?? 0;
+    public int Height => _isLayerMode ? (_layers?.Height ?? 0) : (_workingBitmap?.Height ?? 0);
 
     /// <summary>
     /// Gets whether an image is currently loaded.
     /// </summary>
-    public bool HasImage => _workingBitmap is not null;
+    public bool HasImage => _isLayerMode ? (_layers?.Count > 0) : (_workingBitmap is not null);
 
     /// <summary>
     /// Gets whether a preview is currently active.
@@ -141,7 +168,190 @@ public class ImageEditorCore : IDisposable
     public event EventHandler? ZoomChanged;
 
     /// <summary>
+    /// Event raised when layer mode is toggled.
+    /// </summary>
+    public event EventHandler? LayerModeChanged;
+
+    /// <summary>
+    /// Event raised when layers change (added, removed, reordered).
+    /// </summary>
+    public event EventHandler? LayersChanged;
+
+    #region Layer Operations
+
+    /// <summary>
+    /// Enables layer mode, converting the current working bitmap to a layer stack.
+    /// The initial layer is named after the current image file.
+    /// </summary>
+    public void EnableLayerMode()
+    {
+        if (_layers != null || _workingBitmap == null) return;
+
+        // Use the filename for the initial layer name
+        var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
+            ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
+            : "Background";
+
+        _layers = new LayerStack(_workingBitmap.Width, _workingBitmap.Height);
+        _layers.AddLayerFromBitmap(_workingBitmap, layerName);
+        _layers.ContentChanged += OnLayersContentChanged;
+        _layers.LayersChanged += OnLayersCollectionChanged;
+        _isLayerMode = true;
+        OnImageChanged();
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Disables layer mode, flattening all layers to a single bitmap.
+    /// </summary>
+    public void DisableLayerMode()
+    {
+        if (_layers == null) return;
+
+        var flattened = _layers.Flatten();
+        if (flattened != null)
+        {
+            _workingBitmap?.Dispose();
+            _workingBitmap = flattened;
+        }
+
+        _layers.ContentChanged -= OnLayersContentChanged;
+        _layers.LayersChanged -= OnLayersCollectionChanged;
+        _layers.Dispose();
+        _layers = null;
+        _isLayerMode = false;
+        OnImageChanged();
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Adds a new empty layer at the top of the stack.
+    /// </summary>
+    /// <param name="name">Optional layer name.</param>
+    /// <returns>The newly created layer, or null if not in layer mode.</returns>
+    public Layer? AddLayer(string? name = null)
+    {
+        if (!_isLayerMode || _layers == null) return null;
+        return _layers.AddLayer(name);
+    }
+
+    /// <summary>
+    /// Adds a layer from a bitmap.
+    /// </summary>
+    /// <param name="bitmap">Source bitmap.</param>
+    /// <param name="name">Optional layer name.</param>
+    /// <returns>The newly created layer, or null if not in layer mode.</returns>
+    public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
+    {
+        if (!_isLayerMode || _layers == null) return null;
+        return _layers.AddLayerFromBitmap(bitmap, name);
+    }
+
+    /// <summary>
+    /// Removes a layer from the stack.
+    /// </summary>
+    /// <param name="layer">Layer to remove.</param>
+    /// <returns>True if removed successfully.</returns>
+    public bool RemoveLayer(Layer layer)
+    {
+        if (!_isLayerMode || _layers == null) return false;
+        return _layers.RemoveLayer(layer);
+    }
+
+    /// <summary>
+    /// Duplicates a layer.
+    /// </summary>
+    /// <param name="layer">Layer to duplicate.</param>
+    /// <returns>The duplicated layer, or null if failed.</returns>
+    public Layer? DuplicateLayer(Layer layer)
+    {
+        if (!_isLayerMode || _layers == null) return null;
+        return _layers.DuplicateLayer(layer);
+    }
+
+    /// <summary>
+    /// Moves a layer up in the stack.
+    /// </summary>
+    /// <param name="layer">Layer to move.</param>
+    /// <returns>True if moved successfully.</returns>
+    public bool MoveLayerUp(Layer layer)
+    {
+        if (!_isLayerMode || _layers == null) return false;
+        return _layers.MoveLayerUp(layer);
+    }
+
+    /// <summary>
+    /// Moves a layer down in the stack.
+    /// </summary>
+    /// <param name="layer">Layer to move.</param>
+    /// <returns>True if moved successfully.</returns>
+    public bool MoveLayerDown(Layer layer)
+    {
+        if (!_isLayerMode || _layers == null) return false;
+        return _layers.MoveLayerDown(layer);
+    }
+
+    /// <summary>
+    /// Merges the specified layer with the layer below it.
+    /// </summary>
+    /// <param name="layer">Layer to merge down.</param>
+    /// <returns>True if merged successfully.</returns>
+    public bool MergeLayerDown(Layer layer)
+    {
+        if (!_isLayerMode || _layers == null) return false;
+        return _layers.MergeDown(layer);
+    }
+
+    /// <summary>
+    /// Merges all visible layers.
+    /// </summary>
+    public void MergeVisibleLayers()
+    {
+        if (!_isLayerMode || _layers == null) return;
+        _layers.MergeVisible();
+    }
+
+    /// <summary>
+    /// Flattens all layers to a single bitmap.
+    /// </summary>
+    /// <returns>The flattened bitmap, or null if not in layer mode.</returns>
+    public SKBitmap? FlattenLayers()
+    {
+        if (!_isLayerMode || _layers == null) return null;
+        return _layers.Flatten();
+    }
+
+    /// <summary>
+    /// Gets or sets the active layer for editing.
+    /// </summary>
+    public Layer? ActiveLayer
+    {
+        get => _layers?.ActiveLayer;
+        set
+        {
+            if (_layers != null)
+            {
+                _layers.ActiveLayer = value;
+            }
+        }
+    }
+
+    private void OnLayersContentChanged(object? sender, EventArgs e)
+    {
+        OnImageChanged();
+    }
+
+    private void OnLayersCollectionChanged(object? sender, EventArgs e)
+    {
+        LayersChanged?.Invoke(this, EventArgs.Empty);
+        OnImageChanged();
+    }
+
+    #endregion Layer Operations
+
+    /// <summary>
     /// Loads an image from the specified file path.
+    /// Automatically enables layer mode with the image as the first layer.
     /// </summary>
     /// <param name="filePath">Path to the image file.</param>
     /// <returns>True if the image was loaded successfully.</returns>
@@ -154,6 +364,15 @@ public class ImageEditorCore : IDisposable
         {
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
+            
+            // Dispose existing layers if any
+            if (_layers != null)
+            {
+                _layers.ContentChanged -= OnLayersContentChanged;
+                _layers.LayersChanged -= OnLayersCollectionChanged;
+                _layers.Dispose();
+                _layers = null;
+            }
             
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
@@ -177,6 +396,10 @@ public class ImageEditorCore : IDisposable
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
             ResetZoom();
+            
+            // Auto-enable layer mode with the image as the first layer
+            EnableLayerMode();
+            
             OnImageChanged();
             return true;
         }
@@ -188,6 +411,7 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Loads an image from a byte array.
+    /// Automatically enables layer mode with the image as the first layer.
     /// </summary>
     /// <param name="imageData">The image data as bytes.</param>
     /// <returns>True if the image was loaded successfully.</returns>
@@ -201,6 +425,15 @@ public class ImageEditorCore : IDisposable
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
             
+            // Dispose existing layers if any
+            if (_layers != null)
+            {
+                _layers.ContentChanged -= OnLayersContentChanged;
+                _layers.LayersChanged -= OnLayersCollectionChanged;
+                _layers.Dispose();
+                _layers = null;
+            }
+            
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
 
@@ -210,6 +443,10 @@ public class ImageEditorCore : IDisposable
 
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = null;
+            
+            // Auto-enable layer mode with the image as the first layer
+            EnableLayerMode();
+            
             OnImageChanged();
             return true;
         }
@@ -586,6 +823,7 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Renders the current image with zoom and pan support.
+    /// Supports both single-bitmap and layer modes.
     /// </summary>
     public SKRect RenderWithZoom(SKCanvas canvas, float canvasWidth, float canvasHeight, SKColor backgroundColor)
     {
@@ -593,24 +831,36 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-            if (bitmapToRender is null)
-                return SKRect.Empty;
+            // Determine what to render
+            int imageWidth, imageHeight;
+            if (_isLayerMode && _layers != null && _layers.Count > 0)
+            {
+                imageWidth = _layers.Width;
+                imageHeight = _layers.Height;
+            }
+            else
+            {
+                var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+                if (bitmapToRender is null)
+                    return SKRect.Empty;
+                imageWidth = bitmapToRender.Width;
+                imageHeight = bitmapToRender.Height;
+            }
 
             SKRect imageRect;
 
             if (_isFitMode)
             {
-                imageRect = CalculateFitRectInternal(bitmapToRender, canvasWidth, canvasHeight);
+                imageRect = CalculateFitRectInternal(imageWidth, imageHeight, canvasWidth, canvasHeight);
                 // Update zoom level to reflect fit
-                var fitScale = imageRect.Width / bitmapToRender.Width;
+                var fitScale = imageRect.Width / imageWidth;
                 _zoomLevel = fitScale;
             }
             else
             {
                 // Calculate zoomed size
-                var zoomedWidth = bitmapToRender.Width * _zoomLevel;
-                var zoomedHeight = bitmapToRender.Height * _zoomLevel;
+                var zoomedWidth = imageWidth * _zoomLevel;
+                var zoomedHeight = imageHeight * _zoomLevel;
 
                 // Center with pan offset
                 var x = (canvasWidth - zoomedWidth) / 2f + _panX;
@@ -619,7 +869,19 @@ public class ImageEditorCore : IDisposable
                 imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
             }
 
-            canvas.DrawBitmap(bitmapToRender, imageRect);
+            // Render based on mode
+            if (_isLayerMode && _layers != null)
+            {
+                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect);
+            }
+            else
+            {
+                var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
+                if (bitmapToRender != null)
+                {
+                    canvas.DrawBitmap(bitmapToRender, imageRect);
+                }
+            }
 
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
@@ -635,6 +897,26 @@ public class ImageEditorCore : IDisposable
 
             return imageRect;
         }
+    }
+
+    /// <summary>
+    /// Internal method to calculate fit rect from dimensions.
+    /// </summary>
+    private static SKRect CalculateFitRectInternal(int imageWidth, int imageHeight, float containerWidth, float containerHeight)
+    {
+        // Calculate scale to fit
+        var scaleX = containerWidth / imageWidth;
+        var scaleY = containerHeight / imageHeight;
+        var scale = Math.Min(scaleX, scaleY);
+
+        var scaledWidth = imageWidth * scale;
+        var scaledHeight = imageHeight * scale;
+
+        // Center the image
+        var x = (containerWidth - scaledWidth) / 2f;
+        var y = (containerHeight - scaledHeight) / 2f;
+
+        return new SKRect(x, y, x + scaledWidth, y + scaledHeight);
     }
 
     /// <summary>
@@ -1483,7 +1765,7 @@ public class ImageEditorCore : IDisposable
     #region Drawing
 
     /// <summary>
-    /// Applies a drawing stroke to the working bitmap.
+    /// Applies a drawing stroke to the working bitmap or active layer.
     /// </summary>
     /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
     /// <param name="color">The stroke color.</param>
@@ -1497,13 +1779,29 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            // Get the target bitmap (active layer in layer mode, or working bitmap)
+            SKBitmap? targetBitmap;
+            Layer? targetLayer = null;
+
+            if (_isLayerMode && _layers?.ActiveLayer != null)
+            {
+                targetLayer = _layers.ActiveLayer;
+                if (!targetLayer.CanEdit)
+                    return false;
+                targetBitmap = targetLayer.Bitmap;
+            }
+            else
+            {
+                targetBitmap = _workingBitmap;
+            }
+
+            if (targetBitmap is null)
                 return false;
 
             try
             {
-                var width = _workingBitmap.Width;
-                var height = _workingBitmap.Height;
+                var width = targetBitmap.Width;
+                var height = targetBitmap.Height;
 
                 // Convert normalized points to image pixel coordinates
                 var imagePoints = normalizedPoints
@@ -1511,10 +1809,9 @@ public class ImageEditorCore : IDisposable
                     .ToList();
 
                 // Scale brush size from display coordinates to image coordinates
-                // The brushSize passed is relative to the display, we need to scale it
                 var scaledBrushSize = brushSize * width;
 
-                using var canvas = new SKCanvas(_workingBitmap);
+                using var canvas = new SKCanvas(targetBitmap);
                 using var paint = new SKPaint
                 {
                     Color = color,
@@ -1536,7 +1833,6 @@ public class ImageEditorCore : IDisposable
 
                 if (imagePoints.Count == 1)
                 {
-                    // Single point - draw a dot
                     var point = imagePoints[0];
                     paint.Style = SKPaintStyle.Fill;
                     if (brushShape == BrushShape.Round)
@@ -1551,12 +1847,10 @@ public class ImageEditorCore : IDisposable
                 }
                 else if (imagePoints.Count == 2)
                 {
-                    // Two points - draw a line
                     canvas.DrawLine(imagePoints[0], imagePoints[1], paint);
                 }
                 else
                 {
-                    // Multiple points - draw a path
                     using var path = new SKPath();
                     path.MoveTo(imagePoints[0]);
                     for (var i = 1; i < imagePoints.Count; i++)
@@ -1567,6 +1861,9 @@ public class ImageEditorCore : IDisposable
                 }
 
                 canvas.Flush();
+
+                // Notify layer of content change
+                targetLayer?.NotifyContentChanged();
             }
             catch
             {
@@ -1583,7 +1880,7 @@ public class ImageEditorCore : IDisposable
     #region Shape Drawing
 
     /// <summary>
-    /// Applies a shape to the working bitmap.
+    /// Applies a shape to the working bitmap or active layer.
     /// </summary>
     /// <param name="shapeData">The shape data to apply.</param>
     /// <returns>True if the shape was applied successfully.</returns>
@@ -1594,13 +1891,29 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            // Get the target bitmap (active layer in layer mode, or working bitmap)
+            SKBitmap? targetBitmap;
+            Layer? targetLayer = null;
+
+            if (_isLayerMode && _layers?.ActiveLayer != null)
+            {
+                targetLayer = _layers.ActiveLayer;
+                if (!targetLayer.CanEdit)
+                    return false;
+                targetBitmap = targetLayer.Bitmap;
+            }
+            else
+            {
+                targetBitmap = _workingBitmap;
+            }
+
+            if (targetBitmap is null)
                 return false;
 
             try
             {
-                var width = _workingBitmap.Width;
-                var height = _workingBitmap.Height;
+                var width = targetBitmap.Width;
+                var height = targetBitmap.Height;
 
                 // Convert normalized coordinates to image coordinates
                 var start = new SKPoint(
@@ -1614,7 +1927,7 @@ public class ImageEditorCore : IDisposable
                 var scaledStrokeWidth = shapeData.StrokeWidth * width;
                 var scaledArrowHeadSize = shapeData.ArrowHeadSize;
 
-                using var canvas = new SKCanvas(_workingBitmap);
+                using var canvas = new SKCanvas(targetBitmap);
 
                 ShapeTool.RenderShape(
                     canvas,
@@ -1628,6 +1941,9 @@ public class ImageEditorCore : IDisposable
                     scaledArrowHeadSize);
 
                 canvas.Flush();
+
+                // Notify layer of content change
+                targetLayer?.NotifyContentChanged();
             }
             catch
             {
@@ -1640,6 +1956,112 @@ public class ImageEditorCore : IDisposable
     }
 
     #endregion Shape Drawing
+
+    #region Save with Layers
+
+    /// <summary>
+    /// Saves the image, flattening layers if in layer mode.
+    /// </summary>
+    /// <param name="filePath">Output file path.</param>
+    /// <param name="format">Image format.</param>
+    /// <param name="quality">Quality for lossy formats.</param>
+    /// <returns>True if saved successfully.</returns>
+    public bool SaveImageFlattened(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
+    {
+        SKBitmap? bitmapToSave;
+
+        lock (_bitmapLock)
+        {
+            if (_isLayerMode && _layers != null)
+            {
+                bitmapToSave = _layers.Flatten();
+            }
+            else
+            {
+                bitmapToSave = _workingBitmap?.Copy();
+            }
+        }
+
+        if (bitmapToSave == null)
+            return false;
+
+        try
+        {
+            var directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            using var image = SKImage.FromBitmap(bitmapToSave);
+            if (image is null)
+                return false;
+
+            using var data = image.Encode(format, quality);
+            if (data is null)
+                return false;
+
+            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+            data.SaveTo(stream);
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            bitmapToSave.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Saves layers to a multi-page TIFF file.
+    /// </summary>
+    /// <param name="filePath">Output file path.</param>
+    /// <returns>True if saved successfully.</returns>
+    public bool SaveLayeredTiff(string filePath)
+    {
+        if (!_isLayerMode || _layers == null)
+            return false;
+
+        return TiffExporter.SaveLayeredTiff(_layers, filePath);
+    }
+
+    /// <summary>
+    /// Loads a layered TIFF file.
+    /// </summary>
+    /// <param name="filePath">TIFF file path.</param>
+    /// <returns>True if loaded successfully.</returns>
+    public bool LoadLayeredTiff(string filePath)
+    {
+        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
+        if (loadedLayers == null)
+            return false;
+
+        // Dispose existing layers
+        if (_layers != null)
+        {
+            _layers.ContentChanged -= OnLayersContentChanged;
+            _layers.LayersChanged -= OnLayersCollectionChanged;
+            _layers.Dispose();
+        }
+
+        _layers = loadedLayers;
+        _layers.ContentChanged += OnLayersContentChanged;
+        _layers.LayersChanged += OnLayersCollectionChanged;
+        _isLayerMode = true;
+        CurrentImagePath = filePath;
+
+        OnImageChanged();
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+        LayersChanged?.Invoke(this, EventArgs.Empty);
+
+        return true;
+    }
+
+    #endregion Save with Layers
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
@@ -1658,9 +2080,16 @@ public class ImageEditorCore : IDisposable
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
             _previewBitmap?.Dispose();
+            if (_layers != null)
+            {
+                _layers.ContentChanged -= OnLayersContentChanged;
+                _layers.LayersChanged -= OnLayersCollectionChanged;
+                _layers.Dispose();
+            }
             _originalBitmap = null;
             _workingBitmap = null;
             _previewBitmap = null;
+            _layers = null;
         }
         _disposed = true;
     }

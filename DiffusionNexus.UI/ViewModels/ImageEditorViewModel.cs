@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
+using Avalonia.Media;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -98,6 +99,12 @@ public partial class ImageEditorViewModel : ObservableObject
     private byte _shapeStrokeGreen = 255;
     private byte _shapeStrokeBlue = 255;
     private float _shapeStrokeWidth = 3f;
+
+    // Layer fields
+    private bool _isLayerPanelOpen;
+    private bool _isLayerMode;
+    private LayerViewModel? _selectedLayer;
+    private ObservableCollection<LayerViewModel> _layers = new();
 
     /// <summary>
     /// Path to the currently loaded image.
@@ -1478,6 +1485,163 @@ public partial class ImageEditorViewModel : ObservableObject
         ? $"Size: {ImageWidth} � {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
+    #region Layer Properties
+
+    /// <summary>Whether the layer panel is open (always true - panel is always visible).</summary>
+    public bool IsLayerPanelOpen
+    {
+        get => true;
+        set { } // No-op, panel is always visible
+    }
+
+    /// <summary>Whether layer mode is enabled.</summary>
+    public bool IsLayerMode
+    {
+        get => _isLayerMode;
+        set
+        {
+            if (SetProperty(ref _isLayerMode, value))
+            {
+                NotifyLayerCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Collection of layer view models.</summary>
+    public ObservableCollection<LayerViewModel> Layers
+    {
+        get => _layers;
+        set => SetProperty(ref _layers, value);
+    }
+
+    /// <summary>Currently selected layer.</summary>
+    public LayerViewModel? SelectedLayer
+    {
+        get => _selectedLayer;
+        set
+        {
+            if (SetProperty(ref _selectedLayer, value))
+            {
+                // Update selection state on all layers
+                foreach (var layer in _layers)
+                {
+                    layer.IsSelected = layer == value;
+                }
+                NotifyLayerCommandsCanExecuteChanged();
+                LayerSelectionChanged?.Invoke(this, value?.Layer);
+            }
+        }
+    }
+
+    /// <summary>Whether the selected layer can be moved up.</summary>
+    public bool CanMoveLayerUp
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            return index < _layers.Count - 1;
+        }
+    }
+
+    /// <summary>Whether the selected layer can be moved down.</summary>
+    public bool CanMoveLayerDown
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            return index > 0;
+        }
+    }
+
+    /// <summary>Whether the selected layer can be merged down.</summary>
+    public bool CanMergeDown
+    {
+        get
+        {
+            if (_selectedLayer == null) return false;
+            var index = _layers.IndexOf(_selectedLayer);
+            return index > 0;
+        }
+    }
+
+    /// <summary>Event raised when layer selection changes.</summary>
+    public event EventHandler<Layer?>? LayerSelectionChanged;
+
+    /// <summary>Event raised when layers need to be synchronized.</summary>
+    public event EventHandler? SyncLayersRequested;
+
+    /// <summary>Event raised when a layered TIFF save is requested.</summary>
+    public event Func<string, Task<bool>>? SaveLayeredTiffRequested;
+
+    private void NotifyLayerCommandsCanExecuteChanged()
+    {
+        AddLayerCommand?.NotifyCanExecuteChanged();
+        DeleteLayerCommand?.NotifyCanExecuteChanged();
+        DuplicateLayerCommand?.NotifyCanExecuteChanged();
+        MoveLayerUpCommand?.NotifyCanExecuteChanged();
+        MoveLayerDownCommand?.NotifyCanExecuteChanged();
+        MergeLayerDownCommand?.NotifyCanExecuteChanged();
+        MergeVisibleLayersCommand?.NotifyCanExecuteChanged();
+        FlattenLayersCommand?.NotifyCanExecuteChanged();
+        SaveLayeredTiffCommand?.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanMoveLayerUp));
+        OnPropertyChanged(nameof(CanMoveLayerDown));
+        OnPropertyChanged(nameof(CanMergeDown));
+    }
+
+    /// <summary>
+    /// Synchronizes the layer view models with the editor core's layer stack.
+    /// </summary>
+    public void SyncLayers(LayerStack? layerStack)
+    {
+        // Clear existing
+        foreach (var vm in _layers)
+        {
+            vm.Dispose();
+        }
+        _layers.Clear();
+
+        if (layerStack == null || layerStack.Count == 0)
+        {
+            SelectedLayer = null;
+            return;
+        }
+
+        // Create view models for each layer (reversed for UI - top layer first)
+        for (var i = layerStack.Count - 1; i >= 0; i--)
+        {
+            var layer = layerStack[i];
+            var vm = new LayerViewModel(layer, OnLayerSelectionRequested, OnLayerDeleteRequested);
+            _layers.Add(vm);
+        }
+
+        // Select active layer
+        if (layerStack.ActiveLayer != null)
+        {
+            var activeVm = _layers.FirstOrDefault(vm => vm.Layer == layerStack.ActiveLayer);
+            SelectedLayer = activeVm;
+        }
+        else if (_layers.Count > 0)
+        {
+            SelectedLayer = _layers[0];
+        }
+    }
+
+    private void OnLayerSelectionRequested(LayerViewModel vm)
+    {
+        SelectedLayer = vm;
+    }
+
+    private void OnLayerDeleteRequested(LayerViewModel vm)
+    {
+        if (_layers.Count <= 1) return;
+        ExecuteDeleteLayer();
+    }
+
+    #endregion Layer Properties
+
     #region Commands
 
     public IRelayCommand ClearImageCommand { get; }
@@ -1517,6 +1681,18 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand<string> SetDrawingColorPresetCommand { get; }
     public IRelayCommand<string> SetShapeFillPresetCommand { get; }
     public IRelayCommand<string> SetShapeStrokePresetCommand { get; }
+
+    // Layer commands
+    public IRelayCommand ToggleLayerModeCommand { get; }
+    public IRelayCommand AddLayerCommand { get; }
+    public IRelayCommand DeleteLayerCommand { get; }
+    public IRelayCommand DuplicateLayerCommand { get; }
+    public IRelayCommand MoveLayerUpCommand { get; }
+    public IRelayCommand MoveLayerDownCommand { get; }
+    public IRelayCommand MergeLayerDownCommand { get; }
+    public IRelayCommand MergeVisibleLayersCommand { get; }
+    public IRelayCommand FlattenLayersCommand { get; }
+    public IAsyncRelayCommand SaveLayeredTiffCommand { get; }
 
     #endregion
 
@@ -1917,6 +2093,18 @@ public partial class ImageEditorViewModel : ObservableObject
         // Shape tool commands
         SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
         SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
+
+        // Layer commands (layers are always enabled when an image is loaded)
+        ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);
+        AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => HasImage);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1);
+        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null);
+        MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => HasImage && SelectedLayer != null && CanMoveLayerUp);
+        MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => HasImage && SelectedLayer != null && CanMoveLayerDown);
+        MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => HasImage && SelectedLayer != null && CanMergeDown);
+        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => HasImage && Layers.Count > 1);
+        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => HasImage && Layers.Count > 1);
+        SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => HasImage);
     }
 
     #region Public Methods (View wiring)
@@ -2604,6 +2792,89 @@ public partial class ImageEditorViewModel : ObservableObject
 
         // Add more tools here as they are added in the future
     }
+
+
+    #endregion
+
+    #region Layer Command Implementations
+
+    private void ExecuteToggleLayerMode()
+    {
+        IsLayerMode = !IsLayerMode;
+        EnableLayerModeRequested?.Invoke(this, IsLayerMode);
+    }
+
+    private void ExecuteAddLayer()
+    {
+        AddLayerRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+
+    private void ExecuteDeleteLayer()
+    {
+        if (SelectedLayer == null) return;
+        DeleteLayerRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteDuplicateLayer()
+    {
+        if (SelectedLayer == null) return;
+        DuplicateLayerRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMoveLayerUp()
+    {
+        if (SelectedLayer == null) return;
+        MoveLayerUpRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMoveLayerDown()
+    {
+        if (SelectedLayer == null) return;
+        MoveLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMergeLayerDown()
+    {
+        if (SelectedLayer == null) return;
+        MergeLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
+    }
+
+    private void ExecuteMergeVisibleLayers()
+    {
+        MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteFlattenLayers()
+    {
+        FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task ExecuteSaveLayeredTiffAsync()
+    {
+        if (CurrentImagePath == null) return;
+
+        var directory = Path.GetDirectoryName(CurrentImagePath);
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedPath = Path.Combine(directory ?? "", $"{fileName}_layered.tif");
+
+        if (SaveLayeredTiffRequested != null)
+        {
+            var success = await SaveLayeredTiffRequested.Invoke(suggestedPath);
+            StatusMessage = success ? "Layered TIFF saved successfully" : "Failed to save layered TIFF";
+        }
+    }
+
+    // Layer events for View wiring
+    public event EventHandler<bool>? EnableLayerModeRequested;
+    public event EventHandler? AddLayerRequested;
+    public event EventHandler<Layer>? DeleteLayerRequested;
+    public event EventHandler<Layer>? DuplicateLayerRequested;
+    public event EventHandler<Layer>? MoveLayerUpRequested;
+    public event EventHandler<Layer>? MoveLayerDownRequested;
+    public event EventHandler<Layer>? MergeLayerDownRequested;
+    public event EventHandler? MergeVisibleLayersRequested;
+    public event EventHandler? FlattenLayersRequested;
 
     #endregion
 }

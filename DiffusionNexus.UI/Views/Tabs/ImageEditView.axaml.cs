@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.Controls;
+using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
@@ -129,6 +130,10 @@ public partial class ImageEditView : UserControl
             imageEditor.UpdateFileInfo(
                 _imageEditorCanvas.ImageDpi,
                 _imageEditorCanvas.FileSizeBytes);
+            
+            // Sync layer state when image changes (e.g., after load)
+            imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
         };
 
         // Update zoom info when zoom changes
@@ -628,6 +633,112 @@ public partial class ImageEditView : UserControl
             {
                 imageEditor.StatusMessage = $"Error exporting image: {ex.Message}";
             }
+        };
+
+        // Layer mode event handlers
+        imageEditor.EnableLayerModeRequested += (_, enable) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            
+            if (enable)
+            {
+                _imageEditorCanvas.EditorCore.EnableLayerMode();
+            }
+            else
+            {
+                _imageEditorCanvas.EditorCore.DisableLayerMode();
+            }
+            
+            // Sync layers with ViewModel
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.AddLayerRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.AddLayer();
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.DeleteLayerRequested += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.RemoveLayer(layer);
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.DuplicateLayerRequested += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.DuplicateLayer(layer);
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.MoveLayerUpRequested += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.MoveLayerUp(layer);
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.MoveLayerDownRequested += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.MoveLayerDown(layer);
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.MergeLayerDownRequested += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.MergeLayerDown(layer);
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.MergeVisibleLayersRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.MergeVisibleLayers();
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.FlattenLayersRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.DisableLayerMode();
+            imageEditor.IsLayerMode = false;
+            imageEditor.SyncLayers(null);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        imageEditor.LayerSelectionChanged += (_, layer) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.ActiveLayer = layer;
+        };
+
+        imageEditor.SaveLayeredTiffRequested += async (suggestedPath) =>
+        {
+            if (_imageEditorCanvas is null) return false;
+            
+            if (vm.DialogService is null) return false;
+            
+            var savePath = await vm.DialogService.ShowSaveFileDialogAsync(
+                "Save Layered TIFF",
+                Path.GetFileName(suggestedPath),
+                "*.tif");
+                
+            if (string.IsNullOrEmpty(savePath)) return false;
+            
+            return _imageEditorCanvas.EditorCore.SaveLayeredTiff(savePath);
         };
 
         // Wire up zoom slider
