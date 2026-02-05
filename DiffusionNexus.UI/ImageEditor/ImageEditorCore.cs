@@ -1610,11 +1610,12 @@ public class ImageEditorCore : IDisposable
 
     #endregion Brightness and Contrast
 
+
     #region Background Removal
 
     /// <summary>
-    /// Applies an alpha mask to the current working image for background removal.
-    /// The mask should be the same dimensions as the working bitmap.
+    /// Applies an alpha mask to the current image for background removal.
+    /// When in layer mode, applies to the active layer.
     /// </summary>
     /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
     /// <param name="width">Width of the mask in pixels.</param>
@@ -1622,10 +1623,11 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if the mask was applied successfully.</returns>
     public bool ApplyBackgroundMask(byte[] maskData, int width, int height)
     {
-        if (maskData is null || _workingBitmap is null)
+        var targetBitmap = GetOperationTargetBitmap();
+        if (maskData is null || targetBitmap is null)
             return false;
 
-        if (width != _workingBitmap.Width || height != _workingBitmap.Height)
+        if (width != targetBitmap.Width || height != targetBitmap.Height)
             return false;
 
         if (maskData.Length != width * height)
@@ -1635,7 +1637,7 @@ public class ImageEditorCore : IDisposable
         {
             lock (_bitmapLock)
             {
-                var pixels = _workingBitmap.Pixels;
+                var pixels = targetBitmap.Pixels;
                 var newPixels = new SKColor[pixels.Length];
 
                 for (var i = 0; i < pixels.Length; i++)
@@ -1647,7 +1649,10 @@ public class ImageEditorCore : IDisposable
                     newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
                 }
 
-                _workingBitmap.Pixels = newPixels;
+                // Create new bitmap with the masked pixels
+                var result = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                result.Pixels = newPixels;
+                SetOperationTargetBitmap(result);
             }
 
             OnImageChanged();
@@ -1674,10 +1679,11 @@ public class ImageEditorCore : IDisposable
 
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            var targetBitmap = GetOperationTargetBitmap();
+            if (targetBitmap is null)
                 return false;
 
-            if (width != _workingBitmap.Width || height != _workingBitmap.Height)
+            if (width != targetBitmap.Width || height != targetBitmap.Height)
                 return false;
 
             if (maskData.Length != width * height)
@@ -1690,8 +1696,8 @@ public class ImageEditorCore : IDisposable
             try
             {
                 // Create new preview with alpha applied
-                var newPreview = new SKBitmap(_workingBitmap.Width, _workingBitmap.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                var pixels = _workingBitmap.Pixels;
+                var newPreview = new SKBitmap(targetBitmap.Width, targetBitmap.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                var pixels = targetBitmap.Pixels;
                 var newPixels = new SKColor[pixels.Length];
 
                 for (var i = 0; i < pixels.Length; i++)
@@ -1719,7 +1725,7 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Gets the raw RGBA pixel data from the working bitmap.
+    /// Gets the raw RGBA pixel data from the current target bitmap (active layer or working bitmap).
     /// Used for passing to background removal service.
     /// </summary>
     /// <returns>Tuple of (imageData, width, height) or null if no image is loaded.</returns>
@@ -1727,12 +1733,13 @@ public class ImageEditorCore : IDisposable
     {
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            var targetBitmap = GetOperationTargetBitmap();
+            if (targetBitmap is null)
                 return null;
 
-            var width = _workingBitmap.Width;
-            var height = _workingBitmap.Height;
-            var pixels = _workingBitmap.Pixels;
+            var width = targetBitmap.Width;
+            var height = targetBitmap.Height;
+            var pixels = targetBitmap.Pixels;
             var data = new byte[width * height * 4]; // RGBA
 
             for (var i = 0; i < pixels.Length; i++)
@@ -1752,6 +1759,7 @@ public class ImageEditorCore : IDisposable
     #endregion Background Removal
 
     #region Background Fill
+
 
 
     /// <summary>
