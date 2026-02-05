@@ -37,6 +37,8 @@ public class DatasetStorageService : IDatasetStorageService
 
     public void DeleteMediaFiles(string imagePath, string? captionPath, string? thumbnailPath)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+
         DeleteFile(imagePath);
 
         if (!string.IsNullOrWhiteSpace(captionPath))
@@ -51,7 +53,12 @@ public class DatasetStorageService : IDatasetStorageService
     }
 
     public void CopyFile(string sourcePath, string destinationPath, bool overwrite)
-        => File.Copy(sourcePath, destinationPath, overwrite);
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+
+        File.Copy(sourcePath, destinationPath, overwrite);
+    }
 
     public void CopyFileIfExists(string sourcePath, string destinationPath, bool overwrite)
     {
@@ -66,6 +73,7 @@ public class DatasetStorageService : IDatasetStorageService
         var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
         var extension = Path.GetExtension(fileName);
         var counter = 1;
+        const int maxIterations = 10000;
         string newPath;
 
         do
@@ -73,6 +81,12 @@ public class DatasetStorageService : IDatasetStorageService
             var newName = $"{nameWithoutExt}_{counter}{extension}";
             newPath = Path.Combine(folderPath, newName);
             counter++;
+
+            if (counter > maxIterations)
+            {
+                throw new InvalidOperationException(
+                    $"Unable to generate a unique file path after {maxIterations} attempts for file '{fileName}' in folder '{folderPath}'.");
+            }
         } while (File.Exists(newPath));
 
         return newPath;
