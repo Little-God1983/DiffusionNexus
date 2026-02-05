@@ -91,6 +91,9 @@ public class DatasetStorageService : IDatasetStorageService
 
     public int ExportAsSingleFiles(IEnumerable<DatasetExportItem> files, string destinationFolder)
     {
+        ArgumentNullException.ThrowIfNull(files);
+        ArgumentNullException.ThrowIfNull(destinationFolder);
+
         var exportedCount = 0;
         Directory.CreateDirectory(destinationFolder);
 
@@ -116,6 +119,9 @@ public class DatasetStorageService : IDatasetStorageService
 
     public int ExportAsZip(IEnumerable<DatasetExportItem> files, string zipPath)
     {
+        ArgumentNullException.ThrowIfNull(files);
+        ArgumentNullException.ThrowIfNull(zipPath);
+
         var exportedCount = 0;
 
         if (File.Exists(zipPath))
