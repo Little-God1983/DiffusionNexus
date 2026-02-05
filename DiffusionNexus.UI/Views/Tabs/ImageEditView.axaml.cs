@@ -321,6 +321,39 @@ public partial class ImageEditView : UserControl
             }
         };
 
+        // Handle layer-based background removal requests
+        imageEditor.RemoveBackgroundToLayerRequested += async (_, _) =>
+        {
+            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
+            if (imageData is null)
+            {
+                imageEditor.StatusMessage = "No image loaded";
+                return;
+            }
+
+            await imageEditor.ProcessBackgroundRemovalToLayerAsync(
+                imageData.Value.Data,
+                imageData.Value.Width,
+                imageData.Value.Height);
+        };
+
+        // Handle layer-based background removal completed
+        imageEditor.BackgroundRemovalToLayerCompleted += (_, result) =>
+        {
+            if (result.Success && result.MaskData is not null)
+            {
+                // Apply the mask as layers (creates foreground + background layers)
+                if (_imageEditorCanvas.EditorCore.ApplyBackgroundMaskWithLayers(result.MaskData, result.Width, result.Height))
+                {
+                    imageEditor.OnBackgroundRemovalToLayerApplied();
+                }
+                else
+                {
+                    imageEditor.StatusMessage = "Failed to create layers from background removal mask";
+                }
+            }
+        };
+
         // Handle background fill preview requests (live preview)
         imageEditor.BackgroundFillPreviewRequested += (_, settings) =>
         {

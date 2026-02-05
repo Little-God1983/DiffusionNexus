@@ -1675,6 +1675,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ApplyBrightnessContrastCommand { get; }
     public IRelayCommand ResetBrightnessContrastCommand { get; }
     public IAsyncRelayCommand RemoveBackgroundCommand { get; }
+    public IAsyncRelayCommand RemoveBackgroundToLayerCommand { get; }
     public IAsyncRelayCommand DownloadBackgroundRemovalModelCommand { get; }
     public IRelayCommand ToggleBackgroundFillCommand { get; }
     public IRelayCommand ApplyBackgroundFillCommand { get; }
@@ -1746,10 +1747,22 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? RemoveBackgroundRequested;
 
     /// <summary>
+    /// Event raised to request layer-based background removal.
+    /// The View should respond by calling ProcessBackgroundRemovalToLayerAsync with the image data.
+    /// </summary>
+    public event EventHandler? RemoveBackgroundToLayerRequested;
+
+    /// <summary>
     /// Event raised when background removal completes with result.
     /// The View should apply the mask to the image editor.
     /// </summary>
     public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalCompleted;
+
+    /// <summary>
+    /// Event raised when layer-based background removal completes with result.
+    /// The View should apply the mask as layers to the image editor.
+    /// </summary>
+    public event EventHandler<BackgroundRemovalResult>? BackgroundRemovalToLayerCompleted;
 
     /// <summary>
     /// Event raised to request background fill preview.
@@ -1999,6 +2012,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
         ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
+        RemoveBackgroundToLayerCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
@@ -2080,12 +2094,14 @@ public partial class ImageEditorViewModel : ObservableObject
 
         // Background Removal commands
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
+        RemoveBackgroundToLayerCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundToLayerAsync, CanExecuteRemoveBackground);
         DownloadBackgroundRemovalModelCommand = new AsyncRelayCommand(ExecuteDownloadBackgroundRemovalModelAsync, CanExecuteDownloadModel);
 
         // Background Fill commands
         ToggleBackgroundFillCommand = new RelayCommand(ExecuteToggleBackgroundFill, () => HasImage);
         ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
         SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
+
 
         // AI Upscaling commands
         UpscaleImageCommand = new AsyncRelayCommand(ExecuteUpscaleImageAsync, CanExecuteUpscaleImage);
@@ -2187,6 +2203,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnBackgroundRemovalApplied()
     {
         StatusMessage = "Background removed";
+    }
+
+    /// <summary>
+    /// Called when layer-based background removal is applied successfully.
+    /// Triggers layer synchronization.
+    /// </summary>
+    public void OnBackgroundRemovalToLayerApplied()
+    {
+        StatusMessage = "Background separated to layers";
+        // Request synchronization of layer ViewModels
+        SyncLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -2315,6 +2342,55 @@ public partial class ImageEditorViewModel : ObservableObject
             if (result.Success)
             {
                 BackgroundRemovalCompleted?.Invoke(this, result);
+            }
+            else
+            {
+                StatusMessage = result.ErrorMessage ?? "Background removal failed";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Background removal cancelled";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+        }
+        finally
+        {
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Processes layer-based background removal with the provided image data.
+    /// Called by the View after responding to RemoveBackgroundToLayerRequested.
+    /// </summary>
+    /// <param name="imageData">Raw RGBA image data.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="height">Image height in pixels.</param>
+    public async Task ProcessBackgroundRemovalToLayerAsync(byte[] imageData, int width, int height)
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            IsBackgroundRemovalBusy = false;
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Processing for layers...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            var result = await _backgroundRemovalService.RemoveBackgroundAsync(imageData, width, height);
+
+            if (result.Success)
+            {
+                BackgroundRemovalToLayerCompleted?.Invoke(this, result);
             }
             else
             {
@@ -2571,6 +2647,39 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             // Request image data from the View
             RemoveBackgroundRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Background removal failed: {ex.Message}";
+            BackgroundRemovalStatus = null;
+            BackgroundRemovalProgress = 0;
+            IsBackgroundRemovalBusy = false;
+        }
+    }
+
+    private async Task ExecuteRemoveBackgroundToLayerAsync()
+    {
+        if (_backgroundRemovalService is null)
+        {
+            StatusMessage = "Background removal service not available";
+            return;
+        }
+
+        // Check if model is ready - if not, notify user to download
+        if (!IsBackgroundRemovalModelReady)
+        {
+            StatusMessage = "Please download the RMBG-1.4 model first";
+            return;
+        }
+
+        IsBackgroundRemovalBusy = true;
+        BackgroundRemovalStatus = "Preparing image for layer-based removal...";
+        BackgroundRemovalProgress = 0;
+
+        try
+        {
+            // Request image data from the View for layer-based removal
+            RemoveBackgroundToLayerRequested?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception ex)
         {

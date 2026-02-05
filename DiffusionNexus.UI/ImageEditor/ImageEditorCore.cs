@@ -1781,6 +1781,91 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Applies the background removal mask as layers, creating:
+    /// 1. Subject layer (top) - foreground with background transparent
+    /// 2. Background layer (middle) - background with subject transparent (inverted mask)
+    /// 3. Original layer (bottom) - unchanged original image
+    /// Automatically enables layer mode if not already enabled.
+    /// </summary>
+    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
+    /// <param name="width">Width of the mask in pixels.</param>
+    /// <param name="height">Height of the mask in pixels.</param>
+    /// <returns>True if the layers were created successfully.</returns>
+    public bool ApplyBackgroundMaskWithLayers(byte[] maskData, int width, int height)
+    {
+        var targetBitmap = GetOperationTargetBitmap();
+        if (maskData is null || targetBitmap is null)
+            return false;
+
+        if (width != targetBitmap.Width || height != targetBitmap.Height)
+            return false;
+
+        if (maskData.Length != width * height)
+            return false;
+
+        try
+        {
+            lock (_bitmapLock)
+            {
+                var pixels = targetBitmap.Pixels;
+
+                // Create subject bitmap (foreground with background transparent)
+                var subjectPixels = new SKColor[pixels.Length];
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var pixel = pixels[i];
+                    var maskValue = maskData[i];
+                    subjectPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
+                }
+                var subjectBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                subjectBitmap.Pixels = subjectPixels;
+
+                // Create background bitmap (background with subject transparent - inverted mask)
+                var backgroundPixels = new SKColor[pixels.Length];
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var pixel = pixels[i];
+                    var invertedMaskValue = (byte)(255 - maskData[i]);
+                    backgroundPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, invertedMaskValue);
+                }
+                var backgroundBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                backgroundBitmap.Pixels = backgroundPixels;
+
+                // Create original bitmap (unchanged copy)
+                var originalBitmap = targetBitmap.Copy();
+
+                // Enable layer mode if not already enabled and set up layers
+                if (_layers != null)
+                {
+                    // Already in layer mode - add the new layers on top
+                    _layers.AddLayerFromBitmap(originalBitmap, "Original");
+                    _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
+                    _layers.AddLayerFromBitmap(subjectBitmap, "Subject");
+                }
+                else
+                {
+                    // Not in layer mode - enable it with the 3-layer structure
+                    _layers = new LayerStack(width, height);
+                    _layers.AddLayerFromBitmap(originalBitmap, "Original");
+                    _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
+                    _layers.AddLayerFromBitmap(subjectBitmap, "Subject");
+                    _layers.ContentChanged += OnLayersContentChanged;
+                    _layers.LayersChanged += OnLayersCollectionChanged;
+                    _isLayerMode = true;
+                    LayerModeChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+
+            OnImageChanged();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Sets a preview with background removed using the provided mask.
     /// Does not modify the working bitmap until ApplyPreview is called.
     /// </summary>
