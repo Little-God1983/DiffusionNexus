@@ -1784,7 +1784,7 @@ public class ImageEditorCore : IDisposable
     /// Applies the background removal mask as layers, creating:
     /// 1. Subject layer (top) - foreground with background transparent
     /// 2. Background layer (middle) - background with subject transparent (inverted mask)
-    /// 3. Original layer (bottom) - unchanged original image
+    /// 3. Original layer (bottom) - the existing layer is kept as the original
     /// Automatically enables layer mode if not already enabled.
     /// </summary>
     /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
@@ -1831,20 +1831,26 @@ public class ImageEditorCore : IDisposable
                 var backgroundBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
                 backgroundBitmap.Pixels = backgroundPixels;
 
-                // Create original bitmap (unchanged copy)
-                var originalBitmap = targetBitmap.Copy();
-
-                // Enable layer mode if not already enabled and set up layers
                 if (_layers != null)
                 {
-                    // Already in layer mode - add the new layers on top
-                    _layers.AddLayerFromBitmap(originalBitmap, "Original");
+                    // Already in layer mode - the active layer IS the original, just rename it
+                    // and add Subject and Background layers above it
+                    var activeLayer = _layers.ActiveLayer;
+                    if (activeLayer != null)
+                    {
+                        activeLayer.Name = "Original";
+                    }
+                    
+                    // Add Background and Subject layers on top
                     _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
                     _layers.AddLayerFromBitmap(subjectBitmap, "Subject");
                 }
                 else
                 {
                     // Not in layer mode - enable it with the 3-layer structure
+                    // Create original bitmap (unchanged copy) only when starting fresh
+                    var originalBitmap = targetBitmap.Copy();
+                    
                     _layers = new LayerStack(width, height);
                     _layers.AddLayerFromBitmap(originalBitmap, "Original");
                     _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
