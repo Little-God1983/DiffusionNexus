@@ -1557,14 +1557,16 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
-    /// <summary>Whether the selected layer can be merged down.</summary>
+    /// <summary>Whether the selected layer can be merged down (with the layer below in the visual list).</summary>
     public bool CanMergeDown
     {
         get
         {
             if (_selectedLayer == null) return false;
             var index = _layers.IndexOf(_selectedLayer);
-            return index > 0;
+            // In the UI, "down" means towards higher ViewModel indices (bottom of visual list)
+            // A layer can merge down if there's a layer below it
+            return index < _layers.Count - 1;
         }
     }
 
