@@ -299,7 +299,7 @@ public class ShapeTool
                 break;
 
             case ShapeType.Arrow:
-                DrawArrow(canvas, start, end, strokePaint, arrowHeadSize * strokeWidth);
+                DrawArrow(canvas, start, end, strokePaint, strokeWidth);
                 break;
         }
     }
@@ -313,12 +313,9 @@ public class ShapeTool
         return new SKRect(left, top, right, bottom);
     }
 
-    private static void DrawArrow(SKCanvas canvas, SKPoint start, SKPoint end, SKPaint paint, float headSize)
+    private static void DrawArrow(SKCanvas canvas, SKPoint start, SKPoint end, SKPaint paint, float strokeWidth)
     {
-        // Draw the line
-        canvas.DrawLine(start, end, paint);
-
-        // Calculate arrow head
+        // Calculate direction
         var dx = end.X - start.X;
         var dy = end.Y - start.Y;
         var length = MathF.Sqrt(dx * dx + dy * dy);
@@ -333,13 +330,29 @@ public class ShapeTool
         var px = -ny;
         var py = nx;
 
+        // Arrow head dimensions - proportional to stroke width but with reasonable limits
+        var headLength = Math.Max(strokeWidth * 3f, 12f);  // Length of the arrowhead along the shaft
+        var headWidth = Math.Max(strokeWidth * 2f, 8f);    // Half-width of the arrowhead base
+
+        // Ensure head doesn't exceed line length
+        headLength = Math.Min(headLength, length * 0.4f);
+        headWidth = Math.Min(headWidth, headLength * 0.7f);
+
+        // Calculate the base of the arrow head (where the line should stop)
+        var basePoint = new SKPoint(
+            end.X - headLength * nx,
+            end.Y - headLength * ny);
+
+        // Draw the line (stopping at the base of the arrowhead)
+        canvas.DrawLine(start, basePoint, paint);
+
         // Arrow head points
         var arrowPoint1 = new SKPoint(
-            end.X - headSize * nx + headSize * 0.5f * px,
-            end.Y - headSize * ny + headSize * 0.5f * py);
+            basePoint.X + headWidth * px,
+            basePoint.Y + headWidth * py);
         var arrowPoint2 = new SKPoint(
-            end.X - headSize * nx - headSize * 0.5f * px,
-            end.Y - headSize * ny - headSize * 0.5f * py);
+            basePoint.X - headWidth * px,
+            basePoint.Y - headWidth * py);
 
         // Draw arrow head as filled triangle
         using var path = new SKPath();
