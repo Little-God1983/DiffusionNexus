@@ -2629,8 +2629,21 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        // Pass the Datasets collection to the dialog
-        await DialogService.ShowCaptioningDialogAsync(_captioningService, Datasets, _eventAggregator);
+        try
+        {
+            // Pass the Datasets collection to the dialog
+            await DialogService.ShowCaptioningDialogAsync(
+                _captioningService, 
+                Datasets ?? [], 
+                _eventAggregator,
+                ActiveDataset,
+                ActiveDataset?.CurrentVersion);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening captioning tool: {ex.Message}";
+            _activityLog?.LogError("Captioning", "Failed to open captioning tool", ex);
+        }
     }
 
     #endregion

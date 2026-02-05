@@ -136,7 +136,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task ShowCaptioningDialogAsync(
             ICaptioningService captioningService,
             IEnumerable<DatasetCardViewModel> availableDatasets,
-            IDatasetEventAggregator? eventAggregator = null) =>
+            IDatasetEventAggregator? eventAggregator = null,
+            DatasetCardViewModel? initialDataset = null,
+            int? initialVersion = null) =>
             Task.CompletedTask;
 
         public Task<FileConflictResolutionResult> ShowFileConflictDialogAsync(IEnumerable<FileConflictItem> conflicts) =>

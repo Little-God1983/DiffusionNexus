@@ -82,16 +82,32 @@
           <!-- Dataset Input -->
           <StackPanel IsVisible="{Binding !IsSingleImageMode}">
             <TextBlock Text="Select Dataset" Margin="0,0,0,4" />
-            <ComboBox ItemsSource="{Binding AvailableDatasets}"
-                      SelectedItem="{Binding SelectedDataset}"
-                      PlaceholderText="Choose a dataset..."
-                      HorizontalAlignment="Stretch">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Name}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+            <Grid ColumnDefinitions="*, 12, Auto">
+              <ComboBox Grid.Column="0" 
+                        ItemsSource="{Binding AvailableDatasets}"
+                        SelectedItem="{Binding SelectedDataset}"
+                        PlaceholderText="Choose a dataset..."
+                        HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Name}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+
+              <ComboBox Grid.Column="2"
+                        ItemsSource="{Binding AvailableDatasetVersions}"
+                        SelectedItem="{Binding SelectedDatasetVersion}"
+                        MinWidth="80"
+                        ToolTip.Tip="Select Version"
+                        IsEnabled="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StringFormat='V{0}'}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </Grid>
           </StackPanel>
 
           <!-- Single Image Input -->

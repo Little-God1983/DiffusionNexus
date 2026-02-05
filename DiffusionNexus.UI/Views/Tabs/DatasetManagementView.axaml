@@ -226,8 +226,8 @@
                 Command="{Binding OpenCaptioningToolCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
                 Opacity="0.6"
-                IsEnabled="False"
-                ToolTip.Tip="Coming Soon: Generate captions with AI">
+                IsEnabled="True"
+                ToolTip.Tip="Generate captions with AI">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <TextBlock Text="Auto Caption" VerticalAlignment="Center"/>
             <Border Background="#FF9800" CornerRadius="3" Padding="4,1">

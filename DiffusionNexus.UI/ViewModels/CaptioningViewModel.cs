@@ -32,6 +32,7 @@ public partial class CaptioningViewModel : ObservableObject
     
     // Input Selection
     private DatasetCardViewModel? _selectedDataset;
+    private int? _selectedDatasetVersion;
     private string? _singleImagePath;
     private bool _isSingleImageMode; // Toggle between Dataset and Single Image
     
@@ -44,25 +45,46 @@ public partial class CaptioningViewModel : ObservableObject
         ICaptioningService captioningService,
         IDialogService dialogService,
         IEnumerable<DatasetCardViewModel> availableDatasets,
-        IDatasetEventAggregator? eventAggregator = null)
+        IDatasetEventAggregator? eventAggregator = null,
+        DatasetCardViewModel? initialDataset = null,
+        int? initialVersion = null)
     {
         _captioningService = captioningService;
         _dialogService = dialogService;
         _eventAggregator = eventAggregator;
         
-        AvailableDatasets = new ObservableCollection<DatasetCardViewModel>(availableDatasets);
+        AvailableDatasets = new ObservableCollection<DatasetCardViewModel>(availableDatasets ?? []);
+        AvailableDatasetVersions = new ObservableCollection<int>();
         AvailableModels = Enum.GetValues<CaptioningModelType>();
-        
-        RefreshModelStatuses();
         
         DownloadModelCommand = new AsyncRelayCommand<CaptioningModelType>(DownloadModelAsync, CanDownloadModel);
         GenerateCommand = new AsyncRelayCommand(GenerateCaptionsAsync, CanGenerate);
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
+        
+        RefreshModelStatuses();
+
+        if (initialDataset != null)
+        {
+            try 
+            {
+                SelectedDataset = initialDataset;
+                if (initialVersion.HasValue && AvailableDatasetVersions.Contains(initialVersion.Value))
+                {
+                    SelectedDatasetVersion = initialVersion.Value;
+                }
+            }
+            catch
+            {
+                // Fallback if setting initial dataset fails
+                SelectedDataset = null;
+            }
+        }
     }
     
     public IReadOnlyList<CaptioningModelType> AvailableModels { get; }
     public ObservableCollection<DatasetCardViewModel> AvailableDatasets { get; }
+    public ObservableCollection<int> AvailableDatasetVersions { get; }
 
     public CaptioningModelType SelectedModelType
     {
@@ -166,8 +188,44 @@ public partial class CaptioningViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedDataset, value))
             {
-                if (value != null) IsSingleImageMode = false;
+                AvailableDatasetVersions.Clear();
+                if (value != null)
+                {
+                    IsSingleImageMode = false;
+                    
+                    // Populate versions
+                    if (value.IsVersionedStructure)
+                    {
+                        foreach (var v in value.GetAllVersionNumbers())
+                        {
+                            AvailableDatasetVersions.Add(v);
+                        }
+                    }
+                    else
+                    {
+                        AvailableDatasetVersions.Add(1);
+                    }
+                    
+                    // Default to current version
+                    SelectedDatasetVersion = value.CurrentVersion;
+                }
+                
                 GenerateCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public int? SelectedDatasetVersion
+    {
+        get => _selectedDatasetVersion;
+        set
+        {
+            if (SetProperty(ref _selectedDatasetVersion, value))
+            {
+                if (SelectedDataset != null && value.HasValue && SelectedDataset.CurrentVersion != value.Value)
+                {
+                    SelectedDataset.CurrentVersion = value.Value;
+                }
             }
         }
     }
@@ -255,11 +313,19 @@ public partial class CaptioningViewModel : ObservableObject
 
     private void RefreshModelStatuses()
     {
-        var llavaInfo = _captioningService.GetModelInfo(CaptioningModelType.LLaVA_v1_6_34B);
-        LlavaStatus = llavaInfo.Status;
+        try
+        {
+            var llavaInfo = _captioningService.GetModelInfo(CaptioningModelType.LLaVA_v1_6_34B);
+            LlavaStatus = llavaInfo?.Status ?? CaptioningModelStatus.NotDownloaded;
 
-        var qwenInfo = _captioningService.GetModelInfo(CaptioningModelType.Qwen2_5_VL_7B);
-        QwenStatus = qwenInfo.Status;
+            var qwenInfo = _captioningService.GetModelInfo(CaptioningModelType.Qwen2_5_VL_7B);
+            QwenStatus = qwenInfo?.Status ?? CaptioningModelStatus.NotDownloaded;
+        }
+        catch
+        {
+            LlavaStatus = CaptioningModelStatus.NotDownloaded;
+            QwenStatus = CaptioningModelStatus.NotDownloaded;
+        }
     }
 
     private void RefreshGlobalModelStatus()
