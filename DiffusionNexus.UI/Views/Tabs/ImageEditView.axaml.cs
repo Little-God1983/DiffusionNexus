@@ -380,6 +380,31 @@ public partial class ImageEditView : UserControl
             }
         };
 
+        // Handle drawing tool activation/deactivation and settings changes
+        imageEditor.DrawingToolActivated += (_, isActive) =>
+        {
+            var drawingTool = _imageEditorCanvas.EditorCore.DrawingTool;
+            drawingTool.IsActive = isActive;
+            
+            if (isActive)
+            {
+                // Apply current settings to the drawing tool
+                ApplyDrawingSettingsToTool(imageEditor, drawingTool);
+            }
+        };
+
+        // Handle drawing settings changes (color, size, shape)
+        imageEditor.DrawingSettingsChanged += (_, settings) =>
+        {
+            var drawingTool = _imageEditorCanvas.EditorCore.DrawingTool;
+            drawingTool.BrushColor = new SkiaSharp.SKColor(
+                imageEditor.DrawingBrushRed,
+                imageEditor.DrawingBrushGreen,
+                imageEditor.DrawingBrushBlue);
+            drawingTool.BrushSize = imageEditor.DrawingBrushSize;
+            drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+        };
+
 
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
@@ -651,5 +676,18 @@ public partial class ImageEditView : UserControl
         {
             // No permission to write - rating will be lost on reload
         }
+    }
+
+    /// <summary>
+    /// Applies the current drawing settings from the ViewModel to the drawing tool.
+    /// </summary>
+    private static void ApplyDrawingSettingsToTool(ImageEditorViewModel imageEditor, ImageEditor.DrawingTool drawingTool)
+    {
+        drawingTool.BrushColor = new SkiaSharp.SKColor(
+            imageEditor.DrawingBrushRed,
+            imageEditor.DrawingBrushGreen,
+            imageEditor.DrawingBrushBlue);
+        drawingTool.BrushSize = imageEditor.DrawingBrushSize;
+        drawingTool.BrushShape = imageEditor.DrawingBrushShape;
     }
 }
