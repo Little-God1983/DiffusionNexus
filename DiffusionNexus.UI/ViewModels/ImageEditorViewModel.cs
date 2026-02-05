@@ -80,6 +80,14 @@ public partial class ImageEditorViewModel : ObservableObject
     private int _upscalingProgress;
     private float _upscaleTargetScale = 2.0f;
 
+    // Drawing tool fields
+    private bool _isDrawingToolActive;
+    private byte _drawingBrushRed = 255;
+    private byte _drawingBrushGreen = 255;
+    private byte _drawingBrushBlue = 255;
+    private float _drawingBrushSize = 10f;
+    private ImageEditor.BrushShape _drawingBrushShape = ImageEditor.BrushShape.Round;
+
     /// <summary>
     /// Path to the currently loaded image.
     /// </summary>
@@ -849,6 +857,175 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Drawing Tool Properties
+
+    /// <summary>Whether the drawing tool is active.</summary>
+    public bool IsDrawingToolActive
+    {
+        get => _isDrawingToolActive;
+        set
+        {
+            if (SetProperty(ref _isDrawingToolActive, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when drawing is activated
+                    DeactivateOtherTools(nameof(IsDrawingToolActive));
+                }
+                DrawingToolActivated?.Invoke(this, value);
+                NotifyToolCommandsCanExecuteChanged();
+                StatusMessage = value ? "Draw: Click and drag to draw. Hold Shift for straight lines." : null;
+            }
+        }
+    }
+
+    /// <summary>Red component of the brush color (0-255).</summary>
+    public byte DrawingBrushRed
+    {
+        get => _drawingBrushRed;
+        set
+        {
+            if (SetProperty(ref _drawingBrushRed, value))
+            {
+                OnPropertyChanged(nameof(DrawingBrushColor));
+                OnPropertyChanged(nameof(DrawingBrushColorHex));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>Green component of the brush color (0-255).</summary>
+    public byte DrawingBrushGreen
+    {
+        get => _drawingBrushGreen;
+        set
+        {
+            if (SetProperty(ref _drawingBrushGreen, value))
+            {
+                OnPropertyChanged(nameof(DrawingBrushColor));
+                OnPropertyChanged(nameof(DrawingBrushColorHex));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>Blue component of the brush color (0-255).</summary>
+    public byte DrawingBrushBlue
+    {
+        get => _drawingBrushBlue;
+        set
+        {
+            if (SetProperty(ref _drawingBrushBlue, value))
+            {
+                OnPropertyChanged(nameof(DrawingBrushColor));
+                OnPropertyChanged(nameof(DrawingBrushColorHex));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>The current brush color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color DrawingBrushColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_drawingBrushRed, _drawingBrushGreen, _drawingBrushBlue);
+        set
+        {
+            if (_drawingBrushRed != value.R || _drawingBrushGreen != value.G || _drawingBrushBlue != value.B)
+            {
+                _drawingBrushRed = value.R;
+                _drawingBrushGreen = value.G;
+                _drawingBrushBlue = value.B;
+                OnPropertyChanged(nameof(DrawingBrushRed));
+                OnPropertyChanged(nameof(DrawingBrushGreen));
+                OnPropertyChanged(nameof(DrawingBrushBlue));
+                OnPropertyChanged(nameof(DrawingBrushColor));
+                OnPropertyChanged(nameof(DrawingBrushColorHex));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the brush color.</summary>
+    public string DrawingBrushColorHex => $"#{_drawingBrushRed:X2}{_drawingBrushGreen:X2}{_drawingBrushBlue:X2}";
+
+    /// <summary>Brush size in pixels (1-100).</summary>
+    public float DrawingBrushSize
+    {
+        get => _drawingBrushSize;
+        set
+        {
+            var clamped = Math.Clamp(value, 1f, 100f);
+            if (SetProperty(ref _drawingBrushSize, clamped))
+            {
+                OnPropertyChanged(nameof(DrawingBrushSizeText));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>Formatted brush size for display.</summary>
+    public string DrawingBrushSizeText => $"{(int)_drawingBrushSize} px";
+
+    /// <summary>The current brush shape.</summary>
+    public ImageEditor.BrushShape DrawingBrushShape
+    {
+        get => _drawingBrushShape;
+        set
+        {
+            if (SetProperty(ref _drawingBrushShape, value))
+            {
+                OnPropertyChanged(nameof(IsRoundBrush));
+                OnPropertyChanged(nameof(IsSquareBrush));
+                DrawingSettingsChanged?.Invoke(this, CurrentDrawingSettings);
+            }
+        }
+    }
+
+    /// <summary>Whether the round brush shape is selected.</summary>
+    public bool IsRoundBrush
+    {
+        get => _drawingBrushShape == ImageEditor.BrushShape.Round;
+        set { if (value) DrawingBrushShape = ImageEditor.BrushShape.Round; }
+    }
+
+    /// <summary>Whether the square brush shape is selected.</summary>
+    public bool IsSquareBrush
+    {
+        get => _drawingBrushShape == ImageEditor.BrushShape.Square;
+        set { if (value) DrawingBrushShape = ImageEditor.BrushShape.Square; }
+    }
+
+    /// <summary>Gets the current drawing settings.</summary>
+    public ImageEditor.DrawingSettings CurrentDrawingSettings => new()
+    {
+        Color = SkiaSharp.SKColor.FromHsl(0, 0, 0).WithRed(_drawingBrushRed).WithGreen(_drawingBrushGreen).WithBlue(_drawingBrushBlue),
+        Size = _drawingBrushSize,
+        Shape = _drawingBrushShape
+    };
+
+    /// <summary>Sets the brush color from a preset.</summary>
+    public void SetDrawingColorPreset(string? preset)
+    {
+        if (preset is null) return;
+
+        (byte r, byte g, byte b) = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ((byte)255, (byte)255, (byte)255),
+            "BLACK" => ((byte)0, (byte)0, (byte)0),
+            "RED" => ((byte)255, (byte)0, (byte)0),
+            "GREEN" => ((byte)0, (byte)255, (byte)0),
+            "BLUE" => ((byte)0, (byte)0, (byte)255),
+            "YELLOW" => ((byte)255, (byte)255, (byte)0),
+            _ => (_drawingBrushRed, _drawingBrushGreen, _drawingBrushBlue)
+        };
+
+        DrawingBrushRed = r;
+        DrawingBrushGreen = g;
+        DrawingBrushBlue = b;
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -999,6 +1176,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand<string> SetBackgroundFillPresetCommand { get; }
     public IAsyncRelayCommand UpscaleImageCommand { get; }
     public IAsyncRelayCommand DownloadUpscalingModelCommand { get; }
+    public IRelayCommand ToggleDrawingToolCommand { get; }
+    public IRelayCommand<string> SetDrawingColorPresetCommand { get; }
 
     #endregion
 
@@ -1092,6 +1271,17 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler<ExportEventArgs>? ExportRequested;
 
+    /// <summary>
+    /// Event raised when drawing tool is activated or deactivated.
+    /// The bool parameter indicates whether the tool is now active.
+    /// </summary>
+    public event EventHandler<bool>? DrawingToolActivated;
+
+    /// <summary>
+    /// Event raised when drawing settings (color, size, shape) change.
+    /// </summary>
+    public event EventHandler<ImageEditor.DrawingSettings>? DrawingSettingsChanged;
+
     #endregion
 
     /// <summary>
@@ -1143,6 +1333,13 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsUpscalingPanelOpen));
         }
 
+        if (exceptTool != nameof(IsDrawingToolActive) && _isDrawingToolActive)
+        {
+            _isDrawingToolActive = false;
+            OnPropertyChanged(nameof(IsDrawingToolActive));
+            DrawingToolActivated?.Invoke(this, false);
+        }
+
         // Add more tools here as they are added in the future
     }
 
@@ -1165,6 +1362,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+        ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
 
@@ -1287,6 +1485,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
+        ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
     }
 
@@ -1371,6 +1570,10 @@ public partial class ImageEditorViewModel : ObservableObject
         // AI Upscaling commands
         UpscaleImageCommand = new AsyncRelayCommand(ExecuteUpscaleImageAsync, CanExecuteUpscaleImage);
         DownloadUpscalingModelCommand = new AsyncRelayCommand(ExecuteDownloadUpscalingModelAsync, CanExecuteDownloadUpscalingModel);
+
+        // Drawing tool commands
+        ToggleDrawingToolCommand = new RelayCommand(ExecuteToggleDrawingTool, () => HasImage);
+        SetDrawingColorPresetCommand = new RelayCommand<string>(SetDrawingColorPreset);
     }
 
     #region Public Methods (View wiring)
@@ -1901,6 +2104,11 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillRequested?.Invoke(this, CurrentBackgroundFillSettings);
     }
 
+    private void ExecuteToggleDrawingTool()
+    {
+        IsDrawingToolActive = !IsDrawingToolActive;
+    }
+
     private bool CanExecuteUpscaleImage() => 
         HasImage && !IsUpscalingBusy && IsUpscalingModelReady;
 
@@ -2041,6 +2249,14 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             _isUpscalingPanelOpen = false;
             OnPropertyChanged(nameof(IsUpscalingPanelOpen));
+        }
+
+        // Close drawing tool
+        if (_isDrawingToolActive)
+        {
+            _isDrawingToolActive = false;
+            OnPropertyChanged(nameof(IsDrawingToolActive));
+            DrawingToolActivated?.Invoke(this, false);
         }
 
         // Add more tools here as they are added in the future

@@ -37,6 +37,12 @@ public class ImageEditorControl : Control
         AvaloniaProperty.Register<ImageEditorControl, bool>(nameof(IsCropToolActive));
 
     /// <summary>
+    /// Defines the <see cref="IsDrawingToolActive"/> property.
+    /// </summary>
+    public static readonly StyledProperty<bool> IsDrawingToolActiveProperty =
+        AvaloniaProperty.Register<ImageEditorControl, bool>(nameof(IsDrawingToolActive));
+
+    /// <summary>
     /// Defines the <see cref="ZoomLevel"/> property.
     /// </summary>
     public static readonly StyledProperty<float> ZoomLevelProperty =
@@ -67,6 +73,15 @@ public class ImageEditorControl : Control
     {
         get => GetValue(IsCropToolActiveProperty);
         set => SetValue(IsCropToolActiveProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets whether the drawing tool is active.
+    /// </summary>
+    public bool IsDrawingToolActive
+    {
+        get => GetValue(IsDrawingToolActiveProperty);
+        set => SetValue(IsDrawingToolActiveProperty, value);
     }
 
     /// <summary>
@@ -138,6 +153,8 @@ public class ImageEditorControl : Control
         _editorCore = new ImageEditor.ImageEditorCore();
         _editorCore.ImageChanged += OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
+        _editorCore.DrawingTool.DrawingChanged += OnDrawingChanged;
+        _editorCore.DrawingTool.StrokeCompleted += OnStrokeCompleted;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         ClipToBounds = true;
         Focusable = true;
@@ -145,7 +162,7 @@ public class ImageEditorControl : Control
 
     static ImageEditorControl()
     {
-        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty, ZoomLevelProperty);
+        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty, IsDrawingToolActiveProperty, ZoomLevelProperty);
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -167,6 +184,11 @@ public class ImageEditorControl : Control
         else if (change.Property == IsCropToolActiveProperty)
         {
             _editorCore.CropTool.IsActive = (bool)change.NewValue!;
+            InvalidateVisual();
+        }
+        else if (change.Property == IsDrawingToolActiveProperty)
+        {
+            _editorCore.DrawingTool.IsActive = (bool)change.NewValue!;
             InvalidateVisual();
         }
         else if (change.Property == ZoomLevelProperty)
@@ -193,6 +215,18 @@ public class ImageEditorControl : Control
             _lastPanPoint = point;
             e.Handled = true;
             return;
+        }
+
+        // Drawing tool takes priority when active
+        if (_editorCore.DrawingTool.IsActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.DrawingTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
         }
 
         if (_editorCore.CropTool.OnPointerPressed(skPoint))
@@ -225,6 +259,17 @@ public class ImageEditorControl : Control
             return;
         }
 
+        // Drawing tool takes priority when active
+        if (_editorCore.DrawingTool.IsActive)
+        {
+            if (_editorCore.DrawingTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -244,6 +289,17 @@ public class ImageEditorControl : Control
             _isPanning = false;
             e.Handled = true;
             return;
+        }
+
+        // Drawing tool takes priority when active
+        if (_editorCore.DrawingTool.IsActive)
+        {
+            if (_editorCore.DrawingTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
         }
 
         if (_editorCore.CropTool.OnPointerReleased())
@@ -279,6 +335,13 @@ public class ImageEditorControl : Control
 
         if (!_editorCore.HasImage) return;
 
+        // Handle Shift key for straight line drawing
+        if (e.Key == Key.LeftShift || e.Key == Key.RightShift)
+        {
+            _editorCore.DrawingTool.IsShiftHeld = true;
+            InvalidateVisual();
+        }
+
         // Apply crop with C or Enter when crop tool is active
         if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
         {
@@ -296,8 +359,27 @@ public class ImageEditorControl : Control
         }
     }
 
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+
+        // Handle Shift key release for straight line drawing
+        if (e.Key == Key.LeftShift || e.Key == Key.RightShift)
+        {
+            _editorCore.DrawingTool.IsShiftHeld = false;
+            InvalidateVisual();
+        }
+    }
+
     private void UpdateCursor(SKPoint point)
     {
+        // Drawing tool cursor
+        if (_editorCore.DrawingTool.IsActive)
+        {
+            Cursor = new Cursor(StandardCursorType.Cross);
+            return;
+        }
+
         if (!_editorCore.CropTool.IsActive)
         {
             Cursor = Cursor.Default;
@@ -479,6 +561,17 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    private void OnDrawingChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+    }
+
+    private void OnStrokeCompleted(object? sender, ImageEditor.DrawingStrokeEventArgs e)
+    {
+        // Apply the completed stroke to the image
+        _editorCore.ApplyStroke(e.Points, e.Color, e.BrushSize, e.BrushShape);
+    }
+
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
     {
         SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
@@ -491,6 +584,8 @@ public class ImageEditorControl : Control
         base.OnDetachedFromVisualTree(e);
         _editorCore.ImageChanged -= OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged -= OnCropRegionChanged;
+        _editorCore.DrawingTool.DrawingChanged -= OnDrawingChanged;
+        _editorCore.DrawingTool.StrokeCompleted -= OnStrokeCompleted;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.Dispose();
     }
