@@ -31,6 +31,11 @@ public class ImageEditorCore : IDisposable
     public CropTool CropTool { get; } = new();
 
     /// <summary>
+    /// Gets the drawing tool instance.
+    /// </summary>
+    public DrawingTool DrawingTool { get; } = new();
+
+    /// <summary>
     /// Gets the current working bitmap width.
     /// </summary>
     public int Width => _workingBitmap?.Width ?? 0;
@@ -254,6 +259,10 @@ public class ImageEditorCore : IDisposable
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            // Update drawing tool with current image bounds and render overlay
+            DrawingTool.SetImageBounds(imageRect);
+            DrawingTool.Render(canvas);
 
             return imageRect;
         }
@@ -610,6 +619,10 @@ public class ImageEditorCore : IDisposable
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            // Update drawing tool with current image bounds and render overlay
+            DrawingTool.SetImageBounds(imageRect);
+            DrawingTool.Render(canvas);
 
             return imageRect;
         }
@@ -1457,6 +1470,106 @@ public class ImageEditorCore : IDisposable
     }
 
     #endregion Background Fill
+
+    #region Drawing
+
+    /// <summary>
+    /// Applies a drawing stroke to the working bitmap.
+    /// </summary>
+    /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
+    /// <param name="color">The stroke color.</param>
+    /// <param name="brushSize">The brush size in pixels relative to display size.</param>
+    /// <param name="brushShape">The brush shape.</param>
+    /// <returns>True if the stroke was applied successfully.</returns>
+    public bool ApplyStroke(IReadOnlyList<SKPoint> normalizedPoints, SKColor color, float brushSize, BrushShape brushShape)
+    {
+        if (normalizedPoints is null || normalizedPoints.Count == 0)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            try
+            {
+                var width = _workingBitmap.Width;
+                var height = _workingBitmap.Height;
+
+                // Convert normalized points to image pixel coordinates
+                var imagePoints = normalizedPoints
+                    .Select(p => new SKPoint(p.X * width, p.Y * height))
+                    .ToList();
+
+                // Scale brush size from display coordinates to image coordinates
+                // The brushSize passed is relative to the display, we need to scale it
+                var scaledBrushSize = brushSize * width;
+
+                using var canvas = new SKCanvas(_workingBitmap);
+                using var paint = new SKPaint
+                {
+                    Color = color,
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = scaledBrushSize
+                };
+
+                if (brushShape == BrushShape.Round)
+                {
+                    paint.StrokeCap = SKStrokeCap.Round;
+                    paint.StrokeJoin = SKStrokeJoin.Round;
+                }
+                else
+                {
+                    paint.StrokeCap = SKStrokeCap.Square;
+                    paint.StrokeJoin = SKStrokeJoin.Miter;
+                }
+
+                if (imagePoints.Count == 1)
+                {
+                    // Single point - draw a dot
+                    var point = imagePoints[0];
+                    paint.Style = SKPaintStyle.Fill;
+                    if (brushShape == BrushShape.Round)
+                    {
+                        canvas.DrawCircle(point, scaledBrushSize / 2, paint);
+                    }
+                    else
+                    {
+                        var halfSize = scaledBrushSize / 2;
+                        canvas.DrawRect(point.X - halfSize, point.Y - halfSize, scaledBrushSize, scaledBrushSize, paint);
+                    }
+                }
+                else if (imagePoints.Count == 2)
+                {
+                    // Two points - draw a line
+                    canvas.DrawLine(imagePoints[0], imagePoints[1], paint);
+                }
+                else
+                {
+                    // Multiple points - draw a path
+                    using var path = new SKPath();
+                    path.MoveTo(imagePoints[0]);
+                    for (var i = 1; i < imagePoints.Count; i++)
+                    {
+                        path.LineTo(imagePoints[i]);
+                    }
+                    canvas.DrawPath(path, paint);
+                }
+
+                canvas.Flush();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    #endregion Drawing
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
