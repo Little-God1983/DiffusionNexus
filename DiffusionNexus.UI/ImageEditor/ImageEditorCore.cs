@@ -36,6 +36,11 @@ public class ImageEditorCore : IDisposable
     public DrawingTool DrawingTool { get; } = new();
 
     /// <summary>
+    /// Gets the shape tool instance.
+    /// </summary>
+    public ShapeTool ShapeTool { get; } = new();
+
+    /// <summary>
     /// Gets the current working bitmap width.
     /// </summary>
     public int Width => _workingBitmap?.Width ?? 0;
@@ -623,6 +628,10 @@ public class ImageEditorCore : IDisposable
             // Update drawing tool with current image bounds and render overlay
             DrawingTool.SetImageBounds(imageRect);
             DrawingTool.Render(canvas);
+
+            // Update shape tool with current image bounds and render overlay
+            ShapeTool.SetImageBounds(imageRect);
+            ShapeTool.Render(canvas);
 
             return imageRect;
         }
@@ -1570,6 +1579,67 @@ public class ImageEditorCore : IDisposable
     }
 
     #endregion Drawing
+
+    #region Shape Drawing
+
+    /// <summary>
+    /// Applies a shape to the working bitmap.
+    /// </summary>
+    /// <param name="shapeData">The shape data to apply.</param>
+    /// <returns>True if the shape was applied successfully.</returns>
+    public bool ApplyShape(ShapeData shapeData)
+    {
+        if (shapeData is null)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (_workingBitmap is null)
+                return false;
+
+            try
+            {
+                var width = _workingBitmap.Width;
+                var height = _workingBitmap.Height;
+
+                // Convert normalized coordinates to image coordinates
+                var start = new SKPoint(
+                    shapeData.NormalizedStart.X * width,
+                    shapeData.NormalizedStart.Y * height);
+                var end = new SKPoint(
+                    shapeData.NormalizedEnd.X * width,
+                    shapeData.NormalizedEnd.Y * height);
+
+                // Scale stroke width from normalized to image coordinates
+                var scaledStrokeWidth = shapeData.StrokeWidth * width;
+                var scaledArrowHeadSize = shapeData.ArrowHeadSize;
+
+                using var canvas = new SKCanvas(_workingBitmap);
+
+                ShapeTool.RenderShape(
+                    canvas,
+                    start,
+                    end,
+                    shapeData.ShapeType,
+                    shapeData.FillMode,
+                    shapeData.StrokeColor,
+                    shapeData.FillColor,
+                    scaledStrokeWidth,
+                    scaledArrowHeadSize);
+
+                canvas.Flush();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    #endregion Shape Drawing
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
     private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);

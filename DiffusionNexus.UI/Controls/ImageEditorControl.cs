@@ -43,6 +43,36 @@ public class ImageEditorControl : Control
         AvaloniaProperty.Register<ImageEditorControl, bool>(nameof(IsDrawingToolActive));
 
     /// <summary>
+    /// Defines the <see cref="SelectedShapeType"/> property.
+    /// </summary>
+    public static readonly StyledProperty<ImageEditor.ShapeType> SelectedShapeTypeProperty =
+        AvaloniaProperty.Register<ImageEditorControl, ImageEditor.ShapeType>(nameof(SelectedShapeType));
+
+    /// <summary>
+    /// Defines the <see cref="ShapeFillMode"/> property.
+    /// </summary>
+    public static readonly StyledProperty<ImageEditor.ShapeFillMode> ShapeFillModeProperty =
+        AvaloniaProperty.Register<ImageEditorControl, ImageEditor.ShapeFillMode>(nameof(ShapeFillMode));
+
+    /// <summary>
+    /// Defines the <see cref="ShapeStrokeColor"/> property.
+    /// </summary>
+    public static readonly StyledProperty<Color> ShapeStrokeColorProperty =
+        AvaloniaProperty.Register<ImageEditorControl, Color>(nameof(ShapeStrokeColor), Colors.White);
+
+    /// <summary>
+    /// Defines the <see cref="ShapeFillColor"/> property.
+    /// </summary>
+    public static readonly StyledProperty<Color> ShapeFillColorProperty =
+        AvaloniaProperty.Register<ImageEditorControl, Color>(nameof(ShapeFillColor), Colors.White);
+
+    /// <summary>
+    /// Defines the <see cref="ShapeStrokeWidth"/> property.
+    /// </summary>
+    public static readonly StyledProperty<float> ShapeStrokeWidthProperty =
+        AvaloniaProperty.Register<ImageEditorControl, float>(nameof(ShapeStrokeWidth), 3f);
+
+    /// <summary>
     /// Defines the <see cref="ZoomLevel"/> property.
     /// </summary>
     public static readonly StyledProperty<float> ZoomLevelProperty =
@@ -82,6 +112,51 @@ public class ImageEditorControl : Control
     {
         get => GetValue(IsDrawingToolActiveProperty);
         set => SetValue(IsDrawingToolActiveProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the selected shape type.
+    /// </summary>
+    public ImageEditor.ShapeType SelectedShapeType
+    {
+        get => GetValue(SelectedShapeTypeProperty);
+        set => SetValue(SelectedShapeTypeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the shape fill mode.
+    /// </summary>
+    public ImageEditor.ShapeFillMode ShapeFillMode
+    {
+        get => GetValue(ShapeFillModeProperty);
+        set => SetValue(ShapeFillModeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the shape stroke color.
+    /// </summary>
+    public Color ShapeStrokeColor
+    {
+        get => GetValue(ShapeStrokeColorProperty);
+        set => SetValue(ShapeStrokeColorProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the shape fill color.
+    /// </summary>
+    public Color ShapeFillColor
+    {
+        get => GetValue(ShapeFillColorProperty);
+        set => SetValue(ShapeFillColorProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the shape stroke width.
+    /// </summary>
+    public float ShapeStrokeWidth
+    {
+        get => GetValue(ShapeStrokeWidthProperty);
+        set => SetValue(ShapeStrokeWidthProperty, value);
     }
 
     /// <summary>
@@ -155,6 +230,8 @@ public class ImageEditorControl : Control
         _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
         _editorCore.DrawingTool.DrawingChanged += OnDrawingChanged;
         _editorCore.DrawingTool.StrokeCompleted += OnStrokeCompleted;
+        _editorCore.ShapeTool.ShapeChanged += OnShapeChanged;
+        _editorCore.ShapeTool.ShapeCompleted += OnShapeCompleted;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         ClipToBounds = true;
         Focusable = true;
@@ -162,7 +239,17 @@ public class ImageEditorControl : Control
 
     static ImageEditorControl()
     {
-        AffectsRender<ImageEditorControl>(ImagePathProperty, CanvasBackgroundProperty, IsCropToolActiveProperty, IsDrawingToolActiveProperty, ZoomLevelProperty);
+        AffectsRender<ImageEditorControl>(
+            ImagePathProperty, 
+            CanvasBackgroundProperty, 
+            IsCropToolActiveProperty, 
+            IsDrawingToolActiveProperty, 
+            SelectedShapeTypeProperty,
+            ShapeFillModeProperty,
+            ShapeStrokeColorProperty,
+            ShapeFillColorProperty,
+            ShapeStrokeWidthProperty,
+            ZoomLevelProperty);
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -188,7 +275,43 @@ public class ImageEditorControl : Control
         }
         else if (change.Property == IsDrawingToolActiveProperty)
         {
-            _editorCore.DrawingTool.IsActive = (bool)change.NewValue!;
+            var isActive = (bool)change.NewValue!;
+            _editorCore.DrawingTool.IsActive = isActive && SelectedShapeType == ImageEditor.ShapeType.Freehand;
+            _editorCore.ShapeTool.IsActive = isActive && SelectedShapeType != ImageEditor.ShapeType.Freehand;
+            InvalidateVisual();
+        }
+        else if (change.Property == SelectedShapeTypeProperty)
+        {
+            var shapeType = (ImageEditor.ShapeType)change.NewValue!;
+            _editorCore.ShapeTool.ShapeType = shapeType;
+            // Update tool active states based on shape type
+            if (IsDrawingToolActive)
+            {
+                _editorCore.DrawingTool.IsActive = shapeType == ImageEditor.ShapeType.Freehand;
+                _editorCore.ShapeTool.IsActive = shapeType != ImageEditor.ShapeType.Freehand;
+            }
+            InvalidateVisual();
+        }
+        else if (change.Property == ShapeFillModeProperty)
+        {
+            _editorCore.ShapeTool.FillMode = (ImageEditor.ShapeFillMode)change.NewValue!;
+            InvalidateVisual();
+        }
+        else if (change.Property == ShapeStrokeColorProperty)
+        {
+            var color = (Color)change.NewValue!;
+            _editorCore.ShapeTool.StrokeColor = new SKColor(color.R, color.G, color.B, color.A);
+            InvalidateVisual();
+        }
+        else if (change.Property == ShapeFillColorProperty)
+        {
+            var color = (Color)change.NewValue!;
+            _editorCore.ShapeTool.FillColor = new SKColor(color.R, color.G, color.B, color.A);
+            InvalidateVisual();
+        }
+        else if (change.Property == ShapeStrokeWidthProperty)
+        {
+            _editorCore.ShapeTool.StrokeWidth = (float)change.NewValue!;
             InvalidateVisual();
         }
         else if (change.Property == ZoomLevelProperty)
@@ -215,6 +338,18 @@ public class ImageEditorControl : Control
             _lastPanPoint = point;
             e.Handled = true;
             return;
+        }
+
+        // Shape tool takes priority when active
+        if (_editorCore.ShapeTool.IsActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.ShapeTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
         }
 
         // Drawing tool takes priority when active
@@ -259,6 +394,17 @@ public class ImageEditorControl : Control
             return;
         }
 
+        // Shape tool takes priority when active
+        if (_editorCore.ShapeTool.IsActive)
+        {
+            if (_editorCore.ShapeTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         // Drawing tool takes priority when active
         if (_editorCore.DrawingTool.IsActive)
         {
@@ -289,6 +435,17 @@ public class ImageEditorControl : Control
             _isPanning = false;
             e.Handled = true;
             return;
+        }
+
+        // Shape tool takes priority when active
+        if (_editorCore.ShapeTool.IsActive)
+        {
+            if (_editorCore.ShapeTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
         }
 
         // Drawing tool takes priority when active
@@ -572,6 +729,17 @@ public class ImageEditorControl : Control
         _editorCore.ApplyStroke(e.Points, e.Color, e.BrushSize, e.BrushShape);
     }
 
+    private void OnShapeChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+    }
+
+    private void OnShapeCompleted(object? sender, ImageEditor.ShapeCompletedEventArgs e)
+    {
+        // Apply the completed shape to the image
+        _editorCore.ApplyShape(e.Shape);
+    }
+
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
     {
         SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
@@ -586,6 +754,8 @@ public class ImageEditorControl : Control
         _editorCore.CropTool.CropRegionChanged -= OnCropRegionChanged;
         _editorCore.DrawingTool.DrawingChanged -= OnDrawingChanged;
         _editorCore.DrawingTool.StrokeCompleted -= OnStrokeCompleted;
+        _editorCore.ShapeTool.ShapeChanged -= OnShapeChanged;
+        _editorCore.ShapeTool.ShapeCompleted -= OnShapeCompleted;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.Dispose();
     }

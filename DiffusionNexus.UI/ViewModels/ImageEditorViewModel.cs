@@ -88,6 +88,17 @@ public partial class ImageEditorViewModel : ObservableObject
     private float _drawingBrushSize = 10f;
     private ImageEditor.BrushShape _drawingBrushShape = ImageEditor.BrushShape.Round;
 
+    // Shape tool fields
+    private ImageEditor.ShapeType _selectedShapeType = ImageEditor.ShapeType.Freehand;
+    private ImageEditor.ShapeFillMode _shapeFillMode = ImageEditor.ShapeFillMode.Stroke;
+    private byte _shapeFillRed = 255;
+    private byte _shapeFillGreen = 255;
+    private byte _shapeFillBlue = 255;
+    private byte _shapeStrokeRed = 255;
+    private byte _shapeStrokeGreen = 255;
+    private byte _shapeStrokeBlue = 255;
+    private float _shapeStrokeWidth = 3f;
+
     /// <summary>
     /// Path to the currently loaded image.
     /// </summary>
@@ -1026,6 +1037,332 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Shape Tool Properties
+
+    /// <summary>The currently selected shape type.</summary>
+    public ImageEditor.ShapeType SelectedShapeType
+    {
+        get => _selectedShapeType;
+        set
+        {
+            if (SetProperty(ref _selectedShapeType, value))
+            {
+                OnPropertyChanged(nameof(IsShapeFreehand));
+                OnPropertyChanged(nameof(IsShapeRectangle));
+                OnPropertyChanged(nameof(IsShapeEllipse));
+                OnPropertyChanged(nameof(IsShapeArrow));
+                OnPropertyChanged(nameof(IsShapeLine));
+                OnPropertyChanged(nameof(IsShapeMode));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+                UpdateDrawingModeStatus();
+            }
+        }
+    }
+
+    /// <summary>Whether freehand drawing is selected.</summary>
+    public bool IsShapeFreehand
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Freehand;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Freehand; }
+    }
+
+    /// <summary>Whether rectangle shape is selected.</summary>
+    public bool IsShapeRectangle
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Rectangle;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Rectangle; }
+    }
+
+    /// <summary>Whether ellipse shape is selected.</summary>
+    public bool IsShapeEllipse
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Ellipse;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Ellipse; }
+    }
+
+    /// <summary>Whether arrow shape is selected.</summary>
+    public bool IsShapeArrow
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Arrow;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Arrow; }
+    }
+
+    /// <summary>Whether line shape is selected.</summary>
+    public bool IsShapeLine
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Line;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Line; }
+    }
+
+    /// <summary>Whether a shape mode (not freehand) is selected.</summary>
+    public bool IsShapeMode => _selectedShapeType != ImageEditor.ShapeType.Freehand;
+
+    /// <summary>The shape fill mode.</summary>
+    public ImageEditor.ShapeFillMode ShapeFillMode
+    {
+        get => _shapeFillMode;
+        set
+        {
+            if (SetProperty(ref _shapeFillMode, value))
+            {
+                OnPropertyChanged(nameof(IsShapeStrokeOnly));
+                OnPropertyChanged(nameof(IsShapeFillOnly));
+                OnPropertyChanged(nameof(IsShapeFillAndStroke));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Whether stroke only mode is selected.</summary>
+    public bool IsShapeStrokeOnly
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.Stroke;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.Stroke; }
+    }
+
+    /// <summary>Whether fill only mode is selected.</summary>
+    public bool IsShapeFillOnly
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.Fill;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.Fill; }
+    }
+
+    /// <summary>Whether fill and stroke mode is selected.</summary>
+    public bool IsShapeFillAndStroke
+    {
+        get => _shapeFillMode == ImageEditor.ShapeFillMode.FillAndStroke;
+        set { if (value) ShapeFillMode = ImageEditor.ShapeFillMode.FillAndStroke; }
+    }
+
+    /// <summary>Red component of the shape fill color (0-255).</summary>
+    public byte ShapeFillRed
+    {
+        get => _shapeFillRed;
+        set
+        {
+            if (SetProperty(ref _shapeFillRed, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Green component of the shape fill color (0-255).</summary>
+    public byte ShapeFillGreen
+    {
+        get => _shapeFillGreen;
+        set
+        {
+            if (SetProperty(ref _shapeFillGreen, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Blue component of the shape fill color (0-255).</summary>
+    public byte ShapeFillBlue
+    {
+        get => _shapeFillBlue;
+        set
+        {
+            if (SetProperty(ref _shapeFillBlue, value))
+            {
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>The shape fill color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color ShapeFillColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_shapeFillRed, _shapeFillGreen, _shapeFillBlue);
+        set
+        {
+            if (_shapeFillRed != value.R || _shapeFillGreen != value.G || _shapeFillBlue != value.B)
+            {
+                _shapeFillRed = value.R;
+                _shapeFillGreen = value.G;
+                _shapeFillBlue = value.B;
+                OnPropertyChanged(nameof(ShapeFillRed));
+                OnPropertyChanged(nameof(ShapeFillGreen));
+                OnPropertyChanged(nameof(ShapeFillBlue));
+                OnPropertyChanged(nameof(ShapeFillColor));
+                OnPropertyChanged(nameof(ShapeFillColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the fill color.</summary>
+    public string ShapeFillColorHex => $"#{_shapeFillRed:X2}{_shapeFillGreen:X2}{_shapeFillBlue:X2}";
+
+    /// <summary>Red component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeRed
+    {
+        get => _shapeStrokeRed;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeRed, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Green component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeGreen
+    {
+        get => _shapeStrokeGreen;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeGreen, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Blue component of the shape stroke color (0-255).</summary>
+    public byte ShapeStrokeBlue
+    {
+        get => _shapeStrokeBlue;
+        set
+        {
+            if (SetProperty(ref _shapeStrokeBlue, value))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>The shape stroke color as an Avalonia Color.</summary>
+    public Avalonia.Media.Color ShapeStrokeColor
+    {
+        get => Avalonia.Media.Color.FromRgb(_shapeStrokeRed, _shapeStrokeGreen, _shapeStrokeBlue);
+        set
+        {
+            if (_shapeStrokeRed != value.R || _shapeStrokeGreen != value.G || _shapeStrokeBlue != value.B)
+            {
+                _shapeStrokeRed = value.R;
+                _shapeStrokeGreen = value.G;
+                _shapeStrokeBlue = value.B;
+                OnPropertyChanged(nameof(ShapeStrokeRed));
+                OnPropertyChanged(nameof(ShapeStrokeGreen));
+                OnPropertyChanged(nameof(ShapeStrokeBlue));
+                OnPropertyChanged(nameof(ShapeStrokeColor));
+                OnPropertyChanged(nameof(ShapeStrokeColorHex));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Hex string representation of the stroke color.</summary>
+    public string ShapeStrokeColorHex => $"#{_shapeStrokeRed:X2}{_shapeStrokeGreen:X2}{_shapeStrokeBlue:X2}";
+
+    /// <summary>Shape stroke width in pixels (1-50).</summary>
+    public float ShapeStrokeWidth
+    {
+        get => _shapeStrokeWidth;
+        set
+        {
+            var clamped = Math.Clamp(value, 1f, 50f);
+            if (SetProperty(ref _shapeStrokeWidth, clamped))
+            {
+                OnPropertyChanged(nameof(ShapeStrokeWidthText));
+                ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Formatted stroke width for display.</summary>
+    public string ShapeStrokeWidthText => $"{(int)_shapeStrokeWidth} px";
+
+    /// <summary>Sets the shape fill color from a preset.</summary>
+    public void SetShapeFillPreset(string? preset)
+    {
+        if (preset is null) return;
+
+        (byte r, byte g, byte b) = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ((byte)255, (byte)255, (byte)255),
+            "BLACK" => ((byte)0, (byte)0, (byte)0),
+            "RED" => ((byte)255, (byte)0, (byte)0),
+            "GREEN" => ((byte)0, (byte)255, (byte)0),
+            "BLUE" => ((byte)0, (byte)0, (byte)255),
+            "YELLOW" => ((byte)255, (byte)255, (byte)0),
+            "ORANGE" => ((byte)255, (byte)165, (byte)0),
+            "PURPLE" => ((byte)128, (byte)0, (byte)128),
+            "CYAN" => ((byte)0, (byte)255, (byte)255),
+            "MAGENTA" => ((byte)255, (byte)0, (byte)255),
+            "GRAY" or "GREY" => ((byte)128, (byte)128, (byte)128),
+            "TRANSPARENT" or "NONE" => ((byte)0, (byte)0, (byte)0),
+            _ => (_shapeFillRed, _shapeFillGreen, _shapeFillBlue)
+        };
+
+        ShapeFillRed = r;
+        ShapeFillGreen = g;
+        ShapeFillBlue = b;
+    }
+
+    /// <summary>Sets the shape stroke color from a preset.</summary>
+    public void SetShapeStrokePreset(string? preset)
+    {
+        if (preset is null) return;
+
+        (byte r, byte g, byte b) = preset.ToUpperInvariant() switch
+        {
+            "WHITE" => ((byte)255, (byte)255, (byte)255),
+            "BLACK" => ((byte)0, (byte)0, (byte)0),
+            "RED" => ((byte)255, (byte)0, (byte)0),
+            "GREEN" => ((byte)0, (byte)255, (byte)0),
+            "BLUE" => ((byte)0, (byte)0, (byte)255),
+            "YELLOW" => ((byte)255, (byte)255, (byte)0),
+            "ORANGE" => ((byte)255, (byte)165, (byte)0),
+            "PURPLE" => ((byte)128, (byte)0, (byte)128),
+            "CYAN" => ((byte)0, (byte)255, (byte)255),
+            "MAGENTA" => ((byte)255, (byte)0, (byte)255),
+            "GRAY" or "GREY" => ((byte)128, (byte)128, (byte)128),
+            _ => (_shapeStrokeRed, _shapeStrokeGreen, _shapeStrokeBlue)
+        };
+
+        ShapeStrokeRed = r;
+        ShapeStrokeGreen = g;
+        ShapeStrokeBlue = b;
+    }
+
+    /// <summary>Event raised when shape settings change.</summary>
+    public event EventHandler? ShapeSettingsChanged;
+
+    private void UpdateDrawingModeStatus()
+    {
+        if (!IsDrawingToolActive) return;
+
+        StatusMessage = _selectedShapeType switch
+        {
+            ImageEditor.ShapeType.Freehand => "Draw: Click and drag to draw. Hold Shift for straight lines.",
+            ImageEditor.ShapeType.Rectangle => "Rectangle: Click and drag to draw a rectangle.",
+            ImageEditor.ShapeType.Ellipse => "Ellipse: Click and drag to draw an ellipse.",
+            ImageEditor.ShapeType.Arrow => "Arrow: Click and drag to draw an arrow.",
+            ImageEditor.ShapeType.Line => "Line: Click and drag to draw a straight line.",
+            _ => null
+        };
+    }
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -1178,6 +1515,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand DownloadUpscalingModelCommand { get; }
     public IRelayCommand ToggleDrawingToolCommand { get; }
     public IRelayCommand<string> SetDrawingColorPresetCommand { get; }
+    public IRelayCommand<string> SetShapeFillPresetCommand { get; }
+    public IRelayCommand<string> SetShapeStrokePresetCommand { get; }
 
     #endregion
 
@@ -1574,6 +1913,10 @@ public partial class ImageEditorViewModel : ObservableObject
         // Drawing tool commands
         ToggleDrawingToolCommand = new RelayCommand(ExecuteToggleDrawingTool, () => HasImage);
         SetDrawingColorPresetCommand = new RelayCommand<string>(SetDrawingColorPreset);
+
+        // Shape tool commands
+        SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
+        SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
     }
 
     #region Public Methods (View wiring)
