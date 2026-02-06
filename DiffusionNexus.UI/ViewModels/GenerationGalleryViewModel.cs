@@ -63,6 +63,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     public IReadOnlyList<string> SortOptions { get; } = ["Name", "Creation date"];
 
+    public IReadOnlyList<string> DateFilterOptions { get; } =
+    [
+        "Last 10 Days",
+        "Last 30 Days",
+        "Last 3 Months",
+        "Last 6 Months",
+        "This Year",
+        "All Time"
+    ];
+
     public ObservableCollection<string> GroupingOptions { get; } = [];
 
     public string ImageExtensionsDisplay => SupportedMediaTypes.ImageExtensionsDisplay;
@@ -74,6 +84,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     [ObservableProperty]
     private string _selectedGroupingOption = "None";
+
+    [ObservableProperty]
+    private string _selectedDateFilter = "Last 3 Months";
 
     [ObservableProperty]
     private double _tileWidth = 220;
@@ -138,6 +151,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             return;
         }
 
+        ApplySortingAndGrouping();
+    }
+
+    partial void OnSelectedDateFilterChanged(string value)
+    {
         ApplySortingAndGrouping();
     }
 
@@ -572,6 +590,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     {
         IEnumerable<GenerationGalleryMediaItemViewModel> filtered = _allMediaItems;
 
+        var cutoff = GetDateFilterCutoff(SelectedDateFilter);
+        if (cutoff.HasValue)
+        {
+            filtered = filtered.Where(item => item.CreatedAtUtc >= cutoff.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             filtered = filtered.Where(item =>
@@ -904,5 +928,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         }
 
         return $"{rootName}/{normalized}";
+    }
+
+    private static DateTime? GetDateFilterCutoff(string filter)
+    {
+        var now = DateTime.UtcNow;
+        return filter switch
+        {
+            "Last 10 Days" => now.AddDays(-10),
+            "Last 30 Days" => now.AddDays(-30),
+            "Last 3 Months" => now.AddMonths(-3),
+            "Last 6 Months" => now.AddMonths(-6),
+            "This Year" => new DateTime(now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            _ => null // "All Time"
+        };
     }
 }
