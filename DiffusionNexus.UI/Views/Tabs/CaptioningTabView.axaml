@@ -237,7 +237,7 @@
                 </StackPanel>
 
                 <!-- Current image -->
-                <Image Source="{Binding CurrentImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                <Image Source="{Binding CurrentImagePreview}"
                        Stretch="Uniform"
                        IsVisible="{Binding CurrentImagePath, Converter={x:Static ObjectConverters.IsNotNull}}"/>
 
@@ -256,7 +256,7 @@
               <Border Background="#111111" CornerRadius="6" Height="140"
                       BorderBrush="#333" BorderThickness="1">
                 <Grid>
-                  <Image Source="{Binding LastCompletedImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                  <Image Source="{Binding LastCompletedImagePreview}"
                          Stretch="Uniform"/>
                   <Border Background="#88000000" CornerRadius="4" Padding="6,3"
                           HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">

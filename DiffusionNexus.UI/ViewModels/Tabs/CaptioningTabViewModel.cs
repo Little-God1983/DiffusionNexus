@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -55,6 +56,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _lastCompletedCaption;
     private int _completedCount;
     private int _totalImageCount;
+    private Bitmap? _currentImagePreview;
+    private Bitmap? _lastCompletedImagePreview;
 
     /// <summary>
     /// Creates a new instance of CaptioningTabViewModel.
@@ -428,7 +431,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public string? CurrentImagePath
     {
         get => _currentImagePath;
-        private set => SetProperty(ref _currentImagePath, value);
+        private set
+        {
+            if (SetProperty(ref _currentImagePath, value))
+            {
+                var old = _currentImagePreview;
+                CurrentImagePreview = LoadPreviewBitmap(value);
+                old?.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Preview bitmap for the currently processing image.
+    /// </summary>
+    public Bitmap? CurrentImagePreview
+    {
+        get => _currentImagePreview;
+        private set => SetProperty(ref _currentImagePreview, value);
     }
 
     /// <summary>
@@ -437,7 +457,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public string? LastCompletedImagePath
     {
         get => _lastCompletedImagePath;
-        private set => SetProperty(ref _lastCompletedImagePath, value);
+        private set
+        {
+            if (SetProperty(ref _lastCompletedImagePath, value))
+            {
+                var old = _lastCompletedImagePreview;
+                LastCompletedImagePreview = LoadPreviewBitmap(value);
+                old?.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Preview bitmap for the last completed image.
+    /// </summary>
+    public Bitmap? LastCompletedImagePreview
+    {
+        get => _lastCompletedImagePreview;
+        private set => SetProperty(ref _lastCompletedImagePreview, value);
     }
 
     /// <summary>
@@ -725,6 +762,30 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         OnPropertyChanged(nameof(AvailableDatasets));
     }
 
+    private static Bitmap? LoadPreviewBitmap(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return null;
+
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Bitmap.DecodeToWidth(stream, 600, BitmapInterpolationMode.MediumQuality);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void DisposePreviewBitmaps()
+    {
+        _currentImagePreview?.Dispose();
+        _currentImagePreview = null;
+        _lastCompletedImagePreview?.Dispose();
+        _lastCompletedImagePreview = null;
+    }
+
     #endregion
 
     #region IDisposable
@@ -748,6 +809,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (disposing)
         {
             _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+            DisposePreviewBitmaps();
         }
 
         _disposed = true;
