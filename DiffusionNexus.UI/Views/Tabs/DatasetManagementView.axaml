@@ -47,7 +47,7 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
         
         <!-- Back to Overview Button -->
         <Button Grid.Column="0"
@@ -222,44 +222,18 @@
                 Command="{Binding SendToBatchCropScaleCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
                 ToolTip.Tip="Send dataset to Batch Crop/Scale tab"/>
-        <Button Grid.Column="11"
-                Command="{Binding OpenCaptioningToolCommand}"
-                IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"
-                Opacity="0.6"
-                IsEnabled="True"
-                ToolTip.Tip="Generate captions with AI">
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <TextBlock Text="Auto Caption" VerticalAlignment="Center"/>
-            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
-              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
-            </Border>
-          </StackPanel>
-        </Button>
-        <Button Grid.Column="12" Content="Open Viewer"
+        <Button Grid.Column="11" Content="Open Viewer"
                 Command="{Binding OpenViewerCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="13" Content="Export"
+        <Button Grid.Column="12" Content="Export"
                 Command="{Binding ExportDatasetCommand}"
                 IsVisible="{Binding IsViewingDataset}" Margin="0,0,8,0"/>
-        <Button Grid.Column="14" Content="Save Captions"
+        <Button Grid.Column="13" Content="Save Captions"
                 Command="{Binding SaveAllCaptionsCommand}"
                 IsVisible="{Binding HasUnsavedChanges}" Margin="0,0,8,0" Background="#2D7D46"/>
                 
         <!-- Action Buttons (Overview View) -->
-        <Button Grid.Column="15"
-                Command="{Binding OpenCaptioningToolCommand}"
-                IsVisible="{Binding !IsViewingDataset}" Margin="0,0,8,0"
-                Opacity="0.6"
-                IsEnabled="False"
-                ToolTip.Tip="Coming Soon: Generate captions with AI">
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <TextBlock Text="Auto Caption" VerticalAlignment="Center"/>
-            <Border Background="#FF9800" CornerRadius="3" Padding="4,1">
-              <TextBlock Text="Soon" FontSize="9" FontWeight="Bold" Foreground="White"/>
-            </Border>
-          </StackPanel>
-        </Button>
-        <Button Grid.Column="16" Content="+ New Dataset" 
+        <Button Grid.Column="14" Content="+ New Dataset" 
                 Command="{Binding CreateDatasetCommand}"
                 IsVisible="{Binding !IsViewingDataset}"/>
       </Grid>
@@ -548,7 +522,12 @@
           </Grid>
         </TabItem>
         
-        <!-- Tab 2: Epochs -->
+        <!-- Tab 2: Captioning -->
+        <TabItem Header="Captioning">
+          <views:CaptioningTabView DataContext="{Binding CaptioningTab}"/>
+        </TabItem>
+        
+        <!-- Tab 3: Epochs -->
         <TabItem Header="Epochs">
           <views:EpochsSubTabView DataContext="{Binding EpochsTab}"/>
         </TabItem>

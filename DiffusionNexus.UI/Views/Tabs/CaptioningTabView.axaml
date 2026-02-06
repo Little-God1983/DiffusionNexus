@@ -1,0 +1,218 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:enums="using:DiffusionNexus.Domain.Enums"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.Tabs.CaptioningTabView"
+             x:DataType="vm:CaptioningTabViewModel">
+
+  <Design.DataContext>
+    <vm:CaptioningTabViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*,Auto">
+
+    <!-- Service Unavailable Warning -->
+    <Border IsVisible="{Binding IsServiceAvailable, Converter={x:Static converters:BoolConverters.Not}}"
+            Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
+            HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="16" HorizontalAlignment="Center">
+        <TextBlock Text="?" FontSize="64" HorizontalAlignment="Center" Opacity="0.3" Foreground="#FFC107"/>
+        <TextBlock Text="Captioning Service Unavailable" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+        <TextBlock Text="The AI captioning service is not configured. Ensure the captioning backend is installed and available."
+                   Opacity="0.6" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Main Content -->
+    <ScrollViewer Grid.Row="0" IsVisible="{Binding IsServiceAvailable}" Padding="16">
+      <StackPanel Spacing="16" MaxWidth="700" HorizontalAlignment="Left">
+
+        <!-- Model Selection -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Model Selection" FontWeight="SemiBold" FontSize="14"/>
+
+            <ComboBox ItemsSource="{Binding AvailableModels}"
+                      SelectedItem="{Binding SelectedModelType}"
+                      HorizontalAlignment="Stretch"/>
+
+            <!-- LLaVA Status/Download -->
+            <Grid ColumnDefinitions="*,Auto"
+                  IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}}">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Text="LLaVA v1.6 34B" FontWeight="Bold"/>
+                <TextBlock Text="{Binding LlavaStatusText}" FontSize="12" Opacity="0.7"/>
+                <ProgressBar Value="{Binding LlavaDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                             IsVisible="{Binding IsLlavaDownloading}"/>
+              </StackPanel>
+              <Button Grid.Column="1" Content="Download"
+                      Command="{Binding DownloadModelCommand}"
+                      CommandParameter="{x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}"
+                      IsVisible="{Binding IsLlavaMissing}"/>
+              <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                         IsVisible="{Binding IsLlavaReady}"/>
+            </Grid>
+
+            <!-- Qwen 2.5 Status/Download -->
+            <Grid ColumnDefinitions="*,Auto"
+                  IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}}">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Text="Qwen 2.5 VL 7B" FontWeight="Bold"/>
+                <TextBlock Text="{Binding QwenStatusText}" FontSize="12" Opacity="0.7"/>
+                <ProgressBar Value="{Binding QwenDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                             IsVisible="{Binding IsQwenDownloading}"/>
+              </StackPanel>
+              <Button Grid.Column="1" Content="Download"
+                      Command="{Binding DownloadModelCommand}"
+                      CommandParameter="{x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}"
+                      IsVisible="{Binding IsQwenMissing}"/>
+              <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                         IsVisible="{Binding IsQwenReady}"/>
+            </Grid>
+
+            <!-- Qwen 3 Status/Download -->
+            <Grid ColumnDefinitions="*,Auto"
+                  IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B}}">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Text="Qwen 3 VL 8B" FontWeight="Bold"/>
+                <TextBlock Text="{Binding Qwen3StatusText}" FontSize="12" Opacity="0.7"/>
+                <ProgressBar Value="{Binding Qwen3DownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                             IsVisible="{Binding IsQwen3Downloading}"/>
+              </StackPanel>
+              <Button Grid.Column="1" Content="Download"
+                      Command="{Binding DownloadModelCommand}"
+                      CommandParameter="{x:Static enums:CaptioningModelType.Qwen3_VL_8B}"
+                      IsVisible="{Binding IsQwen3Missing}"/>
+              <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                         IsVisible="{Binding IsQwen3Ready}"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- Input Selection -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Input Source" FontWeight="SemiBold" FontSize="14"/>
+
+            <ToggleSwitch IsChecked="{Binding IsSingleImageMode}"
+                          OnContent="Single Image"
+                          OffContent="Dataset"
+                          HorizontalAlignment="Left"/>
+
+            <!-- Dataset Input -->
+            <StackPanel IsVisible="{Binding !IsSingleImageMode}">
+              <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
+              <Grid ColumnDefinitions="*,12,Auto">
+                <ComboBox Grid.Column="0"
+                          ItemsSource="{Binding AvailableDatasets}"
+                          SelectedItem="{Binding SelectedDataset}"
+                          PlaceholderText="Choose a dataset..."
+                          HorizontalAlignment="Stretch">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{Binding AvailableDatasetVersions}"
+                          SelectedItem="{Binding SelectedDatasetVersion}"
+                          MinWidth="80"
+                          ToolTip.Tip="Select Version"
+                          IsEnabled="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+            </StackPanel>
+
+            <!-- Single Image Input -->
+            <StackPanel IsVisible="{Binding IsSingleImageMode}" Spacing="8">
+              <TextBlock Text="Single Image"/>
+              <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBox Grid.Column="0" Text="{Binding SingleImagePath}" IsReadOnly="True"
+                         Watermark="No image selected" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="..." Command="{Binding SelectSingleImageCommand}" Margin="4,0,0,0"/>
+                <Button Grid.Column="2" Content="X" Command="{Binding ClearSingleImageCommand}" Margin="4,0,0,0"/>
+              </Grid>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Captioning Settings -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Captioning Settings" FontWeight="SemiBold" FontSize="14"/>
+
+            <Grid ColumnDefinitions="*,16,*" RowDefinitions="Auto,Auto,Auto">
+
+              <!-- System Prompt -->
+              <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,12">
+                <TextBlock Text="System Prompt" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" Height="60" TextWrapping="Wrap"/>
+              </StackPanel>
+
+              <!-- Trigger Word -->
+              <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,12">
+                <TextBlock Text="Trigger Word (Optional)" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding TriggerWord}" Watermark="e.g. ohwx style"/>
+              </StackPanel>
+
+              <!-- Blacklisted Words -->
+              <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,12">
+                <TextBlock Text="Blacklisted Words (Optional, comma sep)" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding BlacklistedWords}" Watermark="text, watermark, signature"/>
+              </StackPanel>
+
+              <!-- Temperature -->
+              <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,0,12">
+                <TextBlock Text="{Binding Temperature, StringFormat='Temperature: {0:F1}'}" Margin="0,0,0,4"/>
+                <Slider Value="{Binding Temperature}" Minimum="0.1" Maximum="2.0"
+                        TickFrequency="0.1" IsSnapToTickEnabled="True"/>
+              </StackPanel>
+
+              <!-- Override Option -->
+              <StackPanel Grid.Row="2" Grid.Column="2" VerticalAlignment="Center">
+                <CheckBox Content="Override Existing Captions" IsChecked="{Binding OverrideExisting}"/>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- Processing Status -->
+        <StackPanel Spacing="8" IsVisible="{Binding IsProcessing}">
+          <TextBlock Text="{Binding CurrentProcessingStatus}" HorizontalAlignment="Center"/>
+          <ProgressBar Value="{Binding TotalProgress}" Maximum="100" Height="4"/>
+        </StackPanel>
+
+        <!-- Status Message -->
+        <TextBlock Text="{Binding StatusMessage}"
+                   Foreground="#D4A574"
+                   TextWrapping="Wrap"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Footer -->
+    <Border Grid.Row="1" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,1,0,0"
+            IsVisible="{Binding IsServiceAvailable}">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+        <Button Content="Generate Captions"
+                Command="{Binding GenerateCommand}"
+                Background="#2D7D46"
+                Foreground="White"
+                FontWeight="Bold"
+                Padding="16,8"/>
+      </StackPanel>
+    </Border>
+
+  </Grid>
+</UserControl>
