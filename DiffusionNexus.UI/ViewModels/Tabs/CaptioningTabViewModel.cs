@@ -49,6 +49,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private double _totalProgress;
     private string _currentProcessingStatus = "Ready";
 
+    // Live preview
+    private string? _currentImagePath;
+    private string? _lastCompletedImagePath;
+    private string? _lastCompletedCaption;
+    private int _completedCount;
+    private int _totalImageCount;
+
     /// <summary>
     /// Creates a new instance of CaptioningTabViewModel.
     /// </summary>
@@ -415,6 +422,51 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         private set => SetProperty(ref _currentProcessingStatus, value);
     }
 
+    /// <summary>
+    /// Path to the image currently being processed.
+    /// </summary>
+    public string? CurrentImagePath
+    {
+        get => _currentImagePath;
+        private set => SetProperty(ref _currentImagePath, value);
+    }
+
+    /// <summary>
+    /// Path to the last successfully captioned image.
+    /// </summary>
+    public string? LastCompletedImagePath
+    {
+        get => _lastCompletedImagePath;
+        private set => SetProperty(ref _lastCompletedImagePath, value);
+    }
+
+    /// <summary>
+    /// Caption text generated for the last completed image.
+    /// </summary>
+    public string? LastCompletedCaption
+    {
+        get => _lastCompletedCaption;
+        private set => SetProperty(ref _lastCompletedCaption, value);
+    }
+
+    /// <summary>
+    /// Number of images completed so far.
+    /// </summary>
+    public int CompletedCount
+    {
+        get => _completedCount;
+        private set => SetProperty(ref _completedCount, value);
+    }
+
+    /// <summary>
+    /// Total number of images in the current batch.
+    /// </summary>
+    public int TotalImageCount
+    {
+        get => _totalImageCount;
+        private set => SetProperty(ref _totalImageCount, value);
+    }
+
     #endregion
 
     #endregion
@@ -584,6 +636,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         IsProcessing = true;
         TotalProgress = 0;
         CurrentProcessingStatus = "Initializing...";
+        CurrentImagePath = null;
+        LastCompletedImagePath = null;
+        LastCompletedCaption = null;
+        CompletedCount = 0;
+        TotalImageCount = 0;
 
         try
         {
@@ -614,6 +671,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             {
                 TotalProgress = p.Percentage;
                 CurrentProcessingStatus = p.Status;
+                TotalImageCount = p.TotalCount;
+                CompletedCount = p.CompletedCount;
+                CurrentImagePath = p.CurrentImagePath;
+
+                if (p.LastResult is { Success: true, WasSkipped: false })
+                {
+                    LastCompletedImagePath = p.LastResult.ImagePath;
+                    LastCompletedCaption = p.LastResult.Caption;
+                }
             });
 
             var results = await _captioningService.GenerateCaptionsAsync(config, progress);
