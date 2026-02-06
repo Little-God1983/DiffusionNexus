@@ -39,7 +39,9 @@ public enum ShapeManipulationHandle
     /// <summary>Bottom-right corner resize handle.</summary>
     BottomRight,
     /// <summary>Rotation handle above the shape.</summary>
-    Rotate
+    Rotate,
+    /// <summary>Delete/trash handle next to the rotation handle.</summary>
+    Delete
 }
 
 /// <summary>
@@ -97,6 +99,7 @@ public class ShapeTool
 
     private const float HandleRadius = 6f;
     private const float RotateHandleOffset = 30f;
+    private const float DeleteHandleOffset = 32f;
     private const float HandleHitRadius = 12f;
 
     /// <summary>
@@ -354,6 +357,11 @@ public class ShapeTool
         if (DistanceSq(local, rotateHandlePos) < (HandleHitRadius + 6f) * (HandleHitRadius + 6f))
             return ShapeManipulationHandle.Rotate;
 
+        // Delete handle (to the right of the rotation handle)
+        var deleteHandlePos = new SKPoint(center.X + DeleteHandleOffset, rect.Top - RotateHandleOffset);
+        if (DistanceSq(local, deleteHandlePos) < (HandleHitRadius + 6f) * (HandleHitRadius + 6f))
+            return ShapeManipulationHandle.Delete;
+
         // Body (inside the shape rect with some padding)
         var expandedRect = SKRect.Create(rect.Left - 4, rect.Top - 4, rect.Width + 8, rect.Height + 8);
         if (expandedRect.Contains(local))
@@ -415,6 +423,12 @@ public class ShapeTool
                 _currentPoint = screenPoint;
                 ShapeChanged?.Invoke(this, EventArgs.Empty);
             }
+            return true;
+        }
+
+        if (handle == ShapeManipulationHandle.Delete)
+        {
+            CancelPlacedShape();
             return true;
         }
 
@@ -665,6 +679,29 @@ public class ShapeTool
         using var arcPath = new SKPath();
         arcPath.AddArc(arcRect, -90, 270);
         canvas.DrawPath(arcPath, arrowPaint);
+
+        // Delete/trash handle (to the right of the rotate handle)
+        var deleteCenter = new SKPoint(center.X + DeleteHandleOffset, rect.Top - RotateHandleOffset);
+        canvas.DrawLine(rotateCenter, deleteCenter, stemPaint);
+
+        using var deleteBg = new SKPaint { Color = new SKColor(140, 30, 30, 220), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawCircle(deleteCenter, 12f, deleteBg);
+        canvas.DrawCircle(deleteCenter, 12f, handleStroke);
+
+        // Draw X icon inside the delete circle
+        using var xPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 2f,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round
+        };
+        const float xSize = 4.5f;
+        canvas.DrawLine(deleteCenter.X - xSize, deleteCenter.Y - xSize,
+                        deleteCenter.X + xSize, deleteCenter.Y + xSize, xPaint);
+        canvas.DrawLine(deleteCenter.X + xSize, deleteCenter.Y - xSize,
+                        deleteCenter.X - xSize, deleteCenter.Y + xSize, xPaint);
 
         canvas.Restore();
     }

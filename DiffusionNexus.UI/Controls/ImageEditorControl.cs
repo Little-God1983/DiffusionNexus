@@ -597,6 +597,7 @@ public class ImageEditorControl : Control
                     ImageEditor.ShapeManipulationHandle.TopLeft or ImageEditor.ShapeManipulationHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.TopRight or ImageEditor.ShapeManipulationHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.Rotate => new Cursor(StandardCursorType.Hand),
+                    ImageEditor.ShapeManipulationHandle.Delete => new Cursor(StandardCursorType.Hand),
                     _ => new Cursor(StandardCursorType.Cross)
                 };
             }
