@@ -1680,6 +1680,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ApplyCropCommand { get; }
     public IRelayCommand CancelCropCommand { get; }
     public IRelayCommand FitCropCommand { get; }
+    public IRelayCommand FillCropCommand { get; }
     public IRelayCommand<string> SetCropAspectRatioCommand { get; }
     public IRelayCommand SwitchCropAspectRatioCommand { get; }
     public IAsyncRelayCommand SaveAsNewCommand { get; }
@@ -1739,6 +1740,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? ApplyCropRequested;
     public event EventHandler? CancelCropRequested;
     public event EventHandler? FitCropRequested;
+    public event EventHandler? FillCropRequested;
     public event EventHandler<(float W, float H)>? SetCropAspectRatioRequested;
     public event EventHandler? SwitchCropAspectRatioRequested;
     
@@ -1916,6 +1918,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyCropCommand.NotifyCanExecuteChanged();
         CancelCropCommand.NotifyCanExecuteChanged();
         FitCropCommand.NotifyCanExecuteChanged();
+        FillCropCommand.NotifyCanExecuteChanged();
         SetCropAspectRatioCommand.NotifyCanExecuteChanged();
         SwitchCropAspectRatioCommand.NotifyCanExecuteChanged();
         ToggleColorBalanceCommand.NotifyCanExecuteChanged();
@@ -2099,6 +2102,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
         FitCropCommand = new RelayCommand(ExecuteFitCrop, () => HasImage && IsCropToolActive);
+        FillCropCommand = new RelayCommand(ExecuteFillCrop, () => HasImage && IsCropToolActive);
         SetCropAspectRatioCommand = new RelayCommand<string>(ExecuteSetCropAspectRatio, _ => HasImage && IsCropToolActive);
         SwitchCropAspectRatioCommand = new RelayCommand(ExecuteSwitchCropAspectRatio, () => HasImage && IsCropToolActive);
         SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
@@ -2558,6 +2562,11 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteFitCrop()
     {
         FitCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteFillCrop()
+    {
+        FillCropRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void ExecuteSetCropAspectRatio(string? ratio)

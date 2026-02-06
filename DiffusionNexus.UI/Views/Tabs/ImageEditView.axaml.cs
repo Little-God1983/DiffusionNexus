@@ -217,6 +217,13 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.InvalidateVisual();
         };
 
+        // Handle crop fill-entire-image request
+        imageEditor.FillCropRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.FillImage();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
         // Handle crop aspect ratio request
         imageEditor.SetCropAspectRatioRequested += (_, ratio) =>
         {

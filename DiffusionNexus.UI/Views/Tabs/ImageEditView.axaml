@@ -343,23 +343,35 @@
                 
                 <!-- Aspect Ratio Presets -->
                 <TextBlock Text="Aspect Ratio" FontSize="11" Opacity="0.7"/>
-                <WrapPanel HorizontalAlignment="Center" Orientation="Horizontal">
-                  <Button Content="Fit" Command="{Binding ImageEditor.FitCropCommand}" Padding="8,4" Margin="2" FontSize="10"
-                          ToolTip.Tip="Expand crop to fill image, keeping current aspect ratio"/>
-                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio16x9}}" 
-                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="16:9" 
-                          Padding="8,4" Margin="2" FontSize="10"/>
-                  <Button Content="1:1" Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="1:1" 
-                          Padding="8,4" Margin="2" FontSize="10"/>
-                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio4x3}}" 
-                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="4:3" 
-                          Padding="8,4" Margin="2" FontSize="10"/>
-                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio5x4}}" 
-                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="5:4" 
-                          Padding="8,4" Margin="2" FontSize="10"/>
-                  <Button Content="Switch" Command="{Binding ImageEditor.SwitchCropAspectRatioCommand}" Padding="8,4" Margin="2" FontSize="10"
+                <StackPanel Spacing="4">
+                  <!-- Row 1: Fit & Fill -->
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="Fit" Command="{Binding ImageEditor.FitCropCommand}" Padding="8,4" FontSize="10"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Expand crop to fill image, keeping current aspect ratio"/>
+                    <Button Content="Fill" Command="{Binding ImageEditor.FillCropCommand}" Padding="8,4" FontSize="10"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Set crop to cover the entire image"/>
+                  </StackPanel>
+                  <!-- Row 2: Aspect Ratio Presets -->
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio16x9}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="16:9" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="1:1" Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="1:1" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio4x3}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="4:3" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio5x4}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="5:4" 
+                            Padding="8,4" FontSize="10"/>
+                  </StackPanel>
+                  <!-- Row 3: Switch -->
+                  <Button Content="Switch" Command="{Binding ImageEditor.SwitchCropAspectRatioCommand}" Padding="8,4" FontSize="10"
+                          HorizontalAlignment="Center"
                           ToolTip.Tip="Switch between W:H and H:W"/>
-                </WrapPanel>
+                </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 <!-- Action Buttons -->

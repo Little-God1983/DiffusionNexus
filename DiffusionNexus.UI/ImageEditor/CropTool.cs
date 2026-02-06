@@ -515,6 +515,20 @@ public class CropTool
     }
 
     /// <summary>
+    /// Sets the crop region to cover the entire image.
+    /// </summary>
+    public void FillImage()
+    {
+        _normalizedLeft = 0f;
+        _normalizedTop = 0f;
+        _normalizedRight = 1f;
+        _normalizedBottom = 1f;
+        _hasCropRegion = true;
+
+        CropRegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
     /// Adjusts the crop region to the given aspect ratio while keeping size as large as possible.
     /// The region stays centered at its current center.
     /// </summary>
