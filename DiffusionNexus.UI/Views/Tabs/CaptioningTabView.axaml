@@ -222,8 +222,8 @@
                          IsVisible="{Binding IsProcessing}"/>
           </StackPanel>
 
-          <!-- Image Preview Area -->
-          <Grid Grid.Row="1" Margin="16,0" ColumnDefinitions="*,12,Auto">
+          <!-- Content Area: Current Image + History -->
+          <Grid Grid.Row="1" Margin="16,0" ColumnDefinitions="*,12,240">
 
             <!-- Main: Currently Processing Image -->
             <Border Grid.Column="0" Background="#111111" CornerRadius="6"
@@ -232,7 +232,7 @@
                 <!-- Placeholder when no image -->
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                             IsVisible="{Binding CurrentImagePath, Converter={x:Static ObjectConverters.IsNull}}">
-                  <TextBlock Text="??" FontSize="48" HorizontalAlignment="Center" Opacity="0.2"/>
+                  <TextBlock Text="&#x1F5BC;" FontSize="48" HorizontalAlignment="Center" Opacity="0.2"/>
                   <TextBlock Text="Currently Processing" FontSize="13" Opacity="0.3" HorizontalAlignment="Center" Margin="0,8,0,0"/>
                 </StackPanel>
 
@@ -250,26 +250,52 @@
               </Grid>
             </Border>
 
-            <!-- Side: Last Completed Image (smaller) -->
-            <StackPanel Grid.Column="2" Width="180" Spacing="8"
-                        IsVisible="{Binding LastCompletedImagePath, Converter={x:Static ObjectConverters.IsNotNull}}">
-              <Border Background="#111111" CornerRadius="6" Height="140"
-                      BorderBrush="#333" BorderThickness="1">
-                <Grid>
-                  <Image Source="{Binding LastCompletedImagePreview}"
-                         Stretch="Uniform"/>
-                  <Border Background="#88000000" CornerRadius="4" Padding="6,3"
-                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">
-                    <TextBlock Text="Last Completed" FontSize="10" Opacity="0.9"/>
-                  </Border>
-                </Grid>
-              </Border>
+            <!-- Right Side: Scrollable History List -->
+            <Border Grid.Column="2" Background="#111111" CornerRadius="6"
+                    BorderBrush="#333" BorderThickness="1">
+              <Grid RowDefinitions="Auto,*">
+                <TextBlock Grid.Row="0" Text="History" FontWeight="SemiBold" FontSize="12"
+                           Opacity="0.6" Margin="10,8,10,4"/>
+                <ScrollViewer Grid.Row="1" Padding="4,0">
+                  <ItemsControl ItemsSource="{Binding CaptionHistory}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:CaptionHistoryItemViewModel">
+                        <Button Background="Transparent" Padding="0" Margin="0,0,0,2"
+                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                BorderThickness="0" CornerRadius="4"
+                                Command="{Binding $parent[ItemsControl].((vm:CaptioningTabViewModel)DataContext).ToggleHistoryItemCommand}"
+                                CommandParameter="{Binding}">
+                          <Border Background="#1A1A1A" CornerRadius="4" Padding="6" Margin="2">
+                            <Grid ColumnDefinitions="56,8,*" RowDefinitions="Auto,Auto">
+                              <!-- Thumbnail -->
+                              <Border Grid.Column="0" Grid.RowSpan="2" CornerRadius="3"
+                                      Width="56" Height="56" ClipToBounds="True"
+                                      Background="#222">
+                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                              </Border>
 
-              <!-- Last completed file name -->
-              <TextBlock Text="{Binding LastCompletedImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=name}"
-                         FontSize="11" Opacity="0.5" TextTrimming="CharacterEllipsis"
-                         IsVisible="False"/>
-            </StackPanel>
+                              <!-- File name -->
+                              <TextBlock Grid.Column="2" Grid.Row="0"
+                                         Text="{Binding FileName}"
+                                         FontSize="11" FontWeight="SemiBold"
+                                         TextTrimming="CharacterEllipsis"
+                                         Margin="0,0,0,2"/>
+
+                              <!-- Caption preview / full caption -->
+                              <TextBlock Grid.Column="2" Grid.Row="1"
+                                         Text="{Binding DisplayCaption}"
+                                         FontSize="10" Opacity="0.6"
+                                         TextWrapping="Wrap"
+                                         MaxLines="{Binding IsExpanded, Converter={x:Static converters:BoolConverters.BoolToMaxLines}}"/>
+                            </Grid>
+                          </Border>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Border>
           </Grid>
 
           <!-- Caption Output -->
@@ -280,11 +306,11 @@
                 <!-- Placeholder -->
                 <TextBlock Text="Generated caption will appear here..."
                            Opacity="0.3" FontStyle="Italic"
-                           IsVisible="{Binding LastCompletedCaption, Converter={x:Static ObjectConverters.IsNull}}"/>
+                           IsVisible="{Binding DisplayCaption, Converter={x:Static ObjectConverters.IsNull}}"/>
                 <!-- Caption text -->
-                <TextBlock Text="{Binding LastCompletedCaption}"
+                <TextBlock Text="{Binding DisplayCaption}"
                            TextWrapping="Wrap" FontSize="13" LineHeight="20"
-                           IsVisible="{Binding LastCompletedCaption, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                           IsVisible="{Binding DisplayCaption, Converter={x:Static ObjectConverters.IsNotNull}}"/>
               </Grid>
             </ScrollViewer>
           </Border>

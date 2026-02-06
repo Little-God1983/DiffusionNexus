@@ -52,12 +52,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     // Live preview
     private string? _currentImagePath;
-    private string? _lastCompletedImagePath;
     private string? _lastCompletedCaption;
     private int _completedCount;
     private int _totalImageCount;
     private Bitmap? _currentImagePreview;
-    private Bitmap? _lastCompletedImagePreview;
+    private CaptionHistoryItemViewModel? _selectedHistoryItem;
 
     /// <summary>
     /// Creates a new instance of CaptioningTabViewModel.
@@ -78,6 +77,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         GenerateCommand = new AsyncRelayCommand(GenerateCaptionsAsync, CanGenerate);
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
+        ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
 
         RefreshModelStatuses();
 
@@ -452,29 +452,23 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     }
 
     /// <summary>
-    /// Path to the last successfully captioned image.
+    /// History of all completed caption results in the current batch.
     /// </summary>
-    public string? LastCompletedImagePath
-    {
-        get => _lastCompletedImagePath;
-        private set
-        {
-            if (SetProperty(ref _lastCompletedImagePath, value))
-            {
-                var old = _lastCompletedImagePreview;
-                LastCompletedImagePreview = LoadPreviewBitmap(value);
-                old?.Dispose();
-            }
-        }
-    }
+    public ObservableCollection<CaptionHistoryItemViewModel> CaptionHistory { get; } = [];
 
     /// <summary>
-    /// Preview bitmap for the last completed image.
+    /// The currently selected history item (for viewing full caption and large preview).
     /// </summary>
-    public Bitmap? LastCompletedImagePreview
+    public CaptionHistoryItemViewModel? SelectedHistoryItem
     {
-        get => _lastCompletedImagePreview;
-        private set => SetProperty(ref _lastCompletedImagePreview, value);
+        get => _selectedHistoryItem;
+        set
+        {
+            if (SetProperty(ref _selectedHistoryItem, value))
+            {
+                OnPropertyChanged(nameof(DisplayCaption));
+            }
+        }
     }
 
     /// <summary>
@@ -485,6 +479,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         get => _lastCompletedCaption;
         private set => SetProperty(ref _lastCompletedCaption, value);
     }
+
+    /// <summary>
+    /// The caption to show in the detail area: selected item's full caption, or last completed.
+    /// </summary>
+    public string? DisplayCaption => SelectedHistoryItem?.FullCaption ?? LastCompletedCaption;
 
     /// <summary>
     /// Number of images completed so far.
@@ -529,6 +528,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Command to clear the selected single image.
     /// </summary>
     public IRelayCommand ClearSingleImageCommand { get; }
+
+    /// <summary>
+    /// Command to toggle a history item's expanded state and show its caption in the detail area.
+    /// </summary>
+    public IRelayCommand<CaptionHistoryItemViewModel> ToggleHistoryItemCommand { get; }
 
     #endregion
 
@@ -674,10 +678,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         TotalProgress = 0;
         CurrentProcessingStatus = "Initializing...";
         CurrentImagePath = null;
-        LastCompletedImagePath = null;
         LastCompletedCaption = null;
+        SelectedHistoryItem = null;
         CompletedCount = 0;
         TotalImageCount = 0;
+        ClearHistory();
 
         try
         {
@@ -712,10 +717,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CompletedCount = p.CompletedCount;
                 CurrentImagePath = p.CurrentImagePath;
 
-                if (p.LastResult is { Success: true, WasSkipped: false })
+                if (p.LastResult is { Success: true, WasSkipped: false, Caption: not null })
                 {
-                    LastCompletedImagePath = p.LastResult.ImagePath;
                     LastCompletedCaption = p.LastResult.Caption;
+                    OnPropertyChanged(nameof(DisplayCaption));
+
+                    var thumbnail = LoadPreviewBitmap(p.LastResult.ImagePath, 120);
+                    var item = new CaptionHistoryItemViewModel(
+                        p.LastResult.ImagePath, p.LastResult.Caption, thumbnail);
+                    CaptionHistory.Insert(0, item);
                 }
             });
 
@@ -762,7 +772,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         OnPropertyChanged(nameof(AvailableDatasets));
     }
 
-    private static Bitmap? LoadPreviewBitmap(string? path)
+    private void ToggleHistoryItem(CaptionHistoryItemViewModel? item)
+    {
+        if (item is null) return;
+
+        item.IsExpanded = !item.IsExpanded;
+        SelectedHistoryItem = item.IsExpanded ? item : null;
+    }
+
+    private static Bitmap? LoadPreviewBitmap(string? path, int width = 600)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
             return null;
@@ -770,7 +788,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         try
         {
             using var stream = File.OpenRead(path);
-            return Bitmap.DecodeToWidth(stream, 600, BitmapInterpolationMode.MediumQuality);
+            return Bitmap.DecodeToWidth(stream, width, BitmapInterpolationMode.MediumQuality);
         }
         catch
         {
@@ -778,12 +796,18 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
     }
 
+    private void ClearHistory()
+    {
+        foreach (var item in CaptionHistory)
+            item.Dispose();
+        CaptionHistory.Clear();
+    }
+
     private void DisposePreviewBitmaps()
     {
         _currentImagePreview?.Dispose();
         _currentImagePreview = null;
-        _lastCompletedImagePreview?.Dispose();
-        _lastCompletedImagePreview = null;
+        ClearHistory();
     }
 
     #endregion
