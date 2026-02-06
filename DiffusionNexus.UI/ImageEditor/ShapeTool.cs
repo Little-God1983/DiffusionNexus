@@ -3,6 +3,48 @@ using SkiaSharp;
 namespace DiffusionNexus.UI.ImageEditor;
 
 /// <summary>
+/// Defines the interaction phase of the shape tool.
+/// </summary>
+public enum ShapeToolPhase
+{
+    /// <summary>No shape is active — ready to draw a new one.</summary>
+    Idle,
+    /// <summary>User is dragging to create a new shape.</summary>
+    Drawing,
+    /// <summary>A shape has been placed and can be moved/resized/rotated.</summary>
+    Placed,
+    /// <summary>The placed shape is being moved.</summary>
+    Moving,
+    /// <summary>The placed shape is being resized via a corner handle.</summary>
+    Resizing,
+    /// <summary>The placed shape is being rotated via the rotation handle.</summary>
+    Rotating
+}
+
+/// <summary>
+/// Identifies which manipulation handle is being interacted with on a placed shape.
+/// </summary>
+public enum ShapeManipulationHandle
+{
+    /// <summary>No handle — click is outside the shape.</summary>
+    None,
+    /// <summary>Click is inside the shape body — drag to move.</summary>
+    Body,
+    /// <summary>Top-left corner resize handle.</summary>
+    TopLeft,
+    /// <summary>Top-right corner resize handle.</summary>
+    TopRight,
+    /// <summary>Bottom-left corner resize handle.</summary>
+    BottomLeft,
+    /// <summary>Bottom-right corner resize handle.</summary>
+    BottomRight,
+    /// <summary>Rotation handle above the shape.</summary>
+    Rotate,
+    /// <summary>Delete/trash handle next to the rotation handle.</summary>
+    Delete
+}
+
+/// <summary>
 /// Defines the type of shape to draw.
 /// </summary>
 public enum ShapeType
@@ -41,11 +83,24 @@ public enum ShapeFillMode
 public class ShapeTool
 {
     private bool _isActive;
-    private bool _isDrawing;
+    private ShapeToolPhase _phase = ShapeToolPhase.Idle;
     private SKPoint _startPoint;
     private SKPoint _currentPoint;
     private SKRect _imageRect;
-    private ShapeData? _lastShape;
+    private ShapeData? _placedShape;
+
+    // Manipulation state
+    private ShapeManipulationHandle _activeHandle;
+    private SKPoint _manipulationAnchor;
+    private SKPoint _placedScreenStart;
+    private SKPoint _placedScreenEnd;
+    private float _rotationStartAngle;
+    private float _rotationBaseAngle;
+
+    private const float HandleRadius = 6f;
+    private const float RotateHandleOffset = 30f;
+    private const float DeleteHandleOffset = 32f;
+    private const float HandleHitRadius = 12f;
 
     /// <summary>
     /// Gets or sets whether the shape tool is currently active.
@@ -58,7 +113,8 @@ public class ShapeTool
             _isActive = value;
             if (!value)
             {
-                _isDrawing = false;
+                CancelPlacedShape();
+                _phase = ShapeToolPhase.Idle;
             }
         }
     }
@@ -102,7 +158,18 @@ public class ShapeTool
     /// <summary>
     /// Gets whether the user is currently drawing a shape.
     /// </summary>
-    public bool IsDrawing => _isDrawing;
+    public bool IsDrawing => _phase == ShapeToolPhase.Drawing;
+
+    /// <summary>
+    /// Gets the current interaction phase.
+    /// </summary>
+    public ShapeToolPhase Phase => _phase;
+
+    /// <summary>
+    /// Gets whether a shape is currently placed and can be manipulated.
+    /// </summary>
+    public bool HasPlacedShape => _phase is ShapeToolPhase.Placed or ShapeToolPhase.Moving
+        or ShapeToolPhase.Resizing or ShapeToolPhase.Rotating;
 
     /// <summary>
     /// Gets the start point of the current shape.
@@ -115,12 +182,12 @@ public class ShapeTool
     public SKPoint CurrentPoint => _currentPoint;
 
     /// <summary>
-    /// Gets the last completed shape data for potential editing.
+    /// Gets the placed shape data.
     /// </summary>
-    public ShapeData? LastShape => _lastShape;
+    public ShapeData? PlacedShape => _placedShape;
 
     /// <summary>
-    /// Event raised when a shape is completed and should be applied to the image.
+    /// Event raised when a shape is committed and should be applied to the image.
     /// </summary>
     public event EventHandler<ShapeCompletedEventArgs>? ShapeCompleted;
 
@@ -128,6 +195,11 @@ public class ShapeTool
     /// Event raised when the shape preview changes and a redraw is needed.
     /// </summary>
     public event EventHandler? ShapeChanged;
+
+    /// <summary>
+    /// Event raised when the placed-shape state changes (placed or cleared).
+    /// </summary>
+    public event EventHandler? PlacedShapeStateChanged;
 
     /// <summary>
     /// Sets the current image bounds for coordinate mapping.
@@ -138,57 +210,186 @@ public class ShapeTool
     }
 
     /// <summary>
-    /// Handles pointer press event to start drawing a shape.
+    /// Handles pointer press event.
     /// </summary>
     /// <returns>True if the event was handled.</returns>
     public bool OnPointerPressed(SKPoint screenPoint)
     {
         if (!_isActive) return false;
         if (_imageRect.Width <= 0 || _imageRect.Height <= 0) return false;
-        if (!_imageRect.Contains(screenPoint)) return false;
 
-        _isDrawing = true;
-        _startPoint = screenPoint;
-        _currentPoint = screenPoint;
+        switch (_phase)
+        {
+            case ShapeToolPhase.Placed:
+                return HandlePlacedPointerPressed(screenPoint);
 
-        ShapeChanged?.Invoke(this, EventArgs.Empty);
-        return true;
+            case ShapeToolPhase.Idle:
+                if (!_imageRect.Contains(screenPoint)) return false;
+                _phase = ShapeToolPhase.Drawing;
+                _startPoint = screenPoint;
+                _currentPoint = screenPoint;
+                ShapeChanged?.Invoke(this, EventArgs.Empty);
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>
-    /// Handles pointer move event to update the shape preview.
+    /// Handles pointer move event.
     /// </summary>
     /// <returns>True if the event was handled.</returns>
     public bool OnPointerMoved(SKPoint screenPoint)
     {
-        if (!_isActive || !_isDrawing) return false;
+        if (!_isActive) return false;
 
-        _currentPoint = screenPoint;
-        ShapeChanged?.Invoke(this, EventArgs.Empty);
-        return true;
+        switch (_phase)
+        {
+            case ShapeToolPhase.Drawing:
+                _currentPoint = screenPoint;
+                ShapeChanged?.Invoke(this, EventArgs.Empty);
+                return true;
+
+            case ShapeToolPhase.Moving:
+                HandleMoving(screenPoint);
+                return true;
+
+            case ShapeToolPhase.Resizing:
+                HandleResizing(screenPoint);
+                return true;
+
+            case ShapeToolPhase.Rotating:
+                HandleRotating(screenPoint);
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>
-    /// Handles pointer release event to complete the shape.
+    /// Handles pointer release event.
     /// </summary>
     /// <returns>True if the event was handled.</returns>
     public bool OnPointerReleased()
     {
-        if (!_isActive || !_isDrawing) return false;
+        if (!_isActive) return false;
 
-        _isDrawing = false;
+        switch (_phase)
+        {
+            case ShapeToolPhase.Drawing:
+                return FinishDrawingToPlaced();
 
+            case ShapeToolPhase.Moving:
+            case ShapeToolPhase.Resizing:
+            case ShapeToolPhase.Rotating:
+                _phase = ShapeToolPhase.Placed;
+                ShapeChanged?.Invoke(this, EventArgs.Empty);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Commits the currently placed shape, firing the ShapeCompleted event.
+    /// </summary>
+    /// <returns>True if a shape was committed.</returns>
+    public bool CommitPlacedShape()
+    {
+        if (_placedShape is null || !HasPlacedShape)
+            return false;
+
+        var args = new ShapeCompletedEventArgs(_placedShape);
+        ShapeCompleted?.Invoke(this, args);
+
+        _placedShape = null;
+        _phase = ShapeToolPhase.Idle;
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
+        PlacedShapeStateChanged?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>
+    /// Cancels the currently placed shape without applying it.
+    /// </summary>
+    public void CancelPlacedShape()
+    {
+        if (_placedShape is null && _phase == ShapeToolPhase.Idle) return;
+
+        _placedShape = null;
+        _phase = ShapeToolPhase.Idle;
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
+        PlacedShapeStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Determines which manipulation handle is under the given screen point.
+    /// </summary>
+    public ShapeManipulationHandle HitTestHandle(SKPoint screenPoint)
+    {
+        if (_placedShape is null || !HasPlacedShape) return ShapeManipulationHandle.None;
+
+        var start = NormalizedToScreen(_placedShape.NormalizedStart);
+        var end = NormalizedToScreen(_placedShape.NormalizedEnd);
+        var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+        var rotation = _placedShape.RotationDegrees;
+
+        // Transform the test point into the shape's local (unrotated) coordinate system
+        var local = RotatePointAround(screenPoint, center, -rotation);
+
+        var rect = CreateRect(start, end);
+
+        // Corner handles
+        if (DistanceSq(local, new SKPoint(rect.Left, rect.Top)) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.TopLeft;
+        if (DistanceSq(local, new SKPoint(rect.Right, rect.Top)) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.TopRight;
+        if (DistanceSq(local, new SKPoint(rect.Left, rect.Bottom)) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.BottomLeft;
+        if (DistanceSq(local, new SKPoint(rect.Right, rect.Bottom)) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.BottomRight;
+
+        // Rotation handle
+        var rotateHandlePos = new SKPoint(center.X, rect.Top - RotateHandleOffset);
+        if (DistanceSq(local, rotateHandlePos) < (HandleHitRadius + 6f) * (HandleHitRadius + 6f))
+            return ShapeManipulationHandle.Rotate;
+
+        // Delete handle (to the right of the rotation handle)
+        var deleteHandlePos = new SKPoint(center.X + DeleteHandleOffset, rect.Top - RotateHandleOffset);
+        if (DistanceSq(local, deleteHandlePos) < (HandleHitRadius + 6f) * (HandleHitRadius + 6f))
+            return ShapeManipulationHandle.Delete;
+
+        // Body (inside the shape rect with some padding)
+        var expandedRect = SKRect.Create(rect.Left - 4, rect.Top - 4, rect.Width + 8, rect.Height + 8);
+        if (expandedRect.Contains(local))
+            return ShapeManipulationHandle.Body;
+
+        return ShapeManipulationHandle.None;
+    }
+
+    private bool FinishDrawingToPlaced()
+    {
         // Apply constraints if active
-        var endPoint = ConstrainProportions 
-            ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType) 
+        var endPoint = ConstrainProportions
+            ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType)
             : _currentPoint;
+
+        // Ignore very small drags (< 3px)
+        if (Math.Abs(endPoint.X - _startPoint.X) < 3 && Math.Abs(endPoint.Y - _startPoint.Y) < 3)
+        {
+            _phase = ShapeToolPhase.Idle;
+            ShapeChanged?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
 
         // Convert screen points to normalized image coordinates
         var normalizedStart = ScreenToNormalized(_startPoint);
         var normalizedEnd = ScreenToNormalized(endPoint);
 
-        // Create shape data
-        var shapeData = new ShapeData
+        _placedShape = new ShapeData
         {
             ShapeType = ShapeType,
             FillMode = FillMode,
@@ -197,40 +398,312 @@ public class ShapeTool
             StrokeWidth = StrokeWidth / GetCurrentScale(),
             ArrowHeadSize = ArrowHeadSize,
             NormalizedStart = normalizedStart,
-            NormalizedEnd = normalizedEnd
+            NormalizedEnd = normalizedEnd,
+            RotationDegrees = 0f
         };
 
-        // Store as last shape for potential editing
-        _lastShape = shapeData;
+        _phase = ShapeToolPhase.Placed;
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
+        PlacedShapeStateChanged?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
 
-        // Emit completion event
-        var args = new ShapeCompletedEventArgs(shapeData);
-        ShapeCompleted?.Invoke(this, args);
+    private bool HandlePlacedPointerPressed(SKPoint screenPoint)
+    {
+        var handle = HitTestHandle(screenPoint);
+
+        if (handle == ShapeManipulationHandle.None)
+        {
+            // Click outside — commit current shape and start a new one if inside image
+            CommitPlacedShape();
+            if (_imageRect.Contains(screenPoint))
+            {
+                _phase = ShapeToolPhase.Drawing;
+                _startPoint = screenPoint;
+                _currentPoint = screenPoint;
+                ShapeChanged?.Invoke(this, EventArgs.Empty);
+            }
+            return true;
+        }
+
+        if (handle == ShapeManipulationHandle.Delete)
+        {
+            CancelPlacedShape();
+            return true;
+        }
+
+        _manipulationAnchor = screenPoint;
+        _placedScreenStart = NormalizedToScreen(_placedShape!.NormalizedStart);
+        _placedScreenEnd = NormalizedToScreen(_placedShape.NormalizedEnd);
+        _activeHandle = handle;
+
+        switch (handle)
+        {
+            case ShapeManipulationHandle.Body:
+                _phase = ShapeToolPhase.Moving;
+                break;
+
+            case ShapeManipulationHandle.Rotate:
+                _phase = ShapeToolPhase.Rotating;
+                var center = new SKPoint(
+                    (_placedScreenStart.X + _placedScreenEnd.X) / 2f,
+                    (_placedScreenStart.Y + _placedScreenEnd.Y) / 2f);
+                _rotationStartAngle = MathF.Atan2(
+                    screenPoint.Y - center.Y, screenPoint.X - center.X);
+                _rotationBaseAngle = _placedShape.RotationDegrees;
+                break;
+
+            default: // Corner resize handles
+                _phase = ShapeToolPhase.Resizing;
+                break;
+        }
 
         ShapeChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
 
-    /// <summary>
-    /// Clears the last shape reference.
-    /// </summary>
-    public void ClearLastShape()
+    private void HandleMoving(SKPoint screenPoint)
     {
-        _lastShape = null;
+        if (_placedShape is null) return;
+
+        var dx = screenPoint.X - _manipulationAnchor.X;
+        var dy = screenPoint.Y - _manipulationAnchor.Y;
+
+        var newStart = new SKPoint(_placedScreenStart.X + dx, _placedScreenStart.Y + dy);
+        var newEnd = new SKPoint(_placedScreenEnd.X + dx, _placedScreenEnd.Y + dy);
+
+        _placedShape.NormalizedStart = ScreenToNormalized(newStart);
+        _placedShape.NormalizedEnd = ScreenToNormalized(newEnd);
+
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void HandleResizing(SKPoint screenPoint)
+    {
+        if (_placedShape is null) return;
+
+        var center = new SKPoint(
+            (_placedScreenStart.X + _placedScreenEnd.X) / 2f,
+            (_placedScreenStart.Y + _placedScreenEnd.Y) / 2f);
+
+        // Work in local (unrotated) coordinates
+        var localPoint = RotatePointAround(screenPoint, center, -_placedShape.RotationDegrees);
+        var localStart = RotatePointAround(_placedScreenStart, center, -_placedShape.RotationDegrees);
+        var localEnd = RotatePointAround(_placedScreenEnd, center, -_placedShape.RotationDegrees);
+
+        var left = Math.Min(localStart.X, localEnd.X);
+        var top = Math.Min(localStart.Y, localEnd.Y);
+        var right = Math.Max(localStart.X, localEnd.X);
+        var bottom = Math.Max(localStart.Y, localEnd.Y);
+
+        switch (_activeHandle)
+        {
+            case ShapeManipulationHandle.TopLeft:
+                left = localPoint.X;
+                top = localPoint.Y;
+                break;
+            case ShapeManipulationHandle.TopRight:
+                right = localPoint.X;
+                top = localPoint.Y;
+                break;
+            case ShapeManipulationHandle.BottomLeft:
+                left = localPoint.X;
+                bottom = localPoint.Y;
+                break;
+            case ShapeManipulationHandle.BottomRight:
+                right = localPoint.X;
+                bottom = localPoint.Y;
+                break;
+        }
+
+        if (ConstrainProportions)
+        {
+            var w = Math.Abs(right - left);
+            var h = Math.Abs(bottom - top);
+            var size = Math.Max(w, h);
+            switch (_activeHandle)
+            {
+                case ShapeManipulationHandle.TopLeft:
+                    left = right - size;
+                    top = bottom - size;
+                    break;
+                case ShapeManipulationHandle.TopRight:
+                    right = left + size;
+                    top = bottom - size;
+                    break;
+                case ShapeManipulationHandle.BottomLeft:
+                    left = right - size;
+                    bottom = top + size;
+                    break;
+                case ShapeManipulationHandle.BottomRight:
+                    right = left + size;
+                    bottom = top + size;
+                    break;
+            }
+        }
+
+        // Rotate back to screen coordinates
+        var newStart = RotatePointAround(new SKPoint(left, top), center, _placedShape.RotationDegrees);
+        var newEnd = RotatePointAround(new SKPoint(right, bottom), center, _placedShape.RotationDegrees);
+
+        _placedShape.NormalizedStart = ScreenToNormalized(newStart);
+        _placedShape.NormalizedEnd = ScreenToNormalized(newEnd);
+
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void HandleRotating(SKPoint screenPoint)
+    {
+        if (_placedShape is null) return;
+
+        var screenStart = NormalizedToScreen(_placedShape.NormalizedStart);
+        var screenEnd = NormalizedToScreen(_placedShape.NormalizedEnd);
+        var center = new SKPoint(
+            (screenStart.X + screenEnd.X) / 2f,
+            (screenStart.Y + screenEnd.Y) / 2f);
+
+        var currentAngle = MathF.Atan2(
+            screenPoint.Y - center.Y, screenPoint.X - center.X);
+        var deltaAngle = (currentAngle - _rotationStartAngle) * (180f / MathF.PI);
+
+        _placedShape.RotationDegrees = _rotationBaseAngle + deltaAngle;
+
+        ShapeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
-    /// Renders the current shape preview on the canvas.
+    /// Renders the current shape preview and/or placed shape with manipulation handles.
     /// </summary>
     public void Render(SKCanvas canvas)
     {
-        if (!_isActive || !_isDrawing) return;
+        if (!_isActive) return;
 
-        var endPoint = ConstrainProportions 
-            ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType) 
-            : _currentPoint;
+        // Render drawing preview
+        if (_phase == ShapeToolPhase.Drawing)
+        {
+            var endPoint = ConstrainProportions
+                ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType)
+                : _currentPoint;
 
-        RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
+            RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
+        }
+
+        // Render placed shape with handles
+        if (HasPlacedShape && _placedShape is not null)
+        {
+            var start = NormalizedToScreen(_placedShape.NormalizedStart);
+            var end = NormalizedToScreen(_placedShape.NormalizedEnd);
+            var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+            var screenStrokeWidth = _placedShape.StrokeWidth * GetCurrentScale();
+
+            canvas.Save();
+            canvas.RotateDegrees(_placedShape.RotationDegrees, center.X, center.Y);
+
+            RenderShape(canvas, start, end, _placedShape.ShapeType, _placedShape.FillMode,
+                _placedShape.StrokeColor, _placedShape.FillColor, screenStrokeWidth, _placedShape.ArrowHeadSize);
+
+            canvas.Restore();
+
+            RenderManipulationHandles(canvas, start, end, _placedShape.RotationDegrees);
+        }
+    }
+
+    /// <summary>
+    /// Renders manipulation handles (corner dots and rotation handle) for the placed shape.
+    /// </summary>
+    private void RenderManipulationHandles(SKCanvas canvas, SKPoint start, SKPoint end, float rotation)
+    {
+        var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+
+        canvas.Save();
+        canvas.RotateDegrees(rotation, center.X, center.Y);
+
+        var rect = CreateRect(start, end);
+
+        // Bounding box dashed outline
+        using var linePaint = new SKPaint
+        {
+            Color = new SKColor(255, 255, 255, 180),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1f,
+            IsAntialias = true,
+            PathEffect = SKPathEffect.CreateDash([6f, 4f], 0)
+        };
+        canvas.DrawRect(rect, linePaint);
+
+        // Corner handles
+        SKPoint[] corners =
+        [
+            new(rect.Left, rect.Top),
+            new(rect.Right, rect.Top),
+            new(rect.Right, rect.Bottom),
+            new(rect.Left, rect.Bottom)
+        ];
+
+        using var handleFill = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill, IsAntialias = true };
+        using var handleStroke = new SKPaint { Color = new SKColor(0, 0, 0, 180), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+
+        foreach (var corner in corners)
+        {
+            canvas.DrawCircle(corner, HandleRadius, handleFill);
+            canvas.DrawCircle(corner, HandleRadius, handleStroke);
+        }
+
+        // Rotation handle stem
+        var topCenter = new SKPoint(center.X, rect.Top);
+        var rotateCenter = new SKPoint(center.X, rect.Top - RotateHandleOffset);
+
+        using var stemPaint = new SKPaint
+        {
+            Color = new SKColor(255, 255, 255, 140),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1f,
+            IsAntialias = true
+        };
+        canvas.DrawLine(topCenter, rotateCenter, stemPaint);
+
+        // Rotation handle circle with arrow icon
+        using var rotateBg = new SKPaint { Color = new SKColor(60, 60, 60, 220), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawCircle(rotateCenter, 12f, rotateBg);
+        canvas.DrawCircle(rotateCenter, 12f, handleStroke);
+
+        using var arrowPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.5f,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round
+        };
+        var arcRect = SKRect.Create(rotateCenter.X - 6, rotateCenter.Y - 6, 12, 12);
+        using var arcPath = new SKPath();
+        arcPath.AddArc(arcRect, -90, 270);
+        canvas.DrawPath(arcPath, arrowPaint);
+
+        // Delete/trash handle (to the right of the rotate handle)
+        var deleteCenter = new SKPoint(center.X + DeleteHandleOffset, rect.Top - RotateHandleOffset);
+        canvas.DrawLine(rotateCenter, deleteCenter, stemPaint);
+
+        using var deleteBg = new SKPaint { Color = new SKColor(140, 30, 30, 220), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawCircle(deleteCenter, 12f, deleteBg);
+        canvas.DrawCircle(deleteCenter, 12f, handleStroke);
+
+        // Draw X icon inside the delete circle
+        using var xPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 2f,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round
+        };
+        const float xSize = 4.5f;
+        canvas.DrawLine(deleteCenter.X - xSize, deleteCenter.Y - xSize,
+                        deleteCenter.X + xSize, deleteCenter.Y + xSize, xPaint);
+        canvas.DrawLine(deleteCenter.X + xSize, deleteCenter.Y - xSize,
+                        deleteCenter.X - xSize, deleteCenter.Y + xSize, xPaint);
+
+        canvas.Restore();
     }
 
     /// <summary>
@@ -416,6 +889,35 @@ public class ShapeTool
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
     }
 
+    private SKPoint NormalizedToScreen(SKPoint normalized)
+    {
+        if (_imageRect.Width <= 0 || _imageRect.Height <= 0)
+            return normalized;
+
+        var x = _imageRect.Left + normalized.X * _imageRect.Width;
+        var y = _imageRect.Top + normalized.Y * _imageRect.Height;
+        return new SKPoint(x, y);
+    }
+
+    private static SKPoint RotatePointAround(SKPoint point, SKPoint center, float degrees)
+    {
+        var rad = degrees * MathF.PI / 180f;
+        var cos = MathF.Cos(rad);
+        var sin = MathF.Sin(rad);
+        var dx = point.X - center.X;
+        var dy = point.Y - center.Y;
+        return new SKPoint(
+            center.X + dx * cos - dy * sin,
+            center.Y + dx * sin + dy * cos);
+    }
+
+    private static float DistanceSq(SKPoint a, SKPoint b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return dx * dx + dy * dy;
+    }
+
     /// <summary>
     /// Calculates a constrained end point to create squares from rectangles,
     /// circles from ellipses, and equal-sided crosses.
@@ -441,9 +943,9 @@ public class ShapeTool
 }
 
 /// <summary>
-/// Data representing a completed shape.
+/// Data representing a completed shape that can be manipulated before committing.
 /// </summary>
-public record ShapeData
+public class ShapeData
 {
     /// <summary>The type of shape.</summary>
     public required ShapeType ShapeType { get; init; }
@@ -464,10 +966,18 @@ public record ShapeData
     public float ArrowHeadSize { get; init; } = 4f;
 
     /// <summary>The start point in normalized image coordinates (0-1).</summary>
-    public required SKPoint NormalizedStart { get; init; }
+    public SKPoint NormalizedStart { get; set; }
 
     /// <summary>The end point in normalized image coordinates (0-1).</summary>
-    public required SKPoint NormalizedEnd { get; init; }
+    public SKPoint NormalizedEnd { get; set; }
+
+    /// <summary>The rotation angle in degrees around the center of the shape.</summary>
+    public float RotationDegrees { get; set; }
+
+    /// <summary>Gets the center point of the shape in normalized coordinates.</summary>
+    public SKPoint NormalizedCenter => new(
+        (NormalizedStart.X + NormalizedEnd.X) / 2f,
+        (NormalizedStart.Y + NormalizedEnd.Y) / 2f);
 }
 
 /// <summary>

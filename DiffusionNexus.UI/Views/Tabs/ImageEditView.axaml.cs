@@ -501,6 +501,23 @@ public partial class ImageEditView : UserControl
             drawingTool.BrushShape = imageEditor.DrawingBrushShape;
         };
 
+        // Handle placed shape commit/cancel from ViewModel
+        imageEditor.CommitPlacedShapeRequested += (_, _) =>
+        {
+            _imageEditorCanvas.CommitPlacedShape();
+        };
+
+        imageEditor.CancelPlacedShapeRequested += (_, _) =>
+        {
+            _imageEditorCanvas.CancelPlacedShape();
+        };
+
+        // Sync placed shape state from canvas to ViewModel
+        _imageEditorCanvas.PlacedShapeStateChanged += (_, _) =>
+        {
+            imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
+        };
+
 
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
