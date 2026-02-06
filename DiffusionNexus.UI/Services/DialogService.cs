@@ -249,6 +249,54 @@ public class DialogService : IDialogService
         }
     }
 
+    public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
+        string? preselectedDatasetName, int? preselectedVersion)
+    {
+        FileLogger.LogEntry($"originalFilePath={originalFilePath}, preselectedDataset={preselectedDatasetName ?? "(null)"}, preselectedVersion={preselectedVersion?.ToString() ?? "(null)"}");
+
+        try
+        {
+            if (_window is null)
+            {
+                FileLogger.LogError("ShowSaveAsDialogAsync: _window is null!");
+                return SaveAsResult.Cancelled();
+            }
+
+            if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+            {
+                return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                    () => ShowSaveAsDialogAsync(originalFilePath, availableDatasets, preselectedDatasetName, preselectedVersion));
+            }
+
+            var dialog = new SaveAsDialog();
+            dialog.WithOriginalFile(originalFilePath)
+                  .WithDatasets(availableDatasets)
+                  .WithPreselectedDataset(preselectedDatasetName, preselectedVersion);
+
+            FileLogger.Log($"Showing dialog on window type: {_window.GetType().Name}");
+
+            SaveAsResult? result = null;
+            try
+            {
+                result = await dialog.ShowDialog<SaveAsResult>(_window);
+            }
+            catch (Exception showEx)
+            {
+                FileLogger.LogError("FATAL ERROR in dialog.ShowDialog", showEx);
+                return SaveAsResult.Cancelled();
+            }
+
+            FileLogger.Log($"Dialog result: {(result is null ? "null" : $"IsCancelled={result.IsCancelled}")}");
+            FileLogger.LogExit();
+            return result ?? SaveAsResult.Cancelled();
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception in ShowSaveAsDialogAsync", ex);
+            return SaveAsResult.Cancelled();
+        }
+    }
+
     public async Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage)
     {
         var vm = new ReplaceImageDialogViewModel(originalImage);

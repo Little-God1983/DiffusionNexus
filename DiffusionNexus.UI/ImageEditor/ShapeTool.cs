@@ -16,7 +16,9 @@ public enum ShapeType
     /// <summary>Arrow shape.</summary>
     Arrow,
     /// <summary>Straight line.</summary>
-    Line
+    Line,
+    /// <summary>X/Cross shape.</summary>
+    Cross
 }
 
 /// <summary>
@@ -316,6 +318,10 @@ public class ShapeTool
             case ShapeType.Arrow:
                 DrawArrow(canvas, start, end, strokePaint, strokeWidth);
                 break;
+
+            case ShapeType.Cross:
+                DrawCross(canvas, rect, strokePaint);
+                break;
         }
     }
 
@@ -385,6 +391,15 @@ public class ShapeTool
         canvas.DrawPath(path, fillPaint);
     }
 
+    private static void DrawCross(SKCanvas canvas, SKRect rect, SKPaint paint)
+    {
+        // Draw an X shape with two diagonal lines
+        // Line from top-left to bottom-right
+        canvas.DrawLine(rect.Left, rect.Top, rect.Right, rect.Bottom, paint);
+        // Line from top-right to bottom-left
+        canvas.DrawLine(rect.Right, rect.Top, rect.Left, rect.Bottom, paint);
+    }
+
     private SKPoint ScreenToNormalized(SKPoint screenPoint)
     {
         if (_imageRect.Width <= 0 || _imageRect.Height <= 0)
@@ -402,13 +417,13 @@ public class ShapeTool
     }
 
     /// <summary>
-    /// Calculates a constrained end point to create squares from rectangles
-    /// and circles from ellipses.
+    /// Calculates a constrained end point to create squares from rectangles,
+    /// circles from ellipses, and equal-sided crosses.
     /// </summary>
     private static SKPoint GetConstrainedEndPoint(SKPoint start, SKPoint current, ShapeType shapeType)
     {
-        // Only constrain for Rectangle and Ellipse shapes
-        if (shapeType != ShapeType.Rectangle && shapeType != ShapeType.Ellipse)
+        // Only constrain for Rectangle, Ellipse, and Cross shapes
+        if (shapeType != ShapeType.Rectangle && shapeType != ShapeType.Ellipse && shapeType != ShapeType.Cross)
             return current;
 
         var dx = current.X - start.X;

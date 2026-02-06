@@ -120,6 +120,12 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets) =>
             Task.FromResult(SaveAsResult.Cancelled());
 
+        public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
+            string? preselectedDatasetName, int? preselectedVersion) =>
+            Task.FromResult(SaveAsResult.Cancelled());
+
+
+
 
         public Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage) =>
             Task.FromResult(ReplaceImageResult.Cancelled());

@@ -304,6 +304,35 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         return this;
     }
 
+    /// <summary>
+    /// Pre-selects a specific dataset and version in the dialog.
+    /// Must be called after <see cref="WithDatasets"/>.
+    /// </summary>
+    /// <param name="datasetName">The name of the dataset to pre-select.</param>
+    /// <param name="version">The version number to pre-select, or null for the latest.</param>
+    public SaveAsDialog WithPreselectedDataset(string? datasetName, int? version)
+    {
+        if (string.IsNullOrWhiteSpace(datasetName))
+            return this;
+
+        var match = AvailableDatasets.FirstOrDefault(
+            d => string.Equals(d.Name, datasetName, StringComparison.OrdinalIgnoreCase));
+
+        if (match is not null)
+        {
+            SelectedDataset = match;
+
+            if (version.HasValue && AvailableVersions.Contains(version.Value))
+            {
+                SelectedVersion = version.Value;
+            }
+        }
+
+        return this;
+    }
+
+
+
 
 
 

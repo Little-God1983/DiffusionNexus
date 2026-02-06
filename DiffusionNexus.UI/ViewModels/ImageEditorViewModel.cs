@@ -106,6 +106,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private LayerViewModel? _selectedLayer;
     private ObservableCollection<LayerViewModel> _layers = new();
 
+    // Crop aspect ratio fields
+    private string _cropResolutionText = string.Empty;
+    private bool _cropAspectInverted;
+
     /// <summary>
     /// Path to the currently loaded image.
     /// </summary>
@@ -1059,6 +1063,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsShapeEllipse));
                 OnPropertyChanged(nameof(IsShapeArrow));
                 OnPropertyChanged(nameof(IsShapeLine));
+                OnPropertyChanged(nameof(IsShapeCross));
                 OnPropertyChanged(nameof(IsShapeMode));
                 ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
                 UpdateDrawingModeStatus();
@@ -1099,6 +1104,13 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         get => _selectedShapeType == ImageEditor.ShapeType.Line;
         set { if (value) SelectedShapeType = ImageEditor.ShapeType.Line; }
+    }
+
+    /// <summary>Whether cross/X shape is selected.</summary>
+    public bool IsShapeCross
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Cross;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Cross; }
     }
 
     /// <summary>Whether a shape mode (not freehand) is selected.</summary>
@@ -1417,6 +1429,20 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>Resolution text for the current crop region (e.g., "1920 x 1080").</summary>
+    public string CropResolutionText
+    {
+        get => _cropResolutionText;
+        set => SetProperty(ref _cropResolutionText, value);
+    }
+
+    /// <summary>Whether the crop aspect ratio buttons are in inverted (H:W) mode.</summary>
+    public bool CropAspectInverted
+    {
+        get => _cropAspectInverted;
+        set => SetProperty(ref _cropAspectInverted, value);
+    }
+
     /// <summary>Current zoom percentage (10-1000).</summary>
     public int ZoomPercentage
     {
@@ -1653,6 +1679,10 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand ToggleCropToolCommand { get; }
     public IRelayCommand ApplyCropCommand { get; }
     public IRelayCommand CancelCropCommand { get; }
+    public IRelayCommand FitCropCommand { get; }
+    public IRelayCommand FillCropCommand { get; }
+    public IRelayCommand<string> SetCropAspectRatioCommand { get; }
+    public IRelayCommand SwitchCropAspectRatioCommand { get; }
     public IAsyncRelayCommand SaveAsNewCommand { get; }
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
@@ -1709,6 +1739,10 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? CropToolDeactivated;
     public event EventHandler? ApplyCropRequested;
     public event EventHandler? CancelCropRequested;
+    public event EventHandler? FitCropRequested;
+    public event EventHandler? FillCropRequested;
+    public event EventHandler<(float W, float H)>? SetCropAspectRatioRequested;
+    public event EventHandler? SwitchCropAspectRatioRequested;
     
     /// <summary>
     /// Event raised to request the Save As dialog.
@@ -1883,6 +1917,10 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleCropToolCommand.NotifyCanExecuteChanged();
         ApplyCropCommand.NotifyCanExecuteChanged();
         CancelCropCommand.NotifyCanExecuteChanged();
+        FitCropCommand.NotifyCanExecuteChanged();
+        FillCropCommand.NotifyCanExecuteChanged();
+        SetCropAspectRatioCommand.NotifyCanExecuteChanged();
+        SwitchCropAspectRatioCommand.NotifyCanExecuteChanged();
         ToggleColorBalanceCommand.NotifyCanExecuteChanged();
         ApplyColorBalanceCommand.NotifyCanExecuteChanged();
         ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
@@ -2063,6 +2101,10 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
+        FitCropCommand = new RelayCommand(ExecuteFitCrop, () => HasImage && IsCropToolActive);
+        FillCropCommand = new RelayCommand(ExecuteFillCrop, () => HasImage && IsCropToolActive);
+        SetCropAspectRatioCommand = new RelayCommand<string>(ExecuteSetCropAspectRatio, _ => HasImage && IsCropToolActive);
+        SwitchCropAspectRatioCommand = new RelayCommand(ExecuteSwitchCropAspectRatio, () => HasImage && IsCropToolActive);
         SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
@@ -2176,6 +2218,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public void OnCropApplied()
     {
         IsCropToolActive = false;
+        CropResolutionText = string.Empty;
         StatusMessage = "Crop applied";
     }
 
@@ -2512,7 +2555,49 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteCancelCrop()
     {
         IsCropToolActive = false;
+        CropResolutionText = string.Empty;
         CancelCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteFitCrop()
+    {
+        FitCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteFillCrop()
+    {
+        FillCropRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteSetCropAspectRatio(string? ratio)
+    {
+        if (string.IsNullOrWhiteSpace(ratio)) return;
+
+        var parts = ratio.Split(':');
+        if (parts.Length != 2 ||
+            !float.TryParse(parts[0], out var w) ||
+            !float.TryParse(parts[1], out var h))
+            return;
+
+        if (_cropAspectInverted)
+            (w, h) = (h, w);
+
+        SetCropAspectRatioRequested?.Invoke(this, (w, h));
+    }
+
+    private void ExecuteSwitchCropAspectRatio()
+    {
+        CropAspectInverted = !CropAspectInverted;
+        SwitchCropAspectRatioRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Updates the crop resolution text from the current crop dimensions.
+    /// Called by the View when the crop region changes.
+    /// </summary>
+    public void UpdateCropResolution(int width, int height)
+    {
+        CropResolutionText = width > 0 && height > 0 ? $"{width} x {height}" : string.Empty;
     }
 
     private async Task ExecuteSaveAsNewAsync()

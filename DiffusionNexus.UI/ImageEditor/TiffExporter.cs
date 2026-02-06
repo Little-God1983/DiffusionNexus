@@ -227,14 +227,14 @@ public static class TiffExporter
 
                 bitmap.Pixels = pixels;
 
-                // Create and add layer
+                // Create and add layer (append to maintain save order: index 0 = bottom)
                 var layer = new Layer(bitmap, layerName)
                 {
                     Opacity = opacity,
                     BlendMode = blendMode,
                     IsVisible = isVisible
                 };
-                layerStack.InsertLayer(0, layer); // Insert at bottom to maintain order
+                layerStack.InsertLayer(layerStack.Count, layer);
                 
                 bitmap.Dispose(); // Layer makes a copy
 
@@ -242,7 +242,7 @@ public static class TiffExporter
             }
             while (tiff.ReadDirectory());
 
-            // Set first layer as active
+            // Set top layer as active
             if (layerStack.Count > 0)
             {
                 layerStack.ActiveLayer = layerStack[layerStack.Count - 1];

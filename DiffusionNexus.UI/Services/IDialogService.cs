@@ -149,6 +149,16 @@ public interface IDialogService
     /// <returns>Save result with filename, destination, and rating, or cancelled result.</returns>
     Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets);
 
+    /// <summary>
+    /// Shows the Save As dialog with a pre-selected dataset and version.
+    /// </summary>
+    /// <param name="originalFilePath">Full path to the original file.</param>
+    /// <param name="availableDatasets">List of available datasets to offer as save destinations.</param>
+    /// <param name="preselectedDatasetName">Name of the dataset to pre-select.</param>
+    /// <param name="preselectedVersion">Version number to pre-select, or null for the latest.</param>
+    /// <returns>Save result with filename, destination, and rating, or cancelled result.</returns>
+    Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
+        string? preselectedDatasetName, int? preselectedVersion);
 
     /// <summary>
     /// Shows the Replace Image dialog for comparing and replacing an image.

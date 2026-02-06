@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.Services;
@@ -16,9 +19,13 @@ namespace DiffusionNexus.UI.Views.Tabs;
 /// </summary>
 public partial class ImageEditView : UserControl
 {
+    private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".tif"];
+    
     private static int _instanceCounter;
     private readonly int _instanceId;
     private ImageEditorControl? _imageEditorCanvas;
+    private Border? _imageDropZone;
+    private Button? _openImageButton;
     private bool _eventsWired;
 
 
@@ -35,6 +42,22 @@ public partial class ImageEditView : UserControl
     {
         AvaloniaXamlLoader.Load(this);
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
+        _imageDropZone = this.FindControl<Border>("ImageDropZone");
+        _openImageButton = this.FindControl<Button>("OpenImageButton");
+        
+        // Set up drag-drop handlers for drop zone
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.AddHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageDropZone.AddHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageDropZone.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+        
+        // Set up open image button click handler
+        if (_openImageButton is not null)
+        {
+            _openImageButton.Click += OnOpenImageButtonClick;
+        }
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -185,6 +208,41 @@ public partial class ImageEditView : UserControl
         {
             _imageEditorCanvas.EditorCore.CropTool.ClearCropRegion();
             _imageEditorCanvas.DeactivateCropTool();
+        };
+
+        // Handle crop fit-to-image request
+        imageEditor.FitCropRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.FitToImage();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle crop fill-entire-image request
+        imageEditor.FillCropRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.FillImage();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle crop aspect ratio request
+        imageEditor.SetCropAspectRatioRequested += (_, ratio) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle crop aspect ratio switch (W:H <-> H:W)
+        imageEditor.SwitchCropAspectRatioRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.SwitchAspectRatio();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Update crop resolution text when the crop region changes
+        _imageEditorCanvas.EditorCore.CropTool.CropRegionChanged += (_, _) =>
+        {
+            var (w, h) = _imageEditorCanvas.EditorCore.CropTool.GetCropPixelDimensions();
+            imageEditor.UpdateCropResolution(w, h);
         };
 
         // Handle zoom requests
@@ -456,9 +514,15 @@ public partial class ImageEditView : UserControl
                 FileLogger.LogWarning($"[Instance #{_instanceId}] DialogService or CurrentImagePath is null, returning Cancelled");
                 return SaveAsResult.Cancelled();
             }
+
+            var preselectedDatasetName = vm.SelectedEditorDataset?.Name;
+            var preselectedVersion = vm.SelectedEditorVersion?.Version;
+
             var result = await vm.DialogService.ShowSaveAsDialogAsync(
                 imageEditor.CurrentImagePath, 
-                vm.EditorDatasets.Where(d => !d.IsTemporary));
+                vm.EditorDatasets.Where(d => !d.IsTemporary),
+                preselectedDatasetName,
+                preselectedVersion);
             FileLogger.LogExit($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
             return result;
 
@@ -837,4 +901,176 @@ public partial class ImageEditView : UserControl
         drawingTool.BrushSize = imageEditor.DrawingBrushSize;
         drawingTool.BrushShape = imageEditor.DrawingBrushShape;
     }
+
+    #region Image Drop Zone Handlers
+
+    private void OnImageDragEnter(object? sender, DragEventArgs e)
+    {
+        if (_imageDropZone is null) return;
+
+        var hasValidImage = AnalyzeImageFilesInDrag(e);
+
+        if (hasValidImage)
+        {
+            _imageDropZone.BorderBrush = Brushes.LimeGreen;
+            _imageDropZone.BorderThickness = new Thickness(3);
+            e.DragEffects = DragDropEffects.Copy;
+        }
+        else
+        {
+            _imageDropZone.BorderBrush = Brushes.Red;
+            _imageDropZone.BorderThickness = new Thickness(3);
+            e.DragEffects = DragDropEffects.None;
+        }
+    }
+
+    private void OnImageDragLeave(object? sender, DragEventArgs e)
+    {
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.BorderBrush = new SolidColorBrush(Color.Parse("#444"));
+            _imageDropZone.BorderThickness = new Thickness(3);
+        }
+    }
+
+    private void OnImageDrop(object? sender, DragEventArgs e)
+    {
+        // Reset border
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.BorderBrush = new SolidColorBrush(Color.Parse("#444"));
+            _imageDropZone.BorderThickness = new Thickness(3);
+        }
+
+        var files = e.Data.GetFiles();
+        if (files is null) return;
+
+        // Find the first valid image file
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                var filePath = file.Path.LocalPath;
+                if (IsImageFile(filePath))
+                {
+                    LoadDroppedImage(filePath);
+                    return;
+                }
+            }
+        }
+    }
+
+    private bool AnalyzeImageFilesInDrag(DragEventArgs e)
+    {
+        var files = e.Data.GetFiles();
+        if (files is null) return false;
+
+        foreach (var item in files)
+        {
+            if (item is IStorageFile file)
+            {
+                var filePath = file.Path.LocalPath;
+                if (IsImageFile(filePath))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsImageFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return ImageExtensions.Contains(extension);
+    }
+
+    private static bool IsTiffFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension is ".tiff" or ".tif";
+    }
+
+    private void LoadDroppedImage(string filePath)
+    {
+        if (_imageEditorCanvas is null || DataContext is not ImageEditTabViewModel vm)
+            return;
+
+        try
+        {
+            FileLogger.Log($"Loading dropped image: {filePath}");
+            
+            bool loaded;
+            
+            // TIFF files are loaded as layers to preserve multi-page structure
+            if (IsTiffFile(filePath))
+            {
+                FileLogger.Log($"Detected TIFF file, loading as layers: {filePath}");
+                loaded = _imageEditorCanvas.LoadLayeredTiff(filePath);
+            }
+            else
+            {
+                loaded = _imageEditorCanvas.LoadImage(filePath);
+            }
+
+            if (loaded)
+            {
+                vm.ImageEditor.CurrentImagePath = filePath;
+                
+                // Sync layer state with ViewModel
+                vm.ImageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+                vm.ImageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                
+                vm.ImageEditor.StatusMessage = IsTiffFile(filePath)
+                    ? $"Loaded: {Path.GetFileName(filePath)} ({_imageEditorCanvas.EditorCore.Layers?.Count ?? 1} layers)"
+                    : $"Loaded: {Path.GetFileName(filePath)}";
+                FileLogger.Log($"Successfully loaded dropped image: {filePath}");
+            }
+            else
+            {
+                vm.ImageEditor.StatusMessage = "Failed to load image.";
+                FileLogger.LogError($"Failed to load dropped image: {filePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            vm.ImageEditor.StatusMessage = $"Error loading image: {ex.Message}";
+            FileLogger.LogError($"Exception loading dropped image: {filePath}", ex);
+        }
+    }
+
+    private async void OnOpenImageButtonClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not ImageEditTabViewModel vm)
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is null) return;
+
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open Image",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Image Files")
+                {
+                    Patterns = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif", "*.webp", "*.tiff", "*.tif"]
+                },
+                new FilePickerFileType("All Files")
+                {
+                    Patterns = ["*.*"]
+                }
+            ]
+        });
+
+        if (files.Count > 0)
+        {
+            var filePath = files[0].Path.LocalPath;
+            LoadDroppedImage(filePath);
+        }
+    }
+
+    #endregion
 }

@@ -71,6 +71,18 @@ public class CropTool
     public bool HasCropRegion => _hasCropRegion;
 
     /// <summary>
+    /// The image width in pixels, used for resolution label rendering.
+    /// Set externally when the image dimensions are known.
+    /// </summary>
+    public int ImagePixelWidth { get; set; }
+
+    /// <summary>
+    /// The image height in pixels, used for resolution label rendering.
+    /// Set externally when the image dimensions are known.
+    /// </summary>
+    public int ImagePixelHeight { get; set; }
+
+    /// <summary>
     /// Gets the current crop rectangle in screen coordinates.
     /// </summary>
     public SKRect CropRect => GetScreenCropRect();
@@ -312,6 +324,9 @@ public class CropTool
 
         // Draw handles
         DrawHandles(canvas, cropRect);
+
+        // Draw resolution label
+        DrawResolutionLabel(canvas, cropRect);
     }
 
     /// <summary>
@@ -445,6 +460,189 @@ public class CropTool
         var dx = point.X - handleCenter.X;
         var dy = point.Y - handleCenter.Y;
         return dx * dx + dy * dy <= HandleHitRadius * HandleHitRadius;
+    }
+
+    /// <summary>
+    /// Gets the crop region dimensions in image pixels.
+    /// </summary>
+    public (int Width, int Height) GetCropPixelDimensions()
+    {
+        if (!_hasCropRegion || ImagePixelWidth <= 0 || ImagePixelHeight <= 0)
+            return (0, 0);
+
+        var w = (int)Math.Round((_normalizedRight - _normalizedLeft) * ImagePixelWidth);
+        var h = (int)Math.Round((_normalizedBottom - _normalizedTop) * ImagePixelHeight);
+        return (Math.Max(w, 1), Math.Max(h, 1));
+    }
+
+    /// <summary>
+    /// Expands the crop region to fill the image on the short side while maintaining the current aspect ratio.
+    /// </summary>
+    public void FitToImage()
+    {
+        if (!_hasCropRegion) return;
+
+        var cropW = _normalizedRight - _normalizedLeft;
+        var cropH = _normalizedBottom - _normalizedTop;
+        if (cropW <= 0 || cropH <= 0) return;
+
+        var aspectRatio = cropW / cropH;
+
+        // Determine which dimension to fill
+        float newW, newH;
+        if (aspectRatio >= 1f)
+        {
+            // Wider than tall: fill width, compute height
+            newW = 1f;
+            newH = newW / aspectRatio;
+            if (newH > 1f) { newH = 1f; newW = newH * aspectRatio; }
+        }
+        else
+        {
+            // Taller than wide: fill height, compute width
+            newH = 1f;
+            newW = newH * aspectRatio;
+            if (newW > 1f) { newW = 1f; newH = newW / aspectRatio; }
+        }
+
+        // Center the crop
+        _normalizedLeft = (1f - newW) / 2f;
+        _normalizedTop = (1f - newH) / 2f;
+        _normalizedRight = _normalizedLeft + newW;
+        _normalizedBottom = _normalizedTop + newH;
+
+        CropRegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Sets the crop region to cover the entire image.
+    /// </summary>
+    public void FillImage()
+    {
+        _normalizedLeft = 0f;
+        _normalizedTop = 0f;
+        _normalizedRight = 1f;
+        _normalizedBottom = 1f;
+        _hasCropRegion = true;
+
+        CropRegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Adjusts the crop region to the given aspect ratio while keeping size as large as possible.
+    /// The region stays centered at its current center.
+    /// </summary>
+    /// <param name="ratioW">Width component of the desired aspect ratio.</param>
+    /// <param name="ratioH">Height component of the desired aspect ratio.</param>
+    public void SetAspectRatio(float ratioW, float ratioH)
+    {
+        if (!_hasCropRegion || ratioW <= 0 || ratioH <= 0) return;
+
+        var cropW = _normalizedRight - _normalizedLeft;
+        var cropH = _normalizedBottom - _normalizedTop;
+        if (cropW <= 0 || cropH <= 0) return;
+
+        var centerX = (_normalizedLeft + _normalizedRight) / 2f;
+        var centerY = (_normalizedTop + _normalizedBottom) / 2f;
+
+        // Use the image pixel aspect to convert normalized aspect ratio
+        // Normalized coords are 0-1 for both axes, so we must account for image dimensions
+        var targetNormRatio = (ratioW / ratioH) * ((float)ImagePixelHeight / ImagePixelWidth);
+
+        float newW, newH;
+        var currentNormRatio = cropW / cropH;
+
+        if (targetNormRatio > currentNormRatio)
+        {
+            // New ratio is wider: keep width, shrink height
+            newW = cropW;
+            newH = newW / targetNormRatio;
+        }
+        else
+        {
+            // New ratio is taller: keep height, shrink width
+            newH = cropH;
+            newW = newH * targetNormRatio;
+        }
+
+        // Ensure minimum size
+        newW = Math.Max(newW, MinCropSizeNormalized);
+        newH = Math.Max(newH, MinCropSizeNormalized);
+
+        // Position centered, then clamp to image bounds
+        _normalizedLeft = centerX - newW / 2f;
+        _normalizedTop = centerY - newH / 2f;
+        _normalizedRight = centerX + newW / 2f;
+        _normalizedBottom = centerY + newH / 2f;
+
+        // Shift into bounds if needed
+        if (_normalizedLeft < 0) { _normalizedRight -= _normalizedLeft; _normalizedLeft = 0; }
+        if (_normalizedTop < 0) { _normalizedBottom -= _normalizedTop; _normalizedTop = 0; }
+        if (_normalizedRight > 1) { _normalizedLeft -= (_normalizedRight - 1); _normalizedRight = 1; }
+        if (_normalizedBottom > 1) { _normalizedTop -= (_normalizedBottom - 1); _normalizedBottom = 1; }
+
+        // Final clamp
+        _normalizedLeft = Math.Clamp(_normalizedLeft, 0, 1);
+        _normalizedTop = Math.Clamp(_normalizedTop, 0, 1);
+        _normalizedRight = Math.Clamp(_normalizedRight, 0, 1);
+        _normalizedBottom = Math.Clamp(_normalizedBottom, 0, 1);
+
+        CropRegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Switches the current crop aspect ratio from W:H to H:W.
+    /// </summary>
+    public void SwitchAspectRatio()
+    {
+        if (!_hasCropRegion) return;
+
+        var (pixW, pixH) = GetCropPixelDimensions();
+        if (pixW <= 0 || pixH <= 0) return;
+
+        // Swap: the new ratio is H:W
+        SetAspectRatio(pixH, pixW);
+    }
+
+    private void DrawResolutionLabel(SKCanvas canvas, SKRect cropRect)
+    {
+        var (pixW, pixH) = GetCropPixelDimensions();
+        if (pixW <= 0 || pixH <= 0) return;
+
+        var text = $"{pixW} x {pixH}";
+
+        using var font = new SKFont(SKTypeface.Default, 12f);
+        using var textPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            IsAntialias = true
+        };
+
+        var textBounds = new SKRect();
+        font.MeasureText(text, out textBounds, textPaint);
+
+        var labelX = cropRect.MidX - textBounds.Width / 2f;
+        var labelY = cropRect.Top - 8f;
+
+        // If the label would go above the canvas, place it inside the crop at the top
+        if (labelY - textBounds.Height < 0)
+            labelY = cropRect.Top + textBounds.Height + 6f;
+
+        // Background pill
+        var bgRect = new SKRect(
+            labelX - 6f,
+            labelY - textBounds.Height - 2f,
+            labelX + textBounds.Width + 6f,
+            labelY + 4f);
+
+        using var bgPaint = new SKPaint
+        {
+            Color = new SKColor(0, 0, 0, 180),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true
+        };
+        canvas.DrawRoundRect(bgRect, 4f, 4f, bgPaint);
+        canvas.DrawText(text, labelX, labelY, font, textPaint);
     }
 
     private void NormalizeAndConstrain(ref float left, ref float top, ref float right, ref float bottom)

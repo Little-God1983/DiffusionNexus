@@ -535,6 +535,8 @@ public class ImageEditorCore : IDisposable
 
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
+            CropTool.ImagePixelWidth = bitmapToRender.Width;
+            CropTool.ImagePixelHeight = bitmapToRender.Height;
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             // Update drawing tool with current image bounds and render overlay
@@ -584,6 +586,7 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Resets to the original loaded image, discarding all edits.
+    /// When in layer mode, recreates the layer stack from the original bitmap.
     /// </summary>
     public void ResetToOriginal()
     {
@@ -591,8 +594,34 @@ public class ImageEditorCore : IDisposable
             return;
 
         ClearPreview();
+
+        // If in layer mode, dispose the current layer stack
+        if (_isLayerMode && _layers != null)
+        {
+            _layers.ContentChanged -= OnLayersContentChanged;
+            _layers.LayersChanged -= OnLayersCollectionChanged;
+            _layers.Dispose();
+            _layers = null;
+        }
+
+        // Reset working bitmap from original
         _workingBitmap?.Dispose();
         _workingBitmap = _originalBitmap.Copy();
+
+        // If was in layer mode, recreate the layer stack from the reset working bitmap
+        if (_isLayerMode)
+        {
+            var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
+                ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
+                : "Background";
+
+            _layers = new LayerStack(_workingBitmap.Width, _workingBitmap.Height);
+            _layers.AddLayerFromBitmap(_workingBitmap, layerName);
+            _layers.ContentChanged += OnLayersContentChanged;
+            _layers.LayersChanged += OnLayersCollectionChanged;
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         OnImageChanged();
     }
 
@@ -983,6 +1012,8 @@ public class ImageEditorCore : IDisposable
 
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
+            CropTool.ImagePixelWidth = imageWidth;
+            CropTool.ImagePixelHeight = imageHeight;
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             // Update drawing tool with current image bounds and render overlay
@@ -2388,9 +2419,14 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if loaded successfully.</returns>
     public bool LoadLayeredTiff(string filePath)
     {
-        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
-        if (loadedLayers == null)
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return false;
+
+        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
+        if (loadedLayers == null || loadedLayers.Count == 0)
+            return false;
+
+        ClearPreview(raiseEvent: false);
 
         // Dispose existing layers
         if (_layers != null)
@@ -2400,12 +2436,26 @@ public class ImageEditorCore : IDisposable
             _layers.Dispose();
         }
 
+        // Dispose old bitmaps
+        _originalBitmap?.Dispose();
+        _workingBitmap?.Dispose();
+
+        // Store a flattened copy as the original for Reset support
+        var flattened = loadedLayers.Flatten();
+        _originalBitmap = flattened;
+        _workingBitmap = flattened?.Copy();
+
+        // Get file size
+        var fileInfo = new FileInfo(filePath);
+        FileSizeBytes = fileInfo.Length;
+
         _layers = loadedLayers;
         _layers.ContentChanged += OnLayersContentChanged;
         _layers.LayersChanged += OnLayersCollectionChanged;
         _isLayerMode = true;
         CurrentImagePath = filePath;
 
+        ResetZoom();
         OnImageChanged();
         LayerModeChanged?.Invoke(this, EventArgs.Empty);
         LayersChanged?.Invoke(this, EventArgs.Empty);

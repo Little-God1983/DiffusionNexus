@@ -180,14 +180,21 @@
       <!-- Image Editor Canvas -->
       <Border Grid.Row="1" Background="#1A1A1A" Margin="16">
         <Grid>
-          <!-- Empty state - text instead of emoji -->
-          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding !ImageEditor.HasImage}">
-            <Border Background="#333" CornerRadius="12" Padding="24">
-              <TextBlock Text="No Image" FontSize="18" Opacity="0.4" HorizontalAlignment="Center"/>
-            </Border>
-            <TextBlock Text="No image loaded" FontSize="16" Opacity="0.4" HorizontalAlignment="Center" Margin="0,12,0,0"/>
-            <TextBlock Text="Use 'Send to Image Edit' from Dataset Management" FontSize="12" Opacity="0.3" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-          </StackPanel>
+          <!-- Empty state - Drop Zone -->
+          <Border x:Name="ImageDropZone" IsVisible="{Binding !ImageEditor.HasImage}"
+                  Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" CornerRadius="12"
+                  DragDrop.AllowDrop="True">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+              <Border Background="#333" CornerRadius="12" Padding="24">
+                <TextBlock Text="IMAGE EDITOR" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+              </Border>
+              <TextBlock Text="No image loaded" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+              <TextBlock Text="Drag and drop an image here" FontSize="14" Foreground="#888" HorizontalAlignment="Center"/>
+              <TextBlock Text="or use 'Send to Image Edit' from Dataset Management" FontSize="12" Foreground="#666" HorizontalAlignment="Center"/>
+              <Button x:Name="OpenImageButton" Content="+ Open Image" HorizontalAlignment="Center" 
+                      Padding="16,10" FontSize="14" Background="#4CAF50" Foreground="White"/>
+            </StackPanel>
+          </Border>
           <controls:ImageEditorControl x:Name="ImageEditorCanvas"
                                        ImagePath="{Binding ImageEditor.CurrentImagePath}"
                                        IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
@@ -326,6 +333,46 @@
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
                 <TextBlock Text="Drag on the image to select the crop region." FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+                
+                <!-- Crop Resolution -->
+                <TextBlock Text="{Binding ImageEditor.CropResolutionText}" FontSize="12" FontWeight="SemiBold" 
+                           Foreground="#4CAF50" HorizontalAlignment="Center"
+                           IsVisible="{Binding ImageEditor.CropResolutionText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Aspect Ratio Presets -->
+                <TextBlock Text="Aspect Ratio" FontSize="11" Opacity="0.7"/>
+                <StackPanel Spacing="4">
+                  <!-- Row 1: Fit & Fill -->
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="Fit" Command="{Binding ImageEditor.FitCropCommand}" Padding="8,4" FontSize="10"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Expand crop to fill image, keeping current aspect ratio"/>
+                    <Button Content="Fill" Command="{Binding ImageEditor.FillCropCommand}" Padding="8,4" FontSize="10"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Set crop to cover the entire image"/>
+                  </StackPanel>
+                  <!-- Row 2: Aspect Ratio Presets -->
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio16x9}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="16:9" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="1:1" Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="1:1" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio4x3}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="4:3" 
+                            Padding="8,4" FontSize="10"/>
+                    <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio5x4}}" 
+                            Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="5:4" 
+                            Padding="8,4" FontSize="10"/>
+                  </StackPanel>
+                  <!-- Row 3: Switch -->
+                  <Button Content="Switch" Command="{Binding ImageEditor.SwitchCropAspectRatioCommand}" Padding="8,4" FontSize="10"
+                          HorizontalAlignment="Center"
+                          ToolTip.Tip="Switch between W:H and H:W"/>
+                </StackPanel>
+                
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 <!-- Action Buttons -->
                 <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
@@ -650,17 +697,23 @@
                 <!-- Shape Type Selection -->
                 <StackPanel Spacing="4">
                   <TextBlock Text="Shape Type" FontSize="11" Opacity="0.7"/>
-                  <StackPanel Orientation="Horizontal" Spacing="4">
-                    <ToggleButton Content="Free" IsChecked="{Binding ImageEditor.IsShapeFreehand, Mode=TwoWay}" 
-                                  Padding="8,4" FontSize="10" ToolTip.Tip="Freehand Drawing"/>
-                    <ToggleButton Content="□" IsChecked="{Binding ImageEditor.IsShapeRectangle, Mode=TwoWay}" 
-                                  Padding="8,4" FontSize="14" ToolTip.Tip="Rectangle"/>
-                    <ToggleButton Content="○" IsChecked="{Binding ImageEditor.IsShapeEllipse, Mode=TwoWay}" 
-                                  Padding="8,4" FontSize="14" ToolTip.Tip="Ellipse/Circle"/>
-                    <ToggleButton Content="→" IsChecked="{Binding ImageEditor.IsShapeArrow, Mode=TwoWay}" 
-                                  Padding="8,4" FontSize="14" ToolTip.Tip="Arrow"/>
-                    <ToggleButton Content="/" IsChecked="{Binding ImageEditor.IsShapeLine, Mode=TwoWay}" 
-                                  Padding="8,4" FontSize="14" ToolTip.Tip="Line"/>
+                  <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                      <ToggleButton Content="Free" IsChecked="{Binding ImageEditor.IsShapeFreehand, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="10" ToolTip.Tip="Freehand Drawing"/>
+                      <ToggleButton Content="□" IsChecked="{Binding ImageEditor.IsShapeRectangle, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="14" ToolTip.Tip="Rectangle"/>
+                      <ToggleButton Content="○" IsChecked="{Binding ImageEditor.IsShapeEllipse, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="14" ToolTip.Tip="Ellipse/Circle"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                      <ToggleButton Content="→" IsChecked="{Binding ImageEditor.IsShapeArrow, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="14" ToolTip.Tip="Arrow"/>
+                      <ToggleButton Content="/" IsChecked="{Binding ImageEditor.IsShapeLine, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="14" ToolTip.Tip="Line"/>
+                      <ToggleButton Content="✕" IsChecked="{Binding ImageEditor.IsShapeCross, Mode=TwoWay}" 
+                                    Padding="8,4" FontSize="14" ToolTip.Tip="Cross/X"/>
+                    </StackPanel>
                   </StackPanel>
                 </StackPanel>
                 
