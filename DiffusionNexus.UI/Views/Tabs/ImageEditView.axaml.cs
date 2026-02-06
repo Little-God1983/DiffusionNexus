@@ -945,6 +945,12 @@ public partial class ImageEditView : UserControl
         return ImageExtensions.Contains(extension);
     }
 
+    private static bool IsTiffFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension is ".tiff" or ".tif";
+    }
+
     private void LoadDroppedImage(string filePath)
     {
         if (_imageEditorCanvas is null || DataContext is not ImageEditTabViewModel vm)
@@ -954,11 +960,30 @@ public partial class ImageEditView : UserControl
         {
             FileLogger.Log($"Loading dropped image: {filePath}");
             
-            // Load the image into the editor
-            if (_imageEditorCanvas.LoadImage(filePath))
+            bool loaded;
+            
+            // TIFF files are loaded as layers to preserve multi-page structure
+            if (IsTiffFile(filePath))
+            {
+                FileLogger.Log($"Detected TIFF file, loading as layers: {filePath}");
+                loaded = _imageEditorCanvas.LoadLayeredTiff(filePath);
+            }
+            else
+            {
+                loaded = _imageEditorCanvas.LoadImage(filePath);
+            }
+
+            if (loaded)
             {
                 vm.ImageEditor.CurrentImagePath = filePath;
-                vm.ImageEditor.StatusMessage = $"Loaded: {Path.GetFileName(filePath)}";
+                
+                // Sync layer state with ViewModel
+                vm.ImageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+                vm.ImageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                
+                vm.ImageEditor.StatusMessage = IsTiffFile(filePath)
+                    ? $"Loaded: {Path.GetFileName(filePath)} ({_imageEditorCanvas.EditorCore.Layers?.Count ?? 1} layers)"
+                    : $"Loaded: {Path.GetFileName(filePath)}";
                 FileLogger.Log($"Successfully loaded dropped image: {filePath}");
             }
             else

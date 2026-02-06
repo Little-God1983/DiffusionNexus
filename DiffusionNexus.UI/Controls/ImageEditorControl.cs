@@ -17,6 +17,7 @@ public class ImageEditorControl : Control
     private readonly ImageEditor.ImageEditorCore _editorCore;
     private Point _lastPanPoint;
     private bool _isPanning;
+    private bool _suppressImagePathLoad;
 
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
@@ -258,6 +259,8 @@ public class ImageEditorControl : Control
 
         if (change.Property == ImagePathProperty)
         {
+            if (_suppressImagePathLoad) return;
+            
             var newPath = change.NewValue as string;
             if (!string.IsNullOrEmpty(newPath))
             {
@@ -598,7 +601,9 @@ public class ImageEditorControl : Control
         var result = _editorCore.LoadImage(filePath);
         if (result)
         {
+            _suppressImagePathLoad = true;
             SetCurrentValue(ImagePathProperty, filePath);
+            _suppressImagePathLoad = false;
         }
         return result;
     }
@@ -611,7 +616,24 @@ public class ImageEditorControl : Control
         var result = _editorCore.LoadImage(imageData);
         if (result)
         {
+            _suppressImagePathLoad = true;
             SetCurrentValue(ImagePathProperty, null);
+            _suppressImagePathLoad = false;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Loads a TIFF file as layers, preserving multi-page/layered structure.
+    /// </summary>
+    public bool LoadLayeredTiff(string filePath)
+    {
+        var result = _editorCore.LoadLayeredTiff(filePath);
+        if (result)
+        {
+            _suppressImagePathLoad = true;
+            SetCurrentValue(ImagePathProperty, filePath);
+            _suppressImagePathLoad = false;
         }
         return result;
     }

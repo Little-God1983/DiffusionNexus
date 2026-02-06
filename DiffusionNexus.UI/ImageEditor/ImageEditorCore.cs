@@ -2415,9 +2415,14 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if loaded successfully.</returns>
     public bool LoadLayeredTiff(string filePath)
     {
-        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
-        if (loadedLayers == null)
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return false;
+
+        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
+        if (loadedLayers == null || loadedLayers.Count == 0)
+            return false;
+
+        ClearPreview(raiseEvent: false);
 
         // Dispose existing layers
         if (_layers != null)
@@ -2427,12 +2432,26 @@ public class ImageEditorCore : IDisposable
             _layers.Dispose();
         }
 
+        // Dispose old bitmaps
+        _originalBitmap?.Dispose();
+        _workingBitmap?.Dispose();
+
+        // Store a flattened copy as the original for Reset support
+        var flattened = loadedLayers.Flatten();
+        _originalBitmap = flattened;
+        _workingBitmap = flattened?.Copy();
+
+        // Get file size
+        var fileInfo = new FileInfo(filePath);
+        FileSizeBytes = fileInfo.Length;
+
         _layers = loadedLayers;
         _layers.ContentChanged += OnLayersContentChanged;
         _layers.LayersChanged += OnLayersCollectionChanged;
         _isLayerMode = true;
         CurrentImagePath = filePath;
 
+        ResetZoom();
         OnImageChanged();
         LayerModeChanged?.Invoke(this, EventArgs.Empty);
         LayersChanged?.Invoke(this, EventArgs.Empty);
