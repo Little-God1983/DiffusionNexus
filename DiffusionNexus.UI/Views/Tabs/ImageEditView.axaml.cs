@@ -479,9 +479,15 @@ public partial class ImageEditView : UserControl
                 FileLogger.LogWarning($"[Instance #{_instanceId}] DialogService or CurrentImagePath is null, returning Cancelled");
                 return SaveAsResult.Cancelled();
             }
+
+            var preselectedDatasetName = vm.SelectedEditorDataset?.Name;
+            var preselectedVersion = vm.SelectedEditorVersion?.Version;
+
             var result = await vm.DialogService.ShowSaveAsDialogAsync(
                 imageEditor.CurrentImagePath, 
-                vm.EditorDatasets.Where(d => !d.IsTemporary));
+                vm.EditorDatasets.Where(d => !d.IsTemporary),
+                preselectedDatasetName,
+                preselectedVersion);
             FileLogger.LogExit($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
             return result;
 
