@@ -65,8 +65,9 @@ public sealed class CaptioningService : ICaptioningService
     {
         try
         {
-            // Initialize LLama native library - this will use CUDA if available
-            NativeLibraryConfig.LLama.WithLogCallback((level, message) =>
+            // Configure both LLama and LLaVA native libraries (LLaVA resolver maps
+            // the DllImport("llava_shared") name to the mtmd.dll shipped by the backend)
+            NativeLibraryConfig.All.WithLogCallback((level, message) =>
             {
                 // Route LLama logs to Serilog
                 var logLevel = level switch
