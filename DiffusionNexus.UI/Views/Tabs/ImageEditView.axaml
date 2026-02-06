@@ -180,14 +180,21 @@
       <!-- Image Editor Canvas -->
       <Border Grid.Row="1" Background="#1A1A1A" Margin="16">
         <Grid>
-          <!-- Empty state - text instead of emoji -->
-          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding !ImageEditor.HasImage}">
-            <Border Background="#333" CornerRadius="12" Padding="24">
-              <TextBlock Text="No Image" FontSize="18" Opacity="0.4" HorizontalAlignment="Center"/>
-            </Border>
-            <TextBlock Text="No image loaded" FontSize="16" Opacity="0.4" HorizontalAlignment="Center" Margin="0,12,0,0"/>
-            <TextBlock Text="Use 'Send to Image Edit' from Dataset Management" FontSize="12" Opacity="0.3" HorizontalAlignment="Center" Margin="0,4,0,0"/>
-          </StackPanel>
+          <!-- Empty state - Drop Zone -->
+          <Border x:Name="ImageDropZone" IsVisible="{Binding !ImageEditor.HasImage}"
+                  Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" CornerRadius="12"
+                  DragDrop.AllowDrop="True">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+              <Border Background="#333" CornerRadius="12" Padding="24">
+                <TextBlock Text="IMAGE EDITOR" FontSize="24" Opacity="0.4" HorizontalAlignment="Center" FontWeight="Bold"/>
+              </Border>
+              <TextBlock Text="No image loaded" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.8"/>
+              <TextBlock Text="Drag and drop an image here" FontSize="14" Foreground="#888" HorizontalAlignment="Center"/>
+              <TextBlock Text="or use 'Send to Image Edit' from Dataset Management" FontSize="12" Foreground="#666" HorizontalAlignment="Center"/>
+              <Button x:Name="OpenImageButton" Content="+ Open Image" HorizontalAlignment="Center" 
+                      Padding="16,10" FontSize="14" Background="#4CAF50" Foreground="White"/>
+            </StackPanel>
+          </Border>
           <controls:ImageEditorControl x:Name="ImageEditorCanvas"
                                        ImagePath="{Binding ImageEditor.CurrentImagePath}"
                                        IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
