@@ -94,6 +94,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public bool IsServiceAvailable => _captioningService is not null;
 
     /// <summary>
+    /// Whether the native LLama library loaded successfully.
+    /// </summary>
+    public bool IsNativeLibraryLoaded => _captioningService?.IsNativeLibraryLoaded ?? false;
+
+    /// <summary>
     /// Available captioning model types.
     /// </summary>
     public IReadOnlyList<CaptioningModelType> AvailableModels { get; }
@@ -454,6 +459,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         if (_captioningService is null) return;
 
+        if (!_captioningService.IsNativeLibraryLoaded)
+        {
+            StatusMessage = $"LLama native library failed to load: {_captioningService.NativeLibraryError ?? "unknown error"}. Ensure CUDA toolkit is installed or check backend compatibility.";
+        }
+
         try
         {
             var llavaInfo = _captioningService.GetModelInfo(CaptioningModelType.LLaVA_v1_6_34B);
@@ -550,6 +560,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private bool CanGenerate()
     {
         return _captioningService is not null
+            && _captioningService.IsNativeLibraryLoaded
             && !IsProcessing
             && IsModelReady
             && (SelectedDataset is not null || (!string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath)));

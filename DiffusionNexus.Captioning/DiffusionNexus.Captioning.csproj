@@ -14,12 +14,8 @@
     <!-- CUDA 12 backend for NVIDIA GPU acceleration (supports CUDA 12.8 for RTX 50XX) -->
     <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.25.0" />
     
-    <!-- Explicitly exclude CPU backend to prevent single-file publish conflicts (AVX variant DLLs with same filename) -->
-    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.25.0">
-      <ExcludeAssets>all</ExcludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>none</IncludeAssets>
-    </PackageReference>
+    <!-- CPU backend as fallback when CUDA runtime is not available -->
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.25.0" />
     
     <!-- Image processing -->
     <PackageReference Include="SkiaSharp" Version="3.119.1" />
