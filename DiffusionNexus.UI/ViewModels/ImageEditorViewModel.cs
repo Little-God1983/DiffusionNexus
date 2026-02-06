@@ -1059,6 +1059,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsShapeEllipse));
                 OnPropertyChanged(nameof(IsShapeArrow));
                 OnPropertyChanged(nameof(IsShapeLine));
+                OnPropertyChanged(nameof(IsShapeCross));
                 OnPropertyChanged(nameof(IsShapeMode));
                 ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
                 UpdateDrawingModeStatus();
@@ -1099,6 +1100,13 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         get => _selectedShapeType == ImageEditor.ShapeType.Line;
         set { if (value) SelectedShapeType = ImageEditor.ShapeType.Line; }
+    }
+
+    /// <summary>Whether cross/X shape is selected.</summary>
+    public bool IsShapeCross
+    {
+        get => _selectedShapeType == ImageEditor.ShapeType.Cross;
+        set { if (value) SelectedShapeType = ImageEditor.ShapeType.Cross; }
     }
 
     /// <summary>Whether a shape mode (not freehand) is selected.</summary>

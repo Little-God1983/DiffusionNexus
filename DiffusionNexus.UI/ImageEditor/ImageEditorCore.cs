@@ -584,6 +584,7 @@ public class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Resets to the original loaded image, discarding all edits.
+    /// When in layer mode, recreates the layer stack from the original bitmap.
     /// </summary>
     public void ResetToOriginal()
     {
@@ -591,8 +592,34 @@ public class ImageEditorCore : IDisposable
             return;
 
         ClearPreview();
+
+        // If in layer mode, dispose the current layer stack
+        if (_isLayerMode && _layers != null)
+        {
+            _layers.ContentChanged -= OnLayersContentChanged;
+            _layers.LayersChanged -= OnLayersCollectionChanged;
+            _layers.Dispose();
+            _layers = null;
+        }
+
+        // Reset working bitmap from original
         _workingBitmap?.Dispose();
         _workingBitmap = _originalBitmap.Copy();
+
+        // If was in layer mode, recreate the layer stack from the reset working bitmap
+        if (_isLayerMode)
+        {
+            var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
+                ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
+                : "Background";
+
+            _layers = new LayerStack(_workingBitmap.Width, _workingBitmap.Height);
+            _layers.AddLayerFromBitmap(_workingBitmap, layerName);
+            _layers.ContentChanged += OnLayersContentChanged;
+            _layers.LayersChanged += OnLayersCollectionChanged;
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         OnImageChanged();
     }
 
