@@ -535,6 +535,8 @@ public class ImageEditorCore : IDisposable
 
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
+            CropTool.ImagePixelWidth = bitmapToRender.Width;
+            CropTool.ImagePixelHeight = bitmapToRender.Height;
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             // Update drawing tool with current image bounds and render overlay
@@ -1010,6 +1012,8 @@ public class ImageEditorCore : IDisposable
 
             // Update crop tool with current image bounds and render overlay
             CropTool.SetImageBounds(imageRect);
+            CropTool.ImagePixelWidth = imageWidth;
+            CropTool.ImagePixelHeight = imageHeight;
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             // Update drawing tool with current image bounds and render overlay

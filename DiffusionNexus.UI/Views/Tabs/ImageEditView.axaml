@@ -333,6 +333,34 @@
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
                 <TextBlock Text="Drag on the image to select the crop region." FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+                
+                <!-- Crop Resolution -->
+                <TextBlock Text="{Binding ImageEditor.CropResolutionText}" FontSize="12" FontWeight="SemiBold" 
+                           Foreground="#4CAF50" HorizontalAlignment="Center"
+                           IsVisible="{Binding ImageEditor.CropResolutionText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Aspect Ratio Presets -->
+                <TextBlock Text="Aspect Ratio" FontSize="11" Opacity="0.7"/>
+                <WrapPanel HorizontalAlignment="Center" Orientation="Horizontal">
+                  <Button Content="Fit" Command="{Binding ImageEditor.FitCropCommand}" Padding="8,4" Margin="2" FontSize="10"
+                          ToolTip.Tip="Expand crop to fill image, keeping current aspect ratio"/>
+                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio16x9}}" 
+                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="16:9" 
+                          Padding="8,4" Margin="2" FontSize="10"/>
+                  <Button Content="1:1" Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="1:1" 
+                          Padding="8,4" Margin="2" FontSize="10"/>
+                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio4x3}}" 
+                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="4:3" 
+                          Padding="8,4" Margin="2" FontSize="10"/>
+                  <Button Content="{Binding ImageEditor.CropAspectInverted, Converter={x:Static converters:BoolConverters.BoolToCropRatio5x4}}" 
+                          Command="{Binding ImageEditor.SetCropAspectRatioCommand}" CommandParameter="5:4" 
+                          Padding="8,4" Margin="2" FontSize="10"/>
+                  <Button Content="Switch" Command="{Binding ImageEditor.SwitchCropAspectRatioCommand}" Padding="8,4" Margin="2" FontSize="10"
+                          ToolTip.Tip="Switch between W:H and H:W"/>
+                </WrapPanel>
+                
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 <!-- Action Buttons -->
                 <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">

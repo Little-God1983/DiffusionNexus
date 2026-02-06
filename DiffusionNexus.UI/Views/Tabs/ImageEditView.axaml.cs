@@ -210,6 +210,34 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.DeactivateCropTool();
         };
 
+        // Handle crop fit-to-image request
+        imageEditor.FitCropRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.FitToImage();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle crop aspect ratio request
+        imageEditor.SetCropAspectRatioRequested += (_, ratio) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle crop aspect ratio switch (W:H <-> H:W)
+        imageEditor.SwitchCropAspectRatioRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.CropTool.SwitchAspectRatio();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Update crop resolution text when the crop region changes
+        _imageEditorCanvas.EditorCore.CropTool.CropRegionChanged += (_, _) =>
+        {
+            var (w, h) = _imageEditorCanvas.EditorCore.CropTool.GetCropPixelDimensions();
+            imageEditor.UpdateCropResolution(w, h);
+        };
+
         // Handle zoom requests
         imageEditor.ZoomInRequested += (_, _) =>
         {

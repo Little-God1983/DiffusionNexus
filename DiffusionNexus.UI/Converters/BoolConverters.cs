@@ -244,4 +244,26 @@ public static class BoolConverters
         new FuncValueConverter<bool, IBrush>(isSelected => isSelected ? SelectedLayerBrush : UnselectedLayerBrush);
 
     #endregion
+
+    #region Crop Aspect Ratio Converters
+
+    /// <summary>
+    /// Converts CropAspectInverted to display text for the 16:9 button.
+    /// </summary>
+    public static readonly IValueConverter BoolToCropRatio16x9 =
+        new FuncValueConverter<bool, string>(inverted => inverted ? "9:16" : "16:9");
+
+    /// <summary>
+    /// Converts CropAspectInverted to display text for the 4:3 button.
+    /// </summary>
+    public static readonly IValueConverter BoolToCropRatio4x3 =
+        new FuncValueConverter<bool, string>(inverted => inverted ? "3:4" : "4:3");
+
+    /// <summary>
+    /// Converts CropAspectInverted to display text for the 5:4 button.
+    /// </summary>
+    public static readonly IValueConverter BoolToCropRatio5x4 =
+        new FuncValueConverter<bool, string>(inverted => inverted ? "4:5" : "5:4");
+
+    #endregion
 }
