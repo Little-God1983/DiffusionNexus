@@ -2312,6 +2312,14 @@ public class ImageEditorCore : IDisposable
 
                 using var canvas = new SKCanvas(targetBitmap);
 
+                // Apply rotation around the shape center if needed
+                if (Math.Abs(shapeData.RotationDegrees) > 0.01f)
+                {
+                    var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+                    canvas.Save();
+                    canvas.RotateDegrees(shapeData.RotationDegrees, center.X, center.Y);
+                }
+
                 ShapeTool.RenderShape(
                     canvas,
                     start,
@@ -2322,6 +2330,11 @@ public class ImageEditorCore : IDisposable
                     shapeData.FillColor,
                     scaledStrokeWidth,
                     scaledArrowHeadSize);
+
+                if (Math.Abs(shapeData.RotationDegrees) > 0.01f)
+                {
+                    canvas.Restore();
+                }
 
                 canvas.Flush();
 

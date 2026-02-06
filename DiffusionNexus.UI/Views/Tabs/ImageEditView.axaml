@@ -987,6 +987,20 @@
                     <RadioButton Content="Square" IsChecked="{Binding ImageEditor.IsSquareBrush, Mode=TwoWay}" GroupName="BrushShape"/>
                   </StackPanel>
                 </StackPanel>
+                
+                <!-- Placed Shape Actions (visible when a shape is placed and awaiting commit) -->
+                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.HasPlacedShape}">
+                  <Border Height="1" Background="#444" Margin="0,4"/>
+                  <TextBlock Text="Shape placed — drag to move, corners to resize, top handle to rotate." 
+                             FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+                  <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
+                    <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.CancelPlacedShapeCommand}" 
+                            HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
+                    <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.CommitPlacedShapeCommand}" 
+                            Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
+                  </Grid>
+                  <TextBlock Text="Enter = Apply, Esc = Cancel" FontSize="9" Opacity="0.4" HorizontalAlignment="Center"/>
+                </StackPanel>
               </StackPanel>
             </Border>
           </StackPanel>

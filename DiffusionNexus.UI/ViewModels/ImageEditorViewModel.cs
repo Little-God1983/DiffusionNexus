@@ -99,6 +99,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private byte _shapeStrokeGreen = 255;
     private byte _shapeStrokeBlue = 255;
     private float _shapeStrokeWidth = 3f;
+    private bool _hasPlacedShape;
 
     // Layer fields
     private bool _isLayerPanelOpen;
@@ -1365,6 +1366,32 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Event raised when shape settings change.</summary>
     public event EventHandler? ShapeSettingsChanged;
 
+    /// <summary>Whether a shape is currently placed and awaiting commit/cancel.</summary>
+    public bool HasPlacedShape
+    {
+        get => _hasPlacedShape;
+        set
+        {
+            if (SetProperty(ref _hasPlacedShape, value))
+            {
+                CommitPlacedShapeCommand.NotifyCanExecuteChanged();
+                CancelPlacedShapeCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Event raised when the ViewModel requests committing the placed shape.</summary>
+    public event EventHandler? CommitPlacedShapeRequested;
+
+    /// <summary>Event raised when the ViewModel requests cancelling the placed shape.</summary>
+    public event EventHandler? CancelPlacedShapeRequested;
+
+    /// <summary>Command to commit the placed shape to the image.</summary>
+    public RelayCommand CommitPlacedShapeCommand { get; private set; } = null!;
+
+    /// <summary>Command to cancel the placed shape.</summary>
+    public RelayCommand CancelPlacedShapeCommand { get; private set; } = null!;
+
     private void UpdateDrawingModeStatus()
     {
         if (!IsDrawingToolActive) return;
@@ -2156,6 +2183,12 @@ public partial class ImageEditorViewModel : ObservableObject
         // Shape tool commands
         SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
         SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
+        CommitPlacedShapeCommand = new RelayCommand(
+            () => CommitPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
+            () => HasPlacedShape);
+        CancelPlacedShapeCommand = new RelayCommand(
+            () => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
+            () => HasPlacedShape);
 
         // Layer commands (layers are always enabled when an image is loaded)
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);

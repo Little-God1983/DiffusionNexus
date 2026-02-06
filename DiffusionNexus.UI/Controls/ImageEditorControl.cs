@@ -224,6 +224,11 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler? ZoomChanged;
 
+    /// <summary>
+    /// Event raised when the placed-shape state changes (placed or cleared).
+    /// </summary>
+    public event EventHandler? PlacedShapeStateChanged;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
@@ -233,6 +238,7 @@ public class ImageEditorControl : Control
         _editorCore.DrawingTool.StrokeCompleted += OnStrokeCompleted;
         _editorCore.ShapeTool.ShapeChanged += OnShapeChanged;
         _editorCore.ShapeTool.ShapeCompleted += OnShapeCompleted;
+        _editorCore.ShapeTool.PlacedShapeStateChanged += OnPlacedShapeStateChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         ClipToBounds = true;
         Focusable = true;
@@ -515,6 +521,25 @@ public class ImageEditorControl : Control
             InvalidateVisual();
         }
 
+        // Shape tool: Enter commits, Escape cancels the placed shape
+        if (_editorCore.ShapeTool.IsActive && _editorCore.ShapeTool.HasPlacedShape)
+        {
+            if (e.Key == Key.Enter)
+            {
+                _editorCore.ShapeTool.CommitPlacedShape();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                _editorCore.ShapeTool.CancelPlacedShape();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Apply crop with C or Enter when crop tool is active
         if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
         {
@@ -557,6 +582,28 @@ public class ImageEditorControl : Control
         if (_editorCore.DrawingTool.IsActive)
         {
             Cursor = new Cursor(StandardCursorType.Cross);
+            return;
+        }
+
+        // Shape tool cursors
+        if (_editorCore.ShapeTool.IsActive)
+        {
+            if (_editorCore.ShapeTool.HasPlacedShape)
+            {
+                var shapeHandle = _editorCore.ShapeTool.HitTestHandle(point);
+                Cursor = shapeHandle switch
+                {
+                    ImageEditor.ShapeManipulationHandle.Body => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.ShapeManipulationHandle.TopLeft or ImageEditor.ShapeManipulationHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.ShapeManipulationHandle.TopRight or ImageEditor.ShapeManipulationHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.ShapeManipulationHandle.Rotate => new Cursor(StandardCursorType.Hand),
+                    _ => new Cursor(StandardCursorType.Cross)
+                };
+            }
+            else
+            {
+                Cursor = new Cursor(StandardCursorType.Cross);
+            }
             return;
         }
 
@@ -646,6 +693,31 @@ public class ImageEditorControl : Control
         _editorCore.Clear();
         SetCurrentValue(ImagePathProperty, null);
     }
+
+    /// <summary>
+    /// Commits the currently placed shape to the image.
+    /// </summary>
+    /// <returns>True if a shape was committed.</returns>
+    public bool CommitPlacedShape()
+    {
+        var result = _editorCore.ShapeTool.CommitPlacedShape();
+        if (result) InvalidateVisual();
+        return result;
+    }
+
+    /// <summary>
+    /// Cancels the currently placed shape without applying it.
+    /// </summary>
+    public void CancelPlacedShape()
+    {
+        _editorCore.ShapeTool.CancelPlacedShape();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Gets whether there is a placed shape that can be committed or cancelled.
+    /// </summary>
+    public bool HasPlacedShape => _editorCore.ShapeTool.HasPlacedShape;
 
     /// <summary>
     /// Resets to the original image.
@@ -778,8 +850,14 @@ public class ImageEditorControl : Control
 
     private void OnShapeCompleted(object? sender, ImageEditor.ShapeCompletedEventArgs e)
     {
-        // Apply the completed shape to the image
+        // Apply the committed shape to the image
         _editorCore.ApplyShape(e.Shape);
+    }
+
+    private void OnPlacedShapeStateChanged(object? sender, EventArgs e)
+    {
+        PlacedShapeStateChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
     }
 
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
@@ -798,6 +876,7 @@ public class ImageEditorControl : Control
         _editorCore.DrawingTool.StrokeCompleted -= OnStrokeCompleted;
         _editorCore.ShapeTool.ShapeChanged -= OnShapeChanged;
         _editorCore.ShapeTool.ShapeCompleted -= OnShapeCompleted;
+        _editorCore.ShapeTool.PlacedShapeStateChanged -= OnPlacedShapeStateChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.Dispose();
     }
