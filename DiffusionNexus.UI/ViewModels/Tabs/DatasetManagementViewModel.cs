@@ -98,6 +98,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             EpochsTab.DialogService = value;
             NotesTab.DialogService = value;
             PresentationTab.DialogService = value;
+            CaptioningTab.DialogService = value;
         }
     }
 
@@ -115,6 +116,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Presentation sub-tab.
     /// </summary>
     public PresentationTabViewModel PresentationTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Captioning sub-tab.
+    /// </summary>
+    public CaptioningTabViewModel CaptioningTab { get; }
 
     #region Observable Properties (Delegated to State)
 
@@ -564,6 +570,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         EpochsTab = new EpochsTabViewModel(_eventAggregator);
         NotesTab = new NotesTabViewModel(_eventAggregator);
         PresentationTab = new PresentationTabViewModel(_eventAggregator);
+        CaptioningTab = new CaptioningTabViewModel(_eventAggregator, _state, _captioningService);
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -2697,6 +2704,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _eventAggregator.ImageRatingChanged -= OnImageRatingChanged;
             _eventAggregator.SettingsSaved -= OnSettingsSaved;
             _eventAggregator.ImageSelectionChanged -= OnImageSelectionChanged;
+
+            CaptioningTab.Dispose();
         }
 
         _disposed = true;

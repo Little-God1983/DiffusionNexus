@@ -133,6 +133,17 @@ public interface ICaptioningService : IDisposable
     bool IsGpuAvailable { get; }
 
     /// <summary>
+    /// Gets whether the native LLama library was loaded successfully.
+    /// When false, model loading and inference will not work.
+    /// </summary>
+    bool IsNativeLibraryLoaded { get; }
+
+    /// <summary>
+    /// Gets the error message from native library initialization, if it failed.
+    /// </summary>
+    string? NativeLibraryError { get; }
+
+    /// <summary>
     /// Gets information about a specific model.
     /// </summary>
     /// <param name="modelType">The model type to query.</param>

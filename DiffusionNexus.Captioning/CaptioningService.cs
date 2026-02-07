@@ -22,6 +22,8 @@ public sealed class CaptioningService : ICaptioningService
     private CaptioningModelType? _loadedModelType;
     private bool _isProcessing;
     private bool _isGpuAvailable;
+    private bool _isNativeLibraryLoaded;
+    private string? _nativeLibraryError;
     private bool _disposed;
 
     /// <summary>
@@ -50,6 +52,12 @@ public sealed class CaptioningService : ICaptioningService
     /// <inheritdoc />
     public bool IsGpuAvailable => _isGpuAvailable;
 
+    /// <inheritdoc />
+    public bool IsNativeLibraryLoaded => _isNativeLibraryLoaded;
+
+    /// <inheritdoc />
+    public string? NativeLibraryError => _nativeLibraryError;
+
     /// <summary>
     /// Initializes the LLama native library.
     /// </summary>
@@ -57,8 +65,9 @@ public sealed class CaptioningService : ICaptioningService
     {
         try
         {
-            // Initialize LLama native library - this will use CUDA if available
-            NativeLibraryConfig.LLama.WithLogCallback((level, message) =>
+            // Configure both LLama and LLaVA native libraries (LLaVA resolver maps
+            // the DllImport("llava_shared") name to the mtmd.dll shipped by the backend)
+            NativeLibraryConfig.All.WithLogCallback((level, message) =>
             {
                 // Route LLama logs to Serilog
                 var logLevel = level switch
@@ -71,8 +80,9 @@ public sealed class CaptioningService : ICaptioningService
                 Log.Write(logLevel, "[LLama] {Message}", message?.TrimEnd());
             });
 
-            // Check for CUDA availability
+            // Check for CUDA availability - this triggers native library loading
             _isGpuAvailable = NativeApi.llama_supports_gpu_offload();
+            _isNativeLibraryLoaded = true;
             
             if (_isGpuAvailable)
             {
@@ -87,6 +97,8 @@ public sealed class CaptioningService : ICaptioningService
         {
             Log.Error(ex, "Failed to initialize LLama native library");
             _isGpuAvailable = false;
+            _isNativeLibraryLoaded = false;
+            _nativeLibraryError = ex.InnerException?.Message ?? ex.Message;
         }
     }
 
@@ -126,6 +138,13 @@ public sealed class CaptioningService : ICaptioningService
         CaptioningModelType modelType,
         CancellationToken cancellationToken = default)
     {
+        if (!_isNativeLibraryLoaded)
+        {
+            throw new InvalidOperationException(
+                $"LLama native library failed to initialize: {_nativeLibraryError ?? "unknown error"}. " +
+                "Ensure a compatible CUDA toolkit is installed or switch to the CPU backend.");
+        }
+
         if (_loadedModelType == modelType && IsModelLoaded)
         {
             Log.Debug("Model {ModelType} is already loaded", modelType);

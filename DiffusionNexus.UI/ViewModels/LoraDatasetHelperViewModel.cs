@@ -63,6 +63,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public BatchCropScaleTabViewModel BatchCropScale { get; }
 
+    /// <summary>
+    /// ViewModel for the Captioning tab.
+    /// </summary>
+    public CaptioningTabViewModel Captioning { get; }
+
     #endregion
 
     #region Observable Properties
@@ -120,7 +125,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         _activityLog = activityLog;
 
         // Log application module loaded
-        _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded");
+        _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded - CLR V2");
 
         // Create tab ViewModels - pass activity log for comprehensive logging
         DatasetManagement = new DatasetManagementViewModel(
@@ -134,6 +139,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             activityLog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -200,6 +206,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             DatasetManagement.DialogService = DialogService;
             ImageEdit.DialogService = DialogService;
             BatchCropScale.DialogService = DialogService;
+            Captioning.DialogService = DialogService;
         }
     }
 
@@ -235,6 +242,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             DatasetManagement.Dispose();
             ImageEdit.Dispose();
             BatchCropScale.Dispose();
+            Captioning.Dispose();
         }
 
         _disposed = true;

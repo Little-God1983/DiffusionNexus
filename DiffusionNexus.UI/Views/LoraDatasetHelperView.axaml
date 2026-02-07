@@ -27,13 +27,7 @@
 
       <!-- Captioning Tab -->
       <TabItem Header="Captioning">
-        <Grid>
-          <TextBlock Text="Captioning"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontSize="24"
-                     Opacity="0.5"/>
-        </Grid>
+        <ContentControl Content="{Binding Captioning}"/>
       </TabItem>
 
       <!-- Batch Crop/Scale Tab -->

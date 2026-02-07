@@ -22,25 +22,25 @@ public sealed class CaptioningModelManager
     private const string LLaVaClipProjectorUrl = "https://huggingface.co/cjpais/llava-v1.6-34b-gguf/resolve/main/mmproj-model-f16.gguf";
     private const long ExpectedLLaVaClipSizeBytes = 600_000_000; // ~600MB
 
-    // Qwen 2.5 VL 7B Model
+    // Qwen 2.5 VL 7B Model (unsloth public GGUF repo)
     private const string Qwen25VLModelFileName = "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
-    private const string Qwen25VLModelUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
-    private const long ExpectedQwen25VLSizeBytes = 5_000_000_000; // ~5GB
+    private const string Qwen25VLModelUrl = "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf";
+    private const long ExpectedQwen25VLSizeBytes = 4_683_072_384; // ~4.4GB
 
     // Qwen 2.5 VL CLIP Projector
-    private const string Qwen25VLClipProjectorFileName = "Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
-    private const string Qwen25VLClipProjectorUrl = "https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf";
-    private const long ExpectedQwen25VLClipSizeBytes = 1_500_000_000; // ~1.5GB
+    private const string Qwen25VLClipProjectorFileName = "mmproj-Qwen2.5-VL-7B-F16.gguf";
+    private const string Qwen25VLClipProjectorUrl = "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/mmproj-F16.gguf";
+    private const long ExpectedQwen25VLClipSizeBytes = 1_354_163_040; // ~1.3GB
 
     // Qwen 3 VL 8B Model (Official Qwen repo)
-    private const string Qwen3VLModelFileName = "Qwen3-VL-8B-Instruct-Q4_K_M.gguf";
-    private const string Qwen3VLModelUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf";
-    private const long ExpectedQwen3VLSizeBytes = 5_500_000_000; // ~5.5GB
+    private const string Qwen3VLModelFileName = "Qwen3VL-8B-Instruct-Q4_K_M.gguf";
+    private const string Qwen3VLModelUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf";
+    private const long ExpectedQwen3VLSizeBytes = 5_027_784_800; // ~4.7GB
 
     // Qwen 3 VL CLIP Projector (mmproj)
-    private const string Qwen3VLClipProjectorFileName = "Qwen3-VL-8B-Instruct-mmproj-f16.gguf";
-    private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-mmproj-f16.gguf";
-    private const long ExpectedQwen3VLClipSizeBytes = 1_600_000_000; // ~1.6GB
+    private const string Qwen3VLClipProjectorFileName = "mmproj-Qwen3VL-8B-Instruct-F16.gguf";
+    private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf";
+    private const long ExpectedQwen3VLClipSizeBytes = 1_159_029_824; // ~1.1GB
 
     private readonly string _modelsBasePath;
     private readonly HttpClient _httpClient;

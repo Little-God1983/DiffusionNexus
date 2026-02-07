@@ -49,6 +49,12 @@ public static class BoolConverters
     public static readonly IValueConverter BoolToOpacityLow =
         new FuncValueConverter<bool, double>(b => b ? 1.0 : 0.3);
 
+    /// <summary>
+    /// Converts IsExpanded to max lines (expanded = unlimited, collapsed = 3 lines).
+    /// </summary>
+    public static readonly IValueConverter BoolToMaxLines =
+        new FuncValueConverter<bool, int>(b => b ? int.MaxValue : 3);
+
     #region Selection Converters
 
     private static readonly IBrush SelectionBlueBrush = new SolidColorBrush(Color.Parse("#2196F3"));
