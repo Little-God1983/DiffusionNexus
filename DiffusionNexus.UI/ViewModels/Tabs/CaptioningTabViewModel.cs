@@ -50,6 +50,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private double _totalProgress;
     private string _currentProcessingStatus = "Ready";
 
+    // Dataset statistics
+    private int _datasetImageCount;
+    private int _datasetCaptionedCount;
+
     // Live preview
     private string? _currentImagePath;
     private string? _lastCompletedCaption;
@@ -293,6 +297,38 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     #endregion
 
+    #region Dataset Statistics
+
+    /// <summary>
+    /// Total number of images in the selected dataset version.
+    /// </summary>
+    public int DatasetImageCount
+    {
+        get => _datasetImageCount;
+        private set => SetProperty(ref _datasetImageCount, value);
+    }
+
+    /// <summary>
+    /// Number of images that already have caption (.txt) files.
+    /// </summary>
+    public int DatasetCaptionedCount
+    {
+        get => _datasetCaptionedCount;
+        private set => SetProperty(ref _datasetCaptionedCount, value);
+    }
+
+    /// <summary>
+    /// Number of images that still need captions.
+    /// </summary>
+    public int DatasetUncaptionedCount => DatasetImageCount - DatasetCaptionedCount;
+
+    /// <summary>
+    /// Whether dataset statistics are available to display.
+    /// </summary>
+    public bool HasDatasetStats => DatasetImageCount > 0;
+
+    #endregion
+
     #region Input Properties
 
     /// <summary>
@@ -326,6 +362,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 }
 
                 GenerateCommand.NotifyCanExecuteChanged();
+                RefreshDatasetStats();
             }
         }
     }
@@ -344,6 +381,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 {
                     SelectedDataset.CurrentVersion = value.Value;
                 }
+
+                RefreshDatasetStats();
             }
         }
     }
@@ -743,6 +782,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         finally
         {
             IsProcessing = false;
+            RefreshDatasetStats();
         }
     }
 
@@ -770,6 +810,43 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private void OnRefreshDatasetsRequested(object? sender, RefreshDatasetsRequestedEventArgs e)
     {
         OnPropertyChanged(nameof(AvailableDatasets));
+    }
+
+    private void RefreshDatasetStats()
+    {
+        if (IsSingleImageMode || SelectedDataset is null)
+        {
+            DatasetImageCount = 0;
+            DatasetCaptionedCount = 0;
+            OnPropertyChanged(nameof(DatasetUncaptionedCount));
+            OnPropertyChanged(nameof(HasDatasetStats));
+            return;
+        }
+
+        var path = SelectedDataset.CurrentVersionFolderPath;
+        if (!Directory.Exists(path))
+        {
+            DatasetImageCount = 0;
+            DatasetCaptionedCount = 0;
+            OnPropertyChanged(nameof(DatasetUncaptionedCount));
+            OnPropertyChanged(nameof(HasDatasetStats));
+            return;
+        }
+
+        string[] extensions = [".jpg", ".jpeg", ".png", ".webp"];
+        var imageFiles = Directory.EnumerateFiles(path)
+            .Where(f => extensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .ToList();
+
+        var captionedCount = imageFiles
+            .Count(f => File.Exists(Path.Combine(
+                Path.GetDirectoryName(f) ?? path,
+                Path.GetFileNameWithoutExtension(f) + ".txt")));
+
+        DatasetImageCount = imageFiles.Count;
+        DatasetCaptionedCount = captionedCount;
+        OnPropertyChanged(nameof(DatasetUncaptionedCount));
+        OnPropertyChanged(nameof(HasDatasetStats));
     }
 
     private void ToggleHistoryItem(CaptionHistoryItemViewModel? item)

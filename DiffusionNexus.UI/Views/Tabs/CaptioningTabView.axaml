@@ -191,6 +191,37 @@
             </StackPanel>
           </Border>
 
+          <!-- Dataset Statistics -->
+          <Border Background="#333333" CornerRadius="8" Padding="16"
+                  IsVisible="{Binding HasDatasetStats}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Dataset Overview" FontWeight="SemiBold" FontSize="14"/>
+
+              <!-- Progress bar showing captioned ratio -->
+              <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                <ProgressBar Grid.Row="0" Grid.ColumnSpan="2"
+                             Value="{Binding DatasetCaptionedCount}" Maximum="{Binding DatasetImageCount}"
+                             Height="6" CornerRadius="3" Margin="0,0,0,8"/>
+
+                <!-- Stats row -->
+                <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                  <StackPanel>
+                    <TextBlock Text="Total Images" FontSize="11" Opacity="0.5"/>
+                    <TextBlock Text="{Binding DatasetImageCount}" FontSize="18" FontWeight="Bold"/>
+                  </StackPanel>
+                  <StackPanel>
+                    <TextBlock Text="Captioned" FontSize="11" Opacity="0.5"/>
+                    <TextBlock Text="{Binding DatasetCaptionedCount}" FontSize="18" FontWeight="Bold" Foreground="#4CAF50"/>
+                  </StackPanel>
+                  <StackPanel>
+                    <TextBlock Text="Remaining" FontSize="11" Opacity="0.5"/>
+                    <TextBlock Text="{Binding DatasetUncaptionedCount}" FontSize="18" FontWeight="Bold" Foreground="#FF9800"/>
+                  </StackPanel>
+                </StackPanel>
+              </Grid>
+            </StackPanel>
+          </Border>
+
           <!-- Status Message -->
           <TextBlock Text="{Binding StatusMessage}"
                      Foreground="#D4A574"
