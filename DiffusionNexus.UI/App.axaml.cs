@@ -326,6 +326,12 @@ public partial class App : Application
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
+        // Captioning backends (strategy pattern - local inference + ComfyUI)
+        services.AddSingleton<ICaptioningBackend>(sp =>
+            new LocalInferenceCaptioningBackend(sp.GetRequiredService<ICaptioningService>()));
+        services.AddSingleton<ICaptioningBackend>(sp =>
+            new ComfyUICaptioningBackend(sp.GetRequiredService<IComfyUIWrapperService>()));
+
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();
@@ -354,6 +360,7 @@ public partial class App : Application
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IDatasetState>(),
             sp.GetService<ICaptioningService>(),
+            sp.GetServices<ICaptioningBackend>().ToList(),
             sp.GetService<IVideoThumbnailService>(),
             sp.GetService<IBackgroundRemovalService>(),
             sp.GetService<IImageUpscalingService>(),

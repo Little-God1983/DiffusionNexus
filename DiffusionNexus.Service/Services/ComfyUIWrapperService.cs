@@ -15,6 +15,7 @@ namespace DiffusionNexus.Service.Services;
 public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 {
     private const string Qwen3VlWorkflowFileName = "Assets/Workflows/Qwen-3VL-autocaption.json";
+    private const string LoadImageNodeId = "100";
     private const string Qwen3VqaNodeId = "705";
 
     private static readonly ILogger Logger = Log.ForContext<ComfyUIWrapperService>();
@@ -251,12 +252,18 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 
         Logger.Information("Generating caption for {ImagePath} using Qwen3-VL workflow", imagePath);
 
+        // Upload image to ComfyUI's input folder so the LoadImage node can reference it
+        var uploadedFileName = await UploadImageAsync(imagePath, ct);
+
         var promptId = await QueueWorkflowAsync(workflowPath,
             new Dictionary<string, Action<JsonNode>>
             {
+                [LoadImageNodeId] = node =>
+                {
+                    node["inputs"]!["image"] = uploadedFileName;
+                },
                 [Qwen3VqaNodeId] = node =>
                 {
-                    node["inputs"]!["source_path"] = imagePath;
                     node["inputs"]!["text"] = prompt;
                 }
             }, ct);

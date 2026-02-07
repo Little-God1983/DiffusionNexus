@@ -16,11 +16,16 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware, IDisposable
 {
     private readonly ICaptioningService? _captioningService;
+    private readonly IReadOnlyList<ICaptioningBackend> _backends;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private bool _disposed;
 
-    // Model Selection
+    // Backend Selection
+    private ICaptioningBackend? _selectedBackend;
+    private bool _isBackendAvailable;
+
+    // Model Selection (used by Local Inference backend)
     private CaptioningModelType _selectedModelType = CaptioningModelType.Qwen3_VL_8B;
 
     // Model Status
@@ -68,20 +73,27 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public CaptioningTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
-        ICaptioningService? captioningService = null)
+        ICaptioningService? captioningService = null,
+        IReadOnlyList<ICaptioningBackend>? backends = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
+        _backends = backends ?? [];
 
         AvailableDatasetVersions = [];
         AvailableModels = Enum.GetValues<CaptioningModelType>();
+
+        // Select ComfyUI backend by default, fall back to first available
+        _selectedBackend = _backends.FirstOrDefault(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase))
+                           ?? _backends.FirstOrDefault();
 
         DownloadModelCommand = new AsyncRelayCommand<CaptioningModelType>(DownloadModelAsync, CanDownloadModel);
         GenerateCommand = new AsyncRelayCommand(GenerateCaptionsAsync, CanGenerate);
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
         ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
+        CheckBackendAvailabilityCommand = new AsyncRelayCommand(CheckBackendAvailabilityAsync);
 
         RefreshModelStatuses();
 
@@ -91,7 +103,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public CaptioningTabViewModel() : this(null!, null!, null)
+    public CaptioningTabViewModel() : this(null!, null!, null, null)
     {
     }
 
@@ -103,17 +115,66 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public IDialogService? DialogService { get; set; }
 
     /// <summary>
-    /// Whether the captioning service is available.
+    /// Whether any captioning backend is available (local inference or ComfyUI).
     /// </summary>
-    public bool IsServiceAvailable => _captioningService is not null;
+    public bool IsServiceAvailable => _captioningService is not null || _backends.Count > 0;
 
     /// <summary>
     /// Whether the native LLama library loaded successfully.
+    /// Only relevant when the Local Inference backend is selected.
     /// </summary>
     public bool IsNativeLibraryLoaded => _captioningService?.IsNativeLibraryLoaded ?? false;
 
     /// <summary>
-    /// Available captioning model types.
+    /// Whether the selected backend uses local model management (download, load, etc.).
+    /// Controls visibility of the model selection panel in the UI.
+    /// </summary>
+    public bool IsLocalInferenceBackend => SelectedBackend is null
+        || SelectedBackend.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Available captioning backends.
+    /// </summary>
+    public IReadOnlyList<ICaptioningBackend> AvailableBackends => _backends;
+
+    /// <summary>
+    /// The currently selected captioning backend.
+    /// </summary>
+    public ICaptioningBackend? SelectedBackend
+    {
+        get => _selectedBackend;
+        set
+        {
+            if (SetProperty(ref _selectedBackend, value))
+            {
+                OnPropertyChanged(nameof(IsLocalInferenceBackend));
+                OnPropertyChanged(nameof(IsModelReady));
+                OnPropertyChanged(nameof(IsModelMissing));
+                GenerateCommand.NotifyCanExecuteChanged();
+                _ = CheckBackendAvailabilityAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the selected backend is available and ready.
+    /// </summary>
+    public bool IsBackendAvailable
+    {
+        get => _isBackendAvailable;
+        private set
+        {
+            if (SetProperty(ref _isBackendAvailable, value))
+            {
+                OnPropertyChanged(nameof(IsModelReady));
+                OnPropertyChanged(nameof(IsModelMissing));
+                GenerateCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Available captioning model types (for local inference backend).
     /// </summary>
     public IReadOnlyList<CaptioningModelType> AvailableModels { get; }
 
@@ -246,18 +307,31 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public string Qwen3StatusText => GetStatusText(Qwen3Status);
 
     /// <summary>
-    /// Whether the currently selected model is ready for inference.
+    /// Whether the currently selected backend/model is ready for inference.
+    /// For ComfyUI backends this is driven by server availability.
+    /// For local inference this checks the model download status.
     /// </summary>
-    public bool IsModelReady => SelectedModelType switch
+    public bool IsModelReady
     {
-        CaptioningModelType.LLaVA_v1_6_34B => IsLlavaReady,
-        CaptioningModelType.Qwen2_5_VL_7B => IsQwenReady,
-        CaptioningModelType.Qwen3_VL_8B => IsQwen3Ready,
-        _ => false
-    };
+        get
+        {
+            if (!IsLocalInferenceBackend)
+            {
+                return IsBackendAvailable;
+            }
+
+            return SelectedModelType switch
+            {
+                CaptioningModelType.LLaVA_v1_6_34B => IsLlavaReady,
+                CaptioningModelType.Qwen2_5_VL_7B => IsQwenReady,
+                CaptioningModelType.Qwen3_VL_8B => IsQwen3Ready,
+                _ => false
+            };
+        }
+    }
 
     /// <summary>
-    /// Whether the currently selected model is not ready.
+    /// Whether the currently selected model/backend is not ready.
     /// </summary>
     public bool IsModelMissing => !IsModelReady;
 
@@ -573,9 +647,32 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// </summary>
     public IRelayCommand<CaptionHistoryItemViewModel> ToggleHistoryItemCommand { get; }
 
+    /// <summary>
+    /// Command to check whether the selected backend is available.
+    /// </summary>
+    public IAsyncRelayCommand CheckBackendAvailabilityCommand { get; }
+
     #endregion
 
     #region Private Methods
+
+    private async Task CheckBackendAvailabilityAsync()
+    {
+        if (SelectedBackend is null)
+        {
+            IsBackendAvailable = false;
+            return;
+        }
+
+        try
+        {
+            IsBackendAvailable = await SelectedBackend.IsAvailableAsync();
+        }
+        catch
+        {
+            IsBackendAvailable = false;
+        }
+    }
 
     private static string GetStatusText(CaptioningModelStatus status) => status switch
     {
@@ -691,11 +788,22 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     private bool CanGenerate()
     {
+        if (IsProcessing) return false;
+
+        var hasInput = SelectedDataset is not null
+            || (!string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath));
+        if (!hasInput) return false;
+
+        // ComfyUI / non-local backend
+        if (!IsLocalInferenceBackend)
+        {
+            return SelectedBackend is not null && IsBackendAvailable;
+        }
+
+        // Local inference backend
         return _captioningService is not null
             && _captioningService.IsNativeLibraryLoaded
-            && !IsProcessing
-            && IsModelReady
-            && (SelectedDataset is not null || (!string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath)));
+            && IsModelReady;
     }
 
     private async Task SelectSingleImageAsync()
@@ -711,7 +819,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     private async Task GenerateCaptionsAsync()
     {
-        if (_captioningService is null || !CanGenerate()) return;
+        if (!CanGenerate()) return;
 
         IsProcessing = true;
         TotalProgress = 0;
@@ -768,7 +876,23 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 }
             });
 
-            var results = await _captioningService.GenerateCaptionsAsync(config, progress);
+            IReadOnlyList<CaptioningResult> results;
+
+            if (!IsLocalInferenceBackend && SelectedBackend is not null)
+            {
+                // Delegate to the selected backend (e.g. ComfyUI)
+                results = await SelectedBackend.GenerateBatchCaptionsAsync(config, progress);
+            }
+            else if (_captioningService is not null)
+            {
+                // Delegate to the local inference service
+                results = await _captioningService.GenerateCaptionsAsync(config, progress);
+            }
+            else
+            {
+                StatusMessage = "No captioning backend is available.";
+                return;
+            }
 
             var successCount = results.Count(r => r.Success);
             StatusMessage = $"Completed! {successCount}/{results.Count} images captioned.";

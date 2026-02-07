@@ -522,11 +522,6 @@
           </Grid>
         </TabItem>
         
-        <!-- Tab 2: Captioning -->
-        <TabItem Header="Captioning">
-          <views:CaptioningTabView DataContext="{Binding CaptioningTab}"/>
-        </TabItem>
-        
         <!-- Tab 3: Epochs -->
         <TabItem Header="Epochs">
           <views:EpochsSubTabView DataContext="{Binding EpochsTab}"/>

@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
+             xmlns:svc="using:DiffusionNexus.Domain.Services"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.Tabs.CaptioningTabView"
@@ -34,65 +35,100 @@
       <ScrollViewer Grid.Column="0" Padding="16" Width="480">
         <StackPanel Spacing="16">
 
-          <!-- Model Selection -->
+          <!-- Backend Selection -->
           <Border Background="#333333" CornerRadius="8" Padding="16">
             <StackPanel Spacing="12">
-              <TextBlock Text="Model Selection" FontWeight="SemiBold" FontSize="14"/>
+              <TextBlock Text="Captioning Backend" FontWeight="SemiBold" FontSize="14"/>
 
-              <ComboBox ItemsSource="{Binding AvailableModels}"
-                        SelectedItem="{Binding SelectedModelType}"
-                        HorizontalAlignment="Stretch"/>
+              <ComboBox ItemsSource="{Binding AvailableBackends}"
+                        SelectedItem="{Binding SelectedBackend}"
+                        HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="svc:ICaptioningBackend">
+                    <TextBlock Text="{Binding DisplayName}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
 
-              <!-- LLaVA Status/Download -->
-              <Grid ColumnDefinitions="*,Auto"
-                    IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}}">
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                  <TextBlock Text="LLaVA v1.6 34B" FontWeight="Bold"/>
-                  <TextBlock Text="{Binding LlavaStatusText}" FontSize="12" Opacity="0.7"/>
-                  <ProgressBar Value="{Binding LlavaDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                               IsVisible="{Binding IsLlavaDownloading}"/>
-                </StackPanel>
-                <Button Grid.Column="1" Content="Download"
-                        Command="{Binding DownloadModelCommand}"
-                        CommandParameter="{x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}"
-                        IsVisible="{Binding IsLlavaMissing}"/>
-                <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
-                           IsVisible="{Binding IsLlavaReady}"/>
+              <!-- Backend Status -->
+              <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
+                <!-- Status indicator -->
+                <Panel Grid.Column="0" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,8,0">
+                  <Ellipse Width="12" Height="12" Fill="#4CAF50" IsVisible="{Binding IsBackendAvailable}"/>
+                  <Ellipse Width="12" Height="12" Fill="#FF6B6B" IsVisible="{Binding !IsBackendAvailable}"/>
+                </Panel>
+
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Ready"
+                           Foreground="#4CAF50" FontWeight="SemiBold"
+                           IsVisible="{Binding IsBackendAvailable}"/>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Unavailable"
+                           Foreground="#FF6B6B" FontWeight="SemiBold"
+                           IsVisible="{Binding !IsBackendAvailable}"/>
+
+                <Button Grid.Column="2" Content="Check" Padding="12,4"
+                        Command="{Binding CheckBackendAvailabilityCommand}"
+                        ToolTip.Tip="Check if the captioning backend is available"/>
               </Grid>
 
-              <!-- Qwen 2.5 Status/Download -->
-              <Grid ColumnDefinitions="*,Auto"
-                    IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}}">
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                  <TextBlock Text="Qwen 2.5 VL 7B" FontWeight="Bold"/>
-                  <TextBlock Text="{Binding QwenStatusText}" FontSize="12" Opacity="0.7"/>
-                  <ProgressBar Value="{Binding QwenDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                               IsVisible="{Binding IsQwenDownloading}"/>
-                </StackPanel>
-                <Button Grid.Column="1" Content="Download"
-                        Command="{Binding DownloadModelCommand}"
-                        CommandParameter="{x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}"
-                        IsVisible="{Binding IsQwenMissing}"/>
-                <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
-                           IsVisible="{Binding IsQwenReady}"/>
-              </Grid>
+              <!-- Local inference model panel (hidden when ComfyUI is selected) -->
+              <StackPanel Spacing="8" IsVisible="{Binding IsLocalInferenceBackend}">
+                <Border Height="1" Background="#40FFFFFF" Margin="0,4"/>
+                <TextBlock Text="Local Model" FontWeight="SemiBold" FontSize="12" Opacity="0.7"/>
+                <ComboBox ItemsSource="{Binding AvailableModels}"
+                          SelectedItem="{Binding SelectedModelType}"
+                          HorizontalAlignment="Stretch"/>
 
-              <!-- Qwen 3 Status/Download -->
-              <Grid ColumnDefinitions="*,Auto"
-                    IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B}}">
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                  <TextBlock Text="Qwen 3 VL 8B" FontWeight="Bold"/>
-                  <TextBlock Text="{Binding Qwen3StatusText}" FontSize="12" Opacity="0.7"/>
-                  <ProgressBar Value="{Binding Qwen3DownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                               IsVisible="{Binding IsQwen3Downloading}"/>
-                </StackPanel>
-                <Button Grid.Column="1" Content="Download"
-                        Command="{Binding DownloadModelCommand}"
-                        CommandParameter="{x:Static enums:CaptioningModelType.Qwen3_VL_8B}"
-                        IsVisible="{Binding IsQwen3Missing}"/>
-                <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
-                           IsVisible="{Binding IsQwen3Ready}"/>
-              </Grid>
+                <!-- LLaVA Status/Download -->
+                <Grid ColumnDefinitions="*,Auto"
+                      IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}}">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="LLaVA v1.6 34B" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding LlavaStatusText}" FontSize="12" Opacity="0.7"/>
+                    <ProgressBar Value="{Binding LlavaDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                                 IsVisible="{Binding IsLlavaDownloading}"/>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="Download"
+                          Command="{Binding DownloadModelCommand}"
+                          CommandParameter="{x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}"
+                          IsVisible="{Binding IsLlavaMissing}"/>
+                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                             IsVisible="{Binding IsLlavaReady}"/>
+                </Grid>
+
+                <!-- Qwen 2.5 Status/Download -->
+                <Grid ColumnDefinitions="*,Auto"
+                      IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}}">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Qwen 2.5 VL 7B" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding QwenStatusText}" FontSize="12" Opacity="0.7"/>
+                    <ProgressBar Value="{Binding QwenDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                                 IsVisible="{Binding IsQwenDownloading}"/>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="Download"
+                          Command="{Binding DownloadModelCommand}"
+                          CommandParameter="{x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}"
+                          IsVisible="{Binding IsQwenMissing}"/>
+                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                             IsVisible="{Binding IsQwenReady}"/>
+                </Grid>
+
+                <!-- Qwen 3 Status/Download -->
+                <Grid ColumnDefinitions="*,Auto"
+                      IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B}}">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Qwen 3 VL 8B" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding Qwen3StatusText}" FontSize="12" Opacity="0.7"/>
+                    <ProgressBar Value="{Binding Qwen3DownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
+                                 IsVisible="{Binding IsQwen3Downloading}"/>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="Download"
+                          Command="{Binding DownloadModelCommand}"
+                          CommandParameter="{x:Static enums:CaptioningModelType.Qwen3_VL_8B}"
+                          IsVisible="{Binding IsQwen3Missing}"/>
+                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                             IsVisible="{Binding IsQwen3Ready}"/>
+                </Grid>
+              </StackPanel>
             </StackPanel>
           </Border>
 
