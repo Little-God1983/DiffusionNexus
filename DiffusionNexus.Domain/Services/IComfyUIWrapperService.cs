@@ -1,0 +1,89 @@
+namespace DiffusionNexus.Domain.Services;
+
+/// <summary>
+/// Represents a single image returned by a ComfyUI workflow execution.
+/// </summary>
+/// <param name="Filename">The filename as stored by ComfyUI.</param>
+/// <param name="Subfolder">The subfolder within ComfyUI's output directory.</param>
+/// <param name="Type">The image type (e.g. "output", "temp").</param>
+/// <param name="Url">The full URL to fetch the image from ComfyUI.</param>
+public record ComfyUIImage(
+    string Filename,
+    string Subfolder,
+    string Type,
+    string Url);
+
+/// <summary>
+/// Aggregated result of a ComfyUI workflow execution, containing text and image outputs.
+/// </summary>
+public sealed class ComfyUIResult
+{
+    /// <summary>
+    /// Text outputs produced by the workflow (e.g. captions).
+    /// </summary>
+    public List<string> Texts { get; } = [];
+
+    /// <summary>
+    /// Image outputs produced by the workflow.
+    /// </summary>
+    public List<ComfyUIImage> Images { get; } = [];
+}
+
+/// <summary>
+/// Service for executing ComfyUI workflows via the ComfyUI HTTP/WebSocket API.
+/// Supports uploading images, queuing API-format workflows, tracking progress, and
+/// retrieving results (text and images).
+/// </summary>
+public interface IComfyUIWrapperService : IDisposable
+{
+    /// <summary>
+    /// Uploads a local image file to ComfyUI's input folder so it can be referenced by workflows.
+    /// </summary>
+    /// <param name="localFilePath">Absolute path to the image on disk.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The filename as stored by ComfyUI (use this in workflow node inputs).</returns>
+    Task<string> UploadImageAsync(string localFilePath, CancellationToken ct = default);
+
+    /// <summary>
+    /// Loads an API-format workflow JSON, applies caller-supplied modifications to individual
+    /// nodes, then queues the workflow for execution on the ComfyUI server.
+    /// </summary>
+    /// <param name="workflowJsonPath">Path to the API-format workflow JSON file.</param>
+    /// <param name="nodeModifiers">
+    /// A dictionary mapping node IDs to actions that mutate the node's JSON before submission.
+    /// For example, setting the image filename on a LoadImage node.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The prompt ID assigned by ComfyUI (used to track and fetch results).</returns>
+    Task<string> QueueWorkflowAsync(
+        string workflowJsonPath,
+        Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>> nodeModifiers,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Waits for a queued workflow to finish executing by listening on the ComfyUI WebSocket.
+    /// </summary>
+    /// <param name="promptId">The prompt ID returned by <see cref="QueueWorkflowAsync"/>.</param>
+    /// <param name="progress">Optional progress reporter that receives WebSocket event messages.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task WaitForCompletionAsync(
+        string promptId,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves the outputs (text and images) produced by a completed workflow execution.
+    /// </summary>
+    /// <param name="promptId">The prompt ID of the completed execution.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="ComfyUIResult"/> containing all text and image outputs.</returns>
+    Task<ComfyUIResult> GetResultAsync(string promptId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Downloads the raw bytes of an output image from the ComfyUI server.
+    /// </summary>
+    /// <param name="image">The image descriptor returned inside <see cref="ComfyUIResult"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The image bytes.</returns>
+    Task<byte[]> DownloadImageAsync(ComfyUIImage image, CancellationToken ct = default);
+}

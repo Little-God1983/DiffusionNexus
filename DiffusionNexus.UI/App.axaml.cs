@@ -315,6 +315,14 @@ public partial class App : Application
         // Image upscaling service (singleton - maintains ONNX session)
         services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
 
+        // ComfyUI workflow execution service (singleton - maintains HttpClient)
+        services.AddSingleton<IComfyUIWrapperService>(sp =>
+        {
+            var settings = sp.GetRequiredService<IAppSettingsService>();
+            // Default URL; callers can reconfigure later if settings change
+            return new ComfyUIWrapperService();
+        });
+
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
