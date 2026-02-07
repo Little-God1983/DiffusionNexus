@@ -86,4 +86,19 @@ public interface IComfyUIWrapperService : IDisposable
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The image bytes.</returns>
     Task<byte[]> DownloadImageAsync(ComfyUIImage image, CancellationToken ct = default);
+
+    /// <summary>
+    /// Generates a caption for a local image using the Qwen3-VL workflow on ComfyUI.
+    /// Queues the built-in captioning workflow, waits for completion, and returns the caption text.
+    /// </summary>
+    /// <param name="imagePath">Absolute path to the image file on disk (must be accessible by the ComfyUI server).</param>
+    /// <param name="prompt">The captioning prompt to send to the model.</param>
+    /// <param name="progress">Optional progress reporter that receives WebSocket event messages.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The generated caption text, or <c>null</c> if no text was returned.</returns>
+    Task<string?> GenerateCaptionAsync(
+        string imagePath,
+        string prompt,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default);
 }

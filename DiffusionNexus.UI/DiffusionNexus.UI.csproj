@@ -45,21 +45,19 @@
     <ProjectReference Include="..\DiffusionNexus.Captioning\DiffusionNexus.Captioning.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Assets\Workflows\" />
+  </ItemGroup>
+
   <!-- LLamaSharp 0.24.0 packaging workaround: ggml.dll in the cuda12 directory
        depends on ggml-cpu.dll but the CUDA package doesn't include it. Copy from CPU backend. -->
-  <Target Name="FixCuda12MissingGgmlCpu" AfterTargets="Build"
-          Condition="Exists('$(OutDir)runtimes\win-x64\native\cuda12\ggml.dll') And !Exists('$(OutDir)runtimes\win-x64\native\cuda12\ggml-cpu.dll')">
+  <Target Name="FixCuda12MissingGgmlCpu" AfterTargets="Build" Condition="Exists('$(OutDir)runtimes\win-x64\native\cuda12\ggml.dll') And !Exists('$(OutDir)runtimes\win-x64\native\cuda12\ggml-cpu.dll')">
     <PropertyGroup>
       <_GgmlCpuSource Condition="Exists('$(OutDir)runtimes\win-x64\native\avx2\ggml-cpu.dll')">$(OutDir)runtimes\win-x64\native\avx2\ggml-cpu.dll</_GgmlCpuSource>
       <_GgmlCpuSource Condition="'$(_GgmlCpuSource)' == '' And Exists('$(OutDir)runtimes\win-x64\native\avx\ggml-cpu.dll')">$(OutDir)runtimes\win-x64\native\avx\ggml-cpu.dll</_GgmlCpuSource>
       <_GgmlCpuSource Condition="'$(_GgmlCpuSource)' == '' And Exists('$(OutDir)runtimes\win-x64\native\noavx\ggml-cpu.dll')">$(OutDir)runtimes\win-x64\native\noavx\ggml-cpu.dll</_GgmlCpuSource>
     </PropertyGroup>
-    <Copy SourceFiles="$(_GgmlCpuSource)"
-          DestinationFolder="$(OutDir)runtimes\win-x64\native\cuda12\"
-          SkipUnchangedFiles="true"
-          Condition="'$(_GgmlCpuSource)' != ''" />
-    <Message Importance="high"
-             Text="Copied ggml-cpu.dll to cuda12 backend directory (LLamaSharp workaround)"
-             Condition="'$(_GgmlCpuSource)' != ''" />
+    <Copy SourceFiles="$(_GgmlCpuSource)" DestinationFolder="$(OutDir)runtimes\win-x64\native\cuda12\" SkipUnchangedFiles="true" Condition="'$(_GgmlCpuSource)' != ''" />
+    <Message Importance="high" Text="Copied ggml-cpu.dll to cuda12 backend directory (LLamaSharp workaround)" Condition="'$(_GgmlCpuSource)' != ''" />
   </Target>
 </Project>

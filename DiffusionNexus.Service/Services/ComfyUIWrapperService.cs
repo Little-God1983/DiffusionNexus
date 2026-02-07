@@ -14,6 +14,9 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 {
+    private const string Qwen3VlWorkflowFileName = "Assets/Workflows/Qwen-3VL-autocaption.json";
+    private const string Qwen3VqaNodeId = "705";
+
     private static readonly ILogger Logger = Log.ForContext<ComfyUIWrapperService>();
 
     private readonly HttpClient _httpClient;
@@ -225,6 +228,50 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         using var response = await _httpClient.GetAsync(image.Url, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsByteArrayAsync(ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GenerateCaptionAsync(
+        string imagePath,
+        string prompt,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var workflowPath = Path.Combine(AppContext.BaseDirectory, Qwen3VlWorkflowFileName);
+        if (!File.Exists(workflowPath))
+        {
+            throw new FileNotFoundException(
+                $"Qwen3-VL workflow file not found at {workflowPath}. Ensure the workflow JSON is deployed with the application.",
+                workflowPath);
+        }
+
+        Logger.Information("Generating caption for {ImagePath} using Qwen3-VL workflow", imagePath);
+
+        var promptId = await QueueWorkflowAsync(workflowPath,
+            new Dictionary<string, Action<JsonNode>>
+            {
+                [Qwen3VqaNodeId] = node =>
+                {
+                    node["inputs"]!["source_path"] = imagePath;
+                    node["inputs"]!["text"] = prompt;
+                }
+            }, ct);
+
+        await WaitForCompletionAsync(promptId, progress, ct);
+
+        var result = await GetResultAsync(promptId, ct);
+        var caption = result.Texts.FirstOrDefault();
+
+        Logger.Information(
+            "Caption generation {Result} for {ImagePath}",
+            caption is not null ? "succeeded" : "returned no text",
+            imagePath);
+
+        return caption;
     }
 
     /// <inheritdoc />
