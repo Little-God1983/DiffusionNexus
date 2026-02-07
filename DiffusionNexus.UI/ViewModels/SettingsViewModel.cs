@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Net.Http;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -127,6 +128,24 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// </summary>
     [ObservableProperty]
     private bool _isBackupInProgress;
+
+    /// <summary>
+    /// The ComfyUI server URL.
+    /// </summary>
+    [ObservableProperty]
+    private string _comfyUiServerUrl = "http://127.0.0.1:8188/";
+
+    /// <summary>
+    /// Whether the ComfyUI server is online.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isComfyUiServerOnline;
+
+    /// <summary>
+    /// Whether a ComfyUI connection test is in progress.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isTestingComfyUiConnection;
 
     /// <summary>
     /// Available days for backup interval (0-30).
@@ -306,6 +325,9 @@ public partial class SettingsViewModel : BusyViewModelBase
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
+
+        // Check ComfyUI server connectivity in the background
+        _ = TestComfyUiConnectionAsync();
     }
 
     /// <summary>
@@ -1076,6 +1098,32 @@ public partial class SettingsViewModel : BusyViewModelBase
         ValidateAutoBackupLocation();
     }
     partial void OnMaxBackupsChanged(int value) => HasChanges = true;
+
+    /// <summary>
+    /// Tests whether the ComfyUI server is reachable at the configured URL.
+    /// </summary>
+    [RelayCommand]
+    private async Task TestComfyUiConnectionAsync()
+    {
+        IsTestingComfyUiConnection = true;
+        IsComfyUiServerOnline = false;
+
+        try
+        {
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var baseUrl = ComfyUiServerUrl.TrimEnd('/');
+            using var response = await httpClient.GetAsync($"{baseUrl}/system_stats");
+            IsComfyUiServerOnline = response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            IsComfyUiServerOnline = false;
+        }
+        finally
+        {
+            IsTestingComfyUiConnection = false;
+        }
+    }
 }
 
 /// <summary>
