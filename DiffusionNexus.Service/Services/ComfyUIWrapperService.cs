@@ -106,7 +106,21 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         var payload = new JsonObject
         {
             ["prompt"] = workflow,
-            ["client_id"] = _clientId
+            ["client_id"] = _clientId,
+            ["extra_data"] = new JsonObject
+            {
+                ["extra_pnginfo"] = new JsonObject
+                {
+                    ["workflow"] = new JsonObject
+                    {
+                        // Required by comfyui_queue_manager plugin (qm_queue.py lines 221-222)
+                        ["workflow_name"] = "DiffusionNexus",
+                        ["id"] = _clientId,
+                        // Required by ShowText|pysssss node (show_text.py line 34)
+                        ["nodes"] = new JsonArray()
+                    }
+                }
+            }
         };
 
         var content = new StringContent(
@@ -150,17 +164,33 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         {
             ct.ThrowIfCancellationRequested();
 
-            var result = await ws.ReceiveAsync(buffer, ct);
-            if (result.MessageType != WebSocketMessageType.Text)
+            // Read the full message, assembling fragments if necessary
+            var msg = await ReadFullWebSocketMessageAsync(ws, buffer, ct);
+            if (msg is null)
             {
                 continue;
             }
 
-            var msg = Encoding.UTF8.GetString(buffer, 0, result.Count);
             var json = JsonNode.Parse(msg);
             var type = json?["type"]?.GetValue<string>();
 
+            Logger.Debug("WebSocket event: {EventType} for prompt {PromptId}", type, promptId);
             progress?.Report($"Event: {type}");
+
+            // Detect execution errors and propagate them
+            if (type is "execution_error")
+            {
+                var errorData = json?["data"];
+                var errorPromptId = errorData?["prompt_id"]?.GetValue<string>();
+                if (errorPromptId == promptId)
+                {
+                    var nodeType = errorData?["node_type"]?.GetValue<string>() ?? "unknown";
+                    var errorMsg = errorData?["exception_message"]?.GetValue<string>() ?? "Unknown execution error";
+                    Logger.Error("ComfyUI execution error in node {NodeType}: {Error}", nodeType, errorMsg);
+                    throw new InvalidOperationException(
+                        $"ComfyUI workflow failed in node '{nodeType}': {errorMsg}");
+                }
+            }
 
             if (type is not "executing")
             {
@@ -180,6 +210,40 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         }
     }
 
+    /// <summary>
+    /// Reads a complete WebSocket text message, assembling fragments when the message
+    /// exceeds the buffer size. Returns null for non-text messages.
+    /// </summary>
+    private static async Task<string?> ReadFullWebSocketMessageAsync(
+        ClientWebSocket ws,
+        byte[] buffer,
+        CancellationToken ct)
+    {
+        var result = await ws.ReceiveAsync(buffer, ct);
+        if (result.MessageType != WebSocketMessageType.Text)
+        {
+            return null;
+        }
+
+        // Fast path: message fits in a single buffer read
+        if (result.EndOfMessage)
+        {
+            return Encoding.UTF8.GetString(buffer, 0, result.Count);
+        }
+
+        // Slow path: assemble fragments for large messages
+        using var ms = new MemoryStream();
+        ms.Write(buffer, 0, result.Count);
+
+        while (!result.EndOfMessage)
+        {
+            result = await ws.ReceiveAsync(buffer, ct);
+            ms.Write(buffer, 0, result.Count);
+        }
+
+        return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+    }
+
     /// <inheritdoc />
     public async Task<ComfyUIResult> GetResultAsync(string promptId, CancellationToken ct = default)
     {
@@ -191,7 +255,8 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         using var response = await _httpClient.GetAsync($"/history/{promptId}", ct);
         response.EnsureSuccessStatusCode();
 
-        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))
+        var historyText = await response.Content.ReadAsStringAsync(ct);
+        var json = JsonNode.Parse(historyText)
                    ?? throw new InvalidOperationException("ComfyUI returned an unparseable /history response.");
 
         var outputs = json[promptId]?["outputs"];
@@ -199,14 +264,23 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 
         if (outputs is not JsonObject outputNodes)
         {
-            Logger.Warning("No outputs found for prompt {PromptId}", promptId);
+            Logger.Warning("No outputs found for prompt {PromptId}. Raw history: {History}",
+                promptId, historyText.Length > 2000 ? historyText[..2000] + "..." : historyText);
             return comfyResult;
         }
 
-        foreach (var (_, nodeOutput) in outputNodes)
+        foreach (var (nodeId, nodeOutput) in outputNodes)
         {
+            Logger.Debug("Processing output for node {NodeId}: {Keys}",
+                nodeId, nodeOutput is JsonObject obj ? string.Join(", ", obj.Select(kv => kv.Key)) : "null");
             ExtractTextOutputs(nodeOutput, comfyResult);
             ExtractImageOutputs(nodeOutput, comfyResult);
+        }
+
+        if (comfyResult.Texts.Count == 0 && comfyResult.Images.Count == 0)
+        {
+            Logger.Warning("No text or image outputs extracted for prompt {PromptId}. Output nodes: {Outputs}",
+                promptId, outputs.ToJsonString().Length > 2000 ? outputs.ToJsonString()[..2000] + "..." : outputs.ToJsonString());
         }
 
         Logger.Information(
@@ -300,12 +374,28 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
             return;
         }
 
-        foreach (var t in textArray)
+        foreach (var element in textArray)
         {
-            var text = t?.GetValue<string>();
-            if (text is not null)
+            // ShowText|pysssss with INPUT_IS_LIST/OUTPUT_IS_LIST wraps text in a nested array:
+            // "text": [["caption"]] instead of "text": ["caption"]
+            if (element is JsonArray innerArray)
             {
-                result.Texts.Add(text);
+                foreach (var inner in innerArray)
+                {
+                    var text = inner?.GetValue<string>();
+                    if (text is not null)
+                    {
+                        result.Texts.Add(text);
+                    }
+                }
+            }
+            else
+            {
+                var text = element?.GetValue<string>();
+                if (text is not null)
+                {
+                    result.Texts.Add(text);
+                }
             }
         }
     }
