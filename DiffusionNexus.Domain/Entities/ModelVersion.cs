@@ -6,11 +6,8 @@ namespace DiffusionNexus.Domain.Entities;
 /// Represents a specific version of a model.
 /// Each version can have multiple files (different formats/sizes) and preview images.
 /// </summary>
-public class ModelVersion
+public class ModelVersion : BaseEntity
 {
-    /// <summary>Local database ID.</summary>
-    public int Id { get; set; }
-
     /// <summary>Civitai model version ID.</summary>
     public int? CivitaiId { get; set; }
 
@@ -28,12 +25,6 @@ public class ModelVersion
 
     /// <summary>Original base model string from Civitai (for display).</summary>
     public string? BaseModelRaw { get; set; }
-
-    /// <summary>When this version was created on Civitai.</summary>
-    public DateTimeOffset CreatedAt { get; set; }
-
-    /// <summary>When this version was last updated.</summary>
-    public DateTimeOffset? UpdatedAt { get; set; }
 
     /// <summary>When this version was published.</summary>
     public DateTimeOffset? PublishedAt { get; set; }

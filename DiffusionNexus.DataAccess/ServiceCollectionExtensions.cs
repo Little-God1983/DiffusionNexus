@@ -1,4 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.Repositories;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,6 +13,30 @@ namespace DiffusionNexus.DataAccess;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// Adds the full data access layer: DbContext, repositories, and Unit of Work.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="databaseDirectory">Optional custom directory for the database file.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddDataAccessLayer(
+        this IServiceCollection services,
+        string? databaseDirectory = null)
+    {
+        services.AddDiffusionNexusCoreDatabase(databaseDirectory);
+
+        // Unit of Work (scoped — same lifetime as DbContext)
+        services.AddScoped<IUnitOfWork, DataAccess.UnitOfWork.UnitOfWork>();
+
+        // Repositories (scoped — resolved through UoW or directly)
+        services.AddScoped<IModelRepository, ModelRepository>();
+        services.AddScoped<IModelFileRepository, ModelFileRepository>();
+        services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
+        services.AddScoped<IDisclaimerAcceptanceRepository, DisclaimerAcceptanceRepository>();
+
+        return services;
+    }
+
     /// <summary>
     /// Adds the DiffusionNexus core database context to the service collection.
     /// </summary>

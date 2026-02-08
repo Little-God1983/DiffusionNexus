@@ -414,8 +414,8 @@ public partial class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        // Database
-        services.AddDiffusionNexusCoreDatabase();
+        // Database + Repositories + Unit of Work
+        services.AddDataAccessLayer();
 
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
