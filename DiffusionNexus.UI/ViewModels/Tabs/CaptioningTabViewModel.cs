@@ -54,6 +54,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private bool _isProcessing;
     private double _totalProgress;
     private string _currentProcessingStatus = "Ready";
+    private CancellationTokenSource? _captioningCts;
 
     // Dataset statistics
     private int _datasetImageCount;
@@ -94,6 +95,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
         ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
         CheckBackendAvailabilityCommand = new AsyncRelayCommand(CheckBackendAvailabilityAsync);
+        PauseCommand = new RelayCommand(PauseCaptioning, () => IsProcessing);
 
         RefreshModelStatuses();
 
@@ -516,6 +518,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             {
                 GenerateCommand.NotifyCanExecuteChanged();
                 DownloadModelCommand.NotifyCanExecuteChanged();
+                PauseCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -652,9 +655,20 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// </summary>
     public IAsyncRelayCommand CheckBackendAvailabilityCommand { get; }
 
+    /// <summary>
+    /// Command to pause captioning after the current image finishes.
+    /// </summary>
+    public IRelayCommand PauseCommand { get; }
+
     #endregion
 
     #region Private Methods
+
+    private void PauseCaptioning()
+    {
+        _captioningCts?.Cancel();
+        CurrentProcessingStatus = "Stopping after current image...";
+    }
 
     private async Task CheckBackendAvailabilityAsync()
     {
@@ -831,6 +845,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         TotalImageCount = 0;
         ClearHistory();
 
+        _captioningCts = new CancellationTokenSource();
+
         try
         {
             var blackList = BlacklistedWords?
@@ -856,6 +872,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 return;
             }
 
+            var ct = _captioningCts.Token;
+
             var progress = new Progress<CaptioningProgress>(p =>
             {
                 TotalProgress = p.Percentage;
@@ -880,13 +898,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
             if (!IsLocalInferenceBackend && SelectedBackend is not null)
             {
-                // Delegate to the selected backend (e.g. ComfyUI)
-                results = await SelectedBackend.GenerateBatchCaptionsAsync(config, progress);
+                results = await SelectedBackend.GenerateBatchCaptionsAsync(config, progress, ct);
             }
             else if (_captioningService is not null)
             {
-                // Delegate to the local inference service
-                results = await _captioningService.GenerateCaptionsAsync(config, progress);
+                results = await _captioningService.GenerateCaptionsAsync(config, progress, ct);
             }
             else
             {
@@ -898,6 +914,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             StatusMessage = $"Completed! {successCount}/{results.Count} images captioned.";
             CurrentProcessingStatus = "Done";
         }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = $"Paused after {CompletedCount}/{TotalImageCount} images. Press Generate to continue (already-captioned images will be skipped).";
+            CurrentProcessingStatus = "Paused";
+        }
         catch (Exception ex)
         {
             StatusMessage = $"Job failed: {ex.Message}";
@@ -905,6 +926,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
         finally
         {
+            _captioningCts?.Dispose();
+            _captioningCts = null;
             IsProcessing = false;
             RefreshDatasetStats();
         }
