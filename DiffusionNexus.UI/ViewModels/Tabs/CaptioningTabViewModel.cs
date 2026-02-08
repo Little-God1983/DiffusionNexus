@@ -96,6 +96,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
         CheckBackendAvailabilityCommand = new AsyncRelayCommand(CheckBackendAvailabilityAsync);
         PauseCommand = new RelayCommand(PauseCaptioning, () => IsProcessing);
+        RefreshDatasetsCommand = new RelayCommand(
+            () => _eventAggregator.PublishRefreshDatasetsRequested(new RefreshDatasetsRequestedEventArgs()));
 
         RefreshModelStatuses();
 
@@ -660,6 +662,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// </summary>
     public IRelayCommand PauseCommand { get; }
 
+    /// <summary>
+    /// Command to refresh the available datasets list.
+    /// </summary>
+    public IRelayCommand RefreshDatasetsCommand { get; }
+
     #endregion
 
     #region Private Methods
@@ -957,6 +964,33 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private void OnRefreshDatasetsRequested(object? sender, RefreshDatasetsRequestedEventArgs e)
     {
         OnPropertyChanged(nameof(AvailableDatasets));
+        RefreshVersionList();
+    }
+
+    /// <summary>
+    /// Re-reads version folders from disk for the currently selected dataset
+    /// and updates the version dropdown, preserving the current selection.
+    /// </summary>
+    private void RefreshVersionList()
+    {
+        if (SelectedDataset is null)
+        {
+            return;
+        }
+
+        var previousVersion = SelectedDatasetVersion;
+        var versions = SelectedDataset.GetAllVersionNumbers();
+
+        AvailableDatasetVersions.Clear();
+        foreach (var v in versions)
+        {
+            AvailableDatasetVersions.Add(v);
+        }
+
+        // Keep the previous selection if still valid, otherwise pick the latest
+        SelectedDatasetVersion = versions.Contains(previousVersion ?? 0)
+            ? previousVersion
+            : versions[^1];
     }
 
     private void RefreshDatasetStats()

@@ -145,7 +145,7 @@
               <!-- Dataset Input -->
               <StackPanel IsVisible="{Binding !IsSingleImageMode}">
                 <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
-                <Grid ColumnDefinitions="*,12,Auto">
+                <Grid ColumnDefinitions="*,12,Auto,4,Auto">
                   <ComboBox Grid.Column="0"
                             ItemsSource="{Binding AvailableDatasets}"
                             SelectedItem="{Binding SelectedDataset}"
@@ -170,6 +170,11 @@
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
                   </ComboBox>
+
+                  <Button Grid.Column="4" Content="&#x21BB;"
+                          Command="{Binding RefreshDatasetsCommand}"
+                          Padding="8,6"
+                          ToolTip.Tip="Refresh dataset list"/>
                 </Grid>
               </StackPanel>
 
