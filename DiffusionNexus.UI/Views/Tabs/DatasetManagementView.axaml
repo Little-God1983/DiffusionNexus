@@ -462,7 +462,7 @@
                                 <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
                               </Border>
                               <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
-                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
                                   <Button Grid.Column="0" Content="+" Command="{Binding MarkApprovedCommand}" Padding="12,6" FontSize="14"
                                           Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                                           Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
@@ -476,11 +476,15 @@
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).ReplaceImageCommand}"
                                           CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="4" Content="Edit"
+                                  <Button Grid.Column="4" Content="Caption"
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToCaptioningCommand}"
+                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,4,0"/>
+                                  <Button Grid.Column="5" Content="Edit"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
                                           CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="5" Content="X" 
+                                  <Button Grid.Column="6" Content="X" 
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
                                           CommandParameter="{Binding}" 
                                           Padding="12,6" FontSize="14"
@@ -520,11 +524,6 @@
               </ScrollViewer>
             </Grid>
           </Grid>
-        </TabItem>
-        
-        <!-- Tab 2: Captioning -->
-        <TabItem Header="Captioning">
-          <views:CaptioningTabView DataContext="{Binding CaptioningTab}"/>
         </TabItem>
         
         <!-- Tab 3: Epochs -->

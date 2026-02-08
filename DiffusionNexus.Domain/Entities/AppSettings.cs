@@ -126,6 +126,15 @@ public class AppSettings
 
     #endregion
 
+    #region ComfyUI Settings
+
+    /// <summary>
+    /// The ComfyUI server URL.
+    /// </summary>
+    public string ComfyUiServerUrl { get; set; } = "http://127.0.0.1:8188/";
+
+    #endregion
+
     #region Timestamps
 
     /// <summary>

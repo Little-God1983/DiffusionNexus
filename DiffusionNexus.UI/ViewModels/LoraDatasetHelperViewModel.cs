@@ -103,6 +103,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="eventAggregator">The event aggregator for inter-component communication.</param>
     /// <param name="state">The shared dataset state service.</param>
     /// <param name="captioningService">Optional captioning service for AI image captioning.</param>
+    /// <param name="captioningBackends">Available captioning backends (local inference, ComfyUI, etc.).</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service.</param>
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
     /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
@@ -113,7 +114,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IDatasetStorageService datasetStorageService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
-        ICaptioningService? captioningService = null, // New
+        ICaptioningService? captioningService = null,
+        IReadOnlyList<ICaptioningBackend>? captioningBackends = null,
         IVideoThumbnailService? videoThumbnailService = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IImageUpscalingService? upscalingService = null,
@@ -139,7 +141,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             activityLog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
-        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -152,7 +154,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null)
     {
     }
 
