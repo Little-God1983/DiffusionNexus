@@ -250,6 +250,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             CivitaiApiKey = _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
 
             // Map settings to view model
+            ComfyUiServerUrl = settings.ComfyUiServerUrl;
             ShowNsfw = settings.ShowNsfw;
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowVideoPreview = settings.ShowVideoPreview;
@@ -418,6 +419,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 : _secureStorage.Encrypt(CivitaiApiKey);
 
             // Map view model to settings
+            settings.ComfyUiServerUrl = ComfyUiServerUrl;
             settings.ShowNsfw = ShowNsfw;
             settings.GenerateVideoThumbnails = GenerateVideoThumbnails;
             settings.ShowVideoPreview = ShowVideoPreview;

@@ -155,7 +155,11 @@ public partial class App : Application
             {
                 Serilog.Log.Warning("InitializeDatabase: Cannot connect to database - will try to create it");
             }
-            
+
+            // Remove migration history entries for migrations that no longer exist in the codebase
+            Serilog.Log.Information("InitializeDatabase: Cleaning stale migration history entries...");
+            CleanStaleMigrationHistory(dbContext);
+
             Serilog.Log.Information("InitializeDatabase: Getting pending migrations...");
             var pendingMigrations = dbContext.Database.GetPendingMigrations().ToList();
             
@@ -175,29 +179,44 @@ public partial class App : Application
             {
                 Serilog.Log.Information("InitializeDatabase: No pending migrations - SKIPPING Migrate()");
             }
+
+            // Post-migration verification to catch schema gaps
+            Serilog.Log.Information("InitializeDatabase: Post-migration schema verification...");
+            CheckAndRepairSchema(dbContext);
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {
-            Serilog.Log.Warning("InitializeDatabase: Table already exists (continuing): {Message}", ex.Message);
+            Serilog.Log.Warning("InitializeDatabase: Table/column already exists (continuing): {Message}", ex.Message);
+            CheckAndRepairSchema(dbContext);
+            MarkPendingMigrationsAsApplied(dbContext);
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
         {
-            Serilog.Log.Warning("InitializeDatabase: Table already exists (continuing): {Message}", ex.Message);
+            Serilog.Log.Warning("InitializeDatabase: Table/column already exists (continuing): {Message}", ex.Message);
+            CheckAndRepairSchema(dbContext);
+            MarkPendingMigrationsAsApplied(dbContext);
         }
         catch (SqliteException ex) when (ex.Message.Contains("no such column"))
         {
             Serilog.Log.Warning("InitializeDatabase: Schema mismatch detected: {Message}", ex.Message);
-            TryFixMissingColumns(dbContext);
+            CheckAndRepairSchema(dbContext);
+            MarkPendingMigrationsAsApplied(dbContext);
         }
         catch (SqliteException ex) when (ex.Message.Contains("database is locked") || ex.Message.Contains("busy"))
         {
             Serilog.Log.Error(ex, "InitializeDatabase: Database is locked/busy - this may indicate another process is using the database");
-            // Don't throw - let app continue without fully initialized database
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "InitializeDatabase: Unexpected error during migration");
-            // Don't throw - let app continue
+            try
+            {
+                CheckAndRepairSchema(dbContext);
+            }
+            catch (Exception repairEx)
+            {
+                Serilog.Log.Error(repairEx, "InitializeDatabase: Schema repair also failed");
+            }
         }
 
         Serilog.Log.Information("InitializeDatabase: Completed");
@@ -236,41 +255,150 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Attempts to add missing columns to AppSettings table.
-    /// This is a fallback for when migrations don't run properly.
+    /// Checks and repairs the database schema by ensuring all required columns exist.
+    /// This is safer than waiting for a crash.
     /// </summary>
-    private static void TryFixMissingColumns(DiffusionNexusCoreDbContext dbContext)
+    private static void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext)
     {
         try
         {
-            // Try to add MaxBackups column if missing
-            dbContext.Database.ExecuteSqlRaw(
-                "ALTER TABLE AppSettings ADD COLUMN MaxBackups INTEGER NOT NULL DEFAULT 10");
-            System.Diagnostics.Debug.WriteLine("Added missing MaxBackups column");
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
-        {
-            // Column already exists, ignore
+            Serilog.Log.Information("CheckAndRepairSchema: Checking table schema...");
+            
+            var connection = dbContext.Database.GetDbConnection();
+            var wasOpen = connection.State == System.Data.ConnectionState.Open;
+            if (!wasOpen) connection.Open();
+
+            var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "PRAGMA table_info('AppSettings');";
+                using var reader = command.ExecuteReader();
+                
+                while (reader.Read())
+                {
+                    var name = reader["name"].ToString();
+                    if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
+                }
+            }
+            finally
+            {
+                if (!wasOpen) connection.Close();
+            }
+
+            Serilog.Log.Information("CheckAndRepairSchema: Found AppSettings columns: {Columns}", string.Join(", ", existingColumns));
+            
+            // List of columns to verify and their add scripts
+            var requiredColumns = new Dictionary<string, string>
+            {
+                { "MaxBackups", "ALTER TABLE AppSettings ADD COLUMN MaxBackups INTEGER NOT NULL DEFAULT 10" },
+                { "LastBackupAt", "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT" },
+                { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" }
+            };
+
+            foreach (var col in requiredColumns)
+            {
+                if (!existingColumns.Contains(col.Key))
+                {
+                    Serilog.Log.Warning("CheckAndRepairSchema: Missing '{Column}' column. Attempting to add...", col.Key);
+                    try 
+                    {
+                        dbContext.Database.ExecuteSqlRaw(col.Value);
+                        Serilog.Log.Information("CheckAndRepairSchema: Successfully added '{Column}'", col.Key);
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Error(ex, "CheckAndRepairSchema: Failed to add '{Column}'", col.Key);
+                        // Don't throw, try next
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to add MaxBackups column: {ex.Message}");
+             Serilog.Log.Error(ex, "CheckAndRepairSchema: Fatal error during check");
         }
+    }
 
+    /// <summary>
+    /// Removes entries from __EFMigrationsHistory that no longer have corresponding migration classes.
+    /// This prevents EF Core from failing when migrations are removed from the codebase.
+    /// </summary>
+    private static void CleanStaleMigrationHistory(DiffusionNexusCoreDbContext dbContext)
+    {
         try
         {
-            // Try to add LastBackupAt column if missing
-            dbContext.Database.ExecuteSqlRaw(
-                "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT");
-            System.Diagnostics.Debug.WriteLine("Added missing LastBackupAt column");
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
-        {
-            // Column already exists, ignore
+            var connection = dbContext.Database.GetDbConnection();
+            var wasOpen = connection.State == System.Data.ConnectionState.Open;
+            if (!wasOpen) connection.Open();
+
+            try
+            {
+                // Check if __EFMigrationsHistory table exists
+                using var checkCmd = connection.CreateCommand();
+                checkCmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name='__EFMigrationsHistory';";
+                var tableExists = checkCmd.ExecuteScalar() is not null;
+                if (!tableExists) return;
+
+                // Get all migration IDs known to EF Core from the assembly
+                var knownMigrations = dbContext.Database.GetMigrations().ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                // Get all migration IDs from the history table
+                var appliedMigrations = new List<string>();
+                using var listCmd = connection.CreateCommand();
+                listCmd.CommandText = "SELECT MigrationId FROM __EFMigrationsHistory;";
+                using var reader = listCmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    appliedMigrations.Add(reader.GetString(0));
+                }
+
+                // Remove stale entries (applied but no longer in codebase)
+                foreach (var migrationId in appliedMigrations)
+                {
+                    if (!knownMigrations.Contains(migrationId))
+                    {
+                        Serilog.Log.Warning("CleanStaleMigrationHistory: Removing stale entry '{MigrationId}'", migrationId);
+                        dbContext.Database.ExecuteSqlRaw(
+                            "DELETE FROM __EFMigrationsHistory WHERE MigrationId = {0}", migrationId);
+                    }
+                }
+            }
+            finally
+            {
+                if (!wasOpen) connection.Close();
+            }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to add LastBackupAt column: {ex.Message}");
+            Serilog.Log.Error(ex, "CleanStaleMigrationHistory: Failed to clean stale entries");
+        }
+    }
+
+    /// <summary>
+    /// Marks any pending migrations as applied in __EFMigrationsHistory without running them.
+    /// Used after schema repair when migrations failed due to "already exists" errors.
+    /// </summary>
+    private static void MarkPendingMigrationsAsApplied(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            var pending = dbContext.Database.GetPendingMigrations().ToList();
+            if (pending.Count == 0) return;
+
+            foreach (var migrationId in pending)
+            {
+                Serilog.Log.Information("MarkPendingMigrationsAsApplied: Marking '{MigrationId}' as applied", migrationId);
+                dbContext.Database.ExecuteSqlRaw(
+                    "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ({0}, {1})",
+                    migrationId,
+                    typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "9.0.0");
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "MarkPendingMigrationsAsApplied: Failed");
         }
     }
 
