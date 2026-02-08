@@ -17,7 +17,7 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     /// <inheritdoc />
     public async Task<IReadOnlyList<Model>> GetModelsWithLocalFilesAsync(CancellationToken cancellationToken = default)
     {
-        var models = await Context.Models
+        return await Context.Models
             .Include(m => m.Creator)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.Files)
@@ -25,13 +25,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Images)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            .Where(m => m.Versions.Any(v => v.Files.Any(f => f.LocalPath != null && f.LocalPath != "")))
             .AsSplitQuery()
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-
-        return models
-            .Where(m => m.Versions.Any(v => v.Files.Any(f => !string.IsNullOrEmpty(f.LocalPath))))
-            .ToList();
     }
 
     /// <inheritdoc />
