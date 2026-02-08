@@ -977,6 +977,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private void OnNavigateToCaptioningRequested(object? sender, NavigateToCaptioningEventArgs e)
     {
         LoadSingleImage(e.ImagePath);
+        _state.SelectedTabIndex = 2;
     }
 
     /// <summary>

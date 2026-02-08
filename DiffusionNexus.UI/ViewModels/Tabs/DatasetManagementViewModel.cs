@@ -1611,6 +1611,22 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         StatusMessage = $"Sent to Image Edit: {image.FullFileName}";
     }
 
+    /// <summary>
+    /// Sends the image to the Captioning tab for single-image captioning.
+    /// </summary>
+    [RelayCommand]
+    private void SendToCaptioning(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
+        {
+            ImagePath = image.ImagePath
+        });
+
+        StatusMessage = $"Sent to Captioning: {image.FullFileName}";
+    }
+
     private void SendToBatchCropScale()
     {
         if (ActiveDataset is null) return;
