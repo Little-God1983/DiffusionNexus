@@ -264,6 +264,17 @@ public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when an image is sent to the Captioning tab for single-image captioning.
+/// </summary>
+public sealed class NavigateToCaptioningEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// Absolute path to the image file.
+    /// </summary>
+    public required string ImagePath { get; init; }
+}
+
+/// <summary>
 /// Event raised when navigation to the Batch Crop/Scale tab is requested.
 /// </summary>
 public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
@@ -437,6 +448,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
 
+    /// <summary>
+    /// Raised when an image is sent to the Captioning tab.
+    /// </summary>
+    event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
+
     #endregion
 
     #region Publish Methods
@@ -458,6 +474,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
+    void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
 
     #endregion
@@ -534,6 +551,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
 
     #endregion
 
@@ -656,6 +676,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToImageComparerRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToCaptioningRequested, args);
     }
 
     /// <inheritdoc/>

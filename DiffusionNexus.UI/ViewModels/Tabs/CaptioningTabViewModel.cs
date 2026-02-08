@@ -102,6 +102,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshModelStatuses();
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
+        _eventAggregator.NavigateToCaptioningRequested += OnNavigateToCaptioningRequested;
     }
 
     /// <summary>
@@ -478,6 +479,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 if (!string.IsNullOrEmpty(value)) IsSingleImageMode = true;
                 GenerateCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(SingleImageName));
+                OnPropertyChanged(nameof(HasSingleImage));
             }
         }
     }
@@ -486,6 +488,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Display name for the selected single image.
     /// </summary>
     public string? SingleImageName => Path.GetFileName(SingleImagePath);
+
+    /// <summary>
+    /// Whether a single image is currently loaded.
+    /// </summary>
+    public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
 
     /// <summary>
     /// Whether to caption a single image instead of a dataset.
@@ -967,6 +974,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshVersionList();
     }
 
+    private void OnNavigateToCaptioningRequested(object? sender, NavigateToCaptioningEventArgs e)
+    {
+        LoadSingleImage(e.ImagePath);
+    }
+
+    /// <summary>
+    /// Loads a single image for captioning. Can be called from drag-drop or external navigation.
+    /// </summary>
+    public void LoadSingleImage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+        {
+            return;
+        }
+
+        SingleImagePath = imagePath;
+    }
+
     /// <summary>
     /// Re-reads version folders from disk for the currently selected dataset
     /// and updates the version dropdown, preserving the current selection.
@@ -1091,6 +1116,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (disposing)
         {
             _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+            _eventAggregator.NavigateToCaptioningRequested -= OnNavigateToCaptioningRequested;
             DisposePreviewBitmaps();
         }
 

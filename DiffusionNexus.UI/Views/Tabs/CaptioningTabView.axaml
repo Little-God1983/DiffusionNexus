@@ -180,13 +180,48 @@
 
               <!-- Single Image Input -->
               <StackPanel IsVisible="{Binding IsSingleImageMode}" Spacing="8">
-                <TextBlock Text="Single Image"/>
-                <Grid ColumnDefinitions="*,Auto,Auto">
-                  <TextBox Grid.Column="0" Text="{Binding SingleImagePath}" IsReadOnly="True"
-                           Watermark="No image selected" VerticalAlignment="Center"/>
-                  <Button Grid.Column="1" Content="..." Command="{Binding SelectSingleImageCommand}" Margin="4,0,0,0"/>
-                  <Button Grid.Column="2" Content="X" Command="{Binding ClearSingleImageCommand}" Margin="4,0,0,0"/>
-                </Grid>
+                <!-- Drop zone (no image loaded) -->
+                <Border x:Name="SingleImageDropZone"
+                        Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+                        CornerRadius="8" Padding="16" MinHeight="100"
+                        DragDrop.AllowDrop="True"
+                        IsVisible="{Binding !HasSingleImage}">
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                    <TextBlock Text="No image loaded" FontSize="14" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Opacity="0.6"/>
+                    <TextBlock Text="Drag and drop an image here"
+                               FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
+                    <TextBlock Text="or use 'Send to Captioning' from Dataset Management"
+                               FontSize="11" Opacity="0.3" HorizontalAlignment="Center"/>
+                    <Button Content="+ Open Image"
+                            Command="{Binding SelectSingleImageCommand}"
+                            HorizontalAlignment="Center"
+                            Background="#4CAF50" Foreground="White"
+                            Padding="12,6" Margin="0,4,0,0"/>
+                  </StackPanel>
+                </Border>
+
+                <!-- Loaded image info (image loaded) -->
+                <Border Background="#1A1A1A" CornerRadius="8" Padding="12"
+                        IsVisible="{Binding HasSingleImage}"
+                        DragDrop.AllowDrop="True"
+                        x:Name="SingleImageLoadedZone">
+                  <Grid ColumnDefinitions="Auto,8,*,Auto,Auto">
+                    <TextBlock Grid.Column="0" Text="&#x1F5BC;" FontSize="20" VerticalAlignment="Center" Opacity="0.5"/>
+                    <TextBlock Grid.Column="2" Text="{Binding SingleImageName}"
+                               FontSize="13" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" Opacity="0.8"/>
+                    <Button Grid.Column="3" Content="..."
+                            Command="{Binding SelectSingleImageCommand}"
+                            Padding="8,4" Margin="4,0,0,0"
+                            ToolTip.Tip="Choose a different image"/>
+                    <Button Grid.Column="4" Content="X"
+                            Command="{Binding ClearSingleImageCommand}"
+                            Padding="8,4" Margin="4,0,0,0"
+                            Foreground="#FF6B6B" FontWeight="Bold"
+                            ToolTip.Tip="Remove image"/>
+                  </Grid>
+                </Border>
               </StackPanel>
             </StackPanel>
           </Border>
