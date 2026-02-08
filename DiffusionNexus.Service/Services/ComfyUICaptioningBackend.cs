@@ -36,6 +36,11 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
 
+    /// <summary>
+    /// The configured ComfyUI server URL used for connectivity checks.
+    /// </summary>
+    public string ServerUrl => GetBaseUrl();
+
     /// <inheritdoc />
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
@@ -48,7 +53,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             if (!response.IsSuccessStatusCode)
             {
-                MissingRequirements = ["ComfyUI server is not reachable"];
+                MissingRequirements = [];
                 return false;
             }
 
@@ -73,7 +78,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         }
         catch
         {
-            MissingRequirements = ["ComfyUI server is not reachable"];
+            MissingRequirements = [];
             return false;
         }
     }

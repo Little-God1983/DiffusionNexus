@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
@@ -710,9 +711,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         {
             IsBackendAvailable = await SelectedBackend.IsAvailableAsync();
 
-            if (!IsBackendAvailable && SelectedBackend.MissingRequirements.Count > 0)
+            if (!IsBackendAvailable)
             {
-                StatusMessage = string.Join("; ", SelectedBackend.MissingRequirements);
+                if (SelectedBackend.MissingRequirements.Count > 0)
+                {
+                    StatusMessage = string.Join("; ", SelectedBackend.MissingRequirements);
+                }
+                else if (SelectedBackend is ComfyUICaptioningBackend comfyBackend)
+                {
+                    StatusMessage = $"Server under configured URL not reachable: {comfyBackend.ServerUrl}";
+                }
+                else
+                {
+                    StatusMessage = "Backend is not available.";
+                }
+            }
+            else
+            {
+                StatusMessage = null;
             }
         }
         catch
