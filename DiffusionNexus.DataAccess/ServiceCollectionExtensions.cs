@@ -24,7 +24,29 @@ public static class ServiceCollectionExtensions
         string? databaseDirectory = null)
     {
         services.AddDiffusionNexusCoreDatabase(databaseDirectory);
+        return services.AddDataAccessLayerCore();
+    }
 
+    /// <summary>
+    /// Adds the full data access layer with custom DbContext configuration.
+    /// Useful for testing with in-memory databases.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureOptions">Action to configure DbContext options.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddDataAccessLayer(
+        this IServiceCollection services,
+        Action<DbContextOptionsBuilder> configureOptions)
+    {
+        services.AddDiffusionNexusCoreDatabase(configureOptions);
+        return services.AddDataAccessLayerCore();
+    }
+
+    /// <summary>
+    /// Registers repositories and Unit of Work (shared between AddDataAccessLayer overloads).
+    /// </summary>
+    private static IServiceCollection AddDataAccessLayerCore(this IServiceCollection services)
+    {
         // Unit of Work (scoped — same lifetime as DbContext)
         services.AddScoped<IUnitOfWork, DataAccess.UnitOfWork.UnitOfWork>();
 
