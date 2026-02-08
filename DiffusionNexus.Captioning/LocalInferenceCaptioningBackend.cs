@@ -26,6 +26,9 @@ public sealed class LocalInferenceCaptioningBackend : ICaptioningBackend
     public string DisplayName => "Local Inference (LlamaSharp)";
 
     /// <inheritdoc />
+    public IReadOnlyList<string> MissingRequirements => [];
+
+    /// <inheritdoc />
     public Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         var available = _captioningService.IsNativeLibraryLoaded;

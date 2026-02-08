@@ -12,9 +12,17 @@ public interface ICaptioningBackend
     string DisplayName { get; }
 
     /// <summary>
+    /// Human-readable descriptions of requirements that are not currently satisfied.
+    /// Populated after <see cref="IsAvailableAsync"/> returns <c>false</c>.
+    /// Backends that have no additional requirements may always return an empty list.
+    /// </summary>
+    IReadOnlyList<string> MissingRequirements { get; }
+
+    /// <summary>
     /// Checks whether the backend is currently available and ready to generate captions.
     /// For local inference this means the native library is loaded and a model is downloaded.
-    /// For ComfyUI this means the server is reachable.
+    /// For ComfyUI this means the server is reachable and all required custom nodes are installed.
+    /// Implementations should populate <see cref="MissingRequirements"/> when returning <c>false</c>.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the backend can accept captioning requests.</returns>

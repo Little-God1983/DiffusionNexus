@@ -173,10 +173,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             {
                 OnPropertyChanged(nameof(IsModelReady));
                 OnPropertyChanged(nameof(IsModelMissing));
+                OnPropertyChanged(nameof(HasMissingRequirements));
                 GenerateCommand.NotifyCanExecuteChanged();
             }
         }
     }
+
+    /// <summary>
+    /// Whether the selected backend has unmet requirements (e.g. missing custom nodes).
+    /// </summary>
+    public bool HasMissingRequirements => !IsBackendAvailable
+        && SelectedBackend is not null
+        && SelectedBackend.MissingRequirements.Count > 0;
+
+    /// <summary>
+    /// Human-readable list of missing requirements from the selected backend.
+    /// </summary>
+    public IReadOnlyList<string> BackendMissingRequirements =>
+        SelectedBackend?.MissingRequirements ?? [];
 
     /// <summary>
     /// Available captioning model types (for local inference backend).
@@ -695,10 +709,20 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         try
         {
             IsBackendAvailable = await SelectedBackend.IsAvailableAsync();
+
+            if (!IsBackendAvailable && SelectedBackend.MissingRequirements.Count > 0)
+            {
+                StatusMessage = string.Join("; ", SelectedBackend.MissingRequirements);
+            }
         }
         catch
         {
             IsBackendAvailable = false;
+        }
+        finally
+        {
+            OnPropertyChanged(nameof(HasMissingRequirements));
+            OnPropertyChanged(nameof(BackendMissingRequirements));
         }
     }
 

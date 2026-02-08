@@ -101,4 +101,22 @@ public interface IComfyUIWrapperService : IDisposable
         string prompt,
         IProgress<string>? progress = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Queries the ComfyUI server's <c>/object_info</c> endpoint and returns the set of
+    /// all registered node class types (e.g. "LoadImage", "Qwen3_VQA", "ShowText|pysssss").
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A set of installed node type names.</returns>
+    Task<HashSet<string>> GetInstalledNodeTypesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Checks whether all of the specified custom node types are installed on the ComfyUI server.
+    /// </summary>
+    /// <param name="requiredNodeTypes">The node class_type names to check for.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A list of node type names that are <b>not</b> installed. Empty if all are present.</returns>
+    Task<IReadOnlyList<string>> CheckRequiredNodesAsync(
+        IEnumerable<string> requiredNodeTypes,
+        CancellationToken ct = default);
 }

@@ -356,6 +356,51 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     }
 
     /// <inheritdoc />
+    public async Task<HashSet<string>> GetInstalledNodeTypesAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        Logger.Debug("Querying ComfyUI /object_info for installed node types");
+
+        using var response = await _httpClient.GetAsync("/object_info", ct);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var objectInfo = await JsonSerializer.DeserializeAsync<JsonElement>(stream, cancellationToken: ct);
+
+        var nodeTypes = new HashSet<string>(StringComparer.Ordinal);
+        if (objectInfo.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in objectInfo.EnumerateObject())
+            {
+                nodeTypes.Add(property.Name);
+            }
+        }
+
+        Logger.Information("ComfyUI server has {Count} registered node types", nodeTypes.Count);
+        return nodeTypes;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> CheckRequiredNodesAsync(
+        IEnumerable<string> requiredNodeTypes,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(requiredNodeTypes);
+
+        var installed = await GetInstalledNodeTypesAsync(ct);
+        var missing = requiredNodeTypes.Where(n => !installed.Contains(n)).ToList();
+
+        if (missing.Count > 0)
+        {
+            Logger.Warning("ComfyUI server is missing required custom nodes: {MissingNodes}",
+                string.Join(", ", missing));
+        }
+
+        return missing;
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)

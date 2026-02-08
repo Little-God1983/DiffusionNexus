@@ -61,14 +61,43 @@
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Ready"
                            Foreground="#4CAF50" FontWeight="SemiBold"
                            IsVisible="{Binding IsBackendAvailable}"/>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Requirements failed"
+                           Foreground="#FF6B6B" FontWeight="SemiBold"
+                           IsVisible="{Binding HasMissingRequirements}"/>
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Unavailable"
                            Foreground="#FF6B6B" FontWeight="SemiBold"
-                           IsVisible="{Binding !IsBackendAvailable}"/>
+                           IsVisible="{Binding !IsBackendAvailable}">
+                  <TextBlock.IsVisible>
+                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                      <Binding Path="!IsBackendAvailable"/>
+                      <Binding Path="!HasMissingRequirements"/>
+                    </MultiBinding>
+                  </TextBlock.IsVisible>
+                </TextBlock>
 
                 <Button Grid.Column="2" Content="Check" Padding="12,4"
                         Command="{Binding CheckBackendAvailabilityCommand}"
                         ToolTip.Tip="Check if the captioning backend is available"/>
               </Grid>
+
+              <!-- Missing requirements detail -->
+              <Border Background="#2A1A1A" CornerRadius="6" Padding="12" Margin="0,4,0,0"
+                      IsVisible="{Binding HasMissingRequirements}">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Missing Requirements:" FontWeight="SemiBold" FontSize="12"
+                             Foreground="#FF6B6B"/>
+                  <ItemsControl ItemsSource="{Binding BackendMissingRequirements}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
+                                   Foreground="#FFAB91" TextWrapping="Wrap" Margin="8,2,0,0"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Text="Install via ComfyUI Manager or place into the custom_nodes folder, then restart ComfyUI."
+                             FontSize="11" Opacity="0.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                </StackPanel>
+              </Border>
 
               <!-- Local inference model panel (hidden when ComfyUI is selected) -->
               <StackPanel Spacing="8" IsVisible="{Binding IsLocalInferenceBackend}">

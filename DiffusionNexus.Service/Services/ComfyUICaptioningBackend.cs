@@ -12,6 +12,12 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 {
     private static readonly ILogger Logger = Log.ForContext<ComfyUICaptioningBackend>();
 
+    /// <summary>
+    /// Custom node types required by the captioning workflow.
+    /// Add new entries here when additional workflows introduce new node dependencies.
+    /// </summary>
+    private static readonly string[] RequiredCustomNodes = ["Qwen3_VQA", "ShowText|pysssss"];
+
     private readonly IComfyUIWrapperService _comfyUi;
 
     /// <summary>
@@ -28,18 +34,46 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     public string DisplayName => "ComfyUI – Qwen3-VL";
 
     /// <inheritdoc />
+    public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
+
+    /// <inheritdoc />
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         try
         {
-            // Reuse the same lightweight health check as the Settings page
+            // Lightweight health check — is the server reachable?
             using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await httpClient.GetAsync(
                 $"{GetBaseUrl()}/system_stats", ct);
-            return response.IsSuccessStatusCode;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                MissingRequirements = ["ComfyUI server is not reachable"];
+                return false;
+            }
+
+            // Server is up — verify the required custom nodes are installed
+            var missingNodes = await _comfyUi.CheckRequiredNodesAsync(RequiredCustomNodes, ct);
+
+            if (missingNodes.Count > 0)
+            {
+                MissingRequirements = missingNodes
+                    .Select(n => $"Missing custom node: {n}")
+                    .ToList();
+
+                Logger.Warning(
+                    "ComfyUI server is reachable but missing required custom nodes: {MissingNodes}. " +
+                    "Install them via ComfyUI Manager or manually into the custom_nodes folder",
+                    string.Join(", ", missingNodes));
+                return false;
+            }
+
+            MissingRequirements = [];
+            return true;
         }
         catch
         {
+            MissingRequirements = ["ComfyUI server is not reachable"];
             return false;
         }
     }
