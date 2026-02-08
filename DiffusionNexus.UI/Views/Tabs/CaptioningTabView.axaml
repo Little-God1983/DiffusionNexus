@@ -99,6 +99,26 @@
                 </StackPanel>
               </Border>
 
+              <!-- Backend warnings (non-blocking, e.g. model not yet downloaded) -->
+              <Border Background="#2A2210" CornerRadius="6" Padding="12" Margin="0,4,0,0"
+                      IsVisible="{Binding HasBackendWarnings}">
+                <StackPanel Spacing="4">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse Width="10" Height="10" Fill="#FF9800" VerticalAlignment="Center"/>
+                    <TextBlock Text="Warnings:" FontWeight="SemiBold" FontSize="12"
+                               Foreground="#FF9800"/>
+                  </StackPanel>
+                  <ItemsControl ItemsSource="{Binding BackendWarnings}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
+                                   Foreground="#FFD54F" TextWrapping="Wrap" Margin="8,2,0,0"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+
               <!-- Local inference model panel (hidden when ComfyUI is selected) -->
               <StackPanel Spacing="8" IsVisible="{Binding IsLocalInferenceBackend}">
                 <Border Height="1" Background="#40FFFFFF" Margin="0,4"/>

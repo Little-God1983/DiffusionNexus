@@ -175,7 +175,6 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
             var type = json?["type"]?.GetValue<string>();
 
             Logger.Debug("WebSocket event: {EventType} for prompt {PromptId}", type, promptId);
-            progress?.Report($"Event: {type}");
 
             // Detect execution errors and propagate them
             if (type is "execution_error")
@@ -192,20 +191,55 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                 }
             }
 
-            if (type is not "executing")
+            if (type is "executing")
             {
+                var data = json?["data"];
+                var nodeId = data?["node"]?.GetValue<string>();
+                var currentPromptId = data?["prompt_id"]?.GetValue<string>();
+
+                // node == null means execution finished for this prompt
+                if (nodeId is null && currentPromptId == promptId)
+                {
+                    Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);
+                    return;
+                }
+
+                // Report which node is currently executing
+                if (currentPromptId == promptId && nodeId is not null)
+                {
+                    var nodeLabel = nodeId switch
+                    {
+                        Qwen3VqaNodeId => "Running Qwen3-VL inference (first run may download the model...)",
+                        LoadImageNodeId => "Loading image...",
+                        _ => $"Executing node {nodeId}..."
+                    };
+                    progress?.Report(nodeLabel);
+                }
+
                 continue;
             }
 
-            var data = json?["data"];
-            var nodeId = data?["node"]?.GetValue<string>();
-            var currentPromptId = data?["prompt_id"]?.GetValue<string>();
-
-            // node == null means execution finished for this prompt
-            if (nodeId is null && currentPromptId == promptId)
+            // Forward progress events (e.g. model loading steps reported by ComfyUI)
+            if (type is "progress")
             {
-                Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);
-                return;
+                var data = json?["data"];
+                var value = data?["value"]?.GetValue<int>() ?? 0;
+                var max = data?["max"]?.GetValue<int>() ?? 0;
+                if (max > 0)
+                {
+                    progress?.Report($"Progress: {value}/{max}");
+                }
+                continue;
+            }
+
+            // Forward status events
+            if (type is "status")
+            {
+                var queueRemaining = json?["data"]?["status"]?["exec_info"]?["queue_remaining"]?.GetValue<int>();
+                if (queueRemaining.HasValue)
+                {
+                    Logger.Debug("Queue remaining: {QueueRemaining}", queueRemaining.Value);
+                }
             }
         }
     }

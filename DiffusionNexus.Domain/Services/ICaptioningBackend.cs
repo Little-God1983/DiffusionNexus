@@ -19,6 +19,14 @@ public interface ICaptioningBackend
     IReadOnlyList<string> MissingRequirements { get; }
 
     /// <summary>
+    /// Non-blocking warnings discovered during <see cref="IsAvailableAsync"/>.
+    /// Unlike <see cref="MissingRequirements"/>, warnings do not prevent the backend from
+    /// being used — they inform the user about conditions that may affect the first run
+    /// (e.g. a large model download that will happen on first execution).
+    /// </summary>
+    IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>
     /// Checks whether the backend is currently available and ready to generate captions.
     /// For local inference this means the native library is loaded and a model is downloaded.
     /// For ComfyUI this means the server is reachable and all required custom nodes are installed.

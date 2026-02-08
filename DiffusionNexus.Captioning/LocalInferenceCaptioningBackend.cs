@@ -29,6 +29,9 @@ public sealed class LocalInferenceCaptioningBackend : ICaptioningBackend
     public IReadOnlyList<string> MissingRequirements => [];
 
     /// <inheritdoc />
+    public IReadOnlyList<string> Warnings => [];
+
+    /// <inheritdoc />
     public Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         var available = _captioningService.IsNativeLibraryLoaded;

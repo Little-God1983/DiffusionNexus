@@ -19,6 +19,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     private static readonly string[] RequiredCustomNodes = ["Qwen3_VQA", "ShowText|pysssss"];
 
     private readonly IComfyUIWrapperService _comfyUi;
+    private bool _firstCaptionCompleted;
 
     /// <summary>
     /// Creates a new ComfyUI captioning backend.
@@ -35,6 +36,9 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Warnings { get; private set; } = [];
 
     /// <summary>
     /// The configured ComfyUI server URL used for connectivity checks.
@@ -54,6 +58,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             if (!response.IsSuccessStatusCode)
             {
                 MissingRequirements = [];
+                Warnings = [];
                 return false;
             }
 
@@ -65,6 +70,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
                 MissingRequirements = missingNodes
                     .Select(n => $"Missing custom node: {n}")
                     .ToList();
+                Warnings = [];
 
                 Logger.Warning(
                     "ComfyUI server is reachable but missing required custom nodes: {MissingNodes}. " +
@@ -74,22 +80,40 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             }
 
             MissingRequirements = [];
+
+            // Show a first-run warning until a caption has completed successfully
+            Warnings = _firstCaptionCompleted
+                ? []
+                : ["If the Qwen3-VL model has not been downloaded yet, the first run will automatically download it (~8 GB). This may take several minutes."];
+
             return true;
         }
         catch
         {
             MissingRequirements = [];
+            Warnings = [];
             return false;
         }
     }
 
     /// <inheritdoc />
-    public async Task<CaptioningResult> GenerateSingleCaptionAsync(
+    public Task<CaptioningResult> GenerateSingleCaptionAsync(
         string imagePath,
         string prompt,
         string? triggerWord = null,
         IReadOnlyList<string>? blacklistedWords = null,
         CancellationToken ct = default)
+    {
+        return GenerateSingleCaptionInternalAsync(imagePath, prompt, triggerWord, blacklistedWords, progress: null, ct);
+    }
+
+    private async Task<CaptioningResult> GenerateSingleCaptionInternalAsync(
+        string imagePath,
+        string prompt,
+        string? triggerWord,
+        IReadOnlyList<string>? blacklistedWords,
+        IProgress<string>? progress,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
 
@@ -100,7 +124,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
         try
         {
-            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, ct: ct);
+            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, progress, ct);
 
             if (rawCaption is null)
             {
@@ -108,6 +132,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             }
 
             var caption = CaptionPostProcessor.Process(rawCaption, triggerWord, blacklistedWords);
+            _firstCaptionCompleted = true;
             return CaptioningResult.Succeeded(imagePath, caption, "");
         }
         catch (Exception ex)
@@ -135,11 +160,26 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         var totalCount = imagePaths.Count;
         var results = new List<CaptioningResult>(totalCount);
 
+        // Bridge WebSocket node-level progress to the batch progress reporter
+        IProgress<string>? wsProgress = null;
+        var currentWsImage = "";
+
+        if (progress is not null)
+        {
+            wsProgress = new Progress<string>(nodeStatus =>
+            {
+                progress.Report(new CaptioningProgress(
+                    results.Count, totalCount, currentWsImage,
+                    nodeStatus));
+            });
+        }
+
         for (var i = 0; i < totalCount; i++)
         {
             ct.ThrowIfCancellationRequested();
 
             var imagePath = imagePaths[i];
+            currentWsImage = imagePath;
 
             progress?.Report(new CaptioningProgress(
                 i, totalCount, imagePath,
@@ -159,11 +199,12 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
                 continue;
             }
 
-            var result = await GenerateSingleCaptionAsync(
+            var result = await GenerateSingleCaptionInternalAsync(
                 imagePath,
                 config.SystemPrompt,
                 config.TriggerWord,
                 config.BlacklistedWords,
+                wsProgress,
                 ct);
 
             // Save caption file if generation succeeded

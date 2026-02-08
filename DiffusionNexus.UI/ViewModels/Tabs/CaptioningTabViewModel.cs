@@ -194,6 +194,19 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         SelectedBackend?.MissingRequirements ?? [];
 
     /// <summary>
+    /// Whether the selected backend has non-blocking warnings (e.g. model not yet downloaded).
+    /// </summary>
+    public bool HasBackendWarnings => IsBackendAvailable
+        && SelectedBackend is not null
+        && SelectedBackend.Warnings.Count > 0;
+
+    /// <summary>
+    /// Non-blocking warnings from the selected backend.
+    /// </summary>
+    public IReadOnlyList<string> BackendWarnings =>
+        SelectedBackend?.Warnings ?? [];
+
+    /// <summary>
     /// Available captioning model types (for local inference backend).
     /// </summary>
     public IReadOnlyList<CaptioningModelType> AvailableModels { get; }
@@ -739,6 +752,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         {
             OnPropertyChanged(nameof(HasMissingRequirements));
             OnPropertyChanged(nameof(BackendMissingRequirements));
+            OnPropertyChanged(nameof(HasBackendWarnings));
+            OnPropertyChanged(nameof(BackendWarnings));
         }
     }
 
