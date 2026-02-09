@@ -723,26 +723,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         try
         {
             IsBackendAvailable = await SelectedBackend.IsAvailableAsync();
-
-            if (!IsBackendAvailable)
-            {
-                if (SelectedBackend.MissingRequirements.Count > 0)
-                {
-                    StatusMessage = string.Join("; ", SelectedBackend.MissingRequirements);
-                }
-                else if (SelectedBackend is ComfyUICaptioningBackend comfyBackend)
-                {
-                    StatusMessage = $"Server under configured URL not reachable: {comfyBackend.ServerUrl}";
-                }
-                else
-                {
-                    StatusMessage = "Backend is not available.";
-                }
-            }
-            else
-            {
-                StatusMessage = null;
-            }
+            StatusMessage = null;
         }
         catch
         {

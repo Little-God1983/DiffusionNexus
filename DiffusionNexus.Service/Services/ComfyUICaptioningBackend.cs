@@ -30,15 +30,19 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     private const string ModelFolder = "prompt_generator";
 
     private readonly IComfyUIWrapperService _comfyUi;
+    private readonly IAppSettingsService _settingsService;
 
     /// <summary>
     /// Creates a new ComfyUI captioning backend.
     /// </summary>
     /// <param name="comfyUiService">The ComfyUI wrapper service to delegate to.</param>
-    public ComfyUICaptioningBackend(IComfyUIWrapperService comfyUiService)
+    /// <param name="settingsService">Application settings service for reading the configured server URL.</param>
+    public ComfyUICaptioningBackend(IComfyUIWrapperService comfyUiService, IAppSettingsService settingsService)
     {
         ArgumentNullException.ThrowIfNull(comfyUiService);
+        ArgumentNullException.ThrowIfNull(settingsService);
         _comfyUi = comfyUiService;
+        _settingsService = settingsService;
     }
 
     /// <inheritdoc />
@@ -50,24 +54,21 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// <inheritdoc />
     public IReadOnlyList<string> Warnings { get; private set; } = [];
 
-    /// <summary>
-    /// The configured ComfyUI server URL used for connectivity checks.
-    /// </summary>
-    public string ServerUrl => GetBaseUrl();
-
     /// <inheritdoc />
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         try
         {
+            var serverUrl = await GetConfiguredUrlAsync(ct);
+
             // Lightweight health check — is the server reachable?
             using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await httpClient.GetAsync(
-                $"{GetBaseUrl()}/system_stats", ct);
+                $"{serverUrl}/system_stats", ct);
 
             if (!response.IsSuccessStatusCode)
             {
-                MissingRequirements = [];
+                MissingRequirements = [$"ComfyUI server not reachable at {serverUrl}"];
                 Warnings = [];
                 return false;
             }
@@ -77,9 +78,11 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             if (missingNodes.Count > 0)
             {
-                MissingRequirements = missingNodes
+                var items = missingNodes
                     .Select(n => $"Missing custom node: {n}")
                     .ToList();
+                items.Add("Install via ComfyUI Manager or place into the custom_nodes folder, then restart ComfyUI.");
+                MissingRequirements = items;
                 Warnings = [];
 
                 Logger.Warning(
@@ -104,9 +107,14 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             return true;
         }
-        catch
+        catch (Exception ex)
         {
-            MissingRequirements = [];
+            var url = "(unknown)";
+            try { url = await GetConfiguredUrlAsync(CancellationToken.None); }
+            catch { /* best-effort */ }
+
+            Logger.Debug(ex, "ComfyUI availability check failed for {ServerUrl}", url);
+            MissingRequirements = [$"ComfyUI server not reachable at {url}"];
             Warnings = [];
             return false;
         }
@@ -258,9 +266,9 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         return Path.Combine(directory, nameWithoutExt + ".txt");
     }
 
-    private static string GetBaseUrl()
+    private async Task<string> GetConfiguredUrlAsync(CancellationToken ct)
     {
-        // Default ComfyUI URL — consistent with ComfyUIWrapperService default
-        return "http://127.0.0.1:8188";
+        var settings = await _settingsService.GetSettingsAsync(ct);
+        return settings.ComfyUiServerUrl.TrimEnd('/');
     }
 }
