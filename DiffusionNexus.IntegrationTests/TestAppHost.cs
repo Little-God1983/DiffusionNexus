@@ -107,7 +107,7 @@ public sealed class TestAppHost : IAsyncLifetime, IDisposable
 
     private void ConfigureServices(IServiceCollection services)
     {
-        services.AddDiffusionNexusCoreDatabase(DatabaseRoot);
+        services.AddDataAccessLayer(DatabaseRoot);
         services.AddInfrastructureServices(CacheRoot);
         services.AddSingleton<IThumbnailService, ThumbnailService>();
 
