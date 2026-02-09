@@ -144,6 +144,9 @@
             <ToggleButton Content="Draw" IsChecked="{Binding ImageEditor.IsDrawingToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Drawing Tool - Hold Shift for straight lines"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.IsInpaintingPanelOpen, Mode=TwoWay}" Padding="12,6" 
+                          ToolTip.Tip="AI Inpainting - Paint over areas to regenerate using ComfyUI"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <!-- Separator - always visible -->
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4"/>
@@ -1001,6 +1004,43 @@
                   </Grid>
                   <TextBlock Text="Enter = Apply, Esc = Cancel, ✕ = Delete" FontSize="9" Opacity="0.4" HorizontalAlignment="Center"/>
                 </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+          
+          <!-- Inpainting Panel -->
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsInpaintingPanelOpen}">
+            <TextBlock Text="Inpainting" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+              <StackPanel Spacing="10">
+                <!-- Instructions -->
+                <TextBlock Text="Paint over areas you want AI to regenerate. Masked areas appear as a checkerboard pattern." 
+                           FontSize="10" Opacity="0.7" TextWrapping="Wrap"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Brush Size -->
+                <TextBlock Text="Brush Size" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="1" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="1" Maximum="200" Value="{Binding ImageEditor.InpaintBrushSize}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Action Buttons -->
+                <Button Content="Clear Mask" Command="{Binding ImageEditor.ClearInpaintMaskCommand}" 
+                        HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
+                        ToolTip.Tip="Remove all painted mask areas"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Workflow Info -->
+                <Border Background="#1A2A1A" CornerRadius="4" Padding="6">
+                  <TextBlock Text="After painting the mask, use 'Apply Inpaint' to send the image and mask to ComfyUI for AI regeneration." 
+                             FontSize="9" Opacity="0.8" TextWrapping="Wrap" Foreground="#8BC34A"/>
+                </Border>
               </StackPanel>
             </Border>
           </StackPanel>

@@ -83,6 +83,12 @@ public partial class ImageEditorViewModel : ObservableObject
 
     // Drawing tool fields
     private bool _isDrawingToolActive;
+
+    // Inpainting fields
+    private bool _isInpaintingPanelOpen;
+    private float _inpaintBrushSize = 40f;
+    private bool _isInpaintingBusy;
+    private string? _inpaintingStatus;
     private byte _drawingBrushRed = 255;
     private byte _drawingBrushGreen = 255;
     private byte _drawingBrushBlue = 255;
@@ -1409,6 +1415,88 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Inpainting Properties
+
+    /// <summary>Whether the inpainting panel is open.</summary>
+    public bool IsInpaintingPanelOpen
+    {
+        get => _isInpaintingPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isInpaintingPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when inpainting is activated
+                    DeactivateOtherTools(nameof(IsInpaintingPanelOpen));
+                    StatusMessage = "Inpaint: Paint over areas to mark them for AI regeneration.";
+                }
+                else
+                {
+                    StatusMessage = null;
+                }
+                InpaintToolActivated?.Invoke(this, value);
+                ClearInpaintMaskCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Inpainting brush size in display pixels (1-200).</summary>
+    public float InpaintBrushSize
+    {
+        get => _inpaintBrushSize;
+        set
+        {
+            var clamped = Math.Clamp(value, 1f, 200f);
+            if (SetProperty(ref _inpaintBrushSize, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintBrushSizeText));
+                InpaintSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Formatted inpaint brush size for display.</summary>
+    public string InpaintBrushSizeText => $"{(int)_inpaintBrushSize} px";
+
+    /// <summary>Whether an inpainting operation is currently in progress.</summary>
+    public bool IsInpaintingBusy
+    {
+        get => _isInpaintingBusy;
+        private set => SetProperty(ref _isInpaintingBusy, value);
+    }
+
+    /// <summary>Status message for inpainting operations.</summary>
+    public string? InpaintingStatus
+    {
+        get => _inpaintingStatus;
+        private set => SetProperty(ref _inpaintingStatus, value);
+    }
+
+    /// <summary>Command to clear the inpaint mask layer.</summary>
+    public RelayCommand ClearInpaintMaskCommand { get; private set; } = null!;
+
+    /// <summary>
+    /// Event raised when the inpainting tool is activated or deactivated.
+    /// The bool parameter indicates whether the tool is now active.
+    /// </summary>
+    public event EventHandler<bool>? InpaintToolActivated;
+
+    /// <summary>
+    /// Event raised when inpaint brush settings (size) change.
+    /// </summary>
+    public event EventHandler? InpaintSettingsChanged;
+
+    /// <summary>
+    /// Event raised when the ViewModel requests clearing the inpaint mask.
+    /// </summary>
+    public event EventHandler? ClearInpaintMaskRequested;
+
+    // TODO: Linux Implementation for Inpainting
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -1933,7 +2021,11 @@ public partial class ImageEditorViewModel : ObservableObject
             DrawingToolActivated?.Invoke(this, false);
         }
 
-        // Add more tools here as they are added in the future
+        if (exceptTool != nameof(IsInpaintingPanelOpen) && _isInpaintingPanelOpen)
+        {
+            _isInpaintingPanelOpen = false;
+            OnPropertyChanged(nameof(IsInpaintingPanelOpen));
+        }
     }
 
     /// <summary>
@@ -1960,6 +2052,7 @@ public partial class ImageEditorViewModel : ObservableObject
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
+        ClearInpaintMaskCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
 
@@ -2189,6 +2282,11 @@ public partial class ImageEditorViewModel : ObservableObject
         CancelPlacedShapeCommand = new RelayCommand(
             () => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
             () => HasPlacedShape);
+
+        // Inpainting commands
+        ClearInpaintMaskCommand = new RelayCommand(
+            () => ClearInpaintMaskRequested?.Invoke(this, EventArgs.Empty),
+            () => HasImage && IsInpaintingPanelOpen);
 
         // Layer commands (layers are always enabled when an image is loaded)
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);

@@ -518,6 +518,31 @@ public partial class ImageEditView : UserControl
             imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
         };
 
+        // Handle inpaint tool activation/deactivation
+        imageEditor.InpaintToolActivated += (_, isActive) =>
+        {
+            _imageEditorCanvas.IsInpaintingToolActive = isActive;
+        };
+
+        // Handle inpaint brush settings changes
+        imageEditor.InpaintSettingsChanged += (_, _) =>
+        {
+            _imageEditorCanvas.InpaintBrushSize = imageEditor.InpaintBrushSize;
+        };
+
+        // Handle clear inpaint mask
+        imageEditor.ClearInpaintMaskRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearInpaintMask();
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Sync layers when inpaint mask layer is created or modified
+        _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
+        {
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+        };
 
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>

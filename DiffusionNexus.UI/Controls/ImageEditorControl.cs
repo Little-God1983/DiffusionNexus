@@ -19,6 +19,15 @@ public class ImageEditorControl : Control
     private bool _isPanning;
     private bool _suppressImagePathLoad;
 
+    // Inpaint brush state
+    private bool _isInpaintingToolActive;
+    private float _inpaintBrushSize = 40f;
+    private bool _isInpaintPainting;
+    private SKPoint _inpaintLastPoint;
+    private readonly List<SKPoint> _inpaintStrokePoints = [];
+    private SKPoint _inpaintCursorPosition;
+    private bool _hasInpaintCursorPosition;
+
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
     /// </summary>
@@ -161,6 +170,34 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Gets or sets whether the inpainting tool is active.
+    /// </summary>
+    public bool IsInpaintingToolActive
+    {
+        get => _isInpaintingToolActive;
+        set
+        {
+            _isInpaintingToolActive = value;
+            if (!value)
+            {
+                _isInpaintPainting = false;
+                _inpaintStrokePoints.Clear();
+                _hasInpaintCursorPosition = false;
+            }
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the inpainting brush size in display pixels.
+    /// </summary>
+    public float InpaintBrushSize
+    {
+        get => _inpaintBrushSize;
+        set => _inpaintBrushSize = value;
+    }
+
+    /// <summary>
     /// Gets or sets the zoom level (1.0 = 100%).
     /// </summary>
     public float ZoomLevel
@@ -228,6 +265,12 @@ public class ImageEditorControl : Control
     /// Event raised when the placed-shape state changes (placed or cleared).
     /// </summary>
     public event EventHandler? PlacedShapeStateChanged;
+
+    /// <summary>
+    /// Event raised when the inpaint mask is created or modified.
+    /// The view should sync layers after this event.
+    /// </summary>
+    public event EventHandler? InpaintMaskChanged;
 
     public ImageEditorControl()
     {
@@ -364,6 +407,23 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Inpaint brush takes priority when active
+        if (_isInpaintingToolActive && props.IsLeftButtonPressed)
+        {
+            var imageRect = _editorCore.GetCurrentImageRect();
+            if (imageRect.Contains(skPoint))
+            {
+                _isInpaintPainting = true;
+                _inpaintLastPoint = skPoint;
+                _inpaintStrokePoints.Clear();
+                _inpaintStrokePoints.Add(skPoint);
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
         // Drawing tool takes priority when active
         if (_editorCore.DrawingTool.IsActive && props.IsLeftButtonPressed)
         {
@@ -420,6 +480,26 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Inpaint brush pointer tracking
+        if (_isInpaintingToolActive)
+        {
+            _inpaintCursorPosition = skPoint;
+            _hasInpaintCursorPosition = true;
+
+            if (_isInpaintPainting)
+            {
+                _inpaintStrokePoints.Add(skPoint);
+                _inpaintLastPoint = skPoint;
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+            else
+            {
+                InvalidateVisual();
+            }
+        }
+
         // Drawing tool takes priority when active
         if (_editorCore.DrawingTool.IsActive)
         {
@@ -461,6 +541,34 @@ public class ImageEditorControl : Control
                 InvalidateVisual();
                 return;
             }
+        }
+
+        // Inpaint brush release
+        if (_isInpaintingToolActive && _isInpaintPainting)
+        {
+            _isInpaintPainting = false;
+
+            if (_inpaintStrokePoints.Count > 0)
+            {
+                var imageRect = _editorCore.GetCurrentImageRect();
+                if (imageRect.Width > 0 && imageRect.Height > 0)
+                {
+                    var normalizedPoints = _inpaintStrokePoints
+                        .Select(p => new SKPoint(
+                            (p.X - imageRect.Left) / imageRect.Width,
+                            (p.Y - imageRect.Top) / imageRect.Height))
+                        .ToList();
+
+                    var scaledBrushSize = _inpaintBrushSize / imageRect.Width;
+                    _editorCore.ApplyInpaintStroke(normalizedPoints, scaledBrushSize);
+                    InpaintMaskChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+
+            _inpaintStrokePoints.Clear();
+            e.Handled = true;
+            InvalidateVisual();
+            return;
         }
 
         // Drawing tool takes priority when active

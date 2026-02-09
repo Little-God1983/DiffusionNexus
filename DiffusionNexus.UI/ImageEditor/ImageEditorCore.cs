@@ -22,6 +22,7 @@ public class ImageEditorCore : IDisposable
     private int _imageDpi = 72;
     private readonly object _bitmapLock = new();
     private bool _isLayerMode;
+    private SKRect _lastImageRect;
 
     private const float MinZoom = 0.1f;
     private const float MaxZoom = 10f;
@@ -1024,6 +1025,7 @@ public class ImageEditorCore : IDisposable
             ShapeTool.SetImageBounds(imageRect);
             ShapeTool.Render(canvas);
 
+            _lastImageRect = imageRect;
             return imageRect;
         }
     }
@@ -1098,6 +1100,12 @@ public class ImageEditorCore : IDisposable
         _isFitMode = true;
         OnZoomChanged();
     }
+
+    /// <summary>
+    /// Gets the screen rectangle of the image from the last render pass.
+    /// Used by tools that need screen-to-image coordinate mapping.
+    /// </summary>
+    public SKRect GetCurrentImageRect() => _lastImageRect;
 
     /// <summary>
     /// Pans the image by the specified delta values.
@@ -2352,6 +2360,141 @@ public class ImageEditorCore : IDisposable
     }
 
     #endregion Shape Drawing
+
+    #region Inpainting
+
+    /// <summary>
+    /// Finds the existing inpaint mask layer, or creates one if none exists.
+    /// Ensures layer mode is enabled before creating.
+    /// </summary>
+    /// <returns>The inpaint mask layer, or null if creation failed.</returns>
+    private Layer? GetOrCreateInpaintMaskLayer()
+    {
+        // Ensure layer mode is active
+        if (!_isLayerMode)
+        {
+            EnableLayerMode();
+        }
+
+        if (_layers is null) return null;
+
+        // Look for existing inpaint mask layer
+        var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+        if (maskLayer is not null) return maskLayer;
+
+        // Create a new inpaint mask layer at the top
+        var newLayer = _layers.AddLayer("Inpaint Mask");
+        newLayer.IsInpaintMask = true;
+        return newLayer;
+    }
+
+    /// <summary>
+    /// Applies an inpainting brush stroke to the inpaint mask layer.
+    /// Paints white (opaque) pixels on a transparent layer; the compositor
+    /// renders these areas as a checkerboard pattern.
+    /// </summary>
+    /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
+    /// <param name="brushSize">Brush size in image pixels.</param>
+    /// <returns>True if the stroke was applied successfully.</returns>
+    public bool ApplyInpaintStroke(IReadOnlyList<SKPoint> normalizedPoints, float brushSize)
+    {
+        if (normalizedPoints is null || normalizedPoints.Count == 0)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = GetOrCreateInpaintMaskLayer();
+            if (maskLayer?.Bitmap is null || !maskLayer.CanEdit)
+                return false;
+
+            try
+            {
+                var width = maskLayer.Bitmap.Width;
+                var height = maskLayer.Bitmap.Height;
+
+                var imagePoints = normalizedPoints
+                    .Select(p => new SKPoint(p.X * width, p.Y * height))
+                    .ToList();
+
+                var scaledBrushSize = brushSize * width;
+
+                using var canvas = new SKCanvas(maskLayer.Bitmap);
+                using var paint = new SKPaint
+                {
+                    Color = SKColors.White,
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = scaledBrushSize,
+                    StrokeCap = SKStrokeCap.Round,
+                    StrokeJoin = SKStrokeJoin.Round
+                };
+
+                if (imagePoints.Count == 1)
+                {
+                    paint.Style = SKPaintStyle.Fill;
+                    canvas.DrawCircle(imagePoints[0], scaledBrushSize / 2, paint);
+                }
+                else if (imagePoints.Count == 2)
+                {
+                    canvas.DrawLine(imagePoints[0], imagePoints[1], paint);
+                }
+                else
+                {
+                    using var path = new SKPath();
+                    path.MoveTo(imagePoints[0]);
+                    for (var i = 1; i < imagePoints.Count; i++)
+                    {
+                        path.LineTo(imagePoints[i]);
+                    }
+                    canvas.DrawPath(path, paint);
+                }
+
+                canvas.Flush();
+                maskLayer.NotifyContentChanged();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Clears the inpaint mask layer, removing all painted mask areas.
+    /// </summary>
+    public void ClearInpaintMask()
+    {
+        if (_layers is null) return;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+            maskLayer?.Clear();
+        }
+
+        OnImageChanged();
+    }
+
+    /// <summary>
+    /// Extracts the inpaint mask bitmap (white = inpaint, black = keep).
+    /// Returns null if no mask layer exists or it is empty.
+    /// </summary>
+    /// <returns>A copy of the mask bitmap, or null.</returns>
+    public SKBitmap? GetInpaintMaskBitmap()
+    {
+        if (_layers is null) return null;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+            return maskLayer?.Bitmap?.Copy();
+        }
+    }
+
+    #endregion Inpainting
 
     #region Save with Layers
 

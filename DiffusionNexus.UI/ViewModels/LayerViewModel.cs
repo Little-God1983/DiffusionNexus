@@ -107,6 +107,11 @@ public partial class LayerViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Gets whether this layer is an inpainting mask layer.
+    /// </summary>
+    public bool IsInpaintMask => _layer.IsInpaintMask;
+
+    /// <summary>
     /// Gets or sets the blend mode.
     /// </summary>
     public BlendMode BlendMode
