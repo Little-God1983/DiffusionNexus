@@ -43,6 +43,7 @@ public interface ICaptioningBackend
     /// <param name="prompt">The prompt/instruction to guide caption generation.</param>
     /// <param name="triggerWord">Optional token to prepend to the generated caption.</param>
     /// <param name="blacklistedWords">Words to remove from the generated caption.</param>
+    /// <param name="temperature">Inference temperature (0.0–2.0). Lower values are more deterministic.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The captioning result.</returns>
     Task<CaptioningResult> GenerateSingleCaptionAsync(
@@ -50,6 +51,7 @@ public interface ICaptioningBackend
         string prompt,
         string? triggerWord = null,
         IReadOnlyList<string>? blacklistedWords = null,
+        float temperature = 0.7f,
         CancellationToken ct = default);
 
     /// <summary>

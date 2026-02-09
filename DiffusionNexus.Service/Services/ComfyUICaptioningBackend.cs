@@ -102,9 +102,10 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         string prompt,
         string? triggerWord = null,
         IReadOnlyList<string>? blacklistedWords = null,
+        float temperature = 0.7f,
         CancellationToken ct = default)
     {
-        return GenerateSingleCaptionInternalAsync(imagePath, prompt, triggerWord, blacklistedWords, progress: null, ct);
+        return GenerateSingleCaptionInternalAsync(imagePath, prompt, triggerWord, blacklistedWords, temperature, progress: null, ct);
     }
 
     private async Task<CaptioningResult> GenerateSingleCaptionInternalAsync(
@@ -112,6 +113,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         string prompt,
         string? triggerWord,
         IReadOnlyList<string>? blacklistedWords,
+        float temperature,
         IProgress<string>? progress,
         CancellationToken ct)
     {
@@ -124,7 +126,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
         try
         {
-            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, progress, ct);
+            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, temperature, progress, ct);
 
             if (rawCaption is null)
             {
@@ -204,6 +206,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
                 config.SystemPrompt,
                 config.TriggerWord,
                 config.BlacklistedWords,
+                config.Temperature,
                 wsProgress,
                 ct);
 

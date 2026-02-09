@@ -93,12 +93,14 @@ public interface IComfyUIWrapperService : IDisposable
     /// </summary>
     /// <param name="imagePath">Absolute path to the image file on disk (must be accessible by the ComfyUI server).</param>
     /// <param name="prompt">The captioning prompt to send to the model.</param>
+    /// <param name="temperature">Inference temperature (0.0–2.0). Lower values are more deterministic.</param>
     /// <param name="progress">Optional progress reporter that receives WebSocket event messages.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The generated caption text, or <c>null</c> if no text was returned.</returns>
     Task<string?> GenerateCaptionAsync(
         string imagePath,
         string prompt,
+        float temperature = 0.7f,
         IProgress<string>? progress = null,
         CancellationToken ct = default);
 

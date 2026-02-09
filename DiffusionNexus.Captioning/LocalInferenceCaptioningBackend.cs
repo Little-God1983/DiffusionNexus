@@ -44,10 +44,11 @@ public sealed class LocalInferenceCaptioningBackend : ICaptioningBackend
         string prompt,
         string? triggerWord = null,
         IReadOnlyList<string>? blacklistedWords = null,
+        float temperature = 0.7f,
         CancellationToken ct = default)
     {
         return await _captioningService.GenerateSingleCaptionAsync(
-            imagePath, prompt, triggerWord, blacklistedWords, cancellationToken: ct);
+            imagePath, prompt, triggerWord, blacklistedWords, temperature, ct);
     }
 
     /// <inheritdoc />

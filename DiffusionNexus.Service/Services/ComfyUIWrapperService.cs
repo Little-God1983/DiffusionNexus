@@ -343,6 +343,7 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     public async Task<string?> GenerateCaptionAsync(
         string imagePath,
         string prompt,
+        float temperature = 0.7f,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
@@ -373,6 +374,7 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                 [Qwen3VqaNodeId] = node =>
                 {
                     node["inputs"]!["text"] = prompt;
+                    node["inputs"]!["temperature"] = temperature;
                 }
             }, ct);
 
