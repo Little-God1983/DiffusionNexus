@@ -156,6 +156,7 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
         existingSettings.MaxBackups = settings.MaxBackups;
         existingSettings.LastBackupAt = settings.LastBackupAt;
+        existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
         existingSettings.UpdatedAt = settings.UpdatedAt;
 
         // Handle LoRA sources (remove deleted, update existing, add new)
