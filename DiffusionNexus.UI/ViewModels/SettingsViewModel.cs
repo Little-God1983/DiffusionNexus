@@ -1098,6 +1098,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         ValidateAutoBackupLocation();
     }
     partial void OnMaxBackupsChanged(int value) => HasChanges = true;
+    partial void OnComfyUiServerUrlChanged(string value) => HasChanges = true;
 
     /// <summary>
     /// Tests whether the ComfyUI server is reachable at the configured URL.
