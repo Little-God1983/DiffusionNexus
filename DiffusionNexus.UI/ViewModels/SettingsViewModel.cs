@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Net.Http;
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -1150,9 +1151,14 @@ public partial class SettingsViewModel : BusyViewModelBase
             if (HasChanges) return; // Save failed (validation errors)
         }
 
+        var appVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var defaultFileName = $"DiffusionNexus-Settings_v{appVersion}_{timestamp}.json";
+
         var filePath = await DialogService.ShowSaveFileDialogAsync(
             "Export Settings",
-            "DiffusionNexus-Settings.json",
+            defaultFileName,
             "*.json");
 
         if (string.IsNullOrEmpty(filePath))
