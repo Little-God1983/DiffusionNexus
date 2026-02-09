@@ -94,8 +94,6 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                  <TextBlock Text="Install via ComfyUI Manager or place into the custom_nodes folder, then restart ComfyUI."
-                             FontSize="11" Opacity="0.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
               </Border>
 
@@ -281,9 +279,31 @@
               <TextBlock Text="Captioning Settings" FontWeight="SemiBold" FontSize="14"/>
 
               <!-- System Prompt -->
-              <StackPanel Margin="0,0,0,4">
-                <TextBlock Text="System Prompt" Margin="0,0,0,4"/>
-                <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" Height="60" TextWrapping="Wrap"/>
+              <StackPanel Margin="0,0,0,4" Spacing="8">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="System Prompt" VerticalAlignment="Center"/>
+                  <ToggleSwitch Grid.Column="1"
+                                IsChecked="{Binding IsCustomPromptMode}"
+                                OnContent="Custom"
+                                OffContent="Preset"
+                                HorizontalAlignment="Right"/>
+                </Grid>
+
+                <!-- Preset Dropdown (visible when NOT in custom mode) -->
+                <ComboBox ItemsSource="{Binding PresetPrompts}"
+                          SelectedItem="{Binding SelectedPresetPrompt}"
+                          HorizontalAlignment="Stretch"
+                          IsVisible="{Binding !IsCustomPromptMode}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Custom Prompt TextBox (visible when in custom mode) -->
+                <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" Height="60" TextWrapping="Wrap"
+                         IsVisible="{Binding IsCustomPromptMode}"/>
               </StackPanel>
 
               <Grid ColumnDefinitions="*,16,*">

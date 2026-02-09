@@ -93,12 +93,14 @@ public interface IComfyUIWrapperService : IDisposable
     /// </summary>
     /// <param name="imagePath">Absolute path to the image file on disk (must be accessible by the ComfyUI server).</param>
     /// <param name="prompt">The captioning prompt to send to the model.</param>
+    /// <param name="temperature">Inference temperature (0.0–2.0). Lower values are more deterministic.</param>
     /// <param name="progress">Optional progress reporter that receives WebSocket event messages.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The generated caption text, or <c>null</c> if no text was returned.</returns>
     Task<string?> GenerateCaptionAsync(
         string imagePath,
         string prompt,
+        float temperature = 0.7f,
         IProgress<string>? progress = null,
         CancellationToken ct = default);
 
@@ -118,5 +120,19 @@ public interface IComfyUIWrapperService : IDisposable
     /// <returns>A list of node type names that are <b>not</b> installed. Empty if all are present.</returns>
     Task<IReadOnlyList<string>> CheckRequiredNodesAsync(
         IEnumerable<string> requiredNodeTypes,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Queries the ComfyUI <c>/models/{folder}</c> endpoint to list model files that are
+    /// physically present in the specified model folder on the server (e.g. <c>"prompt_generator"</c>).
+    /// </summary>
+    /// <param name="folderName">The model folder name as registered by the custom node (e.g. <c>"prompt_generator"</c>).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A list of model file/directory names present in the folder, or an empty list if the
+    /// folder does not exist or the endpoint is not available.
+    /// </returns>
+    Task<IReadOnlyList<string>> GetModelsInFolderAsync(
+        string folderName,
         CancellationToken ct = default);
 }

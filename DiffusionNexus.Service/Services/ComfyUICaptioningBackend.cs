@@ -18,17 +18,31 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// </summary>
     private static readonly string[] RequiredCustomNodes = ["Qwen3_VQA", "ShowText|pysssss"];
 
+    /// <summary>
+    /// The model name used in the Qwen3-VL captioning workflow.
+    /// Must match the <c>model</c> input value in <c>Qwen-3VL-autocaption.json</c>.
+    /// </summary>
+    private const string RequiredModelName = "Qwen3-VL-4B-Instruct-FP8";
+
+    /// <summary>
+    /// The ComfyUI model folder where the Qwen3-VL node stores its downloaded models.
+    /// </summary>
+    private const string ModelFolder = "prompt_generator";
+
     private readonly IComfyUIWrapperService _comfyUi;
-    private bool _firstCaptionCompleted;
+    private readonly IAppSettingsService _settingsService;
 
     /// <summary>
     /// Creates a new ComfyUI captioning backend.
     /// </summary>
     /// <param name="comfyUiService">The ComfyUI wrapper service to delegate to.</param>
-    public ComfyUICaptioningBackend(IComfyUIWrapperService comfyUiService)
+    /// <param name="settingsService">Application settings service for reading the configured server URL.</param>
+    public ComfyUICaptioningBackend(IComfyUIWrapperService comfyUiService, IAppSettingsService settingsService)
     {
         ArgumentNullException.ThrowIfNull(comfyUiService);
+        ArgumentNullException.ThrowIfNull(settingsService);
         _comfyUi = comfyUiService;
+        _settingsService = settingsService;
     }
 
     /// <inheritdoc />
@@ -40,24 +54,21 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// <inheritdoc />
     public IReadOnlyList<string> Warnings { get; private set; } = [];
 
-    /// <summary>
-    /// The configured ComfyUI server URL used for connectivity checks.
-    /// </summary>
-    public string ServerUrl => GetBaseUrl();
-
     /// <inheritdoc />
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         try
         {
+            var serverUrl = await GetConfiguredUrlAsync(ct);
+
             // Lightweight health check — is the server reachable?
             using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await httpClient.GetAsync(
-                $"{GetBaseUrl()}/system_stats", ct);
+                $"{serverUrl}/system_stats", ct);
 
             if (!response.IsSuccessStatusCode)
             {
-                MissingRequirements = [];
+                MissingRequirements = [$"ComfyUI server not reachable at {serverUrl}"];
                 Warnings = [];
                 return false;
             }
@@ -67,9 +78,11 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             if (missingNodes.Count > 0)
             {
-                MissingRequirements = missingNodes
+                var items = missingNodes
                     .Select(n => $"Missing custom node: {n}")
                     .ToList();
+                items.Add("Install via ComfyUI Manager or place into the custom_nodes folder, then restart ComfyUI.");
+                MissingRequirements = items;
                 Warnings = [];
 
                 Logger.Warning(
@@ -81,16 +94,27 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             MissingRequirements = [];
 
-            // Show a first-run warning until a caption has completed successfully
-            Warnings = _firstCaptionCompleted
-                ? []
-                : ["If the Qwen3-VL model has not been downloaded yet, the first run will automatically download it (~8 GB). This may take several minutes."];
+            // Check if the required model is physically present in ComfyUI's model folder
+            var downloadedModels = await _comfyUi.GetModelsInFolderAsync(ModelFolder, ct);
+            if (!downloadedModels.Any(m => m.Contains(RequiredModelName, StringComparison.OrdinalIgnoreCase)))
+            {
+                Warnings = [$"The model '{RequiredModelName}' is not yet downloaded. The first run will automatically download it (~8 GB). This may take several minutes."];
+            }
+            else
+            {
+                Warnings = [];
+            }
 
             return true;
         }
-        catch
+        catch (Exception ex)
         {
-            MissingRequirements = [];
+            var url = "(unknown)";
+            try { url = await GetConfiguredUrlAsync(CancellationToken.None); }
+            catch { /* best-effort */ }
+
+            Logger.Debug(ex, "ComfyUI availability check failed for {ServerUrl}", url);
+            MissingRequirements = [$"ComfyUI server not reachable at {url}"];
             Warnings = [];
             return false;
         }
@@ -102,9 +126,10 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         string prompt,
         string? triggerWord = null,
         IReadOnlyList<string>? blacklistedWords = null,
+        float temperature = 0.7f,
         CancellationToken ct = default)
     {
-        return GenerateSingleCaptionInternalAsync(imagePath, prompt, triggerWord, blacklistedWords, progress: null, ct);
+        return GenerateSingleCaptionInternalAsync(imagePath, prompt, triggerWord, blacklistedWords, temperature, progress: null, ct);
     }
 
     private async Task<CaptioningResult> GenerateSingleCaptionInternalAsync(
@@ -112,6 +137,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         string prompt,
         string? triggerWord,
         IReadOnlyList<string>? blacklistedWords,
+        float temperature,
         IProgress<string>? progress,
         CancellationToken ct)
     {
@@ -124,7 +150,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
         try
         {
-            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, progress, ct);
+            var rawCaption = await _comfyUi.GenerateCaptionAsync(imagePath, prompt, temperature, progress, ct);
 
             if (rawCaption is null)
             {
@@ -132,7 +158,6 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             }
 
             var caption = CaptionPostProcessor.Process(rawCaption, triggerWord, blacklistedWords);
-            _firstCaptionCompleted = true;
             return CaptioningResult.Succeeded(imagePath, caption, "");
         }
         catch (Exception ex)
@@ -204,6 +229,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
                 config.SystemPrompt,
                 config.TriggerWord,
                 config.BlacklistedWords,
+                config.Temperature,
                 wsProgress,
                 ct);
 
@@ -240,9 +266,9 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
         return Path.Combine(directory, nameWithoutExt + ".txt");
     }
 
-    private static string GetBaseUrl()
+    private async Task<string> GetConfiguredUrlAsync(CancellationToken ct)
     {
-        // Default ComfyUI URL — consistent with ComfyUIWrapperService default
-        return "http://127.0.0.1:8188";
+        var settings = await _settingsService.GetSettingsAsync(ct);
+        return settings.ComfyUiServerUrl.TrimEnd('/');
     }
 }
