@@ -11,6 +11,9 @@
     <ApplicationIcon>Assets\AIKnowledgeIcon.ico</ApplicationIcon>
     <!-- Ensure all content (including Avalonia resources) is included in single-file publish -->
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <!-- LlamaSharp.Backend.Cpu ships multiple AVX variants with the same DLL names;
+         allow publish to proceed instead of failing on NETSDK1152 -->
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
 
   <ItemGroup>
@@ -48,6 +51,21 @@
   <ItemGroup>
     <Folder Include="Assets\Workflows\" />
   </ItemGroup>
+
+  <!-- LlamaSharp.Backend.Cpu ships duplicate native DLLs under avx / avx2 / avx512 / noavx.
+       During single-file publish the bundler sees them all with the same BundleRelativePath
+       and fails (MSB4018). This target strips the non-avx2 duplicates from
+       ResolvedFileToPublish before _ComputeFilesToBundle feeds them to the bundler. -->
+  <Target Name="DeduplicateLlamaSharpNatives"
+          BeforeTargets="_ComputeFilesToBundle"
+          AfterTargets="_HandleFileConflictsForPublish"
+          Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+          Condition="$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/llamasharp.backend.cpu/'))
+                     And !$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/avx2/'))" />
+    </ItemGroup>
+  </Target>
 
   <!-- LLamaSharp 0.24.0 packaging workaround: ggml.dll in the cuda12 directory
        depends on ggml-cpu.dll but the CUDA package doesn't include it. Copy from CPU backend. -->
