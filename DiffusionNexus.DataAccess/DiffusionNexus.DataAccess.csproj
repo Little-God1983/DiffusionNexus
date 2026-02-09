@@ -1,21 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+<PropertyGroup>
+  <TargetFramework>net10.0</TargetFramework>
+  <ImplicitUsings>enable</ImplicitUsings>
+  <Nullable>enable</Nullable>
+</PropertyGroup>
 
-  <ItemGroup>
-    <Compile Remove="Entities\**" />
-    <Compile Remove="Repositories\**" />
-    <EmbeddedResource Remove="Entities\**" />
-    <EmbeddedResource Remove="Repositories\**" />
-    <None Remove="Entities\**" />
-    <None Remove="Repositories\**" />
-  </ItemGroup>
+<ItemGroup>
+  <Compile Remove="Entities\**" />
+  <EmbeddedResource Remove="Entities\**" />
+  <None Remove="Entities\**" />
+</ItemGroup>
 
-  <ItemGroup>
+<ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.*">

@@ -1,7 +1,6 @@
-using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -10,57 +9,39 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public sealed class AppSettingsService : IAppSettingsService
 {
-    private readonly DiffusionNexusCoreDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly ISecureStorage _secureStorage;
 
-    public AppSettingsService(DiffusionNexusCoreDbContext dbContext, ISecureStorage secureStorage)
+    public AppSettingsService(IUnitOfWork unitOfWork, ISecureStorage secureStorage)
     {
-        _dbContext = dbContext;
+        ArgumentNullException.ThrowIfNull(unitOfWork);
+        ArgumentNullException.ThrowIfNull(secureStorage);
+        _unitOfWork = unitOfWork;
         _secureStorage = secureStorage;
     }
 
     /// <inheritdoc />
     public async Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await _dbContext.AppSettings
-            .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
-            .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
-            .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
-            .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsWithIncludesAsync(cancellationToken)
+            .ConfigureAwait(false);
 
-        if (settings is null)
+        // Settings may be newly created and need saving
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!settings.DatasetCategories.Any())
         {
-            // Create default settings with default categories
-            settings = new AppSettings { Id = 1 };
-            _dbContext.AppSettings.Add(settings);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            // Seed default categories
-            await SeedDefaultCategoriesAsync(cancellationToken);
+            await SeedDefaultCategoriesAsync(cancellationToken).ConfigureAwait(false);
 
             // Reload to get the categories
-            settings = await _dbContext.AppSettings
-                .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
-                .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
-                .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
-                .FirstAsync(s => s.Id == 1, cancellationToken);
-        }
-        else if (!settings.DatasetCategories.Any())
-        {
-            // Seed default categories if none exist
-            await SeedDefaultCategoriesAsync(cancellationToken);
-
-            // Reload to get the categories
-            settings = await _dbContext.AppSettings
-                .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
-                .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
-                .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
-                .FirstAsync(s => s.Id == 1, cancellationToken);
+            settings = await _unitOfWork.AppSettings
+                .GetSettingsWithIncludesAsync(cancellationToken)
+                .ConfigureAwait(false);
         }
         else
         {
-            // Clean up any duplicate categories (by name)
-            await RemoveDuplicateCategoriesAsync(settings, cancellationToken);
+            await RemoveDuplicateCategoriesAsync(settings, cancellationToken).ConfigureAwait(false);
         }
 
         return settings;
@@ -77,32 +58,29 @@ public sealed class AppSettingsService : IAppSettingsService
             .ToList();
 
         if (categoriesByName.Count == 0)
-        {
             return;
-        }
 
         foreach (var group in categoriesByName)
         {
-            // Keep the first, remove the rest
             var duplicates = group.Skip(1).ToList();
             foreach (var duplicate in duplicates)
             {
-                _dbContext.DatasetCategories.Remove(duplicate);
+                _unitOfWork.AppSettings.RemoveDatasetCategory(duplicate);
                 settings.DatasetCategories.Remove(duplicate);
             }
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SeedDefaultCategoriesAsync(CancellationToken cancellationToken = default)
     {
-        // Check if any categories already exist to avoid duplicates
-        var existingCount = await _dbContext.DatasetCategories.CountAsync(cancellationToken);
+        var existingCount = await _unitOfWork.AppSettings
+            .GetDatasetCategoryCountAsync(cancellationToken)
+            .ConfigureAwait(false);
+
         if (existingCount > 0)
-        {
             return;
-        }
 
         var defaultCategories = new[]
         {
@@ -111,8 +89,10 @@ public sealed class AppSettingsService : IAppSettingsService
             new DatasetCategory { Name = "Concept", Order = 2, IsDefault = true, AppSettingsId = 1 }
         };
 
-        _dbContext.DatasetCategories.AddRange(defaultCategories);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.AppSettings
+            .AddDatasetCategoriesAsync(defaultCategories, cancellationToken)
+            .ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -120,31 +100,29 @@ public sealed class AppSettingsService : IAppSettingsService
     {
         settings.UpdatedAt = DateTimeOffset.UtcNow;
 
-        // Update LoRA source order
+        // Update ordering and FK assignments
         var order = 0;
         foreach (var source in settings.LoraSources)
         {
             source.Order = order++;
-            source.AppSettingsId = 1; // Ensure FK is set
+            source.AppSettingsId = 1;
         }
 
-        // Update category order
         var categoryOrder = 0;
         foreach (var category in settings.DatasetCategories)
         {
             category.Order = categoryOrder++;
-            category.AppSettingsId = 1; // Ensure FK is set
+            category.AppSettingsId = 1;
         }
 
-        // Update Image Gallery order
         var galleryOrder = 0;
         foreach (var gallery in settings.ImageGalleries)
         {
             gallery.Order = galleryOrder++;
-            gallery.AppSettingsId = 1; // Ensure FK is set
+            gallery.AppSettingsId = 1;
         }
 
-        // Get the incoming data before querying (to avoid tracking issues)
+        // Capture incoming data before any tracking queries
         var incomingSourceData = settings.LoraSources
             .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
             .ToList();
@@ -157,233 +135,171 @@ public sealed class AppSettingsService : IAppSettingsService
             .Select(g => new { g.Id, g.FolderPath, g.IsEnabled, g.Order })
             .ToList();
 
-        // Detach any tracked entities to avoid conflicts
-        var trackedLoraSources = _dbContext.ChangeTracker.Entries<LoraSource>().ToList();
-        foreach (var entry in trackedLoraSources)
-        {
-            entry.State = EntityState.Detached;
-        }
+        var existingSettings = await _unitOfWork.AppSettings
+            .GetSettingsWithIncludesAsync(cancellationToken)
+            .ConfigureAwait(false);
 
-        var trackedCategories = _dbContext.ChangeTracker.Entries<DatasetCategory>().ToList();
-        foreach (var entry in trackedCategories)
-        {
-            entry.State = EntityState.Detached;
-        }
+        // Update scalar properties
+        existingSettings.EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey;
+        existingSettings.ShowNsfw = settings.ShowNsfw;
+        existingSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
+        existingSettings.ShowVideoPreview = settings.ShowVideoPreview;
+        existingSettings.UseForgeStylePrompts = settings.UseForgeStylePrompts;
+        existingSettings.MergeLoraSources = settings.MergeLoraSources;
+        existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
+        existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
+        existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
+        existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
+        existingSettings.AutoBackupEnabled = settings.AutoBackupEnabled;
+        existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
+        existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
+        existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
+        existingSettings.MaxBackups = settings.MaxBackups;
+        existingSettings.LastBackupAt = settings.LastBackupAt;
+        existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
+        existingSettings.UpdatedAt = settings.UpdatedAt;
 
-        var trackedGalleries = _dbContext.ChangeTracker.Entries<ImageGallery>().ToList();
-        foreach (var entry in trackedGalleries)
-        {
-            entry.State = EntityState.Detached;
-        }
-
-        var existingSettings = await _dbContext.AppSettings
-            .Include(s => s.LoraSources)
-            .Include(s => s.DatasetCategories)
-            .Include(s => s.ImageGalleries)
-            .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
-
-        if (existingSettings is null)
-        {
-            settings.Id = 1;
-            // Re-create LoraSources from the captured data
-            settings.LoraSources = incomingSourceData
-                .Select(s => new LoraSource
-                {
-                    Id = 0,
-                    AppSettingsId = 1,
-                    FolderPath = s.FolderPath,
-                    IsEnabled = s.IsEnabled,
-                    Order = s.Order
-                })
-                .ToList();
-            settings.DatasetCategories = incomingCategoryData
-                .Select(c => new DatasetCategory
-                {
-                    Id = 0,
-                    AppSettingsId = 1,
-                    Name = c.Name,
-                    Description = c.Description,
-                    IsDefault = c.IsDefault,
-                    Order = c.Order
-                })
-                .ToList();
-            _dbContext.AppSettings.Add(settings);
-        }
-        else
-        {
-            // Update scalar properties
-            existingSettings.EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey;
-            existingSettings.ShowNsfw = settings.ShowNsfw;
-            existingSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
-            existingSettings.ShowVideoPreview = settings.ShowVideoPreview;
-            existingSettings.UseForgeStylePrompts = settings.UseForgeStylePrompts;
-            existingSettings.MergeLoraSources = settings.MergeLoraSources;
-            existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
-            existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
-            existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
-            existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
-            existingSettings.AutoBackupEnabled = settings.AutoBackupEnabled;
-            existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
-            existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
-            existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
-            existingSettings.MaxBackups = settings.MaxBackups;
-            existingSettings.LastBackupAt = settings.LastBackupAt;
-            existingSettings.UpdatedAt = settings.UpdatedAt;
-
-            // Handle LoRA sources (remove deleted, update existing, add new)
-            var existingSourceIds = existingSettings.LoraSources
-                .Where(s => s.Id > 0)
-                .Select(s => s.Id)
-                .ToHashSet();
-            var incomingSourceIds = incomingSourceData
-                .Where(s => s.Id > 0)
-                .Select(s => s.Id)
-                .ToHashSet();
-
-            foreach (var source in existingSettings.LoraSources.ToList())
+        // Handle LoRA sources (remove deleted, update existing, add new)
+        SyncChildCollection(
+            existingSettings.LoraSources,
+            incomingSourceData,
+            s => s.Id,
+            d => d.Id,
+            (existing, data) =>
             {
-                if (source.Id > 0 && !incomingSourceIds.Contains(source.Id))
-                {
-                    _dbContext.LoraSources.Remove(source);
-                }
+                existing.FolderPath = data.FolderPath;
+                existing.IsEnabled = data.IsEnabled;
+                existing.Order = data.Order;
+            },
+            data => new LoraSource
+            {
+                AppSettingsId = 1,
+                FolderPath = data.FolderPath,
+                IsEnabled = data.IsEnabled,
+                Order = data.Order
+            },
+            _unitOfWork.AppSettings.RemoveLoraSource,
+            async source => await _unitOfWork.AppSettings.AddLoraSourceAsync(source, cancellationToken).ConfigureAwait(false));
+
+        // Handle DatasetCategories (remove deleted non-defaults, update existing, add new)
+        var existingCategoryIds = existingSettings.DatasetCategories.Where(c => c.Id > 0).Select(c => c.Id).ToHashSet();
+        var incomingCategoryIds = incomingCategoryData.Where(c => c.Id > 0).Select(c => c.Id).ToHashSet();
+
+        foreach (var category in existingSettings.DatasetCategories.ToList())
+        {
+            if (category.Id > 0 && !category.IsDefault && !incomingCategoryIds.Contains(category.Id))
+                _unitOfWork.AppSettings.RemoveDatasetCategory(category);
+        }
+
+        foreach (var categoryData in incomingCategoryData)
+        {
+            if (categoryData.Id > 0 && existingCategoryIds.Contains(categoryData.Id))
+            {
+                var existingCategory = existingSettings.DatasetCategories.First(c => c.Id == categoryData.Id);
+                if (!existingCategory.IsDefault)
+                    existingCategory.Name = categoryData.Name;
+                existingCategory.Description = categoryData.Description;
+                existingCategory.Order = categoryData.Order;
             }
-
-            foreach (var sourceData in incomingSourceData)
+            else if (categoryData.Id == 0)
             {
-                if (sourceData.Id > 0 && existingSourceIds.Contains(sourceData.Id))
-                {
-                    var existingSource = existingSettings.LoraSources.First(s => s.Id == sourceData.Id);
-                    existingSource.FolderPath = sourceData.FolderPath;
-                    existingSource.IsEnabled = sourceData.IsEnabled;
-                    existingSource.Order = sourceData.Order;
-                }
-                else
-                {
-                    var newSource = new LoraSource
-                    {
-                        AppSettingsId = 1,
-                        FolderPath = sourceData.FolderPath,
-                        IsEnabled = sourceData.IsEnabled,
-                        Order = sourceData.Order
-                    };
-                    _dbContext.LoraSources.Add(newSource);
-                }
-            }
-
-            // Handle DatasetCategories (remove deleted non-defaults, update existing, add new)
-            var existingCategoryIds = existingSettings.DatasetCategories
-                .Where(c => c.Id > 0)
-                .Select(c => c.Id)
-                .ToHashSet();
-            var incomingCategoryIds = incomingCategoryData
-                .Where(c => c.Id > 0)
-                .Select(c => c.Id)
-                .ToHashSet();
-
-            foreach (var category in existingSettings.DatasetCategories.ToList())
-            {
-                // Only remove non-default categories that are not in incoming data
-                if (category.Id > 0 && !category.IsDefault && !incomingCategoryIds.Contains(category.Id))
-                {
-                    _dbContext.DatasetCategories.Remove(category);
-                }
-            }
-
-            foreach (var categoryData in incomingCategoryData)
-            {
-                if (categoryData.Id > 0 && existingCategoryIds.Contains(categoryData.Id))
-                {
-                    var existingCategory = existingSettings.DatasetCategories.First(c => c.Id == categoryData.Id);
-                    // Don't update name for default categories
-                    if (!existingCategory.IsDefault)
-                    {
-                        existingCategory.Name = categoryData.Name;
-                    }
-                    existingCategory.Description = categoryData.Description;
-                    existingCategory.Order = categoryData.Order;
-                }
-                else if (categoryData.Id == 0)
-                {
-                    var newCategory = new DatasetCategory
+                await _unitOfWork.AppSettings.AddDatasetCategoriesAsync(
+                    [new DatasetCategory
                     {
                         AppSettingsId = 1,
                         Name = categoryData.Name,
                         Description = categoryData.Description,
                         IsDefault = false,
                         Order = categoryData.Order
-                    };
-                    _dbContext.DatasetCategories.Add(newCategory);
-                }
-            }
-
-            // Handle ImageGalleries (remove deleted, update existing, add new)
-            var existingGalleryIds = existingSettings.ImageGalleries
-                .Where(g => g.Id > 0)
-                .Select(g => g.Id)
-                .ToHashSet();
-            var incomingGalleryIds = incomingGalleryData
-                .Where(g => g.Id > 0)
-                .Select(g => g.Id)
-                .ToHashSet();
-
-            foreach (var gallery in existingSettings.ImageGalleries.ToList())
-            {
-                if (gallery.Id > 0 && !incomingGalleryIds.Contains(gallery.Id))
-                {
-                    _dbContext.ImageGalleries.Remove(gallery);
-                }
-            }
-
-            foreach (var galleryData in incomingGalleryData)
-            {
-                if (galleryData.Id > 0 && existingGalleryIds.Contains(galleryData.Id))
-                {
-                    var existingGallery = existingSettings.ImageGalleries.First(g => g.Id == galleryData.Id);
-                    existingGallery.FolderPath = galleryData.FolderPath;
-                    existingGallery.IsEnabled = galleryData.IsEnabled;
-                    existingGallery.Order = galleryData.Order;
-                }
-                else if (galleryData.Id == 0)
-                {
-                    var newGallery = new ImageGallery
-                    {
-                        AppSettingsId = 1,
-                        FolderPath = galleryData.FolderPath,
-                        IsEnabled = galleryData.IsEnabled,
-                        Order = galleryData.Order
-                    };
-                    _dbContext.ImageGalleries.Add(newGallery);
-                }
-                // Entries with Id > 0 but not found in existing are ignored (should not happen normally)
+                    }], cancellationToken).ConfigureAwait(false);
             }
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // Handle ImageGalleries (remove deleted, update existing, add new)
+        SyncChildCollection(
+            existingSettings.ImageGalleries,
+            incomingGalleryData,
+            g => g.Id,
+            d => d.Id,
+            (existing, data) =>
+            {
+                existing.FolderPath = data.FolderPath;
+                existing.IsEnabled = data.IsEnabled;
+                existing.Order = data.Order;
+            },
+            data => new ImageGallery
+            {
+                AppSettingsId = 1,
+                FolderPath = data.FolderPath,
+                IsEnabled = data.IsEnabled,
+                Order = data.Order
+            },
+            _unitOfWork.AppSettings.RemoveImageGallery,
+            async gallery => await _unitOfWork.AppSettings.AddImageGalleryAsync(gallery, cancellationToken).ConfigureAwait(false));
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Synchronizes a child collection: removes deleted, updates existing, adds new.
+    /// </summary>
+    private static void SyncChildCollection<TEntity, TData>(
+        ICollection<TEntity> existingCollection,
+        IList<TData> incomingData,
+        Func<TEntity, int> entityIdSelector,
+        Func<TData, int> dataIdSelector,
+        Action<TEntity, TData> updateAction,
+        Func<TData, TEntity> createAction,
+        Action<TEntity> removeAction,
+        Func<TEntity, Task> addAction)
+    {
+        var existingIds = existingCollection.Where(e => entityIdSelector(e) > 0).Select(entityIdSelector).ToHashSet();
+        var incomingIds = incomingData.Where(d => dataIdSelector(d) > 0).Select(dataIdSelector).ToHashSet();
+
+        foreach (var entity in existingCollection.ToList())
+        {
+            if (entityIdSelector(entity) > 0 && !incomingIds.Contains(entityIdSelector(entity)))
+                removeAction(entity);
+        }
+
+        foreach (var data in incomingData)
+        {
+            if (dataIdSelector(data) > 0 && existingIds.Contains(dataIdSelector(data)))
+            {
+                var existing = existingCollection.First(e => entityIdSelector(e) == dataIdSelector(data));
+                updateAction(existing, data);
+            }
+            else if (dataIdSelector(data) == 0)
+            {
+                var newEntity = createAction(data);
+                addAction(newEntity).GetAwaiter().GetResult();
+            }
+        }
     }
 
     /// <inheritdoc />
     public async Task<string?> GetCivitaiApiKeyAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await GetSettingsAsync(cancellationToken);
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         return _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
     }
 
     /// <inheritdoc />
     public async Task SetCivitaiApiKeyAsync(string? apiKey, CancellationToken cancellationToken = default)
     {
-        var settings = await GetSettingsAsync(cancellationToken);
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(apiKey)
             ? null
             : _secureStorage.Encrypt(apiKey);
         settings.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> GetEnabledLoraSourcesAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await GetSettingsAsync(cancellationToken);
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         return settings.LoraSources
             .Where(s => s.IsEnabled && !string.IsNullOrWhiteSpace(s.FolderPath))
             .OrderBy(s => s.Order)
@@ -394,7 +310,7 @@ public sealed class AppSettingsService : IAppSettingsService
     /// <inheritdoc />
     public async Task<LoraSource> AddLoraSourceAsync(string folderPath, CancellationToken cancellationToken = default)
     {
-        var settings = await GetSettingsAsync(cancellationToken);
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
 
         var maxOrder = settings.LoraSources.Any()
             ? settings.LoraSources.Max(s => s.Order)
@@ -408,8 +324,8 @@ public sealed class AppSettingsService : IAppSettingsService
             Order = maxOrder + 1
         };
 
-        _dbContext.LoraSources.Add(source);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.AppSettings.AddLoraSourceAsync(source, cancellationToken).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return source;
     }
@@ -417,41 +333,46 @@ public sealed class AppSettingsService : IAppSettingsService
     /// <inheritdoc />
     public async Task RemoveLoraSourceAsync(int sourceId, CancellationToken cancellationToken = default)
     {
-        var source = await _dbContext.LoraSources.FindAsync([sourceId], cancellationToken);
+        var source = await _unitOfWork.AppSettings
+            .FindLoraSourceByIdAsync(sourceId, cancellationToken)
+            .ConfigureAwait(false);
+
         if (source is not null)
         {
-            _dbContext.LoraSources.Remove(source);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            _unitOfWork.AppSettings.RemoveLoraSource(source);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <inheritdoc />
     public async Task UpdateLoraSourceAsync(LoraSource source, CancellationToken cancellationToken = default)
     {
-        var existingSource = await _dbContext.LoraSources.FindAsync([source.Id], cancellationToken);
+        var existingSource = await _unitOfWork.AppSettings
+            .FindLoraSourceByIdAsync(source.Id, cancellationToken)
+            .ConfigureAwait(false);
+
         if (existingSource is not null)
         {
             existingSource.FolderPath = source.FolderPath;
             existingSource.IsEnabled = source.IsEnabled;
             existingSource.Order = source.Order;
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <inheritdoc />
     public async Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default)
     {
-        // Simple, targeted update - only updates the LastBackupAt column
-        // Does NOT touch categories, LoRA sources, or any other collections
-        var settings = await _dbContext.AppSettings
-            .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken);
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         if (settings is not null)
         {
             settings.LastBackupAt = lastBackupAt;
             settings.UpdatedAt = DateTimeOffset.UtcNow;
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 }

@@ -3,19 +3,13 @@ namespace DiffusionNexus.Domain.Entities;
 /// <summary>
 /// Represents a model creator/author.
 /// </summary>
-public class Creator
+public class Creator : BaseEntity
 {
-    /// <summary>Local database ID.</summary>
-    public int Id { get; set; }
-
     /// <summary>The username on Civitai.</summary>
     public string Username { get; set; } = string.Empty;
 
     /// <summary>Avatar image URL.</summary>
     public string? AvatarUrl { get; set; }
-
-    /// <summary>When this creator was first seen.</summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     #region Navigation Properties
 

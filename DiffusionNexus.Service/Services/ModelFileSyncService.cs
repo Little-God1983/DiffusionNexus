@@ -1,9 +1,8 @@
 using System.Security.Cryptography;
-using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -13,7 +12,7 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public class ModelFileSyncService : IModelSyncService
 {
-    private readonly DiffusionNexusCoreDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IAppSettingsService _settingsService;
 
     /// <summary>
@@ -26,33 +25,20 @@ public class ModelFileSyncService : IModelSyncService
     /// </summary>
     private static readonly string[] ModelExtensions = [".safetensors", ".pt", ".ckpt", ".pth"];
 
-    public ModelFileSyncService(DiffusionNexusCoreDbContext dbContext, IAppSettingsService settingsService)
+    public ModelFileSyncService(IUnitOfWork unitOfWork, IAppSettingsService settingsService)
     {
-        _dbContext = dbContext;
+        ArgumentNullException.ThrowIfNull(unitOfWork);
+        ArgumentNullException.ThrowIfNull(settingsService);
+        _unitOfWork = unitOfWork;
         _settingsService = settingsService;
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<Model>> LoadCachedModelsAsync(CancellationToken cancellationToken = default)
     {
-        // Load ALL models that have been saved (simplified query for debugging)
-        var models = await _dbContext.Models
-            .Include(m => m.Creator)
-            .Include(m => m.Versions)
-                .ThenInclude(v => v.Files)
-            .Include(m => m.Versions)
-                .ThenInclude(v => v.Images)
-            .Include(m => m.Versions)
-                .ThenInclude(v => v.TriggerWords)
-            .AsSplitQuery()
-            .ToListAsync(cancellationToken);
-
-        // Filter in memory to ensure we get models with local files
-        var modelsWithLocalFiles = models
-            .Where(m => m.Versions.Any(v => v.Files.Any(f => !string.IsNullOrEmpty(f.LocalPath))))
-            .ToList();
-
-        return modelsWithLocalFiles;
+        return await _unitOfWork.Models
+            .GetModelsWithLocalFilesAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -89,10 +75,9 @@ public class ModelFileSyncService : IModelSyncService
         });
 
         // Get all existing local paths from database
-        var existingPaths = await _dbContext.ModelFiles
-            .Where(f => f.LocalPath != null)
-            .Select(f => f.LocalPath!)
-            .ToHashSetAsync(StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var existingPaths = await _unitOfWork.ModelFiles
+            .GetExistingLocalPathsAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         // Scan all folders for model files
         var allFiles = new List<string>();
@@ -172,14 +157,14 @@ public class ModelFileSyncService : IModelSyncService
             {
                 // Create new model entry
                 var model = CreateModelFromFile(filePath, fileInfo);
-                _dbContext.Models.Add(model);
+                await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
                 newModels.Add(model);
             }
 
             processedCount++;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         progress?.Report(new SyncProgress
         {
@@ -202,9 +187,9 @@ public class ModelFileSyncService : IModelSyncService
         });
 
         // Get all files with local paths
-        var files = await _dbContext.ModelFiles
-            .Where(f => f.LocalPath != null)
-            .ToListAsync(cancellationToken);
+        var files = await _unitOfWork.ModelFiles
+            .GetAllWithLocalPathAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         if (files.Count == 0)
         {
@@ -262,7 +247,7 @@ public class ModelFileSyncService : IModelSyncService
             processedCount++;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         progress?.Report(new SyncProgress
         {
@@ -337,9 +322,9 @@ public class ModelFileSyncService : IModelSyncService
     private async Task<ModelFile?> TryMatchByHashAndSizeAsync(string filePath, long fileSize, CancellationToken cancellationToken)
     {
         // First try to match by exact size (fast check)
-        var candidatesBySize = await _dbContext.ModelFiles
-            .Where(f => f.FileSizeBytes == fileSize && f.LocalPath != null && !f.IsLocalFileValid)
-            .ToListAsync(cancellationToken);
+        var candidatesBySize = await _unitOfWork.ModelFiles
+            .FindBySizeWithInvalidPathAsync(fileSize, cancellationToken)
+            .ConfigureAwait(false);
 
         if (candidatesBySize.Count == 0)
         {
@@ -462,20 +447,5 @@ public class ModelFileSyncService : IModelSyncService
             ".pth" => FileFormat.PickleTensor,
             _ => FileFormat.Unknown
         };
-    }
-}
-
-/// <summary>
-/// Extension method for async HashSet creation.
-/// </summary>
-internal static class AsyncEnumerableExtensions
-{
-    public static async Task<HashSet<T>> ToHashSetAsync<T>(
-        this IQueryable<T> source,
-        IEqualityComparer<T>? comparer,
-        CancellationToken cancellationToken = default)
-    {
-        var list = await source.ToListAsync(cancellationToken);
-        return new HashSet<T>(list, comparer);
     }
 }

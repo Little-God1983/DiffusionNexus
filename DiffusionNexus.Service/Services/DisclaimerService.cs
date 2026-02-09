@@ -1,7 +1,6 @@
-using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -10,11 +9,12 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public class DisclaimerService : IDisclaimerService
 {
-    private readonly DiffusionNexusCoreDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public DisclaimerService(DiffusionNexusCoreDbContext dbContext)
+    public DisclaimerService(IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        ArgumentNullException.ThrowIfNull(unitOfWork);
+        _unitOfWork = unitOfWork;
     }
 
     /// <inheritdoc />
@@ -22,8 +22,9 @@ public class DisclaimerService : IDisclaimerService
     {
         var username = GetCurrentWindowsUsername();
 
-        return await _dbContext.DisclaimerAcceptances
-            .AnyAsync(d => d.WindowsUsername == username && d.Accepted, cancellationToken);
+        return await _unitOfWork.DisclaimerAcceptances
+            .HasUserAcceptedAsync(username, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -38,8 +39,10 @@ public class DisclaimerService : IDisclaimerService
             Accepted = true
         };
 
-        _dbContext.DisclaimerAcceptances.Add(acceptance);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.DisclaimerAcceptances
+            .AddAsync(acceptance, cancellationToken)
+            .ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string GetCurrentWindowsUsername()

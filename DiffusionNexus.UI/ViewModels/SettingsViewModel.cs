@@ -411,31 +411,31 @@ public partial class SettingsViewModel : BusyViewModelBase
 
         await RunBusyAsync(async () =>
         {
-            var settings = await _settingsService.GetSettingsAsync();
+            // Build a detached AppSettings snapshot so we never mutate
+            // tracked EF navigation collections (which causes duplicate inserts).
+            var settings = new AppSettings
+            {
+                Id = 1,
+                EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey)
+                    ? null
+                    : _secureStorage.Encrypt(CivitaiApiKey),
+                ComfyUiServerUrl = ComfyUiServerUrl,
+                ShowNsfw = ShowNsfw,
+                GenerateVideoThumbnails = GenerateVideoThumbnails,
+                ShowVideoPreview = ShowVideoPreview,
+                UseForgeStylePrompts = UseForgeStylePrompts,
+                MergeLoraSources = MergeLoraSources,
+                LoraSortSourcePath = LoraSortSourcePath,
+                LoraSortTargetPath = LoraSortTargetPath,
+                DatasetStoragePath = DatasetStoragePath,
+                AutoBackupEnabled = AutoBackupEnabled,
+                AutoBackupIntervalDays = AutoBackupIntervalDays,
+                AutoBackupIntervalHours = AutoBackupIntervalHours,
+                AutoBackupLocation = AutoBackupLocation,
+                MaxBackups = MaxBackups
+            };
 
-            // Encrypt and set API key
-            settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey)
-                ? null
-                : _secureStorage.Encrypt(CivitaiApiKey);
-
-            // Map view model to settings
-            settings.ComfyUiServerUrl = ComfyUiServerUrl;
-            settings.ShowNsfw = ShowNsfw;
-            settings.GenerateVideoThumbnails = GenerateVideoThumbnails;
-            settings.ShowVideoPreview = ShowVideoPreview;
-            settings.UseForgeStylePrompts = UseForgeStylePrompts;
-            settings.MergeLoraSources = MergeLoraSources;
-            settings.LoraSortSourcePath = LoraSortSourcePath;
-            settings.LoraSortTargetPath = LoraSortTargetPath;
-            settings.DatasetStoragePath = DatasetStoragePath;
-            settings.AutoBackupEnabled = AutoBackupEnabled;
-            settings.AutoBackupIntervalDays = AutoBackupIntervalDays;
-            settings.AutoBackupIntervalHours = AutoBackupIntervalHours;
-            settings.AutoBackupLocation = AutoBackupLocation;
-            settings.MaxBackups = MaxBackups;
-
-            // Map LoRA sources (remove empty ones)
-            settings.LoraSources.Clear();
+            // Map LoRA sources (skip empty)
             var order = 0;
             foreach (var sourceVm in LoraSources.Where(s => !string.IsNullOrWhiteSpace(s.FolderPath)))
             {
@@ -449,8 +449,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 });
             }
 
-            // Map dataset categories (remove empty ones)
-            settings.DatasetCategories.Clear();
+            // Map dataset categories (skip empty)
             var categoryOrder = 0;
             foreach (var categoryVm in DatasetCategories.Where(c => !string.IsNullOrWhiteSpace(c.Name)))
             {
@@ -465,8 +464,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 });
             }
 
-            // Map Image Gallery sources (remove empty ones)
-            settings.ImageGalleries.Clear();
+            // Map Image Gallery sources (skip empty)
             var galleryOrder = 0;
             foreach (var sourceVm in ImageGallerySources.Where(s => !string.IsNullOrWhiteSpace(s.FolderPath)))
             {
@@ -1100,6 +1098,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         ValidateAutoBackupLocation();
     }
     partial void OnMaxBackupsChanged(int value) => HasChanges = true;
+    partial void OnComfyUiServerUrlChanged(string value) => HasChanges = true;
 
     /// <summary>
     /// Tests whether the ComfyUI server is reachable at the configured URL.

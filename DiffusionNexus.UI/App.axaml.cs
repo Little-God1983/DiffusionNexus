@@ -147,7 +147,12 @@ public partial class App : Application
         {
             // Get the database path for logging
             var dbPath = DiffusionNexusCoreDbContext.GetConnectionString();
+            var dbDirectory = DiffusionNexusCoreDbContext.GetDatabaseDirectory();
             Serilog.Log.Information("InitializeDatabase: Connection string: {DbPath}", dbPath);
+
+            // Log the database folder path to the activity log so users can find their DB file
+            var activityLog = Services!.GetService<IActivityLogService>();
+            activityLog?.LogInfo("Database", $"Database loaded from: {dbDirectory}");
             
             // First verify we can connect
             Serilog.Log.Information("InitializeDatabase: Testing connection...");
@@ -414,8 +419,8 @@ public partial class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        // Database
-        services.AddDiffusionNexusCoreDatabase();
+        // Database + Repositories + Unit of Work
+        services.AddDataAccessLayer();
 
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();

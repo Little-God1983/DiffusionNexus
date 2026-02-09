@@ -13,11 +13,8 @@ namespace DiffusionNexus.Domain.Entities;
 /// - Has navigation properties for related entities
 /// - Supports both API and local file discovery
 /// </remarks>
-public class Model
+public class Model : BaseEntity
 {
-    /// <summary>Local database ID.</summary>
-    public int Id { get; set; }
-
     /// <summary>Civitai model ID. Null if discovered locally without API match.</summary>
     public int? CivitaiId { get; set; }
 
@@ -41,12 +38,6 @@ public class Model
 
     /// <summary>Where the model data originated.</summary>
     public DataSource Source { get; set; } = DataSource.Unknown;
-
-    /// <summary>When this record was first created locally.</summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-
-    /// <summary>When this record was last updated.</summary>
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     /// <summary>When data was last synced from Civitai API.</summary>
     public DateTimeOffset? LastSyncedAt { get; set; }
