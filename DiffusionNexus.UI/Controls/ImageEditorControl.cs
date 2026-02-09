@@ -183,6 +183,11 @@ public class ImageEditorControl : Control
                 _isInpaintPainting = false;
                 _inpaintStrokePoints.Clear();
                 _hasInpaintCursorPosition = false;
+                Cursor = Cursor.Default;
+            }
+            else
+            {
+                Cursor = new Cursor(StandardCursorType.None);
             }
             InvalidateVisual();
         }
@@ -686,6 +691,13 @@ public class ImageEditorControl : Control
 
     private void UpdateCursor(SKPoint point)
     {
+        // Inpaint tool uses a custom rendered brush cursor — hide the system cursor
+        if (_isInpaintingToolActive)
+        {
+            Cursor = new Cursor(StandardCursorType.None);
+            return;
+        }
+
         // Drawing tool cursor
         if (_editorCore.DrawingTool.IsActive)
         {
@@ -743,10 +755,19 @@ public class ImageEditorControl : Control
         var bgColor = CanvasBackground;
         var skBgColor = new SKColor(bgColor.R, bgColor.G, bgColor.B, bgColor.A);
 
+        var inpaintOverlay = _isInpaintingToolActive
+            ? new InpaintOverlayState(
+                _hasInpaintCursorPosition ? _inpaintCursorPosition : null,
+                _inpaintBrushSize,
+                _isInpaintPainting,
+                _isInpaintPainting ? [.. _inpaintStrokePoints] : null)
+            : null;
+
         context.Custom(new ImageEditorDrawOperation(
             new Rect(0, 0, bounds.Width, bounds.Height),
             _editorCore,
-            skBgColor));
+            skBgColor,
+            inpaintOverlay));
     }
 
     /// <summary>
@@ -991,6 +1012,15 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Holds inpainting overlay state for rendering.
+    /// </summary>
+    private sealed record InpaintOverlayState(
+        SKPoint? CursorPosition,
+        float BrushSize,
+        bool IsPainting,
+        List<SKPoint>? StrokePoints);
+
+    /// <summary>
     /// Custom draw operation for SkiaSharp rendering.
     /// </summary>
     private sealed class ImageEditorDrawOperation : ICustomDrawOperation
@@ -998,12 +1028,18 @@ public class ImageEditorControl : Control
         private readonly Rect _bounds;
         private readonly ImageEditor.ImageEditorCore _editorCore;
         private readonly SKColor _backgroundColor;
+        private readonly InpaintOverlayState? _inpaintOverlay;
 
-        public ImageEditorDrawOperation(Rect bounds, ImageEditor.ImageEditorCore editorCore, SKColor backgroundColor)
+        public ImageEditorDrawOperation(
+            Rect bounds,
+            ImageEditor.ImageEditorCore editorCore,
+            SKColor backgroundColor,
+            InpaintOverlayState? inpaintOverlay = null)
         {
             _bounds = bounds;
             _editorCore = editorCore;
             _backgroundColor = backgroundColor;
+            _inpaintOverlay = inpaintOverlay;
         }
 
         public Rect Bounds => _bounds;
@@ -1037,6 +1073,70 @@ public class ImageEditorControl : Control
                 (float)_bounds.Width,
                 (float)_bounds.Height,
                 _backgroundColor);
+
+            RenderInpaintOverlay(canvas);
+        }
+
+        private void RenderInpaintOverlay(SKCanvas canvas)
+        {
+            if (_inpaintOverlay is null) return;
+
+            // Draw live stroke preview while painting
+            if (_inpaintOverlay.IsPainting && _inpaintOverlay.StrokePoints is { Count: > 0 })
+            {
+                using var strokePaint = new SKPaint
+                {
+                    Color = new SKColor(255, 255, 255, 100),
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = _inpaintOverlay.BrushSize,
+                    StrokeCap = SKStrokeCap.Round,
+                    StrokeJoin = SKStrokeJoin.Round
+                };
+
+                var points = _inpaintOverlay.StrokePoints;
+                if (points.Count == 1)
+                {
+                    strokePaint.Style = SKPaintStyle.Fill;
+                    canvas.DrawCircle(points[0], _inpaintOverlay.BrushSize / 2, strokePaint);
+                }
+                else
+                {
+                    using var path = new SKPath();
+                    path.MoveTo(points[0]);
+                    for (var i = 1; i < points.Count; i++)
+                    {
+                        path.LineTo(points[i]);
+                    }
+                    canvas.DrawPath(path, strokePaint);
+                }
+            }
+
+            // Draw brush cursor circle
+            if (_inpaintOverlay.CursorPosition is { } cursorPos)
+            {
+                var radius = _inpaintOverlay.BrushSize / 2;
+
+                // Outer ring (white)
+                using var outerPaint = new SKPaint
+                {
+                    Color = new SKColor(255, 255, 255, 200),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1.5f,
+                    IsAntialias = true
+                };
+                canvas.DrawCircle(cursorPos, radius, outerPaint);
+
+                // Inner ring (black for contrast)
+                using var innerPaint = new SKPaint
+                {
+                    Color = new SKColor(0, 0, 0, 140),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 0.75f,
+                    IsAntialias = true
+                };
+                canvas.DrawCircle(cursorPos, radius + 1f, innerPaint);
+            }
         }
     }
 }

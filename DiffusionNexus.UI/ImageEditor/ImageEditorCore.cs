@@ -2177,7 +2177,7 @@ public class ImageEditorCore : IDisposable
             if (_isLayerMode && _layers?.ActiveLayer != null)
             {
                 targetLayer = _layers.ActiveLayer;
-                if (!targetLayer.CanEdit)
+                if (!targetLayer.CanEdit || targetLayer.IsInpaintMask)
                     return false;
                 targetBitmap = targetLayer.Bitmap;
             }
@@ -2289,7 +2289,7 @@ public class ImageEditorCore : IDisposable
             if (_isLayerMode && _layers?.ActiveLayer != null)
             {
                 targetLayer = _layers.ActiveLayer;
-                if (!targetLayer.CanEdit)
+                if (!targetLayer.CanEdit || targetLayer.IsInpaintMask)
                     return false;
                 targetBitmap = targetLayer.Bitmap;
             }
@@ -2382,9 +2382,19 @@ public class ImageEditorCore : IDisposable
         var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
         if (maskLayer is not null) return maskLayer;
 
+        // Remember which layer the user was editing before we create the mask
+        var previousActive = _layers.ActiveLayer;
+
         // Create a new inpaint mask layer at the top
         var newLayer = _layers.AddLayer("Inpaint Mask");
         newLayer.IsInpaintMask = true;
+
+        // Restore the previous active layer so drawing/shape tools still target it
+        if (previousActive is not null)
+        {
+            _layers.ActiveLayer = previousActive;
+        }
+
         return newLayer;
     }
 

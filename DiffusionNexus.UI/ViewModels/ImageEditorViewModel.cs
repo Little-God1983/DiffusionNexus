@@ -2025,6 +2025,7 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             _isInpaintingPanelOpen = false;
             OnPropertyChanged(nameof(IsInpaintingPanelOpen));
+            InpaintToolActivated?.Invoke(this, false);
         }
     }
 

@@ -9,6 +9,7 @@ public static class LayerCompositor
 {
     // Checkerboard tile size for inpaint mask display (in image pixels)
     private const int InpaintCheckSize = 8;
+    private const byte InpaintMaskAlpha = 153; // ~60% opacity so image shows through
     private static readonly SKColor InpaintCheckLight = new(200, 200, 200);
     private static readonly SKColor InpaintCheckDark = new(150, 150, 150);
 
@@ -206,9 +207,12 @@ public static class LayerCompositor
         // We use DstIn blending: draw checkerboard first in a layer, then mask it
         var layerRect = new SKRect(0, 0, imageWidth, imageHeight);
 
+        // Combine inherent mask semi-transparency with layer opacity
+        var effectiveAlpha = (byte)(InpaintMaskAlpha * layer.Opacity);
+
         using var maskPaint = new SKPaint
         {
-            Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255))
+            Color = SKColors.White.WithAlpha(effectiveAlpha)
         };
 
         // Use saveLayer for proper alpha compositing
