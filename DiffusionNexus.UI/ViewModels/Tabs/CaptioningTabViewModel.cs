@@ -139,9 +139,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         || SelectedBackend.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Available captioning backends.
+    /// Available captioning backends visible to the user.
+    /// NOTE: Local Inference (LlamaSharp) is temporarily hidden until fully implemented — do not delete it.
     /// </summary>
-    public IReadOnlyList<ICaptioningBackend> AvailableBackends => _backends;
+    public IReadOnlyList<ICaptioningBackend> AvailableBackends =>
+        _backends.Where(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase)).ToList();
 
     /// <summary>
     /// The currently selected captioning backend.

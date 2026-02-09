@@ -460,6 +460,7 @@ public partial class App : Application
         services.AddCaptioningServices();
 
         // Captioning backends (strategy pattern - local inference + ComfyUI)
+        // NOTE: Local Inference is registered but hidden in the UI until fully implemented — do not delete
         services.AddSingleton<ICaptioningBackend>(sp =>
             new LocalInferenceCaptioningBackend(sp.GetRequiredService<ICaptioningService>()));
         services.AddSingleton<ICaptioningBackend>(sp =>
