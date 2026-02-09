@@ -498,6 +498,15 @@
             BorderThickness="0,1,0,0"
             Padding="20,16">
       <Grid>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="8">
+          <Button Content="Export Settings"
+                  Command="{Binding ExportSettingsCommand}"
+                  ToolTip.Tip="Export all settings to a JSON file"/>
+          <Button Content="Import Settings"
+                  Command="{Binding ImportSettingsCommand}"
+                  ToolTip.Tip="Import settings from a JSON file (replaces current settings)"/>
+        </StackPanel>
+        
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
           
           <TextBlock Text="Unsaved changes"

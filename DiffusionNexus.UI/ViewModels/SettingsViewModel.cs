@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Net.Http;
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -18,6 +19,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IDatasetBackupService? _backupService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IActivityLogService? _activityLogService;
+    private readonly ISettingsExportService? _exportService;
 
     #region Observable Properties
 
@@ -202,13 +204,15 @@ public partial class SettingsViewModel : BusyViewModelBase
         ISecureStorage secureStorage,
         IDatasetBackupService? backupService = null,
         IDatasetEventAggregator? eventAggregator = null,
-        IActivityLogService? activityLogService = null)
+        IActivityLogService? activityLogService = null,
+        ISettingsExportService? exportService = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
         _eventAggregator = eventAggregator;
         _activityLogService = activityLogService;
+        _exportService = exportService;
     }
 
     /// <summary>
@@ -221,6 +225,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _backupService = null;
         _eventAggregator = null;
         _activityLogService = null;
+        _exportService = null;
 
         // Design-time data
         LoraSources =
@@ -1123,6 +1128,103 @@ public partial class SettingsViewModel : BusyViewModelBase
         finally
         {
             IsTestingComfyUiConnection = false;
+        }
+    }
+
+    /// <summary>
+    /// Exports all current settings to a JSON file via a Save File dialog.
+    /// Saves unsaved in-memory changes to the database first.
+    /// </summary>
+    [RelayCommand]
+    private async Task ExportSettingsAsync()
+    {
+        if (DialogService is null || _exportService is null)
+        {
+            StatusMessage = "Export service is not available.";
+            return;
+        }
+
+        // Save first so the export reflects what the user sees
+        if (HasChanges)
+        {
+            await SaveAsync();
+            if (HasChanges) return; // Save failed (validation errors)
+        }
+
+        var appVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var defaultFileName = $"DiffusionNexus-Settings_v{appVersion}_{timestamp}.json";
+
+        var filePath = await DialogService.ShowSaveFileDialogAsync(
+            "Export Settings",
+            defaultFileName,
+            "*.json");
+
+        if (string.IsNullOrEmpty(filePath))
+            return;
+
+        await RunBusyAsync(async () =>
+        {
+            try
+            {
+                await _exportService.ExportAsync(filePath);
+                StatusMessage = $"Settings exported to {Path.GetFileName(filePath)}.";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Export failed: {ex.Message}";
+            }
+        }, "Exporting settings...");
+    }
+
+    /// <summary>
+    /// Imports settings from a JSON file, replacing all current settings.
+    /// Asks for confirmation before overwriting.
+    /// </summary>
+    [RelayCommand]
+    private async Task ImportSettingsAsync()
+    {
+        if (DialogService is null || _exportService is null)
+        {
+            StatusMessage = "Export service is not available.";
+            return;
+        }
+
+        var filePath = await DialogService.ShowOpenFileDialogAsync(
+            "Import Settings",
+            "*.json");
+
+        if (string.IsNullOrEmpty(filePath))
+            return;
+
+        try
+        {
+            var preview = await _exportService.ReadAsync(filePath);
+
+            var message = $"Import settings from {Path.GetFileName(filePath)}?\n\n" +
+                          $"Exported by app version: {preview.AppVersion ?? "unknown"}\n" +
+                          $"Schema version: {preview.SchemaVersion}\n" +
+                          $"Exported at: {preview.ExportedAt:g}\n\n" +
+                          "This will replace ALL current settings. Unsaved changes will be lost.";
+
+            var confirmed = await DialogService.ShowConfirmAsync("Import Settings", message);
+            if (!confirmed)
+            {
+                StatusMessage = "Import cancelled.";
+                return;
+            }
+
+            await RunBusyAsync(async () =>
+            {
+                await _exportService.ImportAsync(filePath);
+                await LoadAsync();
+                StatusMessage = $"Settings imported from {Path.GetFileName(filePath)}.";
+            }, "Importing settings...");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Import failed: {ex.Message}";
         }
     }
 }

@@ -43,12 +43,18 @@ public partial class ModuleItem : ObservableObject
         {
             try
             {
-                using var stream = AssetLoader.Open(new Uri(iconPath));
-                _icon = new Bitmap(stream);
+                // Copy asset data into a MemoryStream so the Bitmap has a stable backing
+                // buffer. The AssetLoader stream can be disposed once the bytes are copied;
+                // MemoryStream is backed by a managed array and needs no disposal.
+                using var assetStream = AssetLoader.Open(new Uri(iconPath));
+                var ms = new MemoryStream();
+                assetStream.CopyTo(ms);
+                ms.Position = 0;
+                _icon = new Bitmap(ms);
             }
-            catch
+            catch (Exception ex)
             {
-                // Fallback or log error if needed
+                Serilog.Log.Warning(ex, "Failed to load icon from {IconPath}", iconPath);
                 _icon = null;
             }
         }

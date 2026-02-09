@@ -473,6 +473,9 @@ public partial class App : Application
         services.AddSingleton<IDatasetState, DatasetStateService>();
         services.AddSingleton<IDatasetStorageService, DatasetStorageService>();
 
+        // Settings export/import
+        services.AddScoped<ISettingsExportService, SettingsExportService>();
+
         // ViewModels (scoped to app lifetime)
         // SettingsViewModel - use factory to inject all required services including IActivityLogService
         services.AddScoped<SettingsViewModel>(sp => new SettingsViewModel(
@@ -480,7 +483,8 @@ public partial class App : Application
             sp.GetRequiredService<ISecureStorage>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IDatasetEventAggregator>(),
-            sp.GetService<IActivityLogService>()));
+            sp.GetService<IActivityLogService>(),
+            sp.GetService<ISettingsExportService>()));
         
         services.AddScoped<LoraViewerViewModel>();
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(

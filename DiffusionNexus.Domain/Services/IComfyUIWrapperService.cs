@@ -135,4 +135,22 @@ public interface IComfyUIWrapperService : IDisposable
     Task<IReadOnlyList<string>> GetModelsInFolderAsync(
         string folderName,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Queries <c>/object_info/{nodeType}</c> to retrieve the available options for a
+    /// specific input of a ComfyUI node. This is the authoritative way to check which
+    /// models a node can see, because it returns exactly the values ComfyUI shows in
+    /// its own UI dropdown.
+    /// </summary>
+    /// <param name="nodeType">The node class_type (e.g. <c>"Qwen3_VQA"</c>).</param>
+    /// <param name="inputName">The input name to inspect (e.g. <c>"model"</c>).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// The list of valid option strings for that input, or an empty list if the node
+    /// or input is not found.
+    /// </returns>
+    Task<IReadOnlyList<string>> GetNodeInputOptionsAsync(
+        string nodeType,
+        string inputName,
+        CancellationToken ct = default);
 }
