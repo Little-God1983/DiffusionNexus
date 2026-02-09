@@ -25,9 +25,15 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     private const string RequiredModelName = "Qwen3-VL-4B-Instruct-FP8";
 
     /// <summary>
-    /// The ComfyUI model folder where the Qwen3-VL node stores its downloaded models.
+    /// The node class_type whose <c>model</c> input we query via <c>/object_info</c>
+    /// to get the authoritative list of available models.
     /// </summary>
-    private const string ModelFolder = "prompt_generator";
+    private const string Qwen3VqaNodeType = "Qwen3_VQA";
+
+    /// <summary>
+    /// The input name on the <see cref="Qwen3VqaNodeType"/> node that selects the model.
+    /// </summary>
+    private const string ModelInputName = "model";
 
     private readonly IComfyUIWrapperService _comfyUi;
     private readonly IAppSettingsService _settingsService;
@@ -94,9 +100,17 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             MissingRequirements = [];
 
-            // Check if the required model is physically present in ComfyUI's model folder
-            var downloadedModels = await _comfyUi.GetModelsInFolderAsync(ModelFolder, ct);
-            if (!downloadedModels.Any(m => m.Contains(RequiredModelName, StringComparison.OrdinalIgnoreCase)))
+            // Authoritative model check: query /object_info for the Qwen3_VQA node's
+            // "model" input options — the exact values ComfyUI shows in its dropdown.
+            var availableModels = await _comfyUi.GetNodeInputOptionsAsync(
+                Qwen3VqaNodeType, ModelInputName, ct);
+
+            Logger.Debug(
+                "Qwen3_VQA node reports {Count} available model(s): {Models}",
+                availableModels.Count,
+                string.Join(", ", availableModels));
+
+            if (!availableModels.Any(m => m.Contains(RequiredModelName, StringComparison.OrdinalIgnoreCase)))
             {
                 Warnings = [$"The model '{RequiredModelName}' is not yet downloaded. The first run will automatically download it (~8 GB). This may take several minutes."];
             }

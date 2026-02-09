@@ -477,6 +477,61 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> GetNodeInputOptionsAsync(
+        string nodeType,
+        string inputName,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(inputName);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        Logger.Debug("Querying /object_info/{NodeType} for input {InputName} options", nodeType, inputName);
+
+        using var response = await _httpClient.GetAsync($"/object_info/{Uri.EscapeDataString(nodeType)}", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            Logger.Warning("/object_info/{NodeType} returned {StatusCode}", nodeType, response.StatusCode);
+            return [];
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var json = await JsonSerializer.DeserializeAsync<JsonElement>(stream, cancellationToken: ct);
+
+        // Structure: { "NodeType": { "input": { "required": { "inputName": [["opt1","opt2"], {}] } } } }
+        if (json.ValueKind == JsonValueKind.Object &&
+            json.TryGetProperty(nodeType, out var nodeInfo) &&
+            nodeInfo.TryGetProperty("input", out var inputSection) &&
+            inputSection.TryGetProperty("required", out var required) &&
+            required.TryGetProperty(inputName, out var inputDef) &&
+            inputDef.ValueKind == JsonValueKind.Array &&
+            inputDef.GetArrayLength() > 0)
+        {
+            var firstElement = inputDef[0];
+            if (firstElement.ValueKind == JsonValueKind.Array)
+            {
+                var options = new List<string>();
+                foreach (var item in firstElement.EnumerateArray())
+                {
+                    var value = item.GetString();
+                    if (value is not null)
+                    {
+                        options.Add(value);
+                    }
+                }
+
+                Logger.Information(
+                    "Node {NodeType} input {InputName} has {Count} option(s)",
+                    nodeType, inputName, options.Count);
+                return options;
+            }
+        }
+
+        Logger.Debug("No options found for node {NodeType} input {InputName}", nodeType, inputName);
+        return [];
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)
