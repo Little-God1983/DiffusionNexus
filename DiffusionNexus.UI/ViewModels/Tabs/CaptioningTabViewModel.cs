@@ -11,6 +11,14 @@ using DiffusionNexus.UI.ViewModels;
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
 /// <summary>
+/// Represents a named preset prompt for image captioning.
+/// </summary>
+public record CaptionPresetPrompt(string Name, string Prompt)
+{
+    public override string ToString() => Name;
+}
+
+/// <summary>
 /// ViewModel for the Captioning tab in the LoRA Dataset Helper.
 /// Manages model selection/download, dataset input, captioning settings, and batch caption generation.
 /// </summary>
@@ -44,6 +52,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _blacklistedWords;
     private float _temperature = 0.7f;
     private bool _overrideExisting;
+
+    // Prompt Mode
+    private bool _isCustomPromptMode;
+    private CaptionPresetPrompt? _selectedPresetPrompt;
 
     // Input Selection
     private DatasetCardViewModel? _selectedDataset;
@@ -85,6 +97,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
         AvailableDatasetVersions = [];
         AvailableModels = Enum.GetValues<CaptioningModelType>();
+
+        PresetPrompts =
+        [
+            new("Tags (SD 1.5, SDXL, Pony, Illustrious)",
+                "Identify and list all key objects, characters, actions, and artistic styles present in this image. Present the output as a comma-separated list of descriptive tags without any introductory text."),
+            new("Simple Description (modern models)",
+                "Provide a simple, clear, and concise one-sentence description of the image, focusing only on the primary subject and action. use 100 words"),
+            new("Detailed Description",
+                "Describe the image in a comprehensive and structured way. Cover the main subjects, their appearance, their placement within the frame, the background, the lighting conditions, and the overall mood. use 200 words"),
+            new("Ultra Detailed Description",
+                "Perform an exhaustive visual analysis of the image. Describe every element in extreme detail, including subtle textures, fine details on objects, precise color shades, composition techniques (like depth of field), and atmospheric nuances. Leave no detail unmentioned. use 300 words"),
+            new("Cinematic Description",
+                "Describe this image through the lens of a director or cinematographer. Focus on the cinematic mood, lighting types (e.g., rim lighting, soft light), camera angles, lens effects, color grading, and the dramatic atmosphere of the scene."),
+            new("Detailed Analysis",
+                "Provide a thorough analysis of the image. Break down the visual components, interpret the narrative or emotional intent behind the scene, and explain how the different elements interact to create the final image.")
+        ];
+        _selectedPresetPrompt = PresetPrompts[0];
+        _systemPrompt = _selectedPresetPrompt.Prompt;
 
         // Select ComfyUI backend by default, fall back to first available
         _selectedBackend = _backends.FirstOrDefault(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase))
@@ -373,6 +403,44 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     #endregion
 
     #region Config Properties
+
+    /// <summary>
+    /// Available preset prompts for image captioning.
+    /// </summary>
+    public IReadOnlyList<CaptionPresetPrompt> PresetPrompts { get; }
+
+    /// <summary>
+    /// The currently selected preset prompt. Drives SystemPrompt when not in custom mode.
+    /// </summary>
+    public CaptionPresetPrompt? SelectedPresetPrompt
+    {
+        get => _selectedPresetPrompt;
+        set
+        {
+            if (SetProperty(ref _selectedPresetPrompt, value) && !IsCustomPromptMode && value is not null)
+            {
+                SystemPrompt = value.Prompt;
+            }
+        }
+    }
+
+    /// <summary>
+    /// When true the user can type a custom system prompt; when false a preset dropdown is used.
+    /// </summary>
+    public bool IsCustomPromptMode
+    {
+        get => _isCustomPromptMode;
+        set
+        {
+            if (SetProperty(ref _isCustomPromptMode, value))
+            {
+                if (!value && _selectedPresetPrompt is not null)
+                {
+                    SystemPrompt = _selectedPresetPrompt.Prompt;
+                }
+            }
+        }
+    }
 
     public string SystemPrompt
     {
