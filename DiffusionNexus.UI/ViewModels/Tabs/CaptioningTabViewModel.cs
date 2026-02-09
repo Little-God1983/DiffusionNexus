@@ -434,7 +434,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         {
             if (SetProperty(ref _isCustomPromptMode, value))
             {
-                if (!value && _selectedPresetPrompt is not null)
+                if (value)
+                {
+                    SystemPrompt = string.Empty;
+                }
+                else if (_selectedPresetPrompt is not null)
                 {
                     SystemPrompt = _selectedPresetPrompt.Prompt;
                 }

@@ -304,10 +304,6 @@
                 <!-- Custom Prompt TextBox (visible when in custom mode) -->
                 <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" Height="60" TextWrapping="Wrap"
                          IsVisible="{Binding IsCustomPromptMode}"/>
-
-                <!-- Read-only preview of selected preset prompt -->
-                <TextBlock Text="{Binding SystemPrompt}" TextWrapping="Wrap" Opacity="0.5" FontSize="12"
-                           IsVisible="{Binding !IsCustomPromptMode}" Margin="0,0,0,0"/>
               </StackPanel>
 
               <Grid ColumnDefinitions="*,16,*">
