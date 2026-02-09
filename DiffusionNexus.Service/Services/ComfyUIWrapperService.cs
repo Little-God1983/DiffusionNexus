@@ -437,6 +437,46 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> GetModelsInFolderAsync(
+        string folderName,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderName);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        Logger.Debug("Querying ComfyUI /models/{FolderName} for downloaded models", folderName);
+
+        using var response = await _httpClient.GetAsync($"/models/{folderName}", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            Logger.Warning("ComfyUI /models/{FolderName} returned {StatusCode}", folderName, response.StatusCode);
+            return [];
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var json = await JsonSerializer.DeserializeAsync<JsonElement>(stream, cancellationToken: ct);
+
+        if (json.ValueKind != JsonValueKind.Array)
+        {
+            Logger.Debug("Unexpected response format from /models/{FolderName}", folderName);
+            return [];
+        }
+
+        var models = new List<string>();
+        foreach (var item in json.EnumerateArray())
+        {
+            var value = item.GetString();
+            if (value is not null)
+            {
+                models.Add(value);
+            }
+        }
+
+        Logger.Information("ComfyUI folder {FolderName} contains {Count} model(s)", folderName, models.Count);
+        return models;
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)

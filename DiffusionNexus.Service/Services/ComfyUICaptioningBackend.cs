@@ -18,8 +18,18 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// </summary>
     private static readonly string[] RequiredCustomNodes = ["Qwen3_VQA", "ShowText|pysssss"];
 
+    /// <summary>
+    /// The model name used in the Qwen3-VL captioning workflow.
+    /// Must match the <c>model</c> input value in <c>Qwen-3VL-autocaption.json</c>.
+    /// </summary>
+    private const string RequiredModelName = "Qwen3-VL-4B-Instruct-FP8";
+
+    /// <summary>
+    /// The ComfyUI model folder where the Qwen3-VL node stores its downloaded models.
+    /// </summary>
+    private const string ModelFolder = "prompt_generator";
+
     private readonly IComfyUIWrapperService _comfyUi;
-    private bool _firstCaptionCompleted;
 
     /// <summary>
     /// Creates a new ComfyUI captioning backend.
@@ -81,10 +91,16 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             MissingRequirements = [];
 
-            // Show a first-run warning until a caption has completed successfully
-            Warnings = _firstCaptionCompleted
-                ? []
-                : ["If the Qwen3-VL model has not been downloaded yet, the first run will automatically download it (~8 GB). This may take several minutes."];
+            // Check if the required model is physically present in ComfyUI's model folder
+            var downloadedModels = await _comfyUi.GetModelsInFolderAsync(ModelFolder, ct);
+            if (!downloadedModels.Any(m => m.Contains(RequiredModelName, StringComparison.OrdinalIgnoreCase)))
+            {
+                Warnings = [$"The model '{RequiredModelName}' is not yet downloaded. The first run will automatically download it (~8 GB). This may take several minutes."];
+            }
+            else
+            {
+                Warnings = [];
+            }
 
             return true;
         }
@@ -134,7 +150,6 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             }
 
             var caption = CaptionPostProcessor.Process(rawCaption, triggerWord, blacklistedWords);
-            _firstCaptionCompleted = true;
             return CaptioningResult.Succeeded(imagePath, caption, "");
         }
         catch (Exception ex)

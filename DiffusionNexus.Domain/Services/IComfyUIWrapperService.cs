@@ -121,4 +121,18 @@ public interface IComfyUIWrapperService : IDisposable
     Task<IReadOnlyList<string>> CheckRequiredNodesAsync(
         IEnumerable<string> requiredNodeTypes,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Queries the ComfyUI <c>/models/{folder}</c> endpoint to list model files that are
+    /// physically present in the specified model folder on the server (e.g. <c>"prompt_generator"</c>).
+    /// </summary>
+    /// <param name="folderName">The model folder name as registered by the custom node (e.g. <c>"prompt_generator"</c>).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A list of model file/directory names present in the folder, or an empty list if the
+    /// folder does not exist or the endpoint is not available.
+    /// </returns>
+    Task<IReadOnlyList<string>> GetModelsInFolderAsync(
+        string folderName,
+        CancellationToken ct = default);
 }
