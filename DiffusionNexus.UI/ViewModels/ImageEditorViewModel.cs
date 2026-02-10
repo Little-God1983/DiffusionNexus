@@ -94,6 +94,8 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _pendingCompareBeforeImagePath;
     private string? _inpaintingStatus;
     private string _inpaintPositivePrompt = string.Empty;
+    private Avalonia.Media.Imaging.Bitmap? _inpaintBaseThumbnail;
+    private bool _hasInpaintBase;
     private string _inpaintNegativePrompt = DefaultInpaintNegativePrompt;
     private const string DefaultInpaintNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
     private byte _drawingBrushRed = 255;
@@ -1443,6 +1445,12 @@ public partial class ImageEditorViewModel : ObservableObject
                     // Deactivate other tools when inpainting is activated
                     DeactivateOtherTools(nameof(IsInpaintingPanelOpen));
                     StatusMessage = "Inpaint: Paint over areas to mark them for AI regeneration.";
+
+                    // Auto-capture the current state as the inpaint base
+                    if (!HasInpaintBase)
+                    {
+                        SetInpaintBaseRequested?.Invoke(this, EventArgs.Empty);
+                    }
                 }
                 else
                 {
@@ -1543,6 +1551,38 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Command to generate inpainting and open both images in the Image Comparer.</summary>
     public IAsyncRelayCommand GenerateAndCompareInpaintCommand { get; private set; } = null!;
+
+    /// <summary>Command to capture the current flattened state as the inpaint base.</summary>
+    public RelayCommand UseCurrentAsInpaintBaseCommand { get; private set; } = null!;
+
+    /// <summary>Whether an inpaint base image has been captured.</summary>
+    public bool HasInpaintBase
+    {
+        get => _hasInpaintBase;
+        private set => SetProperty(ref _hasInpaintBase, value);
+    }
+
+    /// <summary>Thumbnail preview of the current inpaint base image.</summary>
+    public Avalonia.Media.Imaging.Bitmap? InpaintBaseThumbnail
+    {
+        get => _inpaintBaseThumbnail;
+        private set => SetProperty(ref _inpaintBaseThumbnail, value);
+    }
+
+    /// <summary>
+    /// Event raised when the ViewModel requests capturing the current state as the inpaint base.
+    /// </summary>
+    public event EventHandler? SetInpaintBaseRequested;
+
+    /// <summary>
+    /// Updates the inpaint base thumbnail after the EditorCore captures the base bitmap.
+    /// Called by the View after wiring SetInpaintBaseRequested.
+    /// </summary>
+    public void UpdateInpaintBaseThumbnail(Avalonia.Media.Imaging.Bitmap? thumbnail)
+    {
+        InpaintBaseThumbnail = thumbnail;
+        HasInpaintBase = thumbnail is not null;
+    }
 
     /// <summary>
     /// Event raised when the inpainting tool is activated or deactivated.
@@ -2141,6 +2181,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ClearInpaintMaskCommand.NotifyCanExecuteChanged();
         GenerateInpaintCommand.NotifyCanExecuteChanged();
         GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
+        UseCurrentAsInpaintBaseCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
 
@@ -2384,6 +2425,9 @@ public partial class ImageEditorViewModel : ObservableObject
         GenerateAndCompareInpaintCommand = new AsyncRelayCommand(
             ExecuteGenerateAndCompareInpaintAsync,
             () => HasImage && IsInpaintingPanelOpen && !IsInpaintingBusy);
+        UseCurrentAsInpaintBaseCommand = new RelayCommand(
+            () => SetInpaintBaseRequested?.Invoke(this, EventArgs.Empty),
+            () => HasImage && IsInpaintingPanelOpen);
 
         // Layer commands (layers are always enabled when an image is loaded)
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);

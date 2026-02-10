@@ -157,6 +157,14 @@ public partial class ImageEditView : UserControl
             // Sync layer state when image changes (e.g., after load)
             imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
             imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+
+            // Sync inpaint base state (e.g., after LoadImage sets it automatically)
+            var coreHasBase = _imageEditorCanvas.EditorCore.HasInpaintBase;
+            if (coreHasBase != imageEditor.HasInpaintBase)
+            {
+                imageEditor.UpdateInpaintBaseThumbnail(
+                    coreHasBase ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore) : null);
+            }
         };
 
         // Update zoom info when zoom changes
@@ -518,6 +526,14 @@ public partial class ImageEditView : UserControl
             imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
         };
 
+        // Handle capture of the current flattened state as inpaint base
+        imageEditor.SetInpaintBaseRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
+            imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
+        };
+
         // Handle inpaint tool activation/deactivation
         imageEditor.InpaintToolActivated += (_, isActive) =>
         {
@@ -535,6 +551,32 @@ public partial class ImageEditView : UserControl
         {
             imageEditor.InpaintBrushSize = newSize;
         };
+
+        // Ctrl+Enter on the canvas triggers inpainting generation
+        _imageEditorCanvas.InpaintGenerateRequested += (_, _) =>
+        {
+            if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+            {
+                imageEditor.GenerateInpaintCommand.Execute(null);
+            }
+        };
+
+        // Ctrl+Enter in the inpaint prompt TextBox also triggers generation
+        var inpaintPromptTextBox = this.FindControl<TextBox>("InpaintPromptTextBox");
+        if (inpaintPromptTextBox is not null)
+        {
+            inpaintPromptTextBox.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+                {
+                    if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+                    {
+                        imageEditor.GenerateInpaintCommand.Execute(null);
+                    }
+                    e.Handled = true;
+                }
+            };
+        }
 
         // Handle clear inpaint mask
         imageEditor.ClearInpaintMaskRequested += (_, _) =>
@@ -554,9 +596,18 @@ public partial class ImageEditView : UserControl
             {
                 var editorCore = _imageEditorCanvas.EditorCore;
 
-                // Flatten visible layers (excluding inpaint mask) to get the source image
-                var flattenedBitmap = editorCore.FlattenLayers();
-                if (flattenedBitmap is null)
+                // Use the stored inpaint base (original gallery image) instead of
+                // flattening all layers, so the base stays consistent across iterations.
+                var baseBitmap = editorCore.GetInpaintBaseBitmap();
+                if (baseBitmap is null)
+                {
+                    // Fallback: no base set yet, capture and use current state
+                    editorCore.SetInpaintBaseBitmap();
+                    baseBitmap = editorCore.GetInpaintBaseBitmap();
+                    imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
+                }
+
+                if (baseBitmap is null)
                 {
                     imageEditor.StatusMessage = "No image to inpaint.";
                     return;
@@ -567,7 +618,7 @@ public partial class ImageEditView : UserControl
                 if (maskBitmap is null)
                 {
                     imageEditor.StatusMessage = "No inpaint mask painted. Paint over areas to regenerate.";
-                    flattenedBitmap.Dispose();
+                    baseBitmap.Dispose();
                     return;
                 }
 
@@ -580,16 +631,16 @@ public partial class ImageEditView : UserControl
 
                 // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
                 // Use Unpremul so the RGB values are stored straight (not darkened by alpha).
-                // The flattened bitmap is Premul, so copy it as Unpremul first to get correct RGB.
-                var unpremulFlattened = new SkiaSharp.SKBitmap(
-                    flattenedBitmap.Width, flattenedBitmap.Height,
+                // The base bitmap may be Premul, so copy it as Unpremul first to get correct RGB.
+                var unpremulBase = new SkiaSharp.SKBitmap(
+                    baseBitmap.Width, baseBitmap.Height,
                     SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
-                using (var convertCanvas = new SkiaSharp.SKCanvas(unpremulFlattened))
+                using (var convertCanvas = new SkiaSharp.SKCanvas(unpremulBase))
                 {
-                    convertCanvas.DrawBitmap(flattenedBitmap, 0, 0);
+                    convertCanvas.DrawBitmap(baseBitmap, 0, 0);
                 }
 
-                var pixels = unpremulFlattened.Pixels;
+                var pixels = unpremulBase.Pixels;
                 var maskPixels = featheredMask.Pixels;
                 var newPixels = new SkiaSharp.SKColor[pixels.Length];
                 for (var i = 0; i < pixels.Length; i++)
@@ -602,7 +653,7 @@ public partial class ImageEditView : UserControl
                 }
 
                 var maskedBitmap = new SkiaSharp.SKBitmap(
-                    flattenedBitmap.Width, flattenedBitmap.Height,
+                    baseBitmap.Width, baseBitmap.Height,
                     SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
                 maskedBitmap.Pixels = newPixels;
 
@@ -615,17 +666,16 @@ public partial class ImageEditView : UserControl
                     data.SaveTo(stream);
                 }
 
-                flattenedBitmap.Dispose();
-                unpremulFlattened.Dispose();
+                baseBitmap.Dispose();
+                unpremulBase.Dispose();
                 featheredMask.Dispose();
                 maskedBitmap.Dispose();
 
-                // If compare mode is pending, save the flattened "before" image for the comparer
+                // If compare mode is pending, save the base as the "before" image for the comparer
                 if (imageEditor.IsCompareModePending)
                 {
                     var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
-                    // Re-flatten to get a clean copy (previous was disposed)
-                    var beforeBitmap = editorCore.FlattenLayers();
+                    var beforeBitmap = editorCore.GetInpaintBaseBitmap();
                     if (beforeBitmap is not null)
                     {
                         using var beforeImage = SkiaSharp.SKImage.FromBitmap(beforeBitmap);
@@ -1084,6 +1134,32 @@ public partial class ImageEditView : UserControl
             imageEditor.DrawingBrushBlue);
         drawingTool.BrushSize = imageEditor.DrawingBrushSize;
         drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+    }
+
+    /// <summary>
+    /// Creates a small Avalonia thumbnail bitmap from the EditorCore's current inpaint base.
+    /// </summary>
+    private static Avalonia.Media.Imaging.Bitmap? CreateThumbnailFromEditorCore(ImageEditor.ImageEditorCore editorCore)
+    {
+        var baseBitmap = editorCore.GetInpaintBaseBitmap();
+        if (baseBitmap is null) return null;
+
+        try
+        {
+            using var image = SkiaSharp.SKImage.FromBitmap(baseBitmap);
+            using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 80);
+            baseBitmap.Dispose();
+
+            using var memoryStream = new MemoryStream();
+            data.SaveTo(memoryStream);
+            memoryStream.Position = 0;
+            return Avalonia.Media.Imaging.Bitmap.DecodeToWidth(memoryStream, 160);
+        }
+        catch
+        {
+            baseBitmap.Dispose();
+            return null;
+        }
     }
 
     /// <summary>

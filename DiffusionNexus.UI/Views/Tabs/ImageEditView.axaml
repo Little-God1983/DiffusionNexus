@@ -1012,9 +1012,30 @@
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
+                <!-- Inpaint Base Image -->
+                <TextBlock Text="Base Image" FontSize="11" Opacity="0.7"/>
+                <Border Background="#252525" CornerRadius="4" Padding="4" MinHeight="60">
+                  <Grid RowDefinitions="Auto,Auto">
+                    <Border Grid.Row="0" CornerRadius="2" ClipToBounds="True" HorizontalAlignment="Center"
+                            IsVisible="{Binding ImageEditor.HasInpaintBase}">
+                      <Image Source="{Binding ImageEditor.InpaintBaseThumbnail}" MaxHeight="100" Stretch="Uniform"/>
+                    </Border>
+                    <TextBlock Grid.Row="0" Text="No base captured" FontSize="10" Opacity="0.4"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsVisible="{Binding !ImageEditor.HasInpaintBase}"/>
+                    <Button Grid.Row="1" Content="Use Current as Base" 
+                            Command="{Binding ImageEditor.UseCurrentAsInpaintBaseCommand}"
+                            HorizontalAlignment="Stretch" Padding="6,4" FontSize="10" Margin="0,4,0,0"
+                            ToolTip.Tip="Capture the current flattened state as the source image for all future inpaint generations"/>
+                  </Grid>
+                </Border>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
                 <!-- Positive Prompt -->
                 <TextBlock Text="Prompt" FontSize="11" Opacity="0.7"/>
-                <TextBox Text="{Binding ImageEditor.InpaintPositivePrompt, Mode=TwoWay}"
+                <TextBox x:Name="InpaintPromptTextBox"
+                         Text="{Binding ImageEditor.InpaintPositivePrompt, Mode=TwoWay}"
                          Watermark="Describe what to generate..."
                          TextWrapping="Wrap" AcceptsReturn="True"
                          MinHeight="60" MaxHeight="120" FontSize="11"/>

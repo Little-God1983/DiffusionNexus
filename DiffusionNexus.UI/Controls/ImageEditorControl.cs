@@ -282,6 +282,11 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler<float>? InpaintBrushSizeChanged;
 
+    /// <summary>
+    /// Event raised when the user presses Ctrl+Enter while the inpaint tool is active.
+    /// </summary>
+    public event EventHandler? InpaintGenerateRequested;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
@@ -640,6 +645,14 @@ public class ImageEditorControl : Control
         {
             _editorCore.ShapeTool.ConstrainProportions = true;
             InvalidateVisual();
+        }
+
+        // Ctrl+Enter triggers inpainting generation
+        if (_isInpaintingToolActive && e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            InpaintGenerateRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+            return;
         }
 
         // Shape tool: Enter commits, Escape cancels the placed shape

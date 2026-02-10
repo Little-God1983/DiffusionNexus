@@ -12,6 +12,7 @@ public class ImageEditorCore : IDisposable
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
     private SKBitmap? _previewBitmap;
+    private SKBitmap? _inpaintBaseBitmap;
     private LayerStack? _layers;
     private bool _isPreviewActive;
     private bool _disposed;
@@ -435,6 +436,10 @@ public class ImageEditorCore : IDisposable
             
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
+
+            // Reset inpaint base to the newly loaded image
+            ClearInpaintBase();
+            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -482,6 +487,10 @@ public class ImageEditorCore : IDisposable
             
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
+
+            // Reset inpaint base to the newly loaded image
+            ClearInpaintBase();
+            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -2505,6 +2514,49 @@ public class ImageEditorCore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Captures the current flattened state as the inpaint base image.
+    /// Subsequent inpainting generations will use this bitmap instead of re-flattening.
+    /// </summary>
+    public void SetInpaintBaseBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            _inpaintBaseBitmap?.Dispose();
+            _inpaintBaseBitmap = _isLayerMode && _layers != null
+                ? _layers.Flatten()
+                : _workingBitmap?.Copy();
+        }
+    }
+
+    /// <summary>
+    /// Returns a copy of the stored inpaint base bitmap, or null if none has been set.
+    /// </summary>
+    public SKBitmap? GetInpaintBaseBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            return _inpaintBaseBitmap?.Copy();
+        }
+    }
+
+    /// <summary>
+    /// Gets whether an inpaint base bitmap is currently stored.
+    /// </summary>
+    public bool HasInpaintBase => _inpaintBaseBitmap is not null;
+
+    /// <summary>
+    /// Clears the stored inpaint base bitmap.
+    /// </summary>
+    public void ClearInpaintBase()
+    {
+        lock (_bitmapLock)
+        {
+            _inpaintBaseBitmap?.Dispose();
+            _inpaintBaseBitmap = null;
+        }
+    }
+
     #endregion Inpainting
 
     #region Save with Layers
@@ -2649,6 +2701,7 @@ public class ImageEditorCore : IDisposable
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
             _previewBitmap?.Dispose();
+            _inpaintBaseBitmap?.Dispose();
             if (_layers != null)
             {
                 _layers.ContentChanged -= OnLayersContentChanged;
@@ -2658,6 +2711,7 @@ public class ImageEditorCore : IDisposable
             _originalBitmap = null;
             _workingBitmap = null;
             _previewBitmap = null;
+            _inpaintBaseBitmap = null;
             _layers = null;
         }
         _disposed = true;
