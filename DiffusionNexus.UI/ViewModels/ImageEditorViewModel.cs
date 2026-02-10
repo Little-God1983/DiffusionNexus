@@ -2292,8 +2292,8 @@ public partial class ImageEditorViewModel : ObservableObject
         // Layer commands (layers are always enabled when an image is loaded)
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);
         AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => HasImage);
-        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1);
-        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask);
+        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null && !SelectedLayer.Layer.IsInpaintMask);
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => HasImage && SelectedLayer != null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => HasImage && SelectedLayer != null && CanMoveLayerDown);
         MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => HasImage && SelectedLayer != null && CanMergeDown);

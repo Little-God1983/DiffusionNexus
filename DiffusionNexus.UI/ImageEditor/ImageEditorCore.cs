@@ -2385,15 +2385,16 @@ public class ImageEditorCore : IDisposable
         // Remember which layer the user was editing before we create the mask
         var previousActive = _layers.ActiveLayer;
 
-        // Create a new inpaint mask layer at the top
-        var newLayer = _layers.AddLayer("Inpaint Mask");
-        newLayer.IsInpaintMask = true;
+        // Create the inpaint mask layer directly at the top of the stack
+        // (bypassing AddLayer which would insert below an existing mask)
+        var newLayer = new Layer(_layers.Width, _layers.Height, "Inpaint Mask")
+        {
+            IsInpaintMask = true
+        };
+        _layers.Layers.Add(newLayer);
 
         // Restore the previous active layer so drawing/shape tools still target it
-        if (previousActive is not null)
-        {
-            _layers.ActiveLayer = previousActive;
-        }
+        _layers.ActiveLayer = previousActive ?? newLayer;
 
         return newLayer;
     }
