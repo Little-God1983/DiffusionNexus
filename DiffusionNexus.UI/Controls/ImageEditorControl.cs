@@ -280,14 +280,6 @@ public class ImageEditorControl : Control
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
-        _editorCore.ImageChanged += OnEditorCoreImageChanged;
-        _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
-        _editorCore.DrawingTool.DrawingChanged += OnDrawingChanged;
-        _editorCore.DrawingTool.StrokeCompleted += OnStrokeCompleted;
-        _editorCore.ShapeTool.ShapeChanged += OnShapeChanged;
-        _editorCore.ShapeTool.ShapeCompleted += OnShapeCompleted;
-        _editorCore.ShapeTool.PlacedShapeStateChanged += OnPlacedShapeStateChanged;
-        _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         ClipToBounds = true;
         Focusable = true;
     }
@@ -997,6 +989,20 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _editorCore.ImageChanged += OnEditorCoreImageChanged;
+        _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
+        _editorCore.DrawingTool.DrawingChanged += OnDrawingChanged;
+        _editorCore.DrawingTool.StrokeCompleted += OnStrokeCompleted;
+        _editorCore.ShapeTool.ShapeChanged += OnShapeChanged;
+        _editorCore.ShapeTool.ShapeCompleted += OnShapeCompleted;
+        _editorCore.ShapeTool.PlacedShapeStateChanged += OnPlacedShapeStateChanged;
+        _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
+        InvalidateVisual();
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
@@ -1008,7 +1014,6 @@ public class ImageEditorControl : Control
         _editorCore.ShapeTool.ShapeCompleted -= OnShapeCompleted;
         _editorCore.ShapeTool.PlacedShapeStateChanged -= OnPlacedShapeStateChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
-        _editorCore.Dispose();
     }
 
     /// <summary>

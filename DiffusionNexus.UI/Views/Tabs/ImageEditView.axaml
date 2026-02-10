@@ -1055,8 +1055,12 @@
                 <Button Content="Generate" Command="{Binding ImageEditor.GenerateInpaintCommand}" 
                         HorizontalAlignment="Stretch" Padding="8,6" FontSize="12" FontWeight="SemiBold"
                         Background="#2D7D46" Foreground="White"
-                        ToolTip.Tip="Send image and mask to ComfyUI for AI inpainting"
-                        IsEnabled="{Binding !ImageEditor.IsInpaintingBusy}"/>
+                        ToolTip.Tip="Send image and mask to ComfyUI for AI inpainting"/>
+                
+                <Button Content="Generate and Compare" Command="{Binding ImageEditor.GenerateAndCompareInpaintCommand}" 
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
+                        Background="#5E35B1" Foreground="White"
+                        ToolTip.Tip="Generate inpainting and open before/after in Image Comparer"/>
                 
                 <!-- Progress (shown when busy) -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsInpaintingBusy}">

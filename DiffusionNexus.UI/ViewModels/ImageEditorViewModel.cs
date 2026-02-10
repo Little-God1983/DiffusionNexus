@@ -91,6 +91,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private float _inpaintMaskFeather = 10f;
     private float _inpaintDenoise = 1.0f;
     private bool _isInpaintingBusy;
+    private string? _pendingCompareBeforeImagePath;
     private string? _inpaintingStatus;
     private string _inpaintPositivePrompt = string.Empty;
     private string _inpaintNegativePrompt = DefaultInpaintNegativePrompt;
@@ -1540,6 +1541,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Command to generate inpainting via ComfyUI.</summary>
     public IAsyncRelayCommand GenerateInpaintCommand { get; private set; } = null!;
 
+    /// <summary>Command to generate inpainting and open both images in the Image Comparer.</summary>
+    public IAsyncRelayCommand GenerateAndCompareInpaintCommand { get; private set; } = null!;
+
     /// <summary>
     /// Event raised when the inpainting tool is activated or deactivated.
     /// The bool parameter indicates whether the tool is now active.
@@ -1567,6 +1571,12 @@ public partial class ImageEditorViewModel : ObservableObject
     /// The View should apply the result to a new layer.
     /// </summary>
     public event EventHandler<byte[]>? InpaintResultReady;
+
+    /// <summary>
+    /// Event raised when a "Generate and Compare" inpainting completes.
+    /// Contains the before and after temp image paths for the Image Comparer.
+    /// </summary>
+    public event EventHandler<InpaintCompareEventArgs>? InpaintCompareRequested;
 
     // TODO: Linux Implementation for Inpainting
 
@@ -2130,6 +2140,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         ClearInpaintMaskCommand.NotifyCanExecuteChanged();
         GenerateInpaintCommand.NotifyCanExecuteChanged();
+        GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
 
@@ -2369,6 +2380,9 @@ public partial class ImageEditorViewModel : ObservableObject
             () => HasImage && IsInpaintingPanelOpen);
         GenerateInpaintCommand = new AsyncRelayCommand(
             ExecuteGenerateInpaintAsync,
+            () => HasImage && IsInpaintingPanelOpen && !IsInpaintingBusy);
+        GenerateAndCompareInpaintCommand = new AsyncRelayCommand(
+            ExecuteGenerateAndCompareInpaintAsync,
             () => HasImage && IsInpaintingPanelOpen && !IsInpaintingBusy);
 
         // Layer commands (layers are always enabled when an image is loaded)
@@ -3220,11 +3234,38 @@ public partial class ImageEditorViewModel : ObservableObject
             return;
         }
 
+        _pendingCompareBeforeImagePath = null;
         IsInpaintingBusy = true;
         InpaintingStatus = "Preparing image and mask...";
-        GenerateInpaintCommand.NotifyCanExecuteChanged();
+        NotifyInpaintCommandsCanExecuteChanged();
 
         // Fire event so the View can gather image data and call ProcessInpaintAsync
+        GenerateInpaintRequested?.Invoke(this, EventArgs.Empty);
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ExecuteGenerateAndCompareInpaintAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_inpaintPositivePrompt))
+        {
+            StatusMessage = "Please enter a prompt describing what to generate.";
+            return;
+        }
+
+        if (_comfyUiService is null)
+        {
+            StatusMessage = "ComfyUI service not available. Check ComfyUI server settings.";
+            return;
+        }
+
+        // Mark compare mode — the View will set the before-image path via SetCompareBeforeImagePath
+        _pendingCompareBeforeImagePath = string.Empty;
+        IsInpaintingBusy = true;
+        InpaintingStatus = "Preparing image and mask...";
+        NotifyInpaintCommandsCanExecuteChanged();
+
+        // Fire the same event — the View handler will detect IsCompareMode and save the before image
         GenerateInpaintRequested?.Invoke(this, EventArgs.Empty);
 
         await Task.CompletedTask;
@@ -3301,6 +3342,25 @@ public partial class ImageEditorViewModel : ObservableObject
                 var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0]);
                 InpaintResultReady?.Invoke(this, imageBytes);
                 StatusMessage = "Inpainting completed successfully.";
+
+                // If compare mode is active, save the result and navigate to comparer
+                if (!string.IsNullOrEmpty(_pendingCompareBeforeImagePath))
+                {
+                    var afterPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_after_{Guid.NewGuid():N}.png");
+                    await File.WriteAllBytesAsync(afterPath, imageBytes);
+
+                    InpaintCompareRequested?.Invoke(this, new InpaintCompareEventArgs
+                    {
+                        BeforeImagePath = _pendingCompareBeforeImagePath,
+                        AfterImagePath = afterPath
+                    });
+
+                    _eventAggregator?.PublishNavigateToImageComparer(
+                        new NavigateToImageComparerEventArgs
+                        {
+                            ImagePaths = [_pendingCompareBeforeImagePath, afterPath]
+                        });
+                }
             }
             else
             {
@@ -3321,11 +3381,32 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Whether a "Generate and Compare" operation is pending.
+    /// The View checks this to decide whether to save the before-image.
+    /// </summary>
+    public bool IsCompareModePending => _pendingCompareBeforeImagePath is not null;
+
+    /// <summary>
+    /// Sets the path to the "before" image saved by the View for compare mode.
+    /// </summary>
+    public void SetCompareBeforeImagePath(string path)
+    {
+        _pendingCompareBeforeImagePath = path;
+    }
+
     private void OnInpaintingFinished()
     {
+        _pendingCompareBeforeImagePath = null;
         IsInpaintingBusy = false;
         InpaintingStatus = null;
+        NotifyInpaintCommandsCanExecuteChanged();
+    }
+
+    private void NotifyInpaintCommandsCanExecuteChanged()
+    {
         GenerateInpaintCommand.NotifyCanExecuteChanged();
+        GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
     }
 
 
@@ -3428,4 +3509,21 @@ public class ExportEventArgs : EventArgs
     /// The file extension (e.g., ".png").
     /// </summary>
     public string FileExtension { get; init; } = ".png";
+}
+
+/// <summary>
+/// Event arguments for the "Generate and Compare" inpainting result.
+/// Contains paths to both the before and after images for the Image Comparer.
+/// </summary>
+public class InpaintCompareEventArgs : EventArgs
+{
+    /// <summary>
+    /// Path to the "before" image (flattened original before inpainting).
+    /// </summary>
+    public required string BeforeImagePath { get; init; }
+
+    /// <summary>
+    /// Path to the "after" image (inpainting result).
+    /// </summary>
+    public required string AfterImagePath { get; init; }
 }

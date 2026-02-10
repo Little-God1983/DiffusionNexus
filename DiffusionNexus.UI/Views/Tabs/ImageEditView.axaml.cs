@@ -614,6 +614,23 @@ public partial class ImageEditView : UserControl
                 featheredMask.Dispose();
                 maskedBitmap.Dispose();
 
+                // If compare mode is pending, save the flattened "before" image for the comparer
+                if (imageEditor.IsCompareModePending)
+                {
+                    var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
+                    // Re-flatten to get a clean copy (previous was disposed)
+                    var beforeBitmap = editorCore.FlattenLayers();
+                    if (beforeBitmap is not null)
+                    {
+                        using var beforeImage = SkiaSharp.SKImage.FromBitmap(beforeBitmap);
+                        using var beforeData = beforeImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+                        using var beforeStream = File.Create(beforePath);
+                        beforeData.SaveTo(beforeStream);
+                        beforeBitmap.Dispose();
+                        imageEditor.SetCompareBeforeImagePath(beforePath);
+                    }
+                }
+
                 // Call the ViewModel to process via ComfyUI
                 await imageEditor.ProcessInpaintAsync(tempPath);
             }
