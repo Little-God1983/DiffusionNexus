@@ -44,6 +44,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IDatasetState _state;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IImageUpscalingService? _upscalingService;
+    private readonly IComfyUIWrapperService? _comfyUiService;
     private bool _disposed;
 
     private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
@@ -235,15 +236,17 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IImageUpscalingService? upscalingService = null)
+        IImageUpscalingService? upscalingService = null,
+        IComfyUIWrapperService? comfyUiService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _backgroundRemovalService = backgroundRemovalService;
         _upscalingService = upscalingService;
+        _comfyUiService = comfyUiService;
 
         // Create the image editor with background removal and upscaling services
-        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _upscalingService);
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _upscalingService, _comfyUiService);
 
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;

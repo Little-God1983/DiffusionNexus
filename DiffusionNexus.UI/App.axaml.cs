@@ -505,7 +505,8 @@ public partial class App : Application
             sp.GetService<IBackgroundRemovalService>(),
             sp.GetService<IImageUpscalingService>(),
             sp.GetService<IDatasetBackupService>(),
-            sp.GetService<IActivityLogService>()));
+            sp.GetService<IActivityLogService>(),
+            sp.GetService<IComfyUIWrapperService>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

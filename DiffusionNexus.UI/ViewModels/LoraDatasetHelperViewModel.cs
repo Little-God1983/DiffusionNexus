@@ -109,6 +109,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
     /// <param name="backupService">Optional dataset backup service for automatic backups.</param>
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
+    /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
     public LoraDatasetHelperViewModel(
         IAppSettingsService settingsService,
         IDatasetStorageService datasetStorageService,
@@ -120,7 +121,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IBackgroundRemovalService? backgroundRemovalService = null,
         IImageUpscalingService? upscalingService = null,
         IDatasetBackupService? backupService = null,
-        IActivityLogService? activityLog = null)
+        IActivityLogService? activityLog = null,
+        IComfyUIWrapperService? comfyUiService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -139,7 +141,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             videoThumbnailService,
             backupService,
             activityLog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
 
@@ -154,7 +156,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null)
     {
     }
 

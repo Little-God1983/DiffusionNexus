@@ -538,6 +538,107 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.InvalidateVisual();
         };
 
+        // Handle generate inpaint request — prepare masked image and call ComfyUI
+        imageEditor.GenerateInpaintRequested += async (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var tempPath = string.Empty;
+            try
+            {
+                var editorCore = _imageEditorCanvas.EditorCore;
+
+                // Flatten visible layers (excluding inpaint mask) to get the source image
+                var flattenedBitmap = editorCore.FlattenLayers();
+                if (flattenedBitmap is null)
+                {
+                    imageEditor.StatusMessage = "No image to inpaint.";
+                    return;
+                }
+
+                // Get the inpaint mask bitmap (white = inpaint, transparent = keep)
+                var maskBitmap = editorCore.GetInpaintMaskBitmap();
+                if (maskBitmap is null)
+                {
+                    imageEditor.StatusMessage = "No inpaint mask painted. Paint over areas to regenerate.";
+                    flattenedBitmap.Dispose();
+                    return;
+                }
+
+                // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
+                var pixels = flattenedBitmap.Pixels;
+                var maskPixels = maskBitmap.Pixels;
+                var newPixels = new SkiaSharp.SKColor[pixels.Length];
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var p = pixels[i];
+                    var maskAlpha = maskPixels[i].Alpha; // white painted area has alpha 255
+                    // Invert: mask white (255) ? image alpha 0 (masked for inpaint)
+                    var newAlpha = (byte)(255 - maskAlpha);
+                    newPixels[i] = new SkiaSharp.SKColor(p.Red, p.Green, p.Blue, newAlpha);
+                }
+
+                var maskedBitmap = new SkiaSharp.SKBitmap(
+                    flattenedBitmap.Width, flattenedBitmap.Height,
+                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+                maskedBitmap.Pixels = newPixels;
+
+                // Save to temp file
+                tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
+                using (var image = SkiaSharp.SKImage.FromBitmap(maskedBitmap))
+                using (var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100))
+                using (var stream = File.Create(tempPath))
+                {
+                    data.SaveTo(stream);
+                }
+
+                flattenedBitmap.Dispose();
+                maskBitmap.Dispose();
+                maskedBitmap.Dispose();
+
+                // Call the ViewModel to process via ComfyUI
+                await imageEditor.ProcessInpaintAsync(tempPath);
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Inpainting failed: {ex.Message}";
+            }
+            finally
+            {
+                // Clean up temp file
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+            }
+        };
+
+        // Handle inpaint result — load the result image as a new layer
+        imageEditor.InpaintResultReady += (_, imageBytes) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var editorCore = _imageEditorCanvas.EditorCore;
+            var resultBitmap = SkiaSharp.SKBitmap.Decode(imageBytes);
+            if (resultBitmap is null)
+            {
+                imageEditor.StatusMessage = "Failed to decode inpainting result.";
+                return;
+            }
+
+            // Resize result to match current image dimensions if needed
+            if (resultBitmap.Width != editorCore.Width || resultBitmap.Height != editorCore.Height)
+            {
+                var resized = new SkiaSharp.SKBitmap(editorCore.Width, editorCore.Height);
+                using var canvas = new SkiaSharp.SKCanvas(resized);
+                canvas.DrawBitmap(resultBitmap,
+                    new SkiaSharp.SKRect(0, 0, editorCore.Width, editorCore.Height));
+                resultBitmap.Dispose();
+                resultBitmap = resized;
+            }
+
+            editorCore.AddLayerFromBitmap(resultBitmap, "Inpaint Result");
+            imageEditor.SyncLayers(editorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
         // Sync layers when inpaint mask layer is created or modified
         _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
         {
