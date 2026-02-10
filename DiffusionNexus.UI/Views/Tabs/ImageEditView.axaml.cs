@@ -530,6 +530,12 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas.InpaintBrushSize = imageEditor.InpaintBrushSize;
         };
 
+        // Sync brush size back to ViewModel when changed via Shift+wheel on the canvas
+        _imageEditorCanvas.InpaintBrushSizeChanged += (_, newSize) =>
+        {
+            imageEditor.InpaintBrushSize = newSize;
+        };
+
         // Handle clear inpaint mask
         imageEditor.ClearInpaintMaskRequested += (_, _) =>
         {

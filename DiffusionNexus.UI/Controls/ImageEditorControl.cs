@@ -277,6 +277,11 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler? InpaintMaskChanged;
 
+    /// <summary>
+    /// Event raised when the inpaint brush size is changed via Shift+wheel.
+    /// </summary>
+    public event EventHandler<float>? InpaintBrushSizeChanged;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
@@ -591,6 +596,17 @@ public class ImageEditorControl : Control
         base.OnPointerWheelChanged(e);
 
         if (!_editorCore.HasImage) return;
+
+        // Shift+wheel adjusts inpaint brush size when the tool is active
+        if (_isInpaintingToolActive && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            var step = e.Delta.Y > 0 ? 5f : -5f;
+            _inpaintBrushSize = Math.Clamp(_inpaintBrushSize + step, 1f, 200f);
+            InpaintBrushSizeChanged?.Invoke(this, _inpaintBrushSize);
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
 
         // Zoom with mouse wheel
         if (e.Delta.Y > 0)
