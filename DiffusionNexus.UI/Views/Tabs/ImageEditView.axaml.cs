@@ -144,6 +144,9 @@ public partial class ImageEditView : UserControl
         FileLogger.Log($"[Instance #{_instanceId}] _imageEditorCanvas is valid: {_imageEditorCanvas is not null}");
 
 
+        // Track the last synced inpaint base version to avoid redundant thumbnail creation
+        long lastSyncedInpaintBaseVersion = -1;
+
         // Update dimensions and file info when image changes
         _imageEditorCanvas.ImageChanged += (_, _) =>
         {
@@ -157,6 +160,17 @@ public partial class ImageEditView : UserControl
             // Sync layer state when image changes (e.g., after load)
             imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
             imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+
+            // Only regenerate the thumbnail when the core's inpaint base actually changed
+            var coreVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
+            if (coreVersion != lastSyncedInpaintBaseVersion)
+            {
+                lastSyncedInpaintBaseVersion = coreVersion;
+                imageEditor.UpdateInpaintBaseThumbnail(
+                    _imageEditorCanvas.EditorCore.HasInpaintBase
+                        ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore)
+                        : null);
+            }
         };
 
         // Update zoom info when zoom changes
@@ -518,6 +532,217 @@ public partial class ImageEditView : UserControl
             imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
         };
 
+        // Handle capture of the current flattened state as inpaint base
+        imageEditor.SetInpaintBaseRequested += (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
+            lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
+            imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
+        };
+
+        // Handle inpaint tool activation/deactivation
+        imageEditor.InpaintToolActivated += (_, isActive) =>
+        {
+            _imageEditorCanvas.IsInpaintingToolActive = isActive;
+        };
+
+        // Handle inpaint brush settings changes
+        imageEditor.InpaintSettingsChanged += (_, _) =>
+        {
+            _imageEditorCanvas.InpaintBrushSize = imageEditor.InpaintBrushSize;
+        };
+
+        // Sync brush size back to ViewModel when changed via Shift+wheel on the canvas
+        _imageEditorCanvas.InpaintBrushSizeChanged += (_, newSize) =>
+        {
+            imageEditor.InpaintBrushSize = newSize;
+        };
+
+        // Ctrl+Enter on the canvas triggers inpainting generation
+        _imageEditorCanvas.InpaintGenerateRequested += (_, _) =>
+        {
+            if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+            {
+                imageEditor.GenerateInpaintCommand.Execute(null);
+            }
+        };
+
+        // Ctrl+Enter in the inpaint prompt TextBox also triggers generation
+        var inpaintPromptTextBox = this.FindControl<TextBox>("InpaintPromptTextBox");
+        if (inpaintPromptTextBox is not null)
+        {
+            inpaintPromptTextBox.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+                {
+                    if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+                    {
+                        imageEditor.GenerateInpaintCommand.Execute(null);
+                    }
+                    e.Handled = true;
+                }
+            };
+        }
+
+        // Handle clear inpaint mask
+        imageEditor.ClearInpaintMaskRequested += (_, _) =>
+        {
+            _imageEditorCanvas.EditorCore.ClearInpaintMask();
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Handle generate inpaint request — prepare masked image and call ComfyUI
+        imageEditor.GenerateInpaintRequested += async (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var tempPath = string.Empty;
+            try
+            {
+                var editorCore = _imageEditorCanvas.EditorCore;
+
+                // Use the stored inpaint base (original gallery image) instead of
+                // flattening all layers, so the base stays consistent across iterations.
+                var baseBitmap = editorCore.GetInpaintBaseBitmap();
+                if (baseBitmap is null)
+                {
+                    // Fallback: no base set yet, capture and use current state
+                    editorCore.SetInpaintBaseBitmap();
+                    baseBitmap = editorCore.GetInpaintBaseBitmap();
+                    lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
+                    imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
+                }
+
+                if (baseBitmap is null)
+                {
+                    imageEditor.StatusMessage = "No image to inpaint.";
+                    return;
+                }
+
+                // Get the inpaint mask bitmap (white = inpaint, transparent = keep)
+                var maskBitmap = editorCore.GetInpaintMaskBitmap();
+                if (maskBitmap is null)
+                {
+                    imageEditor.StatusMessage = "No inpaint mask painted. Paint over areas to regenerate.";
+                    baseBitmap.Dispose();
+                    return;
+                }
+
+                // Feather the mask: dilate slightly then blur to create soft edges.
+                // Our brush produces hard binary edges, but the workflow's ImageBlur
+                // (sigma=1.0) is too weak to smooth them. Pre-feathering here gives
+                // the inpainting model room to blend at boundaries.
+                var featheredMask = FeatherInpaintMask(maskBitmap, imageEditor.InpaintMaskFeather);
+                maskBitmap.Dispose();
+
+                // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
+                // Use Unpremul so the RGB values are stored straight (not darkened by alpha).
+                // The base bitmap may be Premul, so copy it as Unpremul first to get correct RGB.
+                var unpremulBase = new SkiaSharp.SKBitmap(
+                    baseBitmap.Width, baseBitmap.Height,
+                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
+                using (var convertCanvas = new SkiaSharp.SKCanvas(unpremulBase))
+                {
+                    convertCanvas.DrawBitmap(baseBitmap, 0, 0);
+                }
+
+                var pixels = unpremulBase.Pixels;
+                var maskPixels = featheredMask.Pixels;
+                var newPixels = new SkiaSharp.SKColor[pixels.Length];
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    var p = pixels[i];
+                    var maskAlpha = maskPixels[i].Alpha; // white painted area has alpha 255
+                    // Invert: mask white (255) ? image alpha 0 (masked for inpaint)
+                    var newAlpha = (byte)(255 - maskAlpha);
+                    newPixels[i] = new SkiaSharp.SKColor(p.Red, p.Green, p.Blue, newAlpha);
+                }
+
+                var maskedBitmap = new SkiaSharp.SKBitmap(
+                    baseBitmap.Width, baseBitmap.Height,
+                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
+                maskedBitmap.Pixels = newPixels;
+
+                // Save to temp file
+                tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
+                using (var image = SkiaSharp.SKImage.FromBitmap(maskedBitmap))
+                using (var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100))
+                using (var stream = File.Create(tempPath))
+                {
+                    data.SaveTo(stream);
+                }
+
+                baseBitmap.Dispose();
+                unpremulBase.Dispose();
+                featheredMask.Dispose();
+                maskedBitmap.Dispose();
+
+                // If compare mode is pending, save the base as the "before" image for the comparer
+                if (imageEditor.IsCompareModePending)
+                {
+                    var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
+                    var beforeBitmap = editorCore.GetInpaintBaseBitmap();
+                    if (beforeBitmap is not null)
+                    {
+                        using var beforeImage = SkiaSharp.SKImage.FromBitmap(beforeBitmap);
+                        using var beforeData = beforeImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+                        using var beforeStream = File.Create(beforePath);
+                        beforeData.SaveTo(beforeStream);
+                        beforeBitmap.Dispose();
+                        imageEditor.SetCompareBeforeImagePath(beforePath);
+                    }
+                }
+
+                // Call the ViewModel to process via ComfyUI
+                await imageEditor.ProcessInpaintAsync(tempPath);
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Inpainting failed: {ex.Message}";
+            }
+            finally
+            {
+                // Clean up temp file
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+            }
+        };
+
+        // Handle inpaint result — load the result image as a new layer
+        imageEditor.InpaintResultReady += (_, imageBytes) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var editorCore = _imageEditorCanvas.EditorCore;
+            var resultBitmap = SkiaSharp.SKBitmap.Decode(imageBytes);
+            if (resultBitmap is null)
+            {
+                imageEditor.StatusMessage = "Failed to decode inpainting result.";
+                return;
+            }
+
+            // Resize result to match current image dimensions if needed
+            if (resultBitmap.Width != editorCore.Width || resultBitmap.Height != editorCore.Height)
+            {
+                var resized = new SkiaSharp.SKBitmap(editorCore.Width, editorCore.Height);
+                using var canvas = new SkiaSharp.SKCanvas(resized);
+                canvas.DrawBitmap(resultBitmap,
+                    new SkiaSharp.SKRect(0, 0, editorCore.Width, editorCore.Height));
+                resultBitmap.Dispose();
+                resultBitmap = resized;
+            }
+
+            editorCore.AddLayerFromBitmap(resultBitmap, "Inpaint Result");
+            imageEditor.SyncLayers(editorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+
+        // Sync layers when inpaint mask layer is created or modified
+        _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
+        {
+            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+        };
 
         // Handle save as dialog request
         imageEditor.SaveAsDialogRequested += async () =>
@@ -917,6 +1142,74 @@ public partial class ImageEditView : UserControl
             imageEditor.DrawingBrushBlue);
         drawingTool.BrushSize = imageEditor.DrawingBrushSize;
         drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+    }
+
+    /// <summary>
+    /// Creates a small Avalonia thumbnail bitmap from the EditorCore's current inpaint base.
+    /// </summary>
+    private static Avalonia.Media.Imaging.Bitmap? CreateThumbnailFromEditorCore(ImageEditor.ImageEditorCore editorCore)
+    {
+        var baseBitmap = editorCore.GetInpaintBaseBitmap();
+        if (baseBitmap is null) return null;
+
+        try
+        {
+            using var image = SkiaSharp.SKImage.FromBitmap(baseBitmap);
+            using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 80);
+            baseBitmap.Dispose();
+
+            using var memoryStream = new MemoryStream();
+            data.SaveTo(memoryStream);
+            memoryStream.Position = 0;
+            return Avalonia.Media.Imaging.Bitmap.DecodeToWidth(memoryStream, 160);
+        }
+        catch
+        {
+            baseBitmap.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Feathers the inpaint mask by dilating it slightly and then applying a
+    /// Gaussian blur. This softens the hard binary brush edges so the inpainting
+    /// model can blend seamlessly at mask boundaries.
+    /// </summary>
+    private static SkiaSharp.SKBitmap FeatherInpaintMask(SkiaSharp.SKBitmap maskBitmap, float featherRadius)
+    {
+        // No feathering requested — return a copy of the original mask
+        if (featherRadius < 0.5f)
+            return maskBitmap.Copy();
+
+        var dilateRadius = Math.Max(1, (int)(featherRadius * 0.5f));
+        var blurSigma = featherRadius;
+
+        // Pass 1: dilate (grow) the mask to expand coverage beyond the painted area
+        var dilated = new SkiaSharp.SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+        using (var canvas = new SkiaSharp.SKCanvas(dilated))
+        {
+            canvas.Clear(SkiaSharp.SKColors.Transparent);
+            using var paint = new SkiaSharp.SKPaint();
+            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateDilate(dilateRadius, dilateRadius);
+            canvas.DrawBitmap(maskBitmap, 0, 0, paint);
+        }
+
+        // Pass 2: blur the dilated mask for a smooth falloff at edges
+        var feathered = new SkiaSharp.SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+        using (var canvas = new SkiaSharp.SKCanvas(feathered))
+        {
+            canvas.Clear(SkiaSharp.SKColors.Transparent);
+            using var paint = new SkiaSharp.SKPaint();
+            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateBlur(blurSigma, blurSigma);
+            canvas.DrawBitmap(dilated, 0, 0, paint);
+        }
+
+        dilated.Dispose();
+        return feathered;
     }
 
     #region Image Drop Zone Handlers

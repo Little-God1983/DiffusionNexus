@@ -27,6 +27,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IImageUpscalingService? _upscalingService;
+    private readonly IComfyUIWrapperService? _comfyUiService;
 
     private string? _currentImagePath;
     private string? _imageFileName;
@@ -83,6 +84,20 @@ public partial class ImageEditorViewModel : ObservableObject
 
     // Drawing tool fields
     private bool _isDrawingToolActive;
+
+    // Inpainting fields
+    private bool _isInpaintingPanelOpen;
+    private float _inpaintBrushSize = 40f;
+    private float _inpaintMaskFeather = 10f;
+    private float _inpaintDenoise = 1.0f;
+    private bool _isInpaintingBusy;
+    private string? _pendingCompareBeforeImagePath;
+    private string? _inpaintingStatus;
+    private string _inpaintPositivePrompt = string.Empty;
+    private Avalonia.Media.Imaging.Bitmap? _inpaintBaseThumbnail;
+    private bool _hasInpaintBase;
+    private string _inpaintNegativePrompt = DefaultInpaintNegativePrompt;
+    private const string DefaultInpaintNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
     private byte _drawingBrushRed = 255;
     private byte _drawingBrushGreen = 255;
     private byte _drawingBrushBlue = 255;
@@ -1409,6 +1424,209 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    #region Inpainting Properties
+
+    private const string InpaintWorkflowPath = "Assets/Workflows/Inpaint-Qwen-2512.json";
+    private const string InpaintLoadImageNodeId = "16";
+    private const string InpaintPositivePromptNodeId = "5";
+    private const string InpaintNegativePromptNodeId = "8";
+    private const string InpaintKSamplerNodeId = "11";
+
+    /// <summary>Whether the inpainting panel is open.</summary>
+    public bool IsInpaintingPanelOpen
+    {
+        get => _isInpaintingPanelOpen;
+        set
+        {
+            if (SetProperty(ref _isInpaintingPanelOpen, value))
+            {
+                if (value)
+                {
+                    // Deactivate other tools when inpainting is activated
+                    DeactivateOtherTools(nameof(IsInpaintingPanelOpen));
+                    StatusMessage = "Inpaint: Paint over areas to mark them for AI regeneration.";
+
+                    // Auto-capture the current state as the inpaint base
+                    if (!HasInpaintBase)
+                    {
+                        SetInpaintBaseRequested?.Invoke(this, EventArgs.Empty);
+                    }
+                }
+                else
+                {
+                    StatusMessage = null;
+                }
+                InpaintToolActivated?.Invoke(this, value);
+                ClearInpaintMaskCommand.NotifyCanExecuteChanged();
+                NotifyToolCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Inpainting brush size in display pixels (1-200).</summary>
+    public float InpaintBrushSize
+    {
+        get => _inpaintBrushSize;
+        set
+        {
+            var clamped = Math.Clamp(value, 1f, 200f);
+            if (SetProperty(ref _inpaintBrushSize, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintBrushSizeText));
+                InpaintSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Formatted inpaint brush size for display.</summary>
+    public string InpaintBrushSizeText => $"{(int)_inpaintBrushSize} px";
+
+    /// <summary>Mask feather radius (0-20). Controls how softly the mask edges blend with the original image.</summary>
+    public float InpaintMaskFeather
+    {
+        get => _inpaintMaskFeather;
+        set
+        {
+            var clamped = Math.Clamp(value, 0f, 50f);
+            if (SetProperty(ref _inpaintMaskFeather, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintMaskFeatherText));
+            }
+        }
+    }
+
+    /// <summary>Formatted mask feather value for display.</summary>
+    public string InpaintMaskFeatherText => _inpaintMaskFeather < 0.5f ? "Off" : $"{_inpaintMaskFeather:F0} px";
+
+    /// <summary>Denoise strength (0.0-1.0). Controls how much of the masked area is regenerated. 1.0 = full replacement, lower = preserve more of the original.</summary>
+    public float InpaintDenoise
+    {
+        get => _inpaintDenoise;
+        set
+        {
+            var clamped = Math.Clamp(value, 0f, 1f);
+            if (SetProperty(ref _inpaintDenoise, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintDenoiseText));
+            }
+        }
+    }
+
+    /// <summary>Formatted denoise value for display.</summary>
+    public string InpaintDenoiseText => $"{_inpaintDenoise:F2}";
+
+    /// <summary>Positive prompt describing what to generate in the masked areas.</summary>
+    public string InpaintPositivePrompt
+    {
+        get => _inpaintPositivePrompt;
+        set => SetProperty(ref _inpaintPositivePrompt, value ?? string.Empty);
+    }
+
+    /// <summary>Negative prompt for inpainting. Pre-filled with a sensible default.</summary>
+    public string InpaintNegativePrompt
+    {
+        get => _inpaintNegativePrompt;
+        set => SetProperty(ref _inpaintNegativePrompt, value ?? string.Empty);
+    }
+
+    /// <summary>Whether an inpainting operation is currently in progress.</summary>
+    public bool IsInpaintingBusy
+    {
+        get => _isInpaintingBusy;
+        private set => SetProperty(ref _isInpaintingBusy, value);
+    }
+
+    /// <summary>Status message for inpainting operations.</summary>
+    public string? InpaintingStatus
+    {
+        get => _inpaintingStatus;
+        private set => SetProperty(ref _inpaintingStatus, value);
+    }
+
+    /// <summary>Command to clear the inpaint mask layer.</summary>
+    public RelayCommand ClearInpaintMaskCommand { get; private set; } = null!;
+
+    /// <summary>Command to generate inpainting via ComfyUI.</summary>
+    public IAsyncRelayCommand GenerateInpaintCommand { get; private set; } = null!;
+
+    /// <summary>Command to generate inpainting and open both images in the Image Comparer.</summary>
+    public IAsyncRelayCommand GenerateAndCompareInpaintCommand { get; private set; } = null!;
+
+    /// <summary>Command to capture the current flattened state as the inpaint base.</summary>
+    public RelayCommand UseCurrentAsInpaintBaseCommand { get; private set; } = null!;
+
+    /// <summary>Whether an inpaint base image has been captured.</summary>
+    public bool HasInpaintBase
+    {
+        get => _hasInpaintBase;
+        private set => SetProperty(ref _hasInpaintBase, value);
+    }
+
+    /// <summary>Thumbnail preview of the current inpaint base image.</summary>
+    public Avalonia.Media.Imaging.Bitmap? InpaintBaseThumbnail
+    {
+        get => _inpaintBaseThumbnail;
+        private set => SetProperty(ref _inpaintBaseThumbnail, value);
+    }
+
+    /// <summary>
+    /// Event raised when the ViewModel requests capturing the current state as the inpaint base.
+    /// </summary>
+    public event EventHandler? SetInpaintBaseRequested;
+
+    /// <summary>
+    /// Updates the inpaint base thumbnail after the EditorCore captures the base bitmap.
+    /// Called by the View after wiring SetInpaintBaseRequested.
+    /// </summary>
+    public void UpdateInpaintBaseThumbnail(Avalonia.Media.Imaging.Bitmap? thumbnail)
+    {
+        var old = _inpaintBaseThumbnail;
+        InpaintBaseThumbnail = thumbnail;
+        HasInpaintBase = thumbnail is not null;
+        if (old is not null && !ReferenceEquals(old, thumbnail))
+        {
+            old.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Event raised when the inpainting tool is activated or deactivated.
+    /// The bool parameter indicates whether the tool is now active.
+    /// </summary>
+    public event EventHandler<bool>? InpaintToolActivated;
+
+    /// <summary>
+    /// Event raised when inpaint brush settings (size) change.
+    /// </summary>
+    public event EventHandler? InpaintSettingsChanged;
+
+    /// <summary>
+    /// Event raised when the ViewModel requests clearing the inpaint mask.
+    /// </summary>
+    public event EventHandler? ClearInpaintMaskRequested;
+
+    /// <summary>
+    /// Event raised when the user requests inpaint generation.
+    /// The View should gather image + mask data and call ProcessInpaintAsync.
+    /// </summary>
+    public event EventHandler? GenerateInpaintRequested;
+
+    /// <summary>
+    /// Event raised when the inpaint result image bytes are ready.
+    /// The View should apply the result to a new layer.
+    /// </summary>
+    public event EventHandler<byte[]>? InpaintResultReady;
+
+    /// <summary>
+    /// Event raised when a "Generate and Compare" inpainting completes.
+    /// Contains the before and after temp image paths for the Image Comparer.
+    /// </summary>
+    public event EventHandler<InpaintCompareEventArgs>? InpaintCompareRequested;
+
+    // TODO: Linux Implementation for Inpainting
+
+    #endregion
+
     /// <summary>Current image width in pixels.</summary>
     public int ImageWidth
     {
@@ -1933,7 +2151,12 @@ public partial class ImageEditorViewModel : ObservableObject
             DrawingToolActivated?.Invoke(this, false);
         }
 
-        // Add more tools here as they are added in the future
+        if (exceptTool != nameof(IsInpaintingPanelOpen) && _isInpaintingPanelOpen)
+        {
+            _isInpaintingPanelOpen = false;
+            OnPropertyChanged(nameof(IsInpaintingPanelOpen));
+            InpaintToolActivated?.Invoke(this, false);
+        }
     }
 
     /// <summary>
@@ -1960,6 +2183,10 @@ public partial class ImageEditorViewModel : ObservableObject
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
+        ClearInpaintMaskCommand.NotifyCanExecuteChanged();
+        GenerateInpaintCommand.NotifyCanExecuteChanged();
+        GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
+        UseCurrentAsInpaintBaseCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
 
@@ -2114,14 +2341,17 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <param name="eventAggregator">The event aggregator for publishing events.</param>
     /// <param name="backgroundRemovalService">Optional background removal service.</param>
     /// <param name="upscalingService">Optional image upscaling service.</param>
+    /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
     public ImageEditorViewModel(
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IImageUpscalingService? upscalingService = null)
+        IImageUpscalingService? upscalingService = null,
+        IComfyUIWrapperService? comfyUiService = null)
     {
         _eventAggregator = eventAggregator;
         _backgroundRemovalService = backgroundRemovalService;
         _upscalingService = upscalingService;
+        _comfyUiService = comfyUiService;
 
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
@@ -2190,11 +2420,25 @@ public partial class ImageEditorViewModel : ObservableObject
             () => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
             () => HasPlacedShape);
 
+        // Inpainting commands
+        ClearInpaintMaskCommand = new RelayCommand(
+            () => ClearInpaintMaskRequested?.Invoke(this, EventArgs.Empty),
+            () => HasImage && IsInpaintingPanelOpen);
+        GenerateInpaintCommand = new AsyncRelayCommand(
+            ExecuteGenerateInpaintAsync,
+            () => HasImage && IsInpaintingPanelOpen && !IsInpaintingBusy);
+        GenerateAndCompareInpaintCommand = new AsyncRelayCommand(
+            ExecuteGenerateAndCompareInpaintAsync,
+            () => HasImage && IsInpaintingPanelOpen && !IsInpaintingBusy);
+        UseCurrentAsInpaintBaseCommand = new RelayCommand(
+            () => SetInpaintBaseRequested?.Invoke(this, EventArgs.Empty),
+            () => HasImage && IsInpaintingPanelOpen);
+
         // Layer commands (layers are always enabled when an image is loaded)
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);
         AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => HasImage);
-        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1);
-        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask);
+        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null && !SelectedLayer.Layer.IsInpaintMask);
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => HasImage && SelectedLayer != null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => HasImage && SelectedLayer != null && CanMoveLayerDown);
         MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => HasImage && SelectedLayer != null && CanMergeDown);
@@ -3025,6 +3269,195 @@ public partial class ImageEditorViewModel : ObservableObject
         // Add more tools here as they are added in the future
     }
 
+    private async Task ExecuteGenerateInpaintAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_inpaintPositivePrompt))
+        {
+            StatusMessage = "Please enter a prompt describing what to generate.";
+            return;
+        }
+
+        if (_comfyUiService is null)
+        {
+            StatusMessage = "ComfyUI service not available. Check ComfyUI server settings.";
+            return;
+        }
+
+        _pendingCompareBeforeImagePath = null;
+        IsInpaintingBusy = true;
+        InpaintingStatus = "Preparing image and mask...";
+        NotifyInpaintCommandsCanExecuteChanged();
+
+        // Fire event so the View can gather image data and call ProcessInpaintAsync
+        GenerateInpaintRequested?.Invoke(this, EventArgs.Empty);
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ExecuteGenerateAndCompareInpaintAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_inpaintPositivePrompt))
+        {
+            StatusMessage = "Please enter a prompt describing what to generate.";
+            return;
+        }
+
+        if (_comfyUiService is null)
+        {
+            StatusMessage = "ComfyUI service not available. Check ComfyUI server settings.";
+            return;
+        }
+
+        // Mark compare mode — the View will set the before-image path via SetCompareBeforeImagePath
+        _pendingCompareBeforeImagePath = string.Empty;
+        IsInpaintingBusy = true;
+        InpaintingStatus = "Preparing image and mask...";
+        NotifyInpaintCommandsCanExecuteChanged();
+
+        // Fire the same event — the View handler will detect IsCompareMode and save the before image
+        GenerateInpaintRequested?.Invoke(this, EventArgs.Empty);
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Processes the inpainting workflow via ComfyUI.
+    /// Called by the View after it prepares the masked image file.
+    /// </summary>
+    /// <param name="maskedImagePath">Path to the PNG with mask in alpha channel.</param>
+    public async Task ProcessInpaintAsync(string maskedImagePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(maskedImagePath);
+
+        if (_comfyUiService is null)
+        {
+            StatusMessage = "ComfyUI service not available.";
+            OnInpaintingFinished();
+            return;
+        }
+
+        try
+        {
+            InpaintingStatus = "Uploading image to ComfyUI...";
+            var uploadedFilename = await _comfyUiService.UploadImageAsync(maskedImagePath);
+
+            InpaintingStatus = "Queuing inpainting workflow...";
+
+            var workflowPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                InpaintWorkflowPath);
+
+            if (!File.Exists(workflowPath))
+            {
+                StatusMessage = $"Inpainting workflow not found: {workflowPath}";
+                OnInpaintingFinished();
+                return;
+            }
+
+            var random = new Random();
+            var seed = (long)(random.NextDouble() * long.MaxValue);
+
+            var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath,
+                new Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>
+                {
+                    [InpaintLoadImageNodeId] = node =>
+                    {
+                        node["inputs"]!["image"] = uploadedFilename;
+                    },
+                    [InpaintPositivePromptNodeId] = node =>
+                    {
+                        node["inputs"]!["text"] = _inpaintPositivePrompt;
+                    },
+                    [InpaintNegativePromptNodeId] = node =>
+                    {
+                        node["inputs"]!["text"] = _inpaintNegativePrompt;
+                    },
+                    [InpaintKSamplerNodeId] = node =>
+                    {
+                        node["inputs"]!["seed"] = seed;
+                        node["inputs"]!["denoise"] = _inpaintDenoise;
+                    }
+                });
+
+            InpaintingStatus = "Generating (this may take a while)...";
+            var progress = new Progress<string>(msg => InpaintingStatus = msg);
+            await _comfyUiService.WaitForCompletionAsync(promptId, progress);
+
+            InpaintingStatus = "Downloading result...";
+            var result = await _comfyUiService.GetResultAsync(promptId);
+
+            if (result.Images.Count > 0)
+            {
+                var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0]);
+                InpaintResultReady?.Invoke(this, imageBytes);
+                StatusMessage = "Inpainting completed successfully.";
+
+                // If compare mode is active, save the result and navigate to comparer
+                if (!string.IsNullOrEmpty(_pendingCompareBeforeImagePath))
+                {
+                    var afterPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_after_{Guid.NewGuid():N}.png");
+                    await File.WriteAllBytesAsync(afterPath, imageBytes);
+
+                    InpaintCompareRequested?.Invoke(this, new InpaintCompareEventArgs
+                    {
+                        BeforeImagePath = _pendingCompareBeforeImagePath,
+                        AfterImagePath = afterPath
+                    });
+
+                    _eventAggregator?.PublishNavigateToImageComparer(
+                        new NavigateToImageComparerEventArgs
+                        {
+                            ImagePaths = [_pendingCompareBeforeImagePath, afterPath]
+                        });
+                }
+            }
+            else
+            {
+                StatusMessage = "Inpainting completed but no output image was returned.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Inpainting was cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Inpainting failed: {ex.Message}";
+        }
+        finally
+        {
+            OnInpaintingFinished();
+        }
+    }
+
+    /// <summary>
+    /// Whether a "Generate and Compare" operation is pending.
+    /// The View checks this to decide whether to save the before-image.
+    /// </summary>
+    public bool IsCompareModePending => _pendingCompareBeforeImagePath is not null;
+
+    /// <summary>
+    /// Sets the path to the "before" image saved by the View for compare mode.
+    /// </summary>
+    public void SetCompareBeforeImagePath(string path)
+    {
+        _pendingCompareBeforeImagePath = path;
+    }
+
+    private void OnInpaintingFinished()
+    {
+        _pendingCompareBeforeImagePath = null;
+        IsInpaintingBusy = false;
+        InpaintingStatus = null;
+        NotifyInpaintCommandsCanExecuteChanged();
+    }
+
+    private void NotifyInpaintCommandsCanExecuteChanged()
+    {
+        GenerateInpaintCommand.NotifyCanExecuteChanged();
+        GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
+    }
+
 
     #endregion
 
@@ -3125,4 +3558,21 @@ public class ExportEventArgs : EventArgs
     /// The file extension (e.g., ".png").
     /// </summary>
     public string FileExtension { get; init; } = ".png";
+}
+
+/// <summary>
+/// Event arguments for the "Generate and Compare" inpainting result.
+/// Contains paths to both the before and after images for the Image Comparer.
+/// </summary>
+public class InpaintCompareEventArgs : EventArgs
+{
+    /// <summary>
+    /// Path to the "before" image (flattened original before inpainting).
+    /// </summary>
+    public required string BeforeImagePath { get; init; }
+
+    /// <summary>
+    /// Path to the "after" image (inpainting result).
+    /// </summary>
+    public required string AfterImagePath { get; init; }
 }

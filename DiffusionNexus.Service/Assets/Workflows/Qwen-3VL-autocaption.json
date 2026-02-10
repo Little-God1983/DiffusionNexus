@@ -1,0 +1,45 @@
+{
+  "100": {
+    "inputs": {
+      "image": "placeholder.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "705": {
+    "inputs": {
+      "image": [
+        "100",
+        0
+      ],
+      "text": "what do you see in this image? Describe it in 100 Different words",
+      "model": "Qwen3-VL-4B-Instruct-FP8",
+      "quantization": "none",
+      "keep_model_loaded": false,
+      "temperature": 0.7,
+      "max_new_tokens": 2048,
+      "min_pixels": 200704,
+      "max_pixels": 1003520,
+      "seed": 590,
+      "attention": "eager"
+    },
+    "class_type": "Qwen3_VQA",
+    "_meta": {
+      "title": "Qwen3 VQA"
+    }
+  },
+  "737": {
+    "inputs": {
+      "text": [
+        "705",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text"
+    }
+  }
+}

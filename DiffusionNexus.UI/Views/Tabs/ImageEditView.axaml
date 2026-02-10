@@ -91,7 +91,7 @@
     </Border>
     
     <!-- Main Editor Area -->
-    <Grid Grid.Column="1" RowDefinitions="Auto,*">
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
       <!-- Toolbar -->
       <Border Grid.Row="0" Background="#1E1E1E" Padding="16,8" BorderBrush="#333" BorderThickness="0,0,0,1">
         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
@@ -143,6 +143,9 @@
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Draw" IsChecked="{Binding ImageEditor.IsDrawingToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Drawing Tool - Hold Shift for straight lines"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.IsInpaintingPanelOpen, Mode=TwoWay}" Padding="12,6" 
+                          ToolTip.Tip="AI Inpainting - Paint over areas to regenerate using ComfyUI"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <!-- Separator - always visible -->
@@ -206,6 +209,25 @@
                                        ShapeStrokeWidth="{Binding ImageEditor.ShapeStrokeWidth}"
                                        IsVisible="{Binding ImageEditor.HasImage}"/>
         </Grid>
+      </Border>
+      
+      <!-- Bottom Status Bar - Information & Zoom -->
+      <Border Grid.Row="2" Background="#1E1E1E" Padding="8,0" BorderBrush="#333" BorderThickness="0,1,0,0"
+              IsVisible="{Binding ImageEditor.HasImage}">
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Height="22">
+          <TextBlock Text="{Binding ImageEditor.ImageDimensions}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
+          <TextBlock Text="|" FontSize="10" Opacity="0.4" VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding ImageEditor.ImageDpi, StringFormat='{}{0} DPI'}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
+          <TextBlock Text="|" FontSize="10" Opacity="0.4" VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding ImageEditor.FileSizeText}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
+          <Border Width="0" HorizontalAlignment="Stretch"/>
+          <Button Content="Fit" Command="{Binding ImageEditor.ZoomToFitCommand}" Padding="6,0" FontSize="10"/>
+          <Button Content="100%" Command="{Binding ImageEditor.ZoomToActualCommand}" Padding="6,0" FontSize="10"/>
+          <Slider Minimum="10" Maximum="500" Value="{Binding ImageEditor.ZoomPercentage}" 
+                  Width="100" VerticalAlignment="Center" x:Name="ZoomSlider"/>
+          <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}" FontSize="10" FontWeight="SemiBold" 
+                     Foreground="#4CAF50" VerticalAlignment="Center"/>
+        </StackPanel>
       </Border>
     </Grid>
     
@@ -297,32 +319,6 @@
                 <Button Content="Save Layered TIFF" Command="{Binding ImageEditor.SaveLayeredTiffCommand}" 
                         HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
                         Background="#5E35B1" ToolTip.Tip="Export as multi-layer TIFF file"/>
-              </StackPanel>
-            </Border>
-          </StackPanel>
-          
-          <StackPanel Spacing="8">
-            <TextBlock Text="Information" FontWeight="SemiBold" FontSize="14"/>
-            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
-              <StackPanel Spacing="4">
-                <TextBlock FontSize="12" Opacity="0.8">
-                  <Run Text="Size: "/><Run Text="{Binding ImageEditor.ImageWidth}"/><Run Text=" x "/><Run Text="{Binding ImageEditor.ImageHeight}"/><Run Text=" px"/>
-                </TextBlock>
-                <TextBlock Text="{Binding ImageEditor.ImageDpi, StringFormat='Resolution: {0} DPI'}" FontSize="12" Opacity="0.8"/>
-                <TextBlock Text="{Binding ImageEditor.FileSizeText, StringFormat='File: {0}'}" FontSize="12" Opacity="0.8"/>
-              </StackPanel>
-            </Border>
-          </StackPanel>
-          <StackPanel Spacing="8">
-            <TextBlock Text="Zoom" FontWeight="SemiBold" FontSize="14"/>
-            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
-              <StackPanel Spacing="8">
-                <TextBlock Text="{Binding ImageEditor.ZoomPercentageText}" FontSize="18" FontWeight="SemiBold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
-                <Slider Minimum="10" Maximum="500" Value="{Binding ImageEditor.ZoomPercentage}" x:Name="ZoomSlider"/>
-                <Grid ColumnDefinitions="*,*">
-                  <Button Grid.Column="0" Content="Fit" Command="{Binding ImageEditor.ZoomToFitCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
-                  <Button Grid.Column="1" Content="100%" Command="{Binding ImageEditor.ZoomToActualCommand}" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
-                </Grid>
               </StackPanel>
             </Border>
           </StackPanel>
@@ -1001,6 +997,105 @@
                   </Grid>
                   <TextBlock Text="Enter = Apply, Esc = Cancel, ✕ = Delete" FontSize="9" Opacity="0.4" HorizontalAlignment="Center"/>
                 </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+          
+          <!-- Inpainting Panel -->
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsInpaintingPanelOpen}">
+            <TextBlock Text="Inpainting" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+              <StackPanel Spacing="10">
+                <!-- Instructions -->
+                <TextBlock Text="Paint over areas you want AI to regenerate. Masked areas appear as a checkerboard pattern." 
+                           FontSize="10" Opacity="0.7" TextWrapping="Wrap"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Inpaint Base Image -->
+                <TextBlock Text="Base Image" FontSize="11" Opacity="0.7"/>
+                <Border Background="#252525" CornerRadius="4" Padding="4" MinHeight="60">
+                  <Grid RowDefinitions="Auto,Auto">
+                    <Border Grid.Row="0" CornerRadius="2" ClipToBounds="True" HorizontalAlignment="Center"
+                            IsVisible="{Binding ImageEditor.HasInpaintBase}">
+                      <Image Source="{Binding ImageEditor.InpaintBaseThumbnail}" MaxHeight="100" Stretch="Uniform"/>
+                    </Border>
+                    <TextBlock Grid.Row="0" Text="No base captured" FontSize="10" Opacity="0.4"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsVisible="{Binding !ImageEditor.HasInpaintBase}"/>
+                    <Button Grid.Row="1" Content="Use Current as Base" 
+                            Command="{Binding ImageEditor.UseCurrentAsInpaintBaseCommand}"
+                            HorizontalAlignment="Stretch" Padding="6,4" FontSize="10" Margin="0,4,0,0"
+                            ToolTip.Tip="Capture the current flattened state as the source image for all future inpaint generations"/>
+                  </Grid>
+                </Border>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Positive Prompt -->
+                <TextBlock Text="Prompt" FontSize="11" Opacity="0.7"/>
+                <TextBox x:Name="InpaintPromptTextBox"
+                         Text="{Binding ImageEditor.InpaintPositivePrompt, Mode=TwoWay}"
+                         Watermark="Describe what to generate..."
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="120" FontSize="11"/>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Brush Size -->
+                <TextBlock Text="Brush Size" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="1" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="1" Maximum="200" Value="{Binding ImageEditor.InpaintBrushSize}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
+                <!-- Mask Feather -->
+                <TextBlock Text="Mask Feather" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="50" Value="{Binding ImageEditor.InpaintMaskFeather}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintMaskFeatherText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
+                <!-- Denoise Strength -->
+                <TextBlock Text="Denoise" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding ImageEditor.InpaintDenoise}" TickFrequency="0.05"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintDenoiseText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Action Buttons -->
+                <Button Content="Clear Mask" Command="{Binding ImageEditor.ClearInpaintMaskCommand}" 
+                        HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
+                        ToolTip.Tip="Remove all painted mask areas"/>
+                
+                <Button Content="Generate" Command="{Binding ImageEditor.GenerateInpaintCommand}" 
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="12" FontWeight="SemiBold"
+                        Background="#2D7D46" Foreground="White"
+                        ToolTip.Tip="Send image and mask to ComfyUI for AI inpainting"/>
+                
+                <Button Content="Generate and Compare" Command="{Binding ImageEditor.GenerateAndCompareInpaintCommand}" 
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
+                        Background="#5E35B1" Foreground="White"
+                        ToolTip.Tip="Generate inpainting and open before/after in Image Comparer"/>
+                
+                <!-- Progress (shown when busy) -->
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsInpaintingBusy}">
+                  <TextBlock Text="{Binding ImageEditor.InpaintingStatus}" 
+                             FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+                </StackPanel>
+                
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                
+                <!-- Workflow Info -->
+                <Border Background="#1A2A1A" CornerRadius="4" Padding="6">
+                  <TextBlock Text="Paint a mask over areas to regenerate, enter a prompt, then click Generate to send to ComfyUI." 
+                             FontSize="9" Opacity="0.8" TextWrapping="Wrap" Foreground="#8BC34A"/>
+                </Border>
               </StackPanel>
             </Border>
           </StackPanel>

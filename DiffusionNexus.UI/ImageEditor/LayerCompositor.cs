@@ -7,6 +7,12 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public static class LayerCompositor
 {
+    // Checkerboard tile size for inpaint mask display (in image pixels)
+    private const int InpaintCheckSize = 8;
+    private const byte InpaintMaskAlpha = 153; // ~60% opacity so image shows through
+    private static readonly SKColor InpaintCheckLight = new(200, 200, 200);
+    private static readonly SKColor InpaintCheckDark = new(150, 150, 150);
+
     /// <summary>
     /// Composites all visible layers onto a canvas.
     /// </summary>
@@ -29,15 +35,22 @@ public static class LayerCompositor
         {
             if (!layer.IsVisible || layer.Bitmap == null) continue;
 
-            using var paint = new SKPaint
+            if (layer.IsInpaintMask)
             {
-                Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
-                BlendMode = layer.BlendMode.ToSKBlendMode(),
-                IsAntialias = true,
-                FilterQuality = SKFilterQuality.High
-            };
+                RenderInpaintMaskLayer(canvas, layer, layers.Width, layers.Height);
+            }
+            else
+            {
+                using var paint = new SKPaint
+                {
+                    Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                    BlendMode = layer.BlendMode.ToSKBlendMode(),
+                    IsAntialias = true,
+                    FilterQuality = SKFilterQuality.High
+                };
 
-            canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+                canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+            }
         }
 
         canvas.Restore();
@@ -148,5 +161,75 @@ public static class LayerCompositor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Renders an inpaint mask layer as a checkerboard pattern where the mask has been painted.
+    /// The mask bitmap stores white (opaque) where the user painted; those areas become checkerboard.
+    /// </summary>
+    private static void RenderInpaintMaskLayer(SKCanvas canvas, Layer layer, int imageWidth, int imageHeight)
+    {
+        if (layer.Bitmap is null) return;
+
+        // Build a checkerboard tile that we'll use as the pattern source
+        using var tileBitmap = new SKBitmap(InpaintCheckSize * 2, InpaintCheckSize * 2);
+        tileBitmap.Erase(InpaintCheckLight);
+        for (int y = 0; y < 2; y++)
+        {
+            for (int x = 0; x < 2; x++)
+            {
+                if ((x + y) % 2 == 1)
+                {
+                    for (int py = y * InpaintCheckSize; py < (y + 1) * InpaintCheckSize; py++)
+                    {
+                        for (int px = x * InpaintCheckSize; px < (x + 1) * InpaintCheckSize; px++)
+                        {
+                            tileBitmap.SetPixel(px, py, InpaintCheckDark);
+                        }
+                    }
+                }
+            }
+        }
+
+        using var shader = SKShader.CreateBitmap(tileBitmap, SKShaderTileMode.Repeat, SKShaderTileMode.Repeat);
+
+        using var checkerPaint = new SKPaint
+        {
+            Shader = shader,
+            IsAntialias = true
+        };
+
+        // Use the mask bitmap's alpha as a clip so checkerboard only shows where painted
+        canvas.Save();
+        canvas.ClipRect(new SKRect(0, 0, imageWidth, imageHeight));
+
+        // Draw checkerboard only where the mask has opaque pixels (painted areas)
+        // We use DstIn blending: draw checkerboard first in a layer, then mask it
+        var layerRect = new SKRect(0, 0, imageWidth, imageHeight);
+
+        // Combine inherent mask semi-transparency with layer opacity
+        var effectiveAlpha = (byte)(InpaintMaskAlpha * layer.Opacity);
+
+        using var maskPaint = new SKPaint
+        {
+            Color = SKColors.White.WithAlpha(effectiveAlpha)
+        };
+
+        // Use saveLayer for proper alpha compositing
+        canvas.SaveLayer(maskPaint);
+
+        // Draw the checkerboard everywhere
+        canvas.DrawRect(layerRect, checkerPaint);
+
+        // Cut it using the mask bitmap as alpha (DstIn keeps checkerboard only where mask is opaque)
+        using var maskBlendPaint = new SKPaint
+        {
+            BlendMode = SKBlendMode.DstIn,
+            FilterQuality = SKFilterQuality.High
+        };
+        canvas.DrawBitmap(layer.Bitmap, layerRect, maskBlendPaint);
+
+        canvas.Restore(); // restore saveLayer
+        canvas.Restore(); // restore clip
     }
 }

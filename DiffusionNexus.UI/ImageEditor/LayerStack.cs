@@ -87,6 +87,7 @@ public class LayerStack : IDisposable
 
     /// <summary>
     /// Adds a new empty layer at the top of the stack.
+    /// If an inpaint mask layer exists it stays on top; the new layer is inserted below it.
     /// </summary>
     /// <param name="name">Optional layer name.</param>
     /// <returns>The newly created layer.</returns>
@@ -95,13 +96,25 @@ public class LayerStack : IDisposable
         var layerName = name ?? $"Layer {_layers.Count + 1}";
         var layer = new Layer(_width, _height, layerName);
         layer.ContentChanged += OnLayerContentChanged;
-        _layers.Add(layer);
+
+        // Keep inpaint mask as the topmost layer
+        var maskIndex = GetInpaintMaskIndex();
+        if (maskIndex >= 0)
+        {
+            _layers.Insert(maskIndex, layer);
+        }
+        else
+        {
+            _layers.Add(layer);
+        }
+
         ActiveLayer = layer;
         return layer;
     }
 
     /// <summary>
     /// Adds a layer from an existing bitmap.
+    /// If an inpaint mask layer exists it stays on top; the new layer is inserted below it.
     /// </summary>
     /// <param name="bitmap">Source bitmap.</param>
     /// <param name="name">Optional layer name.</param>
@@ -111,7 +124,18 @@ public class LayerStack : IDisposable
         var layerName = name ?? $"Layer {_layers.Count + 1}";
         var layer = new Layer(bitmap, layerName);
         layer.ContentChanged += OnLayerContentChanged;
-        _layers.Add(layer);
+
+        // Keep inpaint mask as the topmost layer
+        var maskIndex = GetInpaintMaskIndex();
+        if (maskIndex >= 0)
+        {
+            _layers.Insert(maskIndex, layer);
+        }
+        else
+        {
+            _layers.Add(layer);
+        }
+
         ActiveLayer = layer;
         return layer;
     }
@@ -130,6 +154,7 @@ public class LayerStack : IDisposable
 
     /// <summary>
     /// Removes the specified layer.
+    /// The inpaint mask layer cannot be deleted directly; use ClearInpaintMask instead.
     /// </summary>
     /// <param name="layer">Layer to remove.</param>
     /// <returns>True if removed successfully.</returns>
@@ -137,6 +162,9 @@ public class LayerStack : IDisposable
     {
         if (_layers.Count <= 1)
             return false; // Keep at least one layer
+
+        // TODO: Allow inpaint mask deletion when multi-mask support is added
+        if (layer.IsInpaintMask) return false;
 
         var index = _layers.IndexOf(layer);
         if (index < 0) return false;
@@ -170,13 +198,14 @@ public class LayerStack : IDisposable
 
     /// <summary>
     /// Duplicates the specified layer.
+    /// Inpaint mask layers cannot be duplicated (only one mask allowed).
     /// </summary>
     /// <param name="layer">Layer to duplicate.</param>
-    /// <returns>The duplicated layer.</returns>
+    /// <returns>The duplicated layer, or null if the layer is an inpaint mask.</returns>
     public Layer? DuplicateLayer(Layer layer)
     {
         var index = _layers.IndexOf(layer);
-        if (index < 0) return null;
+        if (index < 0 || layer.IsInpaintMask) return null;
 
         var clone = layer.Clone();
         clone.ContentChanged += OnLayerContentChanged;
@@ -187,6 +216,7 @@ public class LayerStack : IDisposable
 
     /// <summary>
     /// Moves a layer up in the stack (towards front).
+    /// A layer cannot move above the inpaint mask layer.
     /// </summary>
     /// <param name="layer">Layer to move.</param>
     /// <returns>True if moved successfully.</returns>
@@ -195,19 +225,24 @@ public class LayerStack : IDisposable
         var index = _layers.IndexOf(layer);
         if (index < 0 || index >= _layers.Count - 1) return false;
 
-        _layers.Move(index, index + 1);
+        // Don't allow moving above the inpaint mask (must stay topmost)
+        var targetIndex = index + 1;
+        if (_layers[targetIndex].IsInpaintMask) return false;
+
+        _layers.Move(index, targetIndex);
         return true;
     }
 
     /// <summary>
     /// Moves a layer down in the stack (towards back).
+    /// The inpaint mask layer cannot be moved down (must stay topmost).
     /// </summary>
     /// <param name="layer">Layer to move.</param>
     /// <returns>True if moved successfully.</returns>
     public bool MoveLayerDown(Layer layer)
     {
         var index = _layers.IndexOf(layer);
-        if (index <= 0) return false;
+        if (index <= 0 || layer.IsInpaintMask) return false;
 
         _layers.Move(index, index - 1);
         return true;
@@ -215,13 +250,14 @@ public class LayerStack : IDisposable
 
     /// <summary>
     /// Merges the specified layer with the layer below it.
+    /// The inpaint mask layer cannot be merged down.
     /// </summary>
     /// <param name="layer">Layer to merge down.</param>
     /// <returns>True if merged successfully.</returns>
     public bool MergeDown(Layer layer)
     {
         var index = _layers.IndexOf(layer);
-        if (index <= 0) return false;
+        if (index <= 0 || layer.IsInpaintMask) return false;
 
         var belowLayer = _layers[index - 1];
         if (belowLayer.Bitmap == null || layer.Bitmap == null) return false;
@@ -253,16 +289,29 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
-    /// Merges all visible layers into one.
+    /// Merges all visible layers into one, preserving any inpaint mask layer.
     /// </summary>
     public void MergeVisible()
     {
         var composite = Flatten();
         if (composite == null) return;
 
+        // Preserve the inpaint mask layer (if any)
+        Layer? maskLayer = null;
+        foreach (var layer in _layers)
+        {
+            if (layer.IsInpaintMask)
+            {
+                maskLayer = layer;
+                layer.ContentChanged -= OnLayerContentChanged;
+                break;
+            }
+        }
+
         // Clear all layers
         foreach (var layer in _layers.ToList())
         {
+            if (layer == maskLayer) continue;
             layer.ContentChanged -= OnLayerContentChanged;
             layer.Dispose();
         }
@@ -273,6 +322,13 @@ public class LayerStack : IDisposable
         merged.ContentChanged += OnLayerContentChanged;
         _layers.Add(merged);
         ActiveLayer = merged;
+
+        // Re-add inpaint mask on top
+        if (maskLayer is not null)
+        {
+            maskLayer.ContentChanged += OnLayerContentChanged;
+            _layers.Add(maskLayer);
+        }
 
         composite.Dispose();
     }
@@ -289,10 +345,10 @@ public class LayerStack : IDisposable
         using var canvas = new SKCanvas(result);
         canvas.Clear(SKColors.Transparent);
 
-        // Draw layers from bottom to top
+        // Draw layers from bottom to top (skip inpaint mask layers)
         foreach (var layer in _layers)
         {
-            if (!layer.IsVisible || layer.Bitmap == null) continue;
+            if (!layer.IsVisible || layer.Bitmap == null || layer.IsInpaintMask) continue;
 
             using var paint = new SKPaint
             {
@@ -392,6 +448,19 @@ public class LayerStack : IDisposable
     /// Gets a layer by index.
     /// </summary>
     public Layer this[int index] => _layers[index];
+
+    /// <summary>
+    /// Gets the index of the inpaint mask layer, or -1 if none exists.
+    /// </summary>
+    private int GetInpaintMaskIndex()
+    {
+        for (var i = _layers.Count - 1; i >= 0; i--)
+        {
+            if (_layers[i].IsInpaintMask)
+                return i;
+        }
+        return -1;
+    }
 
     private void OnLayersCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {

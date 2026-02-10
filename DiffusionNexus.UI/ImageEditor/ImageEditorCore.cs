@@ -12,6 +12,8 @@ public class ImageEditorCore : IDisposable
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
     private SKBitmap? _previewBitmap;
+    private SKBitmap? _inpaintBaseBitmap;
+    private long _inpaintBaseVersion;
     private LayerStack? _layers;
     private bool _isPreviewActive;
     private bool _disposed;
@@ -22,6 +24,7 @@ public class ImageEditorCore : IDisposable
     private int _imageDpi = 72;
     private readonly object _bitmapLock = new();
     private bool _isLayerMode;
+    private SKRect _lastImageRect;
 
     private const float MinZoom = 0.1f;
     private const float MaxZoom = 10f;
@@ -434,6 +437,10 @@ public class ImageEditorCore : IDisposable
             
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
+
+            // Reset inpaint base to the newly loaded image
+            ClearInpaintBase();
+            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -481,6 +488,10 @@ public class ImageEditorCore : IDisposable
             
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
+
+            // Reset inpaint base to the newly loaded image
+            ClearInpaintBase();
+            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -1024,6 +1035,7 @@ public class ImageEditorCore : IDisposable
             ShapeTool.SetImageBounds(imageRect);
             ShapeTool.Render(canvas);
 
+            _lastImageRect = imageRect;
             return imageRect;
         }
     }
@@ -1098,6 +1110,12 @@ public class ImageEditorCore : IDisposable
         _isFitMode = true;
         OnZoomChanged();
     }
+
+    /// <summary>
+    /// Gets the screen rectangle of the image from the last render pass.
+    /// Used by tools that need screen-to-image coordinate mapping.
+    /// </summary>
+    public SKRect GetCurrentImageRect() => _lastImageRect;
 
     /// <summary>
     /// Pans the image by the specified delta values.
@@ -2169,7 +2187,7 @@ public class ImageEditorCore : IDisposable
             if (_isLayerMode && _layers?.ActiveLayer != null)
             {
                 targetLayer = _layers.ActiveLayer;
-                if (!targetLayer.CanEdit)
+                if (!targetLayer.CanEdit || targetLayer.IsInpaintMask)
                     return false;
                 targetBitmap = targetLayer.Bitmap;
             }
@@ -2281,7 +2299,7 @@ public class ImageEditorCore : IDisposable
             if (_isLayerMode && _layers?.ActiveLayer != null)
             {
                 targetLayer = _layers.ActiveLayer;
-                if (!targetLayer.CanEdit)
+                if (!targetLayer.CanEdit || targetLayer.IsInpaintMask)
                     return false;
                 targetBitmap = targetLayer.Bitmap;
             }
@@ -2352,6 +2370,202 @@ public class ImageEditorCore : IDisposable
     }
 
     #endregion Shape Drawing
+
+    #region Inpainting
+
+    /// <summary>
+    /// Finds the existing inpaint mask layer, or creates one if none exists.
+    /// Ensures layer mode is enabled before creating.
+    /// </summary>
+    /// <returns>The inpaint mask layer, or null if creation failed.</returns>
+    private Layer? GetOrCreateInpaintMaskLayer()
+    {
+        // Ensure layer mode is active
+        if (!_isLayerMode)
+        {
+            EnableLayerMode();
+        }
+
+        if (_layers is null) return null;
+
+        // Look for existing inpaint mask layer
+        var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+        if (maskLayer is not null) return maskLayer;
+
+        // Remember which layer the user was editing before we create the mask
+        var previousActive = _layers.ActiveLayer;
+
+        // Create the inpaint mask layer directly at the top of the stack
+        // (bypassing AddLayer which would insert below an existing mask)
+        var newLayer = new Layer(_layers.Width, _layers.Height, "Inpaint Mask")
+        {
+            IsInpaintMask = true
+        };
+        _layers.Layers.Add(newLayer);
+
+        // Restore the previous active layer so drawing/shape tools still target it
+        _layers.ActiveLayer = previousActive ?? newLayer;
+
+        return newLayer;
+    }
+
+    /// <summary>
+    /// Applies an inpainting brush stroke to the inpaint mask layer.
+    /// Paints white (opaque) pixels on a transparent layer; the compositor
+    /// renders these areas as a checkerboard pattern.
+    /// </summary>
+    /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
+    /// <param name="brushSize">Brush size in image pixels.</param>
+    /// <returns>True if the stroke was applied successfully.</returns>
+    public bool ApplyInpaintStroke(IReadOnlyList<SKPoint> normalizedPoints, float brushSize)
+    {
+        if (normalizedPoints is null || normalizedPoints.Count == 0)
+            return false;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = GetOrCreateInpaintMaskLayer();
+            if (maskLayer?.Bitmap is null || !maskLayer.CanEdit)
+                return false;
+
+            try
+            {
+                var width = maskLayer.Bitmap.Width;
+                var height = maskLayer.Bitmap.Height;
+
+                var imagePoints = normalizedPoints
+                    .Select(p => new SKPoint(p.X * width, p.Y * height))
+                    .ToList();
+
+                var scaledBrushSize = brushSize * width;
+
+                using var canvas = new SKCanvas(maskLayer.Bitmap);
+                using var paint = new SKPaint
+                {
+                    Color = SKColors.White,
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = scaledBrushSize,
+                    StrokeCap = SKStrokeCap.Round,
+                    StrokeJoin = SKStrokeJoin.Round
+                };
+
+                if (imagePoints.Count == 1)
+                {
+                    paint.Style = SKPaintStyle.Fill;
+                    canvas.DrawCircle(imagePoints[0], scaledBrushSize / 2, paint);
+                }
+                else if (imagePoints.Count == 2)
+                {
+                    canvas.DrawLine(imagePoints[0], imagePoints[1], paint);
+                }
+                else
+                {
+                    using var path = new SKPath();
+                    path.MoveTo(imagePoints[0]);
+                    for (var i = 1; i < imagePoints.Count; i++)
+                    {
+                        path.LineTo(imagePoints[i]);
+                    }
+                    canvas.DrawPath(path, paint);
+                }
+
+                canvas.Flush();
+                maskLayer.NotifyContentChanged();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Clears the inpaint mask layer, removing all painted mask areas.
+    /// </summary>
+    public void ClearInpaintMask()
+    {
+        if (_layers is null) return;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+            maskLayer?.Clear();
+        }
+
+        OnImageChanged();
+    }
+
+    /// <summary>
+    /// Extracts the inpaint mask bitmap (white = inpaint, black = keep).
+    /// Returns null if no mask layer exists or it is empty.
+    /// </summary>
+    /// <returns>A copy of the mask bitmap, or null.</returns>
+    public SKBitmap? GetInpaintMaskBitmap()
+    {
+        if (_layers is null) return null;
+
+        lock (_bitmapLock)
+        {
+            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+            return maskLayer?.Bitmap?.Copy();
+        }
+    }
+
+    /// <summary>
+    /// Captures the current flattened state as the inpaint base image.
+    /// Subsequent inpainting generations will use this bitmap instead of re-flattening.
+    /// </summary>
+    public void SetInpaintBaseBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            _inpaintBaseBitmap?.Dispose();
+            _inpaintBaseBitmap = _isLayerMode && _layers != null
+                ? _layers.Flatten()
+                : _workingBitmap?.Copy();
+            Interlocked.Increment(ref _inpaintBaseVersion);
+        }
+    }
+
+    /// <summary>
+    /// Returns a copy of the stored inpaint base bitmap, or null if none has been set.
+    /// </summary>
+    public SKBitmap? GetInpaintBaseBitmap()
+    {
+        lock (_bitmapLock)
+        {
+            return _inpaintBaseBitmap?.Copy();
+        }
+    }
+
+    /// <summary>
+    /// Gets whether an inpaint base bitmap is currently stored.
+    /// </summary>
+    public bool HasInpaintBase => _inpaintBaseBitmap is not null;
+
+    /// <summary>
+    /// Monotonically increasing version that changes whenever the inpaint base is set or cleared.
+    /// </summary>
+    public long InpaintBaseVersion => Interlocked.Read(ref _inpaintBaseVersion);
+
+    /// <summary>
+    /// Clears the stored inpaint base bitmap.
+    /// </summary>
+    public void ClearInpaintBase()
+    {
+        lock (_bitmapLock)
+        {
+            _inpaintBaseBitmap?.Dispose();
+            _inpaintBaseBitmap = null;
+            Interlocked.Increment(ref _inpaintBaseVersion);
+        }
+    }
+
+    #endregion Inpainting
 
     #region Save with Layers
 
@@ -2495,6 +2709,7 @@ public class ImageEditorCore : IDisposable
             _originalBitmap?.Dispose();
             _workingBitmap?.Dispose();
             _previewBitmap?.Dispose();
+            _inpaintBaseBitmap?.Dispose();
             if (_layers != null)
             {
                 _layers.ContentChanged -= OnLayersContentChanged;
@@ -2504,6 +2719,7 @@ public class ImageEditorCore : IDisposable
             _originalBitmap = null;
             _workingBitmap = null;
             _previewBitmap = null;
+            _inpaintBaseBitmap = null;
             _layers = null;
         }
         _disposed = true;

@@ -15,6 +15,7 @@ public class Layer : IDisposable
     private float _opacity;
     private bool _isLocked;
     private BlendMode _blendMode;
+    private bool _isInpaintMask;
     private bool _isDisposed;
 
     private const int ThumbnailSize = 48;
@@ -119,6 +120,25 @@ public class Layer : IDisposable
             {
                 _isLocked = value;
                 PropertyChanged?.Invoke(this, nameof(IsLocked));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether this layer is an inpainting mask layer.
+    /// Inpaint mask layers are rendered with a checkerboard pattern and can only
+    /// be painted on by the inpainting brush tool.
+    /// </summary>
+    public bool IsInpaintMask
+    {
+        get => _isInpaintMask;
+        set
+        {
+            if (_isInpaintMask != value)
+            {
+                _isInpaintMask = value;
+                PropertyChanged?.Invoke(this, nameof(IsInpaintMask));
+                ContentChanged?.Invoke(this, EventArgs.Empty);
             }
         }
     }
@@ -246,7 +266,8 @@ public class Layer : IDisposable
             IsVisible = _isVisible,
             Opacity = _opacity,
             IsLocked = _isLocked,
-            BlendMode = _blendMode
+            BlendMode = _blendMode,
+            IsInpaintMask = _isInpaintMask
         };
         return clone;
     }
