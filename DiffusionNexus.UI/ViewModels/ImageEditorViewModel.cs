@@ -88,6 +88,7 @@ public partial class ImageEditorViewModel : ObservableObject
     // Inpainting fields
     private bool _isInpaintingPanelOpen;
     private float _inpaintBrushSize = 40f;
+    private float _inpaintMaskFeather = 10f;
     private bool _isInpaintingBusy;
     private string? _inpaintingStatus;
     private string _inpaintPositivePrompt = string.Empty;
@@ -1469,6 +1470,23 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Formatted inpaint brush size for display.</summary>
     public string InpaintBrushSizeText => $"{(int)_inpaintBrushSize} px";
+
+    /// <summary>Mask feather radius (0-20). Controls how softly the mask edges blend with the original image.</summary>
+    public float InpaintMaskFeather
+    {
+        get => _inpaintMaskFeather;
+        set
+        {
+            var clamped = Math.Clamp(value, 0f, 50f);
+            if (SetProperty(ref _inpaintMaskFeather, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintMaskFeatherText));
+            }
+        }
+    }
+
+    /// <summary>Formatted mask feather value for display.</summary>
+    public string InpaintMaskFeatherText => _inpaintMaskFeather < 0.5f ? "Off" : $"{_inpaintMaskFeather:F0} px";
 
     /// <summary>Positive prompt describing what to generate in the masked areas.</summary>
     public string InpaintPositivePrompt

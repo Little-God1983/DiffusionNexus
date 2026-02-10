@@ -565,9 +565,26 @@ public partial class ImageEditView : UserControl
                     return;
                 }
 
+                // Feather the mask: dilate slightly then blur to create soft edges.
+                // Our brush produces hard binary edges, but the workflow's ImageBlur
+                // (sigma=1.0) is too weak to smooth them. Pre-feathering here gives
+                // the inpainting model room to blend at boundaries.
+                var featheredMask = FeatherInpaintMask(maskBitmap, imageEditor.InpaintMaskFeather);
+                maskBitmap.Dispose();
+
                 // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
-                var pixels = flattenedBitmap.Pixels;
-                var maskPixels = maskBitmap.Pixels;
+                // Use Unpremul so the RGB values are stored straight (not darkened by alpha).
+                // The flattened bitmap is Premul, so copy it as Unpremul first to get correct RGB.
+                var unpremulFlattened = new SkiaSharp.SKBitmap(
+                    flattenedBitmap.Width, flattenedBitmap.Height,
+                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
+                using (var convertCanvas = new SkiaSharp.SKCanvas(unpremulFlattened))
+                {
+                    convertCanvas.DrawBitmap(flattenedBitmap, 0, 0);
+                }
+
+                var pixels = unpremulFlattened.Pixels;
+                var maskPixels = featheredMask.Pixels;
                 var newPixels = new SkiaSharp.SKColor[pixels.Length];
                 for (var i = 0; i < pixels.Length; i++)
                 {
@@ -580,7 +597,7 @@ public partial class ImageEditView : UserControl
 
                 var maskedBitmap = new SkiaSharp.SKBitmap(
                     flattenedBitmap.Width, flattenedBitmap.Height,
-                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
                 maskedBitmap.Pixels = newPixels;
 
                 // Save to temp file
@@ -593,7 +610,8 @@ public partial class ImageEditView : UserControl
                 }
 
                 flattenedBitmap.Dispose();
-                maskBitmap.Dispose();
+                unpremulFlattened.Dispose();
+                featheredMask.Dispose();
                 maskedBitmap.Dispose();
 
                 // Call the ViewModel to process via ComfyUI
@@ -1043,6 +1061,48 @@ public partial class ImageEditView : UserControl
             imageEditor.DrawingBrushBlue);
         drawingTool.BrushSize = imageEditor.DrawingBrushSize;
         drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+    }
+
+    /// <summary>
+    /// Feathers the inpaint mask by dilating it slightly and then applying a
+    /// Gaussian blur. This softens the hard binary brush edges so the inpainting
+    /// model can blend seamlessly at mask boundaries.
+    /// </summary>
+    private static SkiaSharp.SKBitmap FeatherInpaintMask(SkiaSharp.SKBitmap maskBitmap, float featherRadius)
+    {
+        // No feathering requested — return a copy of the original mask
+        if (featherRadius < 0.5f)
+            return maskBitmap.Copy();
+
+        var dilateRadius = Math.Max(1, (int)(featherRadius * 0.5f));
+        var blurSigma = featherRadius;
+
+        // Pass 1: dilate (grow) the mask to expand coverage beyond the painted area
+        var dilated = new SkiaSharp.SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+        using (var canvas = new SkiaSharp.SKCanvas(dilated))
+        {
+            canvas.Clear(SkiaSharp.SKColors.Transparent);
+            using var paint = new SkiaSharp.SKPaint();
+            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateDilate(dilateRadius, dilateRadius);
+            canvas.DrawBitmap(maskBitmap, 0, 0, paint);
+        }
+
+        // Pass 2: blur the dilated mask for a smooth falloff at edges
+        var feathered = new SkiaSharp.SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
+        using (var canvas = new SkiaSharp.SKCanvas(feathered))
+        {
+            canvas.Clear(SkiaSharp.SKColors.Transparent);
+            using var paint = new SkiaSharp.SKPaint();
+            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateBlur(blurSigma, blurSigma);
+            canvas.DrawBitmap(dilated, 0, 0, paint);
+        }
+
+        dilated.Dispose();
+        return feathered;
     }
 
     #region Image Drop Zone Handlers

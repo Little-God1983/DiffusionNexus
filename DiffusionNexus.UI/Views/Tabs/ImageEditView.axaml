@@ -1029,6 +1029,14 @@
                   <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                 </Grid>
                 
+                <!-- Mask Feather -->
+                <TextBlock Text="Mask Feather" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="50" Value="{Binding ImageEditor.InpaintMaskFeather}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintMaskFeatherText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Buttons -->
