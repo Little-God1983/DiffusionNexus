@@ -89,6 +89,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private bool _isInpaintingPanelOpen;
     private float _inpaintBrushSize = 40f;
     private float _inpaintMaskFeather = 10f;
+    private float _inpaintDenoise = 1.0f;
     private bool _isInpaintingBusy;
     private string? _inpaintingStatus;
     private string _inpaintPositivePrompt = string.Empty;
@@ -1487,6 +1488,23 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Formatted mask feather value for display.</summary>
     public string InpaintMaskFeatherText => _inpaintMaskFeather < 0.5f ? "Off" : $"{_inpaintMaskFeather:F0} px";
+
+    /// <summary>Denoise strength (0.0-1.0). Controls how much of the masked area is regenerated. 1.0 = full replacement, lower = preserve more of the original.</summary>
+    public float InpaintDenoise
+    {
+        get => _inpaintDenoise;
+        set
+        {
+            var clamped = Math.Clamp(value, 0f, 1f);
+            if (SetProperty(ref _inpaintDenoise, clamped))
+            {
+                OnPropertyChanged(nameof(InpaintDenoiseText));
+            }
+        }
+    }
+
+    /// <summary>Formatted denoise value for display.</summary>
+    public string InpaintDenoiseText => $"{_inpaintDenoise:F2}";
 
     /// <summary>Positive prompt describing what to generate in the masked areas.</summary>
     public string InpaintPositivePrompt
@@ -3267,6 +3285,7 @@ public partial class ImageEditorViewModel : ObservableObject
                     [InpaintKSamplerNodeId] = node =>
                     {
                         node["inputs"]!["seed"] = seed;
+                        node["inputs"]!["denoise"] = _inpaintDenoise;
                     }
                 });
 

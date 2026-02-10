@@ -1037,6 +1037,14 @@
                   <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintMaskFeatherText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                 </Grid>
                 
+                <!-- Denoise Strength -->
+                <TextBlock Text="Denoise" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="35,*,50">
+                  <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding ImageEditor.InpaintDenoise}" TickFrequency="0.05"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintDenoiseText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                </Grid>
+                
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Buttons -->
