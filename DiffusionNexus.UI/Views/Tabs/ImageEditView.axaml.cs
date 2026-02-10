@@ -144,6 +144,9 @@ public partial class ImageEditView : UserControl
         FileLogger.Log($"[Instance #{_instanceId}] _imageEditorCanvas is valid: {_imageEditorCanvas is not null}");
 
 
+        // Track the last synced inpaint base version to avoid redundant thumbnail creation
+        long lastSyncedInpaintBaseVersion = -1;
+
         // Update dimensions and file info when image changes
         _imageEditorCanvas.ImageChanged += (_, _) =>
         {
@@ -158,12 +161,15 @@ public partial class ImageEditView : UserControl
             imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
             imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
 
-            // Sync inpaint base state (e.g., after LoadImage sets it automatically)
-            var coreHasBase = _imageEditorCanvas.EditorCore.HasInpaintBase;
-            if (coreHasBase != imageEditor.HasInpaintBase)
+            // Only regenerate the thumbnail when the core's inpaint base actually changed
+            var coreVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
+            if (coreVersion != lastSyncedInpaintBaseVersion)
             {
+                lastSyncedInpaintBaseVersion = coreVersion;
                 imageEditor.UpdateInpaintBaseThumbnail(
-                    coreHasBase ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore) : null);
+                    _imageEditorCanvas.EditorCore.HasInpaintBase
+                        ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore)
+                        : null);
             }
         };
 
@@ -531,6 +537,7 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
+            lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
             imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
         };
 
@@ -604,6 +611,7 @@ public partial class ImageEditView : UserControl
                     // Fallback: no base set yet, capture and use current state
                     editorCore.SetInpaintBaseBitmap();
                     baseBitmap = editorCore.GetInpaintBaseBitmap();
+                    lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
                     imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
                 }
 

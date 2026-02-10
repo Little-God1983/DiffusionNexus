@@ -13,6 +13,7 @@ public class ImageEditorCore : IDisposable
     private SKBitmap? _workingBitmap;
     private SKBitmap? _previewBitmap;
     private SKBitmap? _inpaintBaseBitmap;
+    private long _inpaintBaseVersion;
     private LayerStack? _layers;
     private bool _isPreviewActive;
     private bool _disposed;
@@ -2526,6 +2527,7 @@ public class ImageEditorCore : IDisposable
             _inpaintBaseBitmap = _isLayerMode && _layers != null
                 ? _layers.Flatten()
                 : _workingBitmap?.Copy();
+            Interlocked.Increment(ref _inpaintBaseVersion);
         }
     }
 
@@ -2546,6 +2548,11 @@ public class ImageEditorCore : IDisposable
     public bool HasInpaintBase => _inpaintBaseBitmap is not null;
 
     /// <summary>
+    /// Monotonically increasing version that changes whenever the inpaint base is set or cleared.
+    /// </summary>
+    public long InpaintBaseVersion => Interlocked.Read(ref _inpaintBaseVersion);
+
+    /// <summary>
     /// Clears the stored inpaint base bitmap.
     /// </summary>
     public void ClearInpaintBase()
@@ -2554,6 +2561,7 @@ public class ImageEditorCore : IDisposable
         {
             _inpaintBaseBitmap?.Dispose();
             _inpaintBaseBitmap = null;
+            Interlocked.Increment(ref _inpaintBaseVersion);
         }
     }
 

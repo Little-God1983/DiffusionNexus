@@ -1580,8 +1580,13 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public void UpdateInpaintBaseThumbnail(Avalonia.Media.Imaging.Bitmap? thumbnail)
     {
+        var old = _inpaintBaseThumbnail;
         InpaintBaseThumbnail = thumbnail;
         HasInpaintBase = thumbnail is not null;
+        if (old is not null && !ReferenceEquals(old, thumbnail))
+        {
+            old.Dispose();
+        }
     }
 
     /// <summary>
