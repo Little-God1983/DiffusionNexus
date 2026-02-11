@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
+using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
 using Avalonia.Media;
@@ -28,6 +29,28 @@ public partial class ImageEditorViewModel : ObservableObject
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IImageUpscalingService? _upscalingService;
     private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly EditorServices _services;
+
+    /// <summary>
+    /// Gets the editor services for use by the View layer during migration.
+    /// Services provide decoupled access to viewport, tools, layers, and document operations.
+    /// </summary>
+    public EditorServices Services => _services;
+
+    /// <summary>
+    /// Sub-ViewModel for the layer panel (layer list, selection, commands).
+    /// </summary>
+    public LayerPanelViewModel LayerPanel { get; }
+
+    /// <summary>
+    /// Sub-ViewModel for color balance and brightness/contrast tools.
+    /// </summary>
+    public ColorToolsViewModel ColorTools { get; }
+
+    /// <summary>
+    /// Sub-ViewModel for drawing and shape tools.
+    /// </summary>
+    public DrawingToolsViewModel DrawingTools { get; }
 
     private string? _currentImagePath;
     private string? _imageFileName;
@@ -138,6 +161,7 @@ public partial class ImageEditorViewModel : ObservableObject
             {
                 HasImage = !string.IsNullOrEmpty(value);
                 ImageFileName = HasImage ? Path.GetFileName(value) : null;
+                LayerPanel.CurrentImagePath = value;
                 NotifyCommandsCanExecuteChanged();
             }
         }
@@ -1665,6 +1689,7 @@ public partial class ImageEditorViewModel : ObservableObject
                     // Deactivate other tools when crop is activated
                     DeactivateOtherTools(nameof(IsCropToolActive));
                 }
+                ColorTools.IsCropToolActive = value;
                 ToggleCropToolCommand.NotifyCanExecuteChanged();
                 ApplyCropCommand.NotifyCanExecuteChanged();
                 CancelCropCommand.NotifyCanExecuteChanged();
@@ -2188,6 +2213,11 @@ public partial class ImageEditorViewModel : ObservableObject
         GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
         UseCurrentAsInpaintBaseCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
+
+        // Notify sub-ViewModels
+        ColorTools.RefreshCommandStates();
+        DrawingTools.RefreshCommandStates();
+        LayerPanel.NotifyCommandsCanExecuteChanged();
     }
 
     #region Rating Command Implementations
@@ -2346,12 +2376,34 @@ public partial class ImageEditorViewModel : ObservableObject
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IImageUpscalingService? upscalingService = null,
-        IComfyUIWrapperService? comfyUiService = null)
+        IComfyUIWrapperService? comfyUiService = null,
+        EditorServices? services = null)
     {
         _eventAggregator = eventAggregator;
         _backgroundRemovalService = backgroundRemovalService;
         _upscalingService = upscalingService;
         _comfyUiService = comfyUiService;
+        _services = services ?? EditorServiceFactory.Create();
+
+        // Initialize sub-ViewModels
+        LayerPanel = new LayerPanelViewModel(() => HasImage);
+        ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
+        DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
+
+        // Wire sub-ViewModel events to parent
+        WireSubViewModelEvents();
+
+        // Subscribe to service events for cross-cutting concerns
+        _services.Viewport.Changed += (_, _) =>
+        {
+            ZoomPercentage = _services.Viewport.ZoomPercentage;
+            IsFitMode = _services.Viewport.IsFitMode;
+        };
+
+        _services.Tools.ActiveToolChanged += (_, e) =>
+        {
+            NotifyToolCommandsCanExecuteChanged();
+        };
 
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
@@ -2445,6 +2497,60 @@ public partial class ImageEditorViewModel : ObservableObject
         MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => HasImage && Layers.Count > 1);
         FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => HasImage && Layers.Count > 1);
         SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => HasImage);
+    }
+
+    /// <summary>
+    /// Wires events from sub-ViewModels to parent ViewModel for event forwarding
+    /// and cross-cutting concerns during the incremental migration.
+    /// </summary>
+    private void WireSubViewModelEvents()
+    {
+        // LayerPanel: forward events that the View currently subscribes to on the parent
+        LayerPanel.LayerSelectionChanged += (_, layer) => LayerSelectionChanged?.Invoke(this, layer);
+        LayerPanel.SyncLayersRequested += (_, _) => SyncLayersRequested?.Invoke(this, EventArgs.Empty);
+        LayerPanel.SaveLayeredTiffRequested += path => SaveLayeredTiffRequested?.Invoke(path) ?? Task.FromResult(false);
+        LayerPanel.EnableLayerModeRequested += (_, enable) => EnableLayerModeRequested?.Invoke(this, enable);
+        LayerPanel.AddLayerRequested += (_, _) => AddLayerRequested?.Invoke(this, EventArgs.Empty);
+        LayerPanel.DeleteLayerRequested += (_, layer) => DeleteLayerRequested?.Invoke(this, layer);
+        LayerPanel.DuplicateLayerRequested += (_, layer) => DuplicateLayerRequested?.Invoke(this, layer);
+        LayerPanel.MoveLayerUpRequested += (_, layer) => MoveLayerUpRequested?.Invoke(this, layer);
+        LayerPanel.MoveLayerDownRequested += (_, layer) => MoveLayerDownRequested?.Invoke(this, layer);
+        LayerPanel.MergeLayerDownRequested += (_, layer) => MergeLayerDownRequested?.Invoke(this, layer);
+        LayerPanel.MergeVisibleLayersRequested += (_, _) => MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
+        LayerPanel.FlattenLayersRequested += (_, _) => FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
+        LayerPanel.SaveCompleted += (_, msg) => StatusMessage = msg;
+
+        // ColorTools: forward events
+        ColorTools.ApplyColorBalanceRequested += (_, s) => ApplyColorBalanceRequested?.Invoke(this, s);
+        ColorTools.ColorBalancePreviewRequested += (_, s) => ColorBalancePreviewRequested?.Invoke(this, s);
+        ColorTools.CancelColorBalancePreviewRequested += (_, _) => CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
+        ColorTools.ApplyBrightnessContrastRequested += (_, s) => ApplyBrightnessContrastRequested?.Invoke(this, s);
+        ColorTools.BrightnessContrastPreviewRequested += (_, s) => BrightnessContrastPreviewRequested?.Invoke(this, s);
+        ColorTools.CancelBrightnessContrastPreviewRequested += (_, _) => CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
+        ColorTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        ColorTools.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive)
+                _services.Tools.Activate(args.ToolId);
+            else
+                _services.Tools.Deactivate(args.ToolId);
+        };
+
+        // DrawingTools: forward events
+        DrawingTools.DrawingToolActivated += (_, isActive) => DrawingToolActivated?.Invoke(this, isActive);
+        DrawingTools.DrawingSettingsChanged += (_, settings) => DrawingSettingsChanged?.Invoke(this, settings);
+        DrawingTools.ShapeSettingsChanged += (_, _) => ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
+        DrawingTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        DrawingTools.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        DrawingTools.CommitPlacedShapeRequested += (_, _) => CommitPlacedShapeRequested?.Invoke(this, EventArgs.Empty);
+        DrawingTools.CancelPlacedShapeRequested += (_, _) => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty);
+        DrawingTools.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive)
+                _services.Tools.Activate(args.ToolId);
+            else
+                _services.Tools.Deactivate(args.ToolId);
+        };
     }
 
     #region Public Methods (View wiring)
@@ -2816,10 +2922,12 @@ public partial class ImageEditorViewModel : ObservableObject
         IsCropToolActive = !IsCropToolActive;
         if (IsCropToolActive)
         {
+            _services.Tools.Activate(ToolIds.Crop);
             CropToolActivated?.Invoke(this, EventArgs.Empty);
         }
         else
         {
+            _services.Tools.Deactivate(ToolIds.Crop);
             CropToolDeactivated?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -2945,10 +3053,29 @@ public partial class ImageEditorViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
-    private void ExecuteZoomIn() => ZoomInRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomOut() => ZoomOutRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomToFit() => ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
-    private void ExecuteZoomToActual() => ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
+    private void ExecuteZoomIn()
+    {
+        _services.Viewport.ZoomIn();
+        ZoomInRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomOut()
+    {
+        _services.Viewport.ZoomOut();
+        ZoomOutRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomToFit()
+    {
+        _services.Viewport.ZoomToFit();
+        ZoomToFitRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ExecuteZoomToActual()
+    {
+        _services.Viewport.ZoomToActual();
+        ZoomToActualRequested?.Invoke(this, EventArgs.Empty);
+    }
     private void ExecuteRotateLeft() => RotateLeftRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteRotateRight() => RotateRightRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteRotate180() => Rotate180Requested?.Invoke(this, EventArgs.Empty);
@@ -2958,6 +3085,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteToggleColorBalance()
     {
         IsColorBalancePanelOpen = !IsColorBalancePanelOpen;
+        if (IsColorBalancePanelOpen)
+            _services.Tools.Activate(ToolIds.ColorBalance);
+        else
+            _services.Tools.Deactivate(ToolIds.ColorBalance);
     }
 
     private void ExecuteApplyColorBalance()
@@ -2973,6 +3104,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteToggleBrightnessContrast()
     {
         IsBrightnessContrastPanelOpen = !IsBrightnessContrastPanelOpen;
+        if (IsBrightnessContrastPanelOpen)
+            _services.Tools.Activate(ToolIds.BrightnessContrast);
+        else
+            _services.Tools.Deactivate(ToolIds.BrightnessContrast);
     }
 
     private void ExecuteApplyBrightnessContrast()
@@ -3104,6 +3239,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteToggleBackgroundFill()
     {
         IsBackgroundFillPanelOpen = !IsBackgroundFillPanelOpen;
+        if (IsBackgroundFillPanelOpen)
+            _services.Tools.Activate(ToolIds.BackgroundFill);
+        else
+            _services.Tools.Deactivate(ToolIds.BackgroundFill);
     }
 
     private void ExecuteApplyBackgroundFill()
@@ -3114,6 +3253,10 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteToggleDrawingTool()
     {
         IsDrawingToolActive = !IsDrawingToolActive;
+        if (IsDrawingToolActive)
+            _services.Tools.Activate(ToolIds.Drawing);
+        else
+            _services.Tools.Deactivate(ToolIds.Drawing);
     }
 
     private bool CanExecuteUpscaleImage() => 
@@ -3217,6 +3360,10 @@ public partial class ImageEditorViewModel : ObservableObject
             OnPropertyChanged(nameof(IsCropToolActive));
             CropToolDeactivated?.Invoke(this, EventArgs.Empty);
         }
+
+        // Delegate to sub-ViewModels
+        ColorTools.CloseAllPanels();
+        DrawingTools.CloseAll();
 
         // Close color balance panel and cancel any preview
         if (_isColorBalancePanelOpen)
