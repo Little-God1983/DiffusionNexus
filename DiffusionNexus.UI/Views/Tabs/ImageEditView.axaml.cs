@@ -158,8 +158,8 @@ public partial class ImageEditView : UserControl
                 _imageEditorCanvas.FileSizeBytes);
             
             // Sync layer state when image changes (e.g., after load)
-            imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
 
             // Only regenerate the thumbnail when the core's inpaint base actually changed
             var coreVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
@@ -508,11 +508,11 @@ public partial class ImageEditView : UserControl
         {
             var drawingTool = _imageEditorCanvas.EditorCore.DrawingTool;
             drawingTool.BrushColor = new SkiaSharp.SKColor(
-                imageEditor.DrawingBrushRed,
-                imageEditor.DrawingBrushGreen,
-                imageEditor.DrawingBrushBlue);
-            drawingTool.BrushSize = imageEditor.DrawingBrushSize;
-            drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+                imageEditor.DrawingTools.DrawingBrushRed,
+                imageEditor.DrawingTools.DrawingBrushGreen,
+                imageEditor.DrawingTools.DrawingBrushBlue);
+            drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
+            drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
         };
 
         // Handle placed shape commit/cancel from ViewModel
@@ -529,7 +529,7 @@ public partial class ImageEditView : UserControl
         // Sync placed shape state from canvas to ViewModel
         _imageEditorCanvas.PlacedShapeStateChanged += (_, _) =>
         {
-            imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
+            imageEditor.DrawingTools.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
         };
 
         // Handle capture of the current flattened state as inpaint base
@@ -589,7 +589,7 @@ public partial class ImageEditView : UserControl
         imageEditor.ClearInpaintMaskRequested += (_, _) =>
         {
             _imageEditorCanvas.EditorCore.ClearInpaintMask();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
 
@@ -734,14 +734,14 @@ public partial class ImageEditView : UserControl
             }
 
             editorCore.AddLayerFromBitmap(resultBitmap, "Inpaint Result");
-            imageEditor.SyncLayers(editorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(editorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
 
         // Sync layers when inpaint mask layer is created or modified
         _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
         {
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
         };
 
         // Handle save as dialog request
@@ -988,8 +988,7 @@ public partial class ImageEditView : UserControl
                 _imageEditorCanvas.EditorCore.DisableLayerMode();
             }
             
-            // Sync layers with both parent and sub-ViewModel
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            // Sync layers with sub-ViewModel
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -998,7 +997,6 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.AddLayer();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1007,7 +1005,6 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.RemoveLayer(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1016,7 +1013,6 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.DuplicateLayer(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1027,7 +1023,6 @@ public partial class ImageEditView : UserControl
             if (_imageEditorCanvas is null) return;
             // UI "up" means towards front (higher index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerUp(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1037,7 +1032,6 @@ public partial class ImageEditView : UserControl
             if (_imageEditorCanvas is null) return;
             // UI "down" means towards back (lower index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerDown(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1046,7 +1040,6 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeLayerDown(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1055,7 +1048,6 @@ public partial class ImageEditView : UserControl
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeVisibleLayers();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1065,7 +1057,6 @@ public partial class ImageEditView : UserControl
             if (_imageEditorCanvas is null) return;
             // Flatten all layers into one layer (keeps layer mode active)
             _imageEditorCanvas.EditorCore.FlattenAllLayers();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
@@ -1146,11 +1137,11 @@ public partial class ImageEditView : UserControl
     private static void ApplyDrawingSettingsToTool(ImageEditorViewModel imageEditor, ImageEditor.DrawingTool drawingTool)
     {
         drawingTool.BrushColor = new SkiaSharp.SKColor(
-            imageEditor.DrawingBrushRed,
-            imageEditor.DrawingBrushGreen,
-            imageEditor.DrawingBrushBlue);
-        drawingTool.BrushSize = imageEditor.DrawingBrushSize;
-        drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+            imageEditor.DrawingTools.DrawingBrushRed,
+            imageEditor.DrawingTools.DrawingBrushGreen,
+            imageEditor.DrawingTools.DrawingBrushBlue);
+        drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
+        drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
     }
 
     /// <summary>
@@ -1338,8 +1329,8 @@ public partial class ImageEditView : UserControl
                 vm.ImageEditor.CurrentImagePath = filePath;
                 
                 // Sync layer state with ViewModel
-                vm.ImageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
-                vm.ImageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                vm.ImageEditor.LayerPanel.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+                vm.ImageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
                 
                 vm.ImageEditor.StatusMessage = IsTiffFile(filePath)
                     ? $"Loaded: {Path.GetFileName(filePath)} ({_imageEditorCanvas.EditorCore.Layers?.Count ?? 1} layers)"
