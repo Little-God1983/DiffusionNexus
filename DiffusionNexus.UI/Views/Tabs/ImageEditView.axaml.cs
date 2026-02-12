@@ -27,6 +27,9 @@ public partial class ImageEditView : UserControl
     private Border? _imageDropZone;
     private Button? _openImageButton;
     private bool _eventsWired;
+    private long _lastSyncedInpaintBaseVersion = -1;
+    private ImageEditorViewModel? _wiredImageEditor;
+    private readonly List<Action> _eventCleanup = [];
 
 
     public ImageEditView()
@@ -63,17 +66,50 @@ public partial class ImageEditView : UserControl
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         FileLogger.Log($"[Instance #{_instanceId}] OnDataContextChanged called, _eventsWired={_eventsWired}, DataContext type={(DataContext?.GetType().Name ?? "null")}");
-        
-        if (_eventsWired)
-        {
-            FileLogger.Log($"[Instance #{_instanceId}] Already wired, skipping");
-            return;
-        }
+
+        // Unwire previous subscriptions before wiring new ones
+        UnwireEvents();
 
         if (DataContext is ImageEditTabViewModel vm)
         {
             TryWireUpImageEditorEvents(vm);
         }
+    }
+
+    /// <summary>
+    /// Unsubscribes all tracked event handlers and clears ViewModel callbacks.
+    /// </summary>
+    private void UnwireEvents()
+    {
+        foreach (var cleanup in _eventCleanup)
+            cleanup();
+        _eventCleanup.Clear();
+
+        if (_wiredImageEditor is not null)
+        {
+            _wiredImageEditor.SaveImageFunc = null;
+            _wiredImageEditor.ShowSaveFileDialogFunc = null;
+            _wiredImageEditor = null;
+        }
+
+        _eventsWired = false;
+    }
+
+    /// <inheritdoc />
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        UnwireEvents();
+
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageDropZone.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageDropZone.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
+        if (_openImageButton is not null)
+            _openImageButton.Click -= OnOpenImageButtonClick;
     }
 
     private void TryWireUpImageEditorEvents(ImageEditTabViewModel vm)
@@ -122,7 +158,6 @@ public partial class ImageEditView : UserControl
     {
         FileLogger.Log($">>> WireUpImageEditorEvents ENTRY - Instance #{_instanceId}, _eventsWired={_eventsWired}");
         
-        // Double-check guard with logging
         if (_eventsWired)
         {
             FileLogger.LogWarning($"[Instance #{_instanceId}] WireUpImageEditorEvents called but already wired! Skipping.");
@@ -135,289 +170,268 @@ public partial class ImageEditView : UserControl
             return;
         }
         
-        // Set flag FIRST before doing anything else
         _eventsWired = true;
         
         var imageEditor = vm.ImageEditor;
+        _wiredImageEditor = imageEditor;
+        
+        // Wire the shared EditorServices into the control's core
+        _imageEditorCanvas.SetEditorServices(imageEditor.Services);
         
         FileLogger.Log($"[Instance #{_instanceId}] Wiring events for CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
-        FileLogger.Log($"[Instance #{_instanceId}] _imageEditorCanvas is valid: {_imageEditorCanvas is not null}");
 
 
-        // Track the last synced inpaint base version to avoid redundant thumbnail creation
-        long lastSyncedInpaintBaseVersion = -1;
+        WireCanvasEvents(imageEditor);
+        WireCropEvents(imageEditor);
+        WireZoomAndTransformEvents(imageEditor);
+        WireColorToolEvents(imageEditor);
+        WireBackgroundRemovalEvents(imageEditor);
+        WireBackgroundFillEvents(imageEditor);
+        WireUpscalingEvents(imageEditor);
+        WireDrawingEvents(imageEditor);
+        WireInpaintingEvents(imageEditor);
+        WireSaveAndExportEvents(vm, imageEditor);
+        WireLayerEvents(vm, imageEditor);
+        WireZoomSlider();
+    }
 
-        // Update dimensions and file info when image changes
-        _imageEditorCanvas.ImageChanged += (_, _) =>
+    private void WireCanvasEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onImageChanged = (_, _) =>
         {
             imageEditor.UpdateDimensions(
-                _imageEditorCanvas.ImageWidth,
+                _imageEditorCanvas!.ImageWidth,
                 _imageEditorCanvas.ImageHeight);
             imageEditor.UpdateFileInfo(
                 _imageEditorCanvas.ImageDpi,
                 _imageEditorCanvas.FileSizeBytes);
             
-            // Sync layer state when image changes (e.g., after load)
-            imageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
 
-            // Only regenerate the thumbnail when the core's inpaint base actually changed
             var coreVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
-            if (coreVersion != lastSyncedInpaintBaseVersion)
+            if (coreVersion != _lastSyncedInpaintBaseVersion)
             {
-                lastSyncedInpaintBaseVersion = coreVersion;
-                imageEditor.UpdateInpaintBaseThumbnail(
+                _lastSyncedInpaintBaseVersion = coreVersion;
+                imageEditor.Inpainting.UpdateBaseThumbnail(
                     _imageEditorCanvas.EditorCore.HasInpaintBase
                         ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore)
                         : null);
             }
         };
+        _imageEditorCanvas!.ImageChanged += onImageChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.ImageChanged -= onImageChanged);
 
-        // Update zoom info when zoom changes
-        _imageEditorCanvas.ZoomChanged += (_, _) =>
+        EventHandler onZoomChanged = (_, _) =>
         {
             imageEditor.UpdateZoomInfo(
-                _imageEditorCanvas.ZoomPercentage,
+                _imageEditorCanvas!.ZoomPercentage,
                 _imageEditorCanvas.IsFitMode);
         };
+        _imageEditorCanvas.ZoomChanged += onZoomChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.ZoomChanged -= onZoomChanged);
 
-        // Handle crop applied
-        _imageEditorCanvas.CropApplied += (_, _) =>
-        {
-            imageEditor.OnCropApplied();
-        };
+        EventHandler onCropApplied = (_, _) => imageEditor.OnCropApplied();
+        _imageEditorCanvas.CropApplied += onCropApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CropApplied -= onCropApplied);
+    }
 
-        // Handle clear/reset requests from ViewModel
-        imageEditor.ClearRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ClearImage();
-        };
+    private void WireCropEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onClear = (_, _) => _imageEditorCanvas!.ClearImage();
+        imageEditor.ClearRequested += onClear;
+        _eventCleanup.Add(() => imageEditor.ClearRequested -= onClear);
 
-        imageEditor.ResetRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ResetToOriginal();
-        };
+        EventHandler onReset = (_, _) => _imageEditorCanvas!.ResetToOriginal();
+        imageEditor.ResetRequested += onReset;
+        _eventCleanup.Add(() => imageEditor.ResetRequested -= onReset);
 
-        // Handle crop tool activation/deactivation
-        imageEditor.CropToolActivated += (_, _) =>
-        {
-            _imageEditorCanvas.ActivateCropTool();
-        };
+        EventHandler onCropActivated = (_, _) => _imageEditorCanvas!.ActivateCropTool();
+        imageEditor.CropToolActivated += onCropActivated;
+        _eventCleanup.Add(() => imageEditor.CropToolActivated -= onCropActivated);
 
-        imageEditor.CropToolDeactivated += (_, _) =>
-        {
-            _imageEditorCanvas.DeactivateCropTool();
-        };
+        EventHandler onCropDeactivated = (_, _) => _imageEditorCanvas!.DeactivateCropTool();
+        imageEditor.CropToolDeactivated += onCropDeactivated;
+        _eventCleanup.Add(() => imageEditor.CropToolDeactivated -= onCropDeactivated);
 
-        // Handle crop apply/cancel requests
-        imageEditor.ApplyCropRequested += (_, _) =>
+        EventHandler onApplyCrop = (_, _) =>
         {
-            if (_imageEditorCanvas.ApplyCrop())
-            {
+            if (_imageEditorCanvas!.ApplyCrop())
                 imageEditor.OnCropApplied();
-            }
         };
+        imageEditor.ApplyCropRequested += onApplyCrop;
+        _eventCleanup.Add(() => imageEditor.ApplyCropRequested -= onApplyCrop);
 
-        imageEditor.CancelCropRequested += (_, _) =>
+        EventHandler onCancelCrop = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.CropTool.ClearCropRegion();
+            _imageEditorCanvas!.EditorCore.CropTool.ClearCropRegion();
             _imageEditorCanvas.DeactivateCropTool();
         };
+        imageEditor.CancelCropRequested += onCancelCrop;
+        _eventCleanup.Add(() => imageEditor.CancelCropRequested -= onCancelCrop);
 
-        // Handle crop fit-to-image request
-        imageEditor.FitCropRequested += (_, _) =>
+        EventHandler onFitCrop = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.CropTool.FitToImage();
+            _imageEditorCanvas!.EditorCore.CropTool.FitToImage();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.FitCropRequested += onFitCrop;
+        _eventCleanup.Add(() => imageEditor.FitCropRequested -= onFitCrop);
 
-        // Handle crop fill-entire-image request
-        imageEditor.FillCropRequested += (_, _) =>
+        EventHandler onFillCrop = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.CropTool.FillImage();
+            _imageEditorCanvas!.EditorCore.CropTool.FillImage();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.FillCropRequested += onFillCrop;
+        _eventCleanup.Add(() => imageEditor.FillCropRequested -= onFillCrop);
 
-        // Handle crop aspect ratio request
-        imageEditor.SetCropAspectRatioRequested += (_, ratio) =>
+        EventHandler<(float W, float H)> onSetAspect = (_, ratio) =>
         {
-            _imageEditorCanvas.EditorCore.CropTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas!.EditorCore.CropTool.SetAspectRatio(ratio.W, ratio.H);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.SetCropAspectRatioRequested += onSetAspect;
+        _eventCleanup.Add(() => imageEditor.SetCropAspectRatioRequested -= onSetAspect);
 
-        // Handle crop aspect ratio switch (W:H <-> H:W)
-        imageEditor.SwitchCropAspectRatioRequested += (_, _) =>
+        EventHandler onSwitchAspect = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.CropTool.SwitchAspectRatio();
+            _imageEditorCanvas!.EditorCore.CropTool.SwitchAspectRatio();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.SwitchCropAspectRatioRequested += onSwitchAspect;
+        _eventCleanup.Add(() => imageEditor.SwitchCropAspectRatioRequested -= onSwitchAspect);
 
-        // Update crop resolution text when the crop region changes
-        _imageEditorCanvas.EditorCore.CropTool.CropRegionChanged += (_, _) =>
+        EventHandler onCropRegionChanged = (_, _) =>
         {
-            var (w, h) = _imageEditorCanvas.EditorCore.CropTool.GetCropPixelDimensions();
+            var (w, h) = _imageEditorCanvas!.EditorCore.CropTool.GetCropPixelDimensions();
             imageEditor.UpdateCropResolution(w, h);
         };
+        _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged += onCropRegionChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged -= onCropRegionChanged);
+    }
 
-        // Handle zoom requests
-        imageEditor.ZoomInRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomIn();
-        };
+    private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onZoomIn = (_, _) => _imageEditorCanvas!.ZoomIn();
+        EventHandler onZoomOut = (_, _) => _imageEditorCanvas!.ZoomOut();
+        EventHandler onZoomFit = (_, _) => _imageEditorCanvas!.ZoomToFit();
+        EventHandler onZoomActual = (_, _) => _imageEditorCanvas!.ZoomToActual();
+        EventHandler onRotateL = (_, _) => _imageEditorCanvas!.EditorCore.RotateLeft();
+        EventHandler onRotateR = (_, _) => _imageEditorCanvas!.EditorCore.RotateRight();
+        EventHandler onRotate180 = (_, _) => _imageEditorCanvas!.EditorCore.Rotate180();
+        EventHandler onFlipH = (_, _) => _imageEditorCanvas!.EditorCore.FlipHorizontal();
+        EventHandler onFlipV = (_, _) => _imageEditorCanvas!.EditorCore.FlipVertical();
 
-        imageEditor.ZoomOutRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomOut();
-        };
+        imageEditor.ZoomInRequested += onZoomIn;
+        imageEditor.ZoomOutRequested += onZoomOut;
+        imageEditor.ZoomToFitRequested += onZoomFit;
+        imageEditor.ZoomToActualRequested += onZoomActual;
+        imageEditor.RotateLeftRequested += onRotateL;
+        imageEditor.RotateRightRequested += onRotateR;
+        imageEditor.Rotate180Requested += onRotate180;
+        imageEditor.FlipHorizontalRequested += onFlipH;
+        imageEditor.FlipVerticalRequested += onFlipV;
 
-        imageEditor.ZoomToFitRequested += (_, _) =>
-        {
-            _imageEditorCanvas.ZoomToFit();
-        };
+        _eventCleanup.Add(() => imageEditor.ZoomInRequested -= onZoomIn);
+        _eventCleanup.Add(() => imageEditor.ZoomOutRequested -= onZoomOut);
+        _eventCleanup.Add(() => imageEditor.ZoomToFitRequested -= onZoomFit);
+        _eventCleanup.Add(() => imageEditor.ZoomToActualRequested -= onZoomActual);
+        _eventCleanup.Add(() => imageEditor.RotateLeftRequested -= onRotateL);
+        _eventCleanup.Add(() => imageEditor.RotateRightRequested -= onRotateR);
+        _eventCleanup.Add(() => imageEditor.Rotate180Requested -= onRotate180);
+        _eventCleanup.Add(() => imageEditor.FlipHorizontalRequested -= onFlipH);
+        _eventCleanup.Add(() => imageEditor.FlipVerticalRequested -= onFlipV);
+    }
 
-        imageEditor.ZoomToActualRequested += (_, _) =>
+    private void WireColorToolEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler<ColorBalanceSettings> onApplyCB = (_, settings) =>
         {
-            _imageEditorCanvas.ZoomToActual();
-        };
-
-        // Handle transform requests
-        imageEditor.RotateLeftRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.RotateLeft();
-        };
-
-        imageEditor.RotateRightRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.RotateRight();
-        };
-
-        imageEditor.Rotate180Requested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.Rotate180();
-        };
-
-        imageEditor.FlipHorizontalRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.FlipHorizontal();
-        };
-
-        imageEditor.FlipVerticalRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.FlipVertical();
-        };
-
-        // Handle color balance requests
-        imageEditor.ApplyColorBalanceRequested += (_, settings) =>
-        {
-            // Clear preview first, then apply to working bitmap
-            _imageEditorCanvas.EditorCore.ClearPreview();
+            _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyColorBalance(settings))
-            {
                 imageEditor.OnColorBalanceApplied();
-            }
             else
-            {
                 imageEditor.StatusMessage = "Failed to apply color balance.";
-            }
         };
+        imageEditor.ColorTools.ApplyColorBalanceRequested += onApplyCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ApplyColorBalanceRequested -= onApplyCB);
 
-        // Handle color balance preview requests (live preview)
-        imageEditor.ColorBalancePreviewRequested += (_, settings) =>
-        {
-            _imageEditorCanvas.EditorCore.SetColorBalancePreview(settings);
-        };
+        EventHandler<ColorBalanceSettings> onPreviewCB = (_, settings) =>
+            _imageEditorCanvas!.EditorCore.SetColorBalancePreview(settings);
+        imageEditor.ColorTools.ColorBalancePreviewRequested += onPreviewCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ColorBalancePreviewRequested -= onPreviewCB);
 
-        // Handle color balance preview cancel
-        imageEditor.CancelColorBalancePreviewRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.ClearPreview();
-        };
+        EventHandler onCancelCB = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.ColorTools.CancelColorBalancePreviewRequested += onCancelCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.CancelColorBalancePreviewRequested -= onCancelCB);
 
-        // Handle brightness/contrast requests
-        imageEditor.ApplyBrightnessContrastRequested += (_, settings) =>
+        EventHandler<BrightnessContrastSettings> onApplyBC = (_, settings) =>
         {
-            // Clear preview first, then apply to working bitmap
-            _imageEditorCanvas.EditorCore.ClearPreview();
+            _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyBrightnessContrast(settings))
-            {
                 imageEditor.OnBrightnessContrastApplied();
-            }
             else
-            {
                 imageEditor.StatusMessage = "Failed to apply brightness/contrast.";
-            }
         };
+        imageEditor.ColorTools.ApplyBrightnessContrastRequested += onApplyBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ApplyBrightnessContrastRequested -= onApplyBC);
 
-        // Handle brightness/contrast preview requests (live preview)
-        imageEditor.BrightnessContrastPreviewRequested += (_, settings) =>
+        EventHandler<BrightnessContrastSettings> onPreviewBC = (_, settings) =>
+            _imageEditorCanvas!.EditorCore.SetBrightnessContrastPreview(settings);
+        imageEditor.ColorTools.BrightnessContrastPreviewRequested += onPreviewBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.BrightnessContrastPreviewRequested -= onPreviewBC);
+
+        EventHandler onCancelBC = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.ColorTools.CancelBrightnessContrastPreviewRequested += onCancelBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.CancelBrightnessContrastPreviewRequested -= onCancelBC);
+    }
+
+    private void WireBackgroundRemovalEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onRemoveBg = async (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.SetBrightnessContrastPreview(settings);
+            var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
+            if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
+
+            await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalAsync(
+                imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.BackgroundRemoval.RemoveBackgroundRequested += onRemoveBg;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.RemoveBackgroundRequested -= onRemoveBg);
 
-        // Handle brightness/contrast preview cancel
-        imageEditor.CancelBrightnessContrastPreviewRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.ClearPreview();
-        };
-
-        // Handle background removal requests
-        imageEditor.RemoveBackgroundRequested += async (_, _) =>
-        {
-            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
-            if (imageData is null)
-            {
-                imageEditor.StatusMessage = "No image loaded";
-                return;
-            }
-
-            await imageEditor.ProcessBackgroundRemovalAsync(
-                imageData.Value.Data,
-                imageData.Value.Width,
-                imageData.Value.Height);
-        };
-
-        // Handle background removal completed
-        imageEditor.BackgroundRemovalCompleted += (_, result) =>
+        EventHandler<BackgroundRemovalResult> onBgCompleted = (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
-                // Apply the mask directly to the working bitmap
-                if (_imageEditorCanvas.EditorCore.ApplyBackgroundMask(result.MaskData, result.Width, result.Height))
-                {
-                    imageEditor.OnBackgroundRemovalApplied();
-                }
+                if (_imageEditorCanvas!.EditorCore.ApplyBackgroundMask(result.MaskData, result.Width, result.Height))
+                    imageEditor.BackgroundRemoval.OnBackgroundRemovalApplied();
                 else
-                {
                     imageEditor.StatusMessage = "Failed to apply background removal mask";
-                }
             }
         };
+        imageEditor.BackgroundRemoval.BackgroundRemovalCompleted += onBgCompleted;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.BackgroundRemovalCompleted -= onBgCompleted);
 
-        // Handle layer-based background removal requests
-        imageEditor.RemoveBackgroundToLayerRequested += async (_, _) =>
+        EventHandler onRemoveBgToLayer = async (_, _) =>
         {
-            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
-            if (imageData is null)
-            {
-                imageEditor.StatusMessage = "No image loaded";
-                return;
-            }
+            var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
+            if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
 
-            await imageEditor.ProcessBackgroundRemovalToLayerAsync(
-                imageData.Value.Data,
-                imageData.Value.Width,
-                imageData.Value.Height);
+            await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalToLayerAsync(
+                imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested += onRemoveBgToLayer;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested -= onRemoveBgToLayer);
 
-        // Handle layer-based background removal completed
-        imageEditor.BackgroundRemovalToLayerCompleted += (_, result) =>
+        EventHandler<BackgroundRemovalResult> onBgLayerCompleted = (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
-                // Apply the mask as layers (creates foreground + background layers)
-                if (_imageEditorCanvas.EditorCore.ApplyBackgroundMaskWithLayers(result.MaskData, result.Width, result.Height))
+                if (_imageEditorCanvas!.EditorCore.ApplyBackgroundMaskWithLayers(result.MaskData, result.Width, result.Height))
                 {
-                    imageEditor.OnBackgroundRemovalToLayerApplied();
+                    imageEditor.BackgroundRemoval.OnBackgroundRemovalToLayerApplied();
+                    imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
                 }
                 else
                 {
@@ -425,63 +439,55 @@ public partial class ImageEditView : UserControl
                 }
             }
         };
+        imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted += onBgLayerCompleted;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted -= onBgLayerCompleted);
+    }
 
-        // Handle background fill preview requests (live preview)
-        imageEditor.BackgroundFillPreviewRequested += (_, settings) =>
-        {
-            _imageEditorCanvas.EditorCore.SetBackgroundFillPreview(settings);
-        };
+    private void WireBackgroundFillEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler<BackgroundFillSettings> onPreview = (_, settings) =>
+            _imageEditorCanvas!.EditorCore.SetBackgroundFillPreview(settings);
+        imageEditor.BackgroundFill.PreviewRequested += onPreview;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.PreviewRequested -= onPreview);
 
-        // Handle background fill preview cancel
-        imageEditor.CancelBackgroundFillPreviewRequested += (_, _) =>
-        {
-            _imageEditorCanvas.EditorCore.ClearPreview();
-        };
+        EventHandler onCancelPreview = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.BackgroundFill.CancelPreviewRequested += onCancelPreview;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.CancelPreviewRequested -= onCancelPreview);
 
-        // Handle apply background fill
-        imageEditor.ApplyBackgroundFillRequested += (_, settings) =>
+        EventHandler<BackgroundFillSettings> onApply = (_, settings) =>
         {
-            // Clear preview first, then apply to working bitmap
-            _imageEditorCanvas.EditorCore.ClearPreview();
+            _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyBackgroundFill(settings))
-            {
-                imageEditor.OnBackgroundFillApplied();
-            }
+                imageEditor.BackgroundFill.OnFillApplied();
             else
-            {
                 imageEditor.StatusMessage = "Failed to apply background fill";
-            }
         };
+        imageEditor.BackgroundFill.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.ApplyRequested -= onApply);
+    }
 
-        // Handle upscaling requests
-        imageEditor.UpscaleImageRequested += async (_, _) =>
+    private void WireUpscalingEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onUpscale = async (_, _) =>
         {
-            var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
-            if (imageData is null)
-            {
-                imageEditor.StatusMessage = "No image loaded";
-                return;
-            }
+            var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
+            if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
 
-            await imageEditor.ProcessUpscalingAsync(
-                imageData.Value.Data,
-                imageData.Value.Width,
-                imageData.Value.Height);
+            await imageEditor.Upscaling.ProcessUpscalingAsync(
+                imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.Upscaling.UpscaleRequested += onUpscale;
+        _eventCleanup.Add(() => imageEditor.Upscaling.UpscaleRequested -= onUpscale);
 
-        // Handle upscaling completed
-        imageEditor.UpscalingCompleted += (_, result) =>
+        EventHandler<ImageUpscalingResult> onUpscaleCompleted = (_, result) =>
         {
             if (result.Success && result.ImageData is not null)
             {
-                // Load the upscaled image (PNG bytes) into the editor
-                if (_imageEditorCanvas.EditorCore.LoadImage(result.ImageData))
+                if (_imageEditorCanvas!.EditorCore.LoadImage(result.ImageData))
                 {
-                    imageEditor.OnUpscalingApplied();
-                    // Update dimensions in ViewModel
+                    imageEditor.Upscaling.OnUpscalingApplied();
                     imageEditor.UpdateDimensions(
-                        _imageEditorCanvas.ImageWidth,
-                        _imageEditorCanvas.ImageHeight);
+                        _imageEditorCanvas.ImageWidth, _imageEditorCanvas.ImageHeight);
                 }
                 else
                 {
@@ -489,112 +495,110 @@ public partial class ImageEditView : UserControl
                 }
             }
         };
+        imageEditor.Upscaling.UpscalingCompleted += onUpscaleCompleted;
+        _eventCleanup.Add(() => imageEditor.Upscaling.UpscalingCompleted -= onUpscaleCompleted);
+    }
 
-        // Handle drawing tool activation/deactivation and settings changes
-        imageEditor.DrawingToolActivated += (_, isActive) =>
+    private void WireDrawingEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler<bool> onDrawingActivated = (_, isActive) =>
         {
-            var drawingTool = _imageEditorCanvas.EditorCore.DrawingTool;
+            var drawingTool = _imageEditorCanvas!.EditorCore.DrawingTool;
             drawingTool.IsActive = isActive;
-            
             if (isActive)
-            {
-                // Apply current settings to the drawing tool
                 ApplyDrawingSettingsToTool(imageEditor, drawingTool);
-            }
         };
+        imageEditor.DrawingTools.DrawingToolActivated += onDrawingActivated;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.DrawingToolActivated -= onDrawingActivated);
 
-        // Handle drawing settings changes (color, size, shape)
-        imageEditor.DrawingSettingsChanged += (_, settings) =>
+        EventHandler<ImageEditor.DrawingSettings> onSettingsChanged = (_, _) =>
         {
-            var drawingTool = _imageEditorCanvas.EditorCore.DrawingTool;
+            var drawingTool = _imageEditorCanvas!.EditorCore.DrawingTool;
             drawingTool.BrushColor = new SkiaSharp.SKColor(
-                imageEditor.DrawingBrushRed,
-                imageEditor.DrawingBrushGreen,
-                imageEditor.DrawingBrushBlue);
-            drawingTool.BrushSize = imageEditor.DrawingBrushSize;
-            drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+                imageEditor.DrawingTools.DrawingBrushRed,
+                imageEditor.DrawingTools.DrawingBrushGreen,
+                imageEditor.DrawingTools.DrawingBrushBlue);
+            drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
+            drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
         };
+        imageEditor.DrawingTools.DrawingSettingsChanged += onSettingsChanged;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.DrawingSettingsChanged -= onSettingsChanged);
 
-        // Handle placed shape commit/cancel from ViewModel
-        imageEditor.CommitPlacedShapeRequested += (_, _) =>
-        {
-            _imageEditorCanvas.CommitPlacedShape();
-        };
+        EventHandler onCommitShape = (_, _) => _imageEditorCanvas!.CommitPlacedShape();
+        imageEditor.DrawingTools.CommitPlacedShapeRequested += onCommitShape;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.CommitPlacedShapeRequested -= onCommitShape);
 
-        imageEditor.CancelPlacedShapeRequested += (_, _) =>
-        {
-            _imageEditorCanvas.CancelPlacedShape();
-        };
+        EventHandler onCancelShape = (_, _) => _imageEditorCanvas!.CancelPlacedShape();
+        imageEditor.DrawingTools.CancelPlacedShapeRequested += onCancelShape;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.CancelPlacedShapeRequested -= onCancelShape);
 
-        // Sync placed shape state from canvas to ViewModel
-        _imageEditorCanvas.PlacedShapeStateChanged += (_, _) =>
-        {
-            imageEditor.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
-        };
+        EventHandler onPlacedShapeState = (_, _) =>
+            imageEditor.DrawingTools.HasPlacedShape = _imageEditorCanvas!.HasPlacedShape;
+        _imageEditorCanvas!.PlacedShapeStateChanged += onPlacedShapeState;
+        _eventCleanup.Add(() => _imageEditorCanvas!.PlacedShapeStateChanged -= onPlacedShapeState);
+    }
 
-        // Handle capture of the current flattened state as inpaint base
-        imageEditor.SetInpaintBaseRequested += (_, _) =>
+    private void WireInpaintingEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onSetBase = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
-            lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
-            imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
+            _lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
+            imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
         };
+        imageEditor.Inpainting.SetBaseRequested += onSetBase;
+        _eventCleanup.Add(() => imageEditor.Inpainting.SetBaseRequested -= onSetBase);
 
-        // Handle inpaint tool activation/deactivation
-        imageEditor.InpaintToolActivated += (_, isActive) =>
+        EventHandler<bool> onToolActivated = (_, isActive) =>
+            _imageEditorCanvas!.IsInpaintingToolActive = isActive;
+        imageEditor.Inpainting.ToolActivated += onToolActivated;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ToolActivated -= onToolActivated);
+
+        EventHandler onSettingsChanged = (_, _) =>
+            _imageEditorCanvas!.InpaintBrushSize = imageEditor.Inpainting.BrushSize;
+        imageEditor.Inpainting.SettingsChanged += onSettingsChanged;
+        _eventCleanup.Add(() => imageEditor.Inpainting.SettingsChanged -= onSettingsChanged);
+
+        EventHandler<float> onBrushSizeChanged = (_, newSize) =>
+            imageEditor.Inpainting.BrushSize = newSize;
+        _imageEditorCanvas!.InpaintBrushSizeChanged += onBrushSizeChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintBrushSizeChanged -= onBrushSizeChanged);
+
+        EventHandler onGenerateRequested = (_, _) =>
         {
-            _imageEditorCanvas.IsInpaintingToolActive = isActive;
+            if (imageEditor.Inpainting.GenerateCommand.CanExecute(null))
+                imageEditor.Inpainting.GenerateCommand.Execute(null);
         };
+        _imageEditorCanvas.InpaintGenerateRequested += onGenerateRequested;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintGenerateRequested -= onGenerateRequested);
 
-        // Handle inpaint brush settings changes
-        imageEditor.InpaintSettingsChanged += (_, _) =>
-        {
-            _imageEditorCanvas.InpaintBrushSize = imageEditor.InpaintBrushSize;
-        };
-
-        // Sync brush size back to ViewModel when changed via Shift+wheel on the canvas
-        _imageEditorCanvas.InpaintBrushSizeChanged += (_, newSize) =>
-        {
-            imageEditor.InpaintBrushSize = newSize;
-        };
-
-        // Ctrl+Enter on the canvas triggers inpainting generation
-        _imageEditorCanvas.InpaintGenerateRequested += (_, _) =>
-        {
-            if (imageEditor.GenerateInpaintCommand.CanExecute(null))
-            {
-                imageEditor.GenerateInpaintCommand.Execute(null);
-            }
-        };
-
-        // Ctrl+Enter in the inpaint prompt TextBox also triggers generation
         var inpaintPromptTextBox = this.FindControl<TextBox>("InpaintPromptTextBox");
         if (inpaintPromptTextBox is not null)
         {
-            inpaintPromptTextBox.KeyDown += (_, e) =>
+            EventHandler<KeyEventArgs> onKeyDown = (_, e) =>
             {
                 if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
                 {
-                    if (imageEditor.GenerateInpaintCommand.CanExecute(null))
-                    {
-                        imageEditor.GenerateInpaintCommand.Execute(null);
-                    }
+                    if (imageEditor.Inpainting.GenerateCommand.CanExecute(null))
+                        imageEditor.Inpainting.GenerateCommand.Execute(null);
                     e.Handled = true;
                 }
             };
+            inpaintPromptTextBox.KeyDown += onKeyDown;
+            _eventCleanup.Add(() => inpaintPromptTextBox.KeyDown -= onKeyDown);
         }
 
-        // Handle clear inpaint mask
-        imageEditor.ClearInpaintMaskRequested += (_, _) =>
+        EventHandler onClearMask = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.ClearInpaintMask();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas!.EditorCore.ClearInpaintMask();
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.Inpainting.ClearMaskRequested += onClearMask;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ClearMaskRequested -= onClearMask);
 
-        // Handle generate inpaint request — prepare masked image and call ComfyUI
-        imageEditor.GenerateInpaintRequested += async (_, _) =>
+        EventHandler onGenerate = async (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
 
@@ -602,101 +606,37 @@ public partial class ImageEditView : UserControl
             try
             {
                 var editorCore = _imageEditorCanvas.EditorCore;
+                var versionBefore = editorCore.InpaintBaseVersion;
 
-                // Use the stored inpaint base (original gallery image) instead of
-                // flattening all layers, so the base stays consistent across iterations.
-                var baseBitmap = editorCore.GetInpaintBaseBitmap();
-                if (baseBitmap is null)
+                var prepareResult = editorCore.PrepareInpaintMaskedImage(imageEditor.Inpainting.MaskFeather);
+
+                if (editorCore.InpaintBaseVersion != versionBefore)
                 {
-                    // Fallback: no base set yet, capture and use current state
-                    editorCore.SetInpaintBaseBitmap();
-                    baseBitmap = editorCore.GetInpaintBaseBitmap();
-                    lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
-                    imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
+                    _lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
+                    imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
                 }
 
-                if (baseBitmap is null)
+                if (!prepareResult.Success)
                 {
-                    imageEditor.StatusMessage = "No image to inpaint.";
+                    imageEditor.StatusMessage = prepareResult.ErrorMessage;
                     return;
                 }
 
-                // Get the inpaint mask bitmap (white = inpaint, transparent = keep)
-                var maskBitmap = editorCore.GetInpaintMaskBitmap();
-                if (maskBitmap is null)
-                {
-                    imageEditor.StatusMessage = "No inpaint mask painted. Paint over areas to regenerate.";
-                    baseBitmap.Dispose();
-                    return;
-                }
-
-                // Feather the mask: dilate slightly then blur to create soft edges.
-                // Our brush produces hard binary edges, but the workflow's ImageBlur
-                // (sigma=1.0) is too weak to smooth them. Pre-feathering here gives
-                // the inpainting model room to blend at boundaries.
-                var featheredMask = FeatherInpaintMask(maskBitmap, imageEditor.InpaintMaskFeather);
-                maskBitmap.Dispose();
-
-                // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
-                // Use Unpremul so the RGB values are stored straight (not darkened by alpha).
-                // The base bitmap may be Premul, so copy it as Unpremul first to get correct RGB.
-                var unpremulBase = new SkiaSharp.SKBitmap(
-                    baseBitmap.Width, baseBitmap.Height,
-                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
-                using (var convertCanvas = new SkiaSharp.SKCanvas(unpremulBase))
-                {
-                    convertCanvas.DrawBitmap(baseBitmap, 0, 0);
-                }
-
-                var pixels = unpremulBase.Pixels;
-                var maskPixels = featheredMask.Pixels;
-                var newPixels = new SkiaSharp.SKColor[pixels.Length];
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var p = pixels[i];
-                    var maskAlpha = maskPixels[i].Alpha; // white painted area has alpha 255
-                    // Invert: mask white (255) ? image alpha 0 (masked for inpaint)
-                    var newAlpha = (byte)(255 - maskAlpha);
-                    newPixels[i] = new SkiaSharp.SKColor(p.Red, p.Green, p.Blue, newAlpha);
-                }
-
-                var maskedBitmap = new SkiaSharp.SKBitmap(
-                    baseBitmap.Width, baseBitmap.Height,
-                    SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
-                maskedBitmap.Pixels = newPixels;
-
-                // Save to temp file
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
-                using (var image = SkiaSharp.SKImage.FromBitmap(maskedBitmap))
-                using (var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100))
-                using (var stream = File.Create(tempPath))
-                {
-                    data.SaveTo(stream);
-                }
+                await File.WriteAllBytesAsync(tempPath, prepareResult.MaskedImagePng!);
 
-                baseBitmap.Dispose();
-                unpremulBase.Dispose();
-                featheredMask.Dispose();
-                maskedBitmap.Dispose();
-
-                // If compare mode is pending, save the base as the "before" image for the comparer
-                if (imageEditor.IsCompareModePending)
+                if (imageEditor.Inpainting.IsCompareModePending)
                 {
-                    var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
-                    var beforeBitmap = editorCore.GetInpaintBaseBitmap();
-                    if (beforeBitmap is not null)
+                    var beforePng = editorCore.GetInpaintBaseAsPng();
+                    if (beforePng is not null)
                     {
-                        using var beforeImage = SkiaSharp.SKImage.FromBitmap(beforeBitmap);
-                        using var beforeData = beforeImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
-                        using var beforeStream = File.Create(beforePath);
-                        beforeData.SaveTo(beforeStream);
-                        beforeBitmap.Dispose();
-                        imageEditor.SetCompareBeforeImagePath(beforePath);
+                        var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
+                        await File.WriteAllBytesAsync(beforePath, beforePng);
+                        imageEditor.Inpainting.SetCompareBeforeImagePath(beforePath);
                     }
                 }
 
-                // Call the ViewModel to process via ComfyUI
-                await imageEditor.ProcessInpaintAsync(tempPath);
+                await imageEditor.Inpainting.ProcessInpaintAsync(tempPath);
             }
             catch (Exception ex)
             {
@@ -704,13 +644,13 @@ public partial class ImageEditView : UserControl
             }
             finally
             {
-                // Clean up temp file
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
             }
         };
+        imageEditor.Inpainting.GenerateRequested += onGenerate;
+        _eventCleanup.Add(() => imageEditor.Inpainting.GenerateRequested -= onGenerate);
 
-        // Handle inpaint result — load the result image as a new layer
-        imageEditor.InpaintResultReady += (_, imageBytes) =>
+        EventHandler<byte[]> onResultReady = (_, imageBytes) =>
         {
             if (_imageEditorCanvas is null) return;
 
@@ -722,7 +662,6 @@ public partial class ImageEditView : UserControl
                 return;
             }
 
-            // Resize result to match current image dimensions if needed
             if (resultBitmap.Width != editorCore.Width || resultBitmap.Height != editorCore.Height)
             {
                 var resized = new SkiaSharp.SKBitmap(editorCore.Width, editorCore.Height);
@@ -734,360 +673,179 @@ public partial class ImageEditView : UserControl
             }
 
             editorCore.AddLayerFromBitmap(resultBitmap, "Inpaint Result");
-            imageEditor.SyncLayers(editorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(editorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.Inpainting.ResultReady += onResultReady;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ResultReady -= onResultReady);
 
-        // Sync layers when inpaint mask layer is created or modified
-        _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
+        EventHandler onMaskChanged = (_, _) =>
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
+        _imageEditorCanvas.InpaintMaskChanged += onMaskChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintMaskChanged -= onMaskChanged);
+    }
+
+    private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
+    {
+        // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
+        imageEditor.SaveImageFunc = path =>
+            _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
+
+        imageEditor.ShowSaveFileDialogFunc = async (title, suggestedFileName, filter) =>
         {
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            if (vm.DialogService is null) return null;
+            return await vm.DialogService.ShowSaveFileDialogAsync(title, suggestedFileName, filter);
         };
 
-        // Handle save as dialog request
-        imageEditor.SaveAsDialogRequested += async () =>
+        Func<Task<SaveAsResult>> onSaveAsDialog = async () =>
         {
-            FileLogger.Log($"[Instance #{_instanceId}] SaveAsDialogRequested handler invoked");
-            FileLogger.Log($"[Instance #{_instanceId}] CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
-            FileLogger.Log($"[Instance #{_instanceId}] About to show dialog...");
-            
             if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
-            {
-                FileLogger.LogWarning($"[Instance #{_instanceId}] DialogService or CurrentImagePath is null, returning Cancelled");
                 return SaveAsResult.Cancelled();
-            }
 
-            var preselectedDatasetName = vm.SelectedEditorDataset?.Name;
-            var preselectedVersion = vm.SelectedEditorVersion?.Version;
-
-            var result = await vm.DialogService.ShowSaveAsDialogAsync(
-                imageEditor.CurrentImagePath, 
+            return await vm.DialogService.ShowSaveAsDialogAsync(
+                imageEditor.CurrentImagePath,
                 vm.EditorDatasets.Where(d => !d.IsTemporary),
-                preselectedDatasetName,
-                preselectedVersion);
-            FileLogger.LogExit($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
-            return result;
-
-
+                vm.SelectedEditorDataset?.Name,
+                vm.SelectedEditorVersion?.Version);
         };
+        imageEditor.SaveAsDialogRequested += onSaveAsDialog;
+        _eventCleanup.Add(() => imageEditor.SaveAsDialogRequested -= onSaveAsDialog);
 
-
-        // Handle actual save after dialog confirmation
-        imageEditor.SaveAsRequested += (_, result) =>
+        Func<Task<bool>> onOverwriteConfirm = async () =>
         {
-            FileLogger.LogEntry($"IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}, Rating={result.Rating}, Destination={result.Destination}");
-            FileLogger.Log($"CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
-            
-            if (result.IsCancelled || string.IsNullOrWhiteSpace(result.FileName) || imageEditor.CurrentImagePath is null)
-            {
-                FileLogger.Log("Result is cancelled or invalid, returning");
-                return;
-            }
-
-            // Verify the canvas control is available
-            if (_imageEditorCanvas is null)
-            {
-                FileLogger.LogError("_imageEditorCanvas is null");
-                imageEditor.StatusMessage = "Image editor not initialized.";
-                return;
-            }
-            
-            string newPath;
-            var extension = Path.GetExtension(imageEditor.CurrentImagePath);
-
-            if (result.Destination == SaveAsDestination.OriginFolder)
-            {
-                var directory = Path.GetDirectoryName(imageEditor.CurrentImagePath);
-                if (string.IsNullOrEmpty(directory))
-                {
-                    FileLogger.LogError("Cannot determine save location - directory is null/empty");
-                    imageEditor.StatusMessage = "Cannot determine save location.";
-                    return;
-                }
-                newPath = Path.Combine(directory, result.FileName + extension);
-            }
-            else
-            {
-                var dataset = result.SelectedDataset;
-                if (dataset == null)
-                {
-                    FileLogger.LogError("SelectedDataset is null for ExistingDataset destination");
-                    imageEditor.StatusMessage = "No dataset selected.";
-                    return;
-                }
-                var version = result.SelectedVersion ?? 1;
-                var datasetFolderPath = dataset.GetVersionFolderPath(version);
-                
-                try
-                {
-                    if (!Directory.Exists(datasetFolderPath))
-                    {
-                        Directory.CreateDirectory(datasetFolderPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    FileLogger.LogError($"Failed to create dataset directory: {datasetFolderPath}", ex);
-                    imageEditor.StatusMessage = "Failed to create dataset directory.";
-                    return;
-                }
-                
-                newPath = Path.Combine(datasetFolderPath, result.FileName + extension);
-            }
-
-            FileLogger.Log($"New path to save: {newPath}");
-
-            // Safety check: file existence is validated in dialog, but check again for race conditions
-            if (File.Exists(newPath))
-            {
-                FileLogger.LogWarning($"File already exists: {newPath}");
-                imageEditor.StatusMessage = $"File '{result.FileName}{extension}' already exists.";
-                return;
-            }
-
-            // Save the image
-            try
-            {
-                FileLogger.Log("Calling EditorCore.SaveImage...");
-                if (_imageEditorCanvas.EditorCore.SaveImage(newPath))
-                {
-                    FileLogger.Log("SaveImage succeeded");
-                    // Save rating to .rating file if not Unrated
-                    SaveRatingToFile(newPath, result.Rating);
-                    
-                    FileLogger.Log("Calling OnSaveAsNewCompleted...");
-                    imageEditor.OnSaveAsNewCompleted(newPath, result.Rating);
-                    FileLogger.Log("OnSaveAsNewCompleted returned");
-                }
-                else
-                {
-                    FileLogger.LogError("SaveImage returned false");
-                    imageEditor.StatusMessage = "Failed to save image.";
-                }
-            }
-            catch (Exception ex)
-            {
-                FileLogger.LogError("Exception during save", ex);
-                imageEditor.StatusMessage = $"Error saving image: {ex.Message}";
-            }
-            
-            FileLogger.LogExit();
-        };
-
-
-        imageEditor.SaveOverwriteConfirmRequested += async () =>
-        {
-            FileLogger.LogEntry();
             if (vm.DialogService is not null)
             {
-                var result = await vm.DialogService.ShowConfirmAsync(
+                return await vm.DialogService.ShowConfirmAsync(
                     "Overwrite Image",
                     "Do you really want to overwrite your original image? This cannot be undone.");
-                FileLogger.LogExit(result.ToString());
-                return result;
             }
-            FileLogger.LogExit("false (DialogService is null)");
             return false;
         };
+        imageEditor.SaveOverwriteConfirmRequested += onOverwriteConfirm;
+        _eventCleanup.Add(() => imageEditor.SaveOverwriteConfirmRequested -= onOverwriteConfirm);
+    }
 
-        imageEditor.SaveOverwriteRequested += (_, _) =>
-        {
-            FileLogger.LogEntry();
-            
-            if (_imageEditorCanvas is null)
-            {
-                FileLogger.LogError("_imageEditorCanvas is null");
-                imageEditor.StatusMessage = "Image editor not initialized.";
-                return;
-            }
-
-            try
-            {
-                FileLogger.Log("Calling EditorCore.SaveOverwrite...");
-                if (_imageEditorCanvas.EditorCore.SaveOverwrite())
-                {
-                    FileLogger.Log("SaveOverwrite succeeded");
-                    FileLogger.Log("Calling OnSaveOverwriteCompleted...");
-                    imageEditor.OnSaveOverwriteCompleted();
-                    FileLogger.Log("OnSaveOverwriteCompleted returned");
-                }
-                else
-                {
-                    FileLogger.LogError("SaveOverwrite returned false");
-                    imageEditor.StatusMessage = "Failed to save image.";
-                }
-            }
-            catch (Exception ex)
-            {
-                FileLogger.LogError("Exception during save overwrite", ex);
-                imageEditor.StatusMessage = $"Error saving image: {ex.Message}";
-            }
-            
-            FileLogger.LogExit();
-        };
-
-        // Handle export requests
-        imageEditor.ExportRequested += async (_, args) =>
-        {
-            FileLogger.LogEntry($"SuggestedFileName={args.SuggestedFileName}, FileExtension={args.FileExtension}");
-            
-            if (vm.DialogService is null)
-            {
-                FileLogger.LogError("DialogService is null");
-                imageEditor.StatusMessage = "Export not available";
-                return;
-            }
-
-            var exportPath = await vm.DialogService.ShowSaveFileDialogAsync(
-                "Export Image",
-                args.SuggestedFileName,
-                $"*{args.FileExtension}");
-
-            FileLogger.Log($"Export path from dialog: {exportPath ?? "(null/cancelled)"}");
-
-            if (string.IsNullOrEmpty(exportPath))
-            {
-                FileLogger.Log("User cancelled export");
-                return; // User cancelled
-            }
-
-            if (_imageEditorCanvas is null)
-            {
-                imageEditor.StatusMessage = "Image editor not initialized.";
-                return;
-            }
-
-            try
-            {
-                if (_imageEditorCanvas.EditorCore.SaveImage(exportPath))
-                {
-                    imageEditor.OnExportCompleted(exportPath);
-                }
-                else
-                {
-                    imageEditor.StatusMessage = "Failed to export image.";
-                }
-            }
-            catch (Exception ex)
-            {
-                imageEditor.StatusMessage = $"Error exporting image: {ex.Message}";
-            }
-        };
-
-        // Layer mode event handlers
-        imageEditor.EnableLayerModeRequested += (_, enable) =>
+    private void WireLayerEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
+    {
+        EventHandler<bool> onEnableLayer = (_, enable) =>
         {
             if (_imageEditorCanvas is null) return;
-            
-            if (enable)
-            {
-                _imageEditorCanvas.EditorCore.EnableLayerMode();
-            }
-            else
-            {
-                _imageEditorCanvas.EditorCore.DisableLayerMode();
-            }
-            
-            // Sync layers with ViewModel
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            if (enable) _imageEditorCanvas.EditorCore.EnableLayerMode();
+            else _imageEditorCanvas.EditorCore.DisableLayerMode();
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.EnableLayerModeRequested += onEnableLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.EnableLayerModeRequested -= onEnableLayer);
 
-        imageEditor.AddLayerRequested += (_, _) =>
+        EventHandler onAddLayer = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.AddLayer();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.AddLayerRequested += onAddLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.AddLayerRequested -= onAddLayer);
 
-        imageEditor.DeleteLayerRequested += (_, layer) =>
+        EventHandler<Layer> onDeleteLayer = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.RemoveLayer(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.DeleteLayerRequested += onDeleteLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.DeleteLayerRequested -= onDeleteLayer);
 
-        imageEditor.DuplicateLayerRequested += (_, layer) =>
+        EventHandler<Layer> onDuplicateLayer = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.DuplicateLayer(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.DuplicateLayerRequested += onDuplicateLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.DuplicateLayerRequested -= onDuplicateLayer);
 
-
-        imageEditor.MoveLayerUpRequested += (_, layer) =>
+        EventHandler<Layer> onMoveUp = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
-            // UI "up" means towards front (higher index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerUp(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MoveLayerUpRequested += onMoveUp;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MoveLayerUpRequested -= onMoveUp);
 
-        imageEditor.MoveLayerDownRequested += (_, layer) =>
+        EventHandler<Layer> onMoveDown = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
-            // UI "down" means towards back (lower index in LayerStack)
             _imageEditorCanvas.EditorCore.MoveLayerDown(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MoveLayerDownRequested += onMoveDown;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MoveLayerDownRequested -= onMoveDown);
 
-        imageEditor.MergeLayerDownRequested += (_, layer) =>
+        EventHandler<Layer> onMergeDown = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeLayerDown(layer);
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MergeLayerDownRequested += onMergeDown;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MergeLayerDownRequested -= onMergeDown);
 
-        imageEditor.MergeVisibleLayersRequested += (_, _) =>
+        EventHandler onMergeVisible = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeVisibleLayers();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MergeVisibleLayersRequested += onMergeVisible;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MergeVisibleLayersRequested -= onMergeVisible);
 
-        imageEditor.FlattenLayersRequested += (_, _) =>
+        EventHandler onFlatten = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
-            // Flatten all layers into one layer (keeps layer mode active)
             _imageEditorCanvas.EditorCore.FlattenAllLayers();
-            imageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.FlattenLayersRequested += onFlatten;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.FlattenLayersRequested -= onFlatten);
 
-        imageEditor.LayerSelectionChanged += (_, layer) =>
+        EventHandler<Layer?> onLayerSelection = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.ActiveLayer = layer;
         };
+        imageEditor.LayerPanel.LayerSelectionChanged += onLayerSelection;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.LayerSelectionChanged -= onLayerSelection);
 
-        imageEditor.SaveLayeredTiffRequested += async (suggestedPath) =>
+        Func<string, Task<bool>> onSaveTiff = async (suggestedPath) =>
         {
-            if (_imageEditorCanvas is null) return false;
-            
-            if (vm.DialogService is null) return false;
+            if (_imageEditorCanvas is null || vm.DialogService is null) return false;
             
             var savePath = await vm.DialogService.ShowSaveFileDialogAsync(
-                "Save Layered TIFF",
-                Path.GetFileName(suggestedPath),
-                "*.tif");
+                "Save Layered TIFF", Path.GetFileName(suggestedPath), "*.tif");
                 
             if (string.IsNullOrEmpty(savePath)) return false;
-            
             return _imageEditorCanvas.EditorCore.SaveLayeredTiff(savePath);
         };
+        imageEditor.LayerPanel.SaveLayeredTiffRequested += onSaveTiff;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.SaveLayeredTiffRequested -= onSaveTiff);
+    }
 
-        // Wire up zoom slider
+    private void WireZoomSlider()
+    {
         var zoomSlider = this.FindControl<Slider>("ZoomSlider");
         if (zoomSlider is not null)
         {
-            zoomSlider.PropertyChanged += (_, args) =>
+            EventHandler<AvaloniaPropertyChangedEventArgs> onSliderChanged = (_, args) =>
             {
                 if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
@@ -1095,39 +853,8 @@ public partial class ImageEditView : UserControl
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
-        }
-    }
-
-    /// <summary>
-    /// Saves the rating to a .rating file next to the image.
-    /// </summary>
-    private static void SaveRatingToFile(string imagePath, ImageRatingStatus rating)
-    {
-        try
-        {
-            var ratingFilePath = Path.ChangeExtension(imagePath, ".rating");
-            
-            if (rating == ImageRatingStatus.Unrated)
-            {
-                // Delete rating file if it exists and rating is Unrated
-                if (File.Exists(ratingFilePath))
-                {
-                    File.Delete(ratingFilePath);
-                }
-            }
-            else
-            {
-                // Write rating to file
-                File.WriteAllText(ratingFilePath, rating.ToString());
-            }
-        }
-        catch (IOException)
-        {
-            // File may be in use or read-only - rating will be lost on reload
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // No permission to write - rating will be lost on reload
+            zoomSlider.PropertyChanged += onSliderChanged;
+            _eventCleanup.Add(() => zoomSlider.PropertyChanged -= onSliderChanged);
         }
     }
 
@@ -1137,11 +864,11 @@ public partial class ImageEditView : UserControl
     private static void ApplyDrawingSettingsToTool(ImageEditorViewModel imageEditor, ImageEditor.DrawingTool drawingTool)
     {
         drawingTool.BrushColor = new SkiaSharp.SKColor(
-            imageEditor.DrawingBrushRed,
-            imageEditor.DrawingBrushGreen,
-            imageEditor.DrawingBrushBlue);
-        drawingTool.BrushSize = imageEditor.DrawingBrushSize;
-        drawingTool.BrushShape = imageEditor.DrawingBrushShape;
+            imageEditor.DrawingTools.DrawingBrushRed,
+            imageEditor.DrawingTools.DrawingBrushGreen,
+            imageEditor.DrawingTools.DrawingBrushBlue);
+        drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
+        drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
     }
 
     /// <summary>
@@ -1168,48 +895,6 @@ public partial class ImageEditView : UserControl
             baseBitmap.Dispose();
             return null;
         }
-    }
-
-    /// <summary>
-    /// Feathers the inpaint mask by dilating it slightly and then applying a
-    /// Gaussian blur. This softens the hard binary brush edges so the inpainting
-    /// model can blend seamlessly at mask boundaries.
-    /// </summary>
-    private static SkiaSharp.SKBitmap FeatherInpaintMask(SkiaSharp.SKBitmap maskBitmap, float featherRadius)
-    {
-        // No feathering requested — return a copy of the original mask
-        if (featherRadius < 0.5f)
-            return maskBitmap.Copy();
-
-        var dilateRadius = Math.Max(1, (int)(featherRadius * 0.5f));
-        var blurSigma = featherRadius;
-
-        // Pass 1: dilate (grow) the mask to expand coverage beyond the painted area
-        var dilated = new SkiaSharp.SKBitmap(
-            maskBitmap.Width, maskBitmap.Height,
-            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
-        using (var canvas = new SkiaSharp.SKCanvas(dilated))
-        {
-            canvas.Clear(SkiaSharp.SKColors.Transparent);
-            using var paint = new SkiaSharp.SKPaint();
-            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateDilate(dilateRadius, dilateRadius);
-            canvas.DrawBitmap(maskBitmap, 0, 0, paint);
-        }
-
-        // Pass 2: blur the dilated mask for a smooth falloff at edges
-        var feathered = new SkiaSharp.SKBitmap(
-            maskBitmap.Width, maskBitmap.Height,
-            SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Premul);
-        using (var canvas = new SkiaSharp.SKCanvas(feathered))
-        {
-            canvas.Clear(SkiaSharp.SKColors.Transparent);
-            using var paint = new SkiaSharp.SKPaint();
-            paint.ImageFilter = SkiaSharp.SKImageFilter.CreateBlur(blurSigma, blurSigma);
-            canvas.DrawBitmap(dilated, 0, 0, paint);
-        }
-
-        dilated.Dispose();
-        return feathered;
     }
 
     #region Image Drop Zone Handlers
@@ -1329,8 +1014,8 @@ public partial class ImageEditView : UserControl
                 vm.ImageEditor.CurrentImagePath = filePath;
                 
                 // Sync layer state with ViewModel
-                vm.ImageEditor.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
-                vm.ImageEditor.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                vm.ImageEditor.LayerPanel.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
+                vm.ImageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
                 
                 vm.ImageEditor.StatusMessage = IsTiffFile(filePath)
                     ? $"Loaded: {Path.GetFileName(filePath)} ({_imageEditorCanvas.EditorCore.Layers?.Count ?? 1} layers)"

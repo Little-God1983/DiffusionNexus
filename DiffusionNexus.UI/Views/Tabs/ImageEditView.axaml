@@ -126,25 +126,25 @@
           <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
             <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Color" IsChecked="{Binding ImageEditor.IsColorBalancePanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Color" IsChecked="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Color Balance"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="B/C" IsChecked="{Binding ImageEditor.ColorTools.IsBrightnessContrastPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Brightness &amp; Contrast"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Rm BG" IsChecked="{Binding ImageEditor.IsBackgroundRemovalPanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Rm BG" IsChecked="{Binding ImageEditor.BackgroundRemoval.IsPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Remove Background using AI (RMBG-1.4)"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.IsBackgroundFillPanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.BackgroundFill.IsPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Fill transparent background with solid color"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Upscale" IsChecked="{Binding ImageEditor.IsUpscalingPanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Upscale" IsChecked="{Binding ImageEditor.Upscaling.IsPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="AI Upscaling (4x-UltraSharp)"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Draw" IsChecked="{Binding ImageEditor.IsDrawingToolActive, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Draw" IsChecked="{Binding ImageEditor.DrawingTools.IsDrawingToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Drawing Tool - Hold Shift for straight lines"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.IsInpaintingPanelOpen, Mode=TwoWay}" Padding="12,6" 
+            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.Inpainting.IsPanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="AI Inpainting - Paint over areas to regenerate using ComfyUI"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
@@ -201,12 +201,12 @@
           <controls:ImageEditorControl x:Name="ImageEditorCanvas"
                                        ImagePath="{Binding ImageEditor.CurrentImagePath}"
                                        IsCropToolActive="{Binding ImageEditor.IsCropToolActive}"
-                                       IsDrawingToolActive="{Binding ImageEditor.IsDrawingToolActive}"
-                                       SelectedShapeType="{Binding ImageEditor.SelectedShapeType}"
-                                       ShapeFillMode="{Binding ImageEditor.ShapeFillMode}"
-                                       ShapeStrokeColor="{Binding ImageEditor.ShapeStrokeColor}"
-                                       ShapeFillColor="{Binding ImageEditor.ShapeFillColor}"
-                                       ShapeStrokeWidth="{Binding ImageEditor.ShapeStrokeWidth}"
+                                       IsDrawingToolActive="{Binding ImageEditor.DrawingTools.IsDrawingToolActive}"
+                                       SelectedShapeType="{Binding ImageEditor.DrawingTools.SelectedShapeType}"
+                                       ShapeFillMode="{Binding ImageEditor.DrawingTools.ShapeFillMode}"
+                                       ShapeStrokeColor="{Binding ImageEditor.DrawingTools.ShapeStrokeColor}"
+                                       ShapeFillColor="{Binding ImageEditor.DrawingTools.ShapeFillColor}"
+                                       ShapeStrokeWidth="{Binding ImageEditor.DrawingTools.ShapeStrokeWidth}"
                                        IsVisible="{Binding ImageEditor.HasImage}"/>
         </Grid>
       </Border>
@@ -243,22 +243,22 @@
               <StackPanel Spacing="8">
                 <!-- Layer Actions -->
                 <StackPanel Orientation="Horizontal" Spacing="2">
-                  <Button Content="+" Command="{Binding ImageEditor.AddLayerCommand}" Padding="6,2" FontSize="12" 
+                  <Button Content="+" Command="{Binding ImageEditor.LayerPanel.AddLayerCommand}" Padding="6,2" FontSize="12" 
                           ToolTip.Tip="Add new layer" FontWeight="Bold"/>
-                  <Button Content="-" Command="{Binding ImageEditor.DeleteLayerCommand}" Padding="6,2" FontSize="12" 
+                  <Button Content="-" Command="{Binding ImageEditor.LayerPanel.DeleteLayerCommand}" Padding="6,2" FontSize="12" 
                           ToolTip.Tip="Delete selected layer" FontWeight="Bold"/>
-                  <Button Content="D" Command="{Binding ImageEditor.DuplicateLayerCommand}" Padding="6,2" FontSize="10" 
+                  <Button Content="D" Command="{Binding ImageEditor.LayerPanel.DuplicateLayerCommand}" Padding="6,2" FontSize="10" 
                           ToolTip.Tip="Duplicate selected layer"/>
-                  <Button Content="↑" Command="{Binding ImageEditor.MoveLayerUpCommand}" Padding="6,2" FontSize="12" 
+                  <Button Content="↑" Command="{Binding ImageEditor.LayerPanel.MoveLayerUpCommand}" Padding="6,2" FontSize="12" 
                           ToolTip.Tip="Move layer up"/>
-                  <Button Content="↓" Command="{Binding ImageEditor.MoveLayerDownCommand}" Padding="6,2" FontSize="12" 
+                  <Button Content="↓" Command="{Binding ImageEditor.LayerPanel.MoveLayerDownCommand}" Padding="6,2" FontSize="12" 
                           ToolTip.Tip="Move layer down"/>
                 </StackPanel>
                 
                 <!-- Layer List -->
                 <Border Background="#252525" CornerRadius="2" MinHeight="100" MaxHeight="200">
                   <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding ImageEditor.Layers}">
+                    <ItemsControl ItemsSource="{Binding ImageEditor.LayerPanel.Layers}">
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Button Command="{Binding SelectCommand}" Padding="0" Margin="1" HorizontalAlignment="Stretch"
@@ -292,13 +292,13 @@
                 </Border>
                 
                 <!-- Selected Layer Properties -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.SelectedLayer, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.LayerPanel.SelectedLayer, Converter={x:Static ObjectConverters.IsNotNull}}">
                   <Border Height="1" Background="#444" Margin="0,2"/>
                   <TextBlock Text="Layer Opacity" FontSize="10" Opacity="0.7"/>
                   <Grid ColumnDefinitions="*,35">
                     <Slider Grid.Column="0" Minimum="0" Maximum="100" 
-                            Value="{Binding ImageEditor.SelectedLayer.OpacityPercent}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.SelectedLayer.OpacityText}" 
+                            Value="{Binding ImageEditor.LayerPanel.SelectedLayer.OpacityPercent}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.LayerPanel.SelectedLayer.OpacityText}" 
                                FontSize="9" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
@@ -307,16 +307,16 @@
                 
                 <!-- Merge/Flatten Options -->
                 <StackPanel Spacing="4">
-                  <Button Content="Merge Down" Command="{Binding ImageEditor.MergeLayerDownCommand}" 
+                  <Button Content="Merge Down" Command="{Binding ImageEditor.LayerPanel.MergeLayerDownCommand}" 
                           HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"/>
-                  <Button Content="Flatten All" Command="{Binding ImageEditor.FlattenLayersCommand}" 
+                  <Button Content="Flatten All" Command="{Binding ImageEditor.LayerPanel.FlattenLayersCommand}" 
                           HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"/>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,2"/>
                 
                 <!-- Save Layered TIFF -->
-                <Button Content="Save Layered TIFF" Command="{Binding ImageEditor.SaveLayeredTiffCommand}" 
+                <Button Content="Save Layered TIFF" Command="{Binding ImageEditor.LayerPanel.SaveLayeredTiffCommand}" 
                         HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
                         Background="#5E35B1" ToolTip.Tip="Export as multi-layer TIFF file"/>
               </StackPanel>
@@ -380,16 +380,16 @@
           </StackPanel>
           
           <!-- Color Balance Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsColorBalancePanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen}">
             <TextBlock Text="Color Balance" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
                 <!-- Range Selection -->
                 <TextBlock Text="Select Range" FontSize="11" Opacity="0.7"/>
                 <StackPanel Spacing="4">
-                  <RadioButton Content="Shadows" IsChecked="{Binding ImageEditor.IsShadowsSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
-                  <RadioButton Content="Midtones" IsChecked="{Binding ImageEditor.IsMidtonesSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
-                  <RadioButton Content="Highlights" IsChecked="{Binding ImageEditor.IsHighlightsSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
+                  <RadioButton Content="Shadows" IsChecked="{Binding ImageEditor.ColorTools.IsShadowsSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
+                  <RadioButton Content="Midtones" IsChecked="{Binding ImageEditor.ColorTools.IsMidtonesSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
+                  <RadioButton Content="Highlights" IsChecked="{Binding ImageEditor.ColorTools.IsHighlightsSelected, Mode=TwoWay}" GroupName="ColorBalanceRange"/>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
@@ -397,43 +397,43 @@
                 <!-- Cyan - Red -->
                 <Grid ColumnDefinitions="50,*,40">
                   <TextBlock Grid.Column="0" Text="Cyan" FontSize="11" VerticalAlignment="Center" Foreground="#00FFFF"/>
-                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorBalanceCyanRed}" TickFrequency="10"/>
+                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorTools.ColorBalanceCyanRed}" TickFrequency="10"/>
                   <TextBlock Grid.Column="2" Text="Red" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="#FF6666"/>
                 </Grid>
-                <TextBlock Text="{Binding ImageEditor.ColorBalanceCyanRed, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding ImageEditor.ColorTools.ColorBalanceCyanRed, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
                 
                 <!-- Magenta - Green -->
                 <Grid ColumnDefinitions="50,*,40">
                   <TextBlock Grid.Column="0" Text="Magenta" FontSize="11" VerticalAlignment="Center" Foreground="#FF00FF"/>
-                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorBalanceMagentaGreen}" TickFrequency="10"/>
+                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorTools.ColorBalanceMagentaGreen}" TickFrequency="10"/>
                   <TextBlock Grid.Column="2" Text="Green" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="#66FF66"/>
                 </Grid>
-                <TextBlock Text="{Binding ImageEditor.ColorBalanceMagentaGreen, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding ImageEditor.ColorTools.ColorBalanceMagentaGreen, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
                 
                 <!-- Yellow - Blue -->
                 <Grid ColumnDefinitions="50,*,40">
                   <TextBlock Grid.Column="0" Text="Yellow" FontSize="11" VerticalAlignment="Center" Foreground="#FFFF00"/>
-                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorBalanceYellowBlue}" TickFrequency="10"/>
+                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorTools.ColorBalanceYellowBlue}" TickFrequency="10"/>
                   <TextBlock Grid.Column="2" Text="Blue" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="#6666FF"/>
                 </Grid>
-                <TextBlock Text="{Binding ImageEditor.ColorBalanceYellowBlue, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding ImageEditor.ColorTools.ColorBalanceYellowBlue, StringFormat='{}{0:F1}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Preserve Luminosity -->
-                <CheckBox Content="Preserve Luminosity" IsChecked="{Binding ImageEditor.PreserveLuminosity}" FontSize="11"/>
+                <CheckBox Content="Preserve Luminosity" IsChecked="{Binding ImageEditor.ColorTools.PreserveLuminosity}" FontSize="11"/>
                 
                 <!-- Action Buttons -->
                 <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
-                  <Button Grid.Column="0" Content="Reset" Command="{Binding ImageEditor.ResetColorBalanceRangeCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
-                  <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ApplyColorBalanceCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
+                  <Button Grid.Column="0" Content="Reset" Command="{Binding ImageEditor.ColorTools.ResetColorBalanceRangeCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
+                  <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ColorTools.ApplyColorBalanceCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
               </StackPanel>
             </Border>
           </StackPanel>
           
           <!-- Brightness/Contrast Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsBrightnessContrastPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsBrightnessContrastPanelOpen}">
             <TextBlock Text="Brightness/Contrast" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -441,33 +441,33 @@
                 <TextBlock Text="Brightness" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="40,*,40">
                   <TextBlock Grid.Column="0" Text="-" FontSize="16" VerticalAlignment="Center" Opacity="0.5" HorizontalAlignment="Center"/>
-                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.Brightness}" TickFrequency="10"/>
+                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorTools.Brightness}" TickFrequency="10"/>
                   <TextBlock Grid.Column="2" Text="+" FontSize="16" VerticalAlignment="Center" Opacity="0.5" HorizontalAlignment="Center"/>
                 </Grid>
-                <TextBlock Text="{Binding ImageEditor.Brightness, StringFormat='{}{0:F0}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding ImageEditor.ColorTools.Brightness, StringFormat='{}{0:F0}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
                 
                 <!-- Contrast -->
                 <TextBlock Text="Contrast" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="40,*,40">
                   <TextBlock Grid.Column="0" Text="-" FontSize="16" VerticalAlignment="Center" Opacity="0.5" HorizontalAlignment="Center"/>
-                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.Contrast}" TickFrequency="10"/>
+                  <Slider Grid.Column="1" Minimum="-100" Maximum="100" Value="{Binding ImageEditor.ColorTools.Contrast}" TickFrequency="10"/>
                   <TextBlock Grid.Column="2" Text="+" FontSize="16" VerticalAlignment="Center" Opacity="0.5" HorizontalAlignment="Center"/>
                 </Grid>
-                <TextBlock Text="{Binding ImageEditor.Contrast, StringFormat='{}{0:F0}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding ImageEditor.ColorTools.Contrast, StringFormat='{}{0:F0}'}" FontSize="10" Opacity="0.6" HorizontalAlignment="Center"/>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Buttons -->
                 <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
-                  <Button Grid.Column="0" Content="Reset" Command="{Binding ImageEditor.ResetBrightnessContrastCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
-                  <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ApplyBrightnessContrastCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
+                  <Button Grid.Column="0" Content="Reset" Command="{Binding ImageEditor.ColorTools.ResetBrightnessContrastCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
+                  <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ColorTools.ApplyBrightnessContrastCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
               </StackPanel>
             </Border>
           </StackPanel>
           
           <!-- Background Removal Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsBackgroundRemovalPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundRemoval.IsPanelOpen}">
             <TextBlock Text="Background Removal" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
@@ -476,28 +476,28 @@
                   <TextBlock Text="Model Status" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <Border Width="8" Height="8" CornerRadius="4"
-                            Background="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
+                            Background="{Binding ImageEditor.BackgroundRemoval.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
                     <TextBlock FontSize="12" Opacity="0.9"
-                               Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelStatusText}}"/>
+                               Text="{Binding ImageEditor.BackgroundRemoval.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToModelStatusText}}"/>
                   </StackPanel>
                 </StackPanel>
                 
                 <!-- Download Button (shown when model missing and not busy) -->
                 <Button Content="Download Model (~176 MB)" 
-                        Command="{Binding ImageEditor.DownloadBackgroundRemovalModelCommand}"
+                        Command="{Binding ImageEditor.BackgroundRemoval.DownloadModelCommand}"
                         HorizontalAlignment="Stretch"
                         Background="#5E35B1"
                         Foreground="White"
-                        IsVisible="{Binding ImageEditor.IsBackgroundRemovalModelMissing}"
-                        IsEnabled="{Binding !ImageEditor.IsBackgroundRemovalBusy}"/>
+                        IsVisible="{Binding ImageEditor.BackgroundRemoval.IsModelMissing}"
+                        IsEnabled="{Binding !ImageEditor.BackgroundRemoval.IsBusy}"/>
                 
                 <!-- Progress (shown when busy) -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsBackgroundRemovalBusy}">
-                  <TextBlock Text="{Binding ImageEditor.BackgroundRemovalStatus}" 
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.BackgroundRemoval.IsBusy}">
+                  <TextBlock Text="{Binding ImageEditor.BackgroundRemoval.Status}" 
                              FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
                   <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
                     <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
-                            Width="{Binding ImageEditor.BackgroundRemovalProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                            Width="{Binding ImageEditor.BackgroundRemoval.Progress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
                   </Border>
                 </StackPanel>
                 
@@ -506,28 +506,28 @@
                 <!-- Instructions -->
                 <TextBlock Text="Uses RMBG-1.4 AI model to remove backgrounds. Runs locally on GPU/CPU." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding ImageEditor.IsBackgroundRemovalModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
+                <TextBlock Text="{Binding ImageEditor.BackgroundRemoval.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToModelPathText}}"
                            FontSize="9" Opacity="0.4" TextWrapping="Wrap"/>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Buttons -->
                 <StackPanel Spacing="4" Margin="0,4,0,0">
-                  <Button Content="Remove BG" Command="{Binding ImageEditor.RemoveBackgroundCommand}" 
+                  <Button Content="Remove BG" Command="{Binding ImageEditor.BackgroundRemoval.RemoveBackgroundCommand}" 
                           Background="#2D7D46" HorizontalAlignment="Stretch"
                           ToolTip.Tip="Remove background (destructive)"
-                          IsEnabled="{Binding ImageEditor.IsBackgroundRemovalModelReady}"/>
-                  <Button Content="To Layer" Command="{Binding ImageEditor.RemoveBackgroundToLayerCommand}" 
+                          IsEnabled="{Binding ImageEditor.BackgroundRemoval.IsModelReady}"/>
+                  <Button Content="To Layer" Command="{Binding ImageEditor.BackgroundRemoval.RemoveBackgroundToLayerCommand}" 
                           Background="#5E35B1" HorizontalAlignment="Stretch"
                           ToolTip.Tip="Keep background as separate layer (non-destructive)"
-                          IsEnabled="{Binding ImageEditor.IsBackgroundRemovalModelReady}"/>
+                          IsEnabled="{Binding ImageEditor.BackgroundRemoval.IsModelReady}"/>
                 </StackPanel>
               </StackPanel>
             </Border>
           </StackPanel>
           
           <!-- Background Fill Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsBackgroundFillPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundFill.IsPanelOpen}">
             <TextBlock Text="Background Fill" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -537,10 +537,10 @@
                   <Grid ColumnDefinitions="Auto,*">
                     <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
                       <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.BackgroundFillColor}"/>
+                        <SolidColorBrush Color="{Binding ImageEditor.BackgroundFill.FillColor}"/>
                       </Border.Background>
                     </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.BackgroundFillColorHex}" 
+                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.BackgroundFill.FillColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
                 </StackPanel>
@@ -550,23 +550,23 @@
                   <TextBlock Text="Presets" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="4">
                     <Button Width="28" Height="28" Padding="0" ToolTip.Tip="White"
-                            Command="{Binding ImageEditor.SetBackgroundFillPresetCommand}" CommandParameter="White">
+                            Command="{Binding ImageEditor.BackgroundFill.SetPresetCommand}" CommandParameter="White">
                       <Border Width="24" Height="24" CornerRadius="2" Background="White"/>
                     </Button>
                     <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Black"
-                            Command="{Binding ImageEditor.SetBackgroundFillPresetCommand}" CommandParameter="Black">
+                            Command="{Binding ImageEditor.BackgroundFill.SetPresetCommand}" CommandParameter="Black">
                       <Border Width="24" Height="24" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
                     <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Gray"
-                            Command="{Binding ImageEditor.SetBackgroundFillPresetCommand}" CommandParameter="Gray">
+                            Command="{Binding ImageEditor.BackgroundFill.SetPresetCommand}" CommandParameter="Gray">
                       <Border Width="24" Height="24" CornerRadius="2" Background="#808080"/>
                     </Button>
                     <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Green"
-                            Command="{Binding ImageEditor.SetBackgroundFillPresetCommand}" CommandParameter="Green">
+                            Command="{Binding ImageEditor.BackgroundFill.SetPresetCommand}" CommandParameter="Green">
                       <Border Width="24" Height="24" CornerRadius="2" Background="#00B140"/>
                     </Button>
                     <Button Width="28" Height="28" Padding="0" ToolTip.Tip="Blue"
-                            Command="{Binding ImageEditor.SetBackgroundFillPresetCommand}" CommandParameter="Blue">
+                            Command="{Binding ImageEditor.BackgroundFill.SetPresetCommand}" CommandParameter="Blue">
                       <Border Width="24" Height="24" CornerRadius="2" Background="#0078D7"/>
                     </Button>
                   </StackPanel>
@@ -578,25 +578,25 @@
                 <StackPanel Spacing="6">
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="R" FontSize="11" VerticalAlignment="Center" Foreground="#FF6666" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFillRed}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFillRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFill.FillRed}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFill.FillRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="G" FontSize="11" VerticalAlignment="Center" Foreground="#66FF66" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFillGreen}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFillGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFill.FillGreen}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFill.FillGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="B" FontSize="11" VerticalAlignment="Center" Foreground="#6666FF" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFillBlue}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFillBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.BackgroundFill.FillBlue}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.BackgroundFill.FillBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Button -->
-                <Button Content="Apply Fill" Command="{Binding ImageEditor.ApplyBackgroundFillCommand}" 
+                <Button Content="Apply Fill" Command="{Binding ImageEditor.BackgroundFill.ApplyCommand}" 
                         Background="#2D7D46" HorizontalAlignment="Stretch"/>
                         
                 <!-- Instructions -->
@@ -607,7 +607,7 @@
           </StackPanel>
           
           <!-- AI Upscaling Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsUpscalingPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Upscaling.IsPanelOpen}">
             <TextBlock Text="AI Upscaling" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
@@ -616,49 +616,49 @@
                   <TextBlock Text="Model Status" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <Border Width="8" Height="8" CornerRadius="4"
-                            Background="{Binding ImageEditor.IsUpscalingModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
+                            Background="{Binding ImageEditor.Upscaling.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
                     <TextBlock FontSize="12" Opacity="0.9"
-                               Text="{Binding ImageEditor.IsUpscalingModelReady, Converter={x:Static converters:BoolConverters.BoolToUpscalingModelStatusText}}"/>
+                               Text="{Binding ImageEditor.Upscaling.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToUpscalingModelStatusText}}"/>
                   </StackPanel>
                 </StackPanel>
                 
                 <!-- Download Button (shown when model missing and not busy) -->
                 <Button Content="Download Model (~67 MB)" 
-                        Command="{Binding ImageEditor.DownloadUpscalingModelCommand}"
+                        Command="{Binding ImageEditor.Upscaling.DownloadModelCommand}"
                         HorizontalAlignment="Stretch"
                         Background="#5E35B1"
                         Foreground="White"
-                        IsVisible="{Binding ImageEditor.IsUpscalingModelMissing}"
-                        IsEnabled="{Binding !ImageEditor.IsUpscalingBusy}"/>
+                        IsVisible="{Binding ImageEditor.Upscaling.IsModelMissing}"
+                        IsEnabled="{Binding !ImageEditor.Upscaling.IsBusy}"/>
                 
                 <!-- Progress (shown when busy) -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsUpscalingBusy}">
-                  <TextBlock Text="{Binding ImageEditor.UpscalingStatus}" 
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Upscaling.IsBusy}">
+                  <TextBlock Text="{Binding ImageEditor.Upscaling.Status}" 
                              FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
                   <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
                     <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
-                            Width="{Binding ImageEditor.UpscalingProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                            Width="{Binding ImageEditor.Upscaling.Progress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
                   </Border>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Scale Slider (only show when model is ready) -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.IsUpscalingModelReady}">
+                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.Upscaling.IsModelReady}">
                   <TextBlock Text="Target Scale" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*,Auto">
                     <TextBlock Grid.Column="0" Text="1.1x" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                    <Slider Grid.Column="1" Minimum="1.1" Maximum="4.0" Value="{Binding ImageEditor.UpscaleTargetScale}" 
+                    <Slider Grid.Column="1" Minimum="1.1" Maximum="4.0" Value="{Binding ImageEditor.Upscaling.TargetScale}" 
                             TickFrequency="0.1" Margin="8,0"/>
                     <TextBlock Grid.Column="2" Text="4.0x" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
                   </Grid>
-                  <TextBlock Text="{Binding ImageEditor.UpscaleTargetScaleText}" 
+                  <TextBlock Text="{Binding ImageEditor.Upscaling.TargetScaleText}" 
                              FontSize="18" FontWeight="SemiBold" Foreground="#5E35B1" HorizontalAlignment="Center"/>
                   
                   <!-- Output Dimensions Preview -->
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Margin="0,4,0,0">
                     <TextBlock Text="Output:" FontSize="10" Opacity="0.6"/>
-                    <TextBlock Text="{Binding ImageEditor.UpscaleOutputDimensions}" FontSize="10" Opacity="0.8"/>
+                    <TextBlock Text="{Binding ImageEditor.Upscaling.OutputDimensions}" FontSize="10" Opacity="0.8"/>
                   </StackPanel>
                 </StackPanel>
                 
@@ -670,7 +670,7 @@
                 
                 <!-- Performance Warning -->
                 <Border Background="#3D2D00" CornerRadius="4" Padding="6" Margin="0,4,0,0" 
-                        IsVisible="{Binding ImageEditor.IsUpscalingModelReady}">
+                        IsVisible="{Binding ImageEditor.Upscaling.IsModelReady}">
                   <TextBlock Text="? Processing can take several minutes for large images. A 4x upscale is always computed internally, even for lower target scales." 
                              FontSize="9" Opacity="0.9" TextWrapping="Wrap" Foreground="#FFCC00"/>
                 </Border>
@@ -678,15 +678,15 @@
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Button -->
-                <Button Content="Apply Upscale" Command="{Binding ImageEditor.UpscaleImageCommand}" 
+                <Button Content="Apply Upscale" Command="{Binding ImageEditor.Upscaling.UpscaleCommand}" 
                         Background="#2D7D46" HorizontalAlignment="Stretch"
-                        IsEnabled="{Binding ImageEditor.IsUpscalingModelReady}"/>
+                        IsEnabled="{Binding ImageEditor.Upscaling.IsModelReady}"/>
               </StackPanel>
             </Border>
           </StackPanel>
           
           <!-- Drawing Tool Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsDrawingToolActive}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.DrawingTools.IsDrawingToolActive}">
             <TextBlock Text="Drawing Tool" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -695,19 +695,19 @@
                   <TextBlock Text="Shape Type" FontSize="11" Opacity="0.7"/>
                   <StackPanel Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                      <ToggleButton Content="Free" IsChecked="{Binding ImageEditor.IsShapeFreehand, Mode=TwoWay}" 
+                      <ToggleButton Content="Free" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeFreehand, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="10" ToolTip.Tip="Freehand Drawing"/>
-                      <ToggleButton Content="□" IsChecked="{Binding ImageEditor.IsShapeRectangle, Mode=TwoWay}" 
+                      <ToggleButton Content="□" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeRectangle, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="14" ToolTip.Tip="Rectangle"/>
-                      <ToggleButton Content="○" IsChecked="{Binding ImageEditor.IsShapeEllipse, Mode=TwoWay}" 
+                      <ToggleButton Content="○" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeEllipse, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="14" ToolTip.Tip="Ellipse/Circle"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                      <ToggleButton Content="→" IsChecked="{Binding ImageEditor.IsShapeArrow, Mode=TwoWay}" 
+                      <ToggleButton Content="→" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeArrow, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="14" ToolTip.Tip="Arrow"/>
-                      <ToggleButton Content="/" IsChecked="{Binding ImageEditor.IsShapeLine, Mode=TwoWay}" 
+                      <ToggleButton Content="/" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeLine, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="14" ToolTip.Tip="Line"/>
-                      <ToggleButton Content="✕" IsChecked="{Binding ImageEditor.IsShapeCross, Mode=TwoWay}" 
+                      <ToggleButton Content="✕" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeCross, Mode=TwoWay}" 
                                     Padding="8,4" FontSize="14" ToolTip.Tip="Cross/X"/>
                     </StackPanel>
                   </StackPanel>
@@ -716,132 +716,132 @@
                 <!-- Instructions -->
                 <TextBlock Text="Click and drag to draw. Hold Shift for straight lines." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"
-                           IsVisible="{Binding ImageEditor.IsShapeFreehand}"/>
+                           IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}"/>
                 <TextBlock Text="Click and drag to draw. Hold Ctrl for square/circle." 
                            FontSize="10" Opacity="0.6" TextWrapping="Wrap"
-                           IsVisible="{Binding ImageEditor.IsShapeMode}"/>
+                           IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}"/>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Fill Mode (only for shapes, not freehand) -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeMode}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Fill Mode" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="4">
-                    <ToggleButton Content="Outline" IsChecked="{Binding ImageEditor.IsShapeStrokeOnly, Mode=TwoWay}" 
+                    <ToggleButton Content="Outline" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeStrokeOnly, Mode=TwoWay}" 
                                   Padding="6,4" FontSize="10" ToolTip.Tip="Outline only"/>
-                    <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.IsShapeFillOnly, Mode=TwoWay}" 
+                    <ToggleButton Content="Fill" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeFillOnly, Mode=TwoWay}" 
                                   Padding="6,4" FontSize="10" ToolTip.Tip="Fill only"/>
-                    <ToggleButton Content="Both" IsChecked="{Binding ImageEditor.IsShapeFillAndStroke, Mode=TwoWay}" 
+                    <ToggleButton Content="Both" IsChecked="{Binding ImageEditor.DrawingTools.IsShapeFillAndStroke, Mode=TwoWay}" 
                                   Padding="6,4" FontSize="10" ToolTip.Tip="Fill and outline"/>
                   </StackPanel>
                   <Border Height="1" Background="#444" Margin="0,4"/>
                 </StackPanel>
                 
                 <!-- Freehand Brush Color -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <TextBlock Text="Brush Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
                     <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
                       <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.DrawingBrushColor}"/>
+                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.DrawingBrushColor}"/>
                       </Border.Background>
                     </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingBrushColorHex}" 
+                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.DrawingBrushColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
                 </StackPanel>
                 
                 <!-- Shape Stroke Color -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeMode}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Stroke Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
                     <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
                       <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.ShapeStrokeColor}"/>
+                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.ShapeStrokeColor}"/>
                       </Border.Background>
                     </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.ShapeStrokeColorHex}" 
+                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
                 </StackPanel>
                 
                 <!-- Shape Fill Color (only for fill modes) -->
-                <StackPanel Spacing="4" IsVisible="{Binding !ImageEditor.IsShapeStrokeOnly}">
+                <StackPanel Spacing="4" IsVisible="{Binding !ImageEditor.DrawingTools.IsShapeStrokeOnly}">
                   <StackPanel.IsVisible>
                     <MultiBinding Converter="{x:Static BoolConverters.And}">
-                      <Binding Path="ImageEditor.IsShapeMode"/>
-                      <Binding Path="!ImageEditor.IsShapeStrokeOnly"/>
+                      <Binding Path="ImageEditor.DrawingTools.IsShapeMode"/>
+                      <Binding Path="!ImageEditor.DrawingTools.IsShapeStrokeOnly"/>
                     </MultiBinding>
                   </StackPanel.IsVisible>
                   <TextBlock Text="Fill Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
                     <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
                       <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.ShapeFillColor}"/>
+                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.ShapeFillColor}"/>
                       </Border.Background>
                     </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.ShapeFillColorHex}" 
+                    <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.ShapeFillColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
                 </StackPanel>
                 
                 <!-- Preset Colors for Freehand -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <TextBlock Text="Presets" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="2">
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="White">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="White">
                       <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Black">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="Black">
                       <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Red">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="Red">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Green">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="Green">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Blue">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="Blue">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
-                            Command="{Binding ImageEditor.SetDrawingColorPresetCommand}" CommandParameter="Yellow">
+                            Command="{Binding ImageEditor.DrawingTools.SetDrawingColorPresetCommand}" CommandParameter="Yellow">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
                 </StackPanel>
                 
                 <!-- Preset Colors for Shape Stroke -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeMode}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Stroke Presets" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="2">
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="White">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="White">
                       <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Black">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="Black">
                       <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Red">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="Red">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Green">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="Green">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Blue">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="Blue">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
-                            Command="{Binding ImageEditor.SetShapeStrokePresetCommand}" CommandParameter="Yellow">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeStrokePresetCommand}" CommandParameter="Yellow">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
@@ -851,34 +851,34 @@
                 <StackPanel Spacing="4">
                   <StackPanel.IsVisible>
                     <MultiBinding Converter="{x:Static BoolConverters.And}">
-                      <Binding Path="ImageEditor.IsShapeMode"/>
-                      <Binding Path="!ImageEditor.IsShapeStrokeOnly"/>
+                      <Binding Path="ImageEditor.DrawingTools.IsShapeMode"/>
+                      <Binding Path="!ImageEditor.DrawingTools.IsShapeStrokeOnly"/>
                     </MultiBinding>
                   </StackPanel.IsVisible>
                   <TextBlock Text="Fill Presets" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="2">
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="White"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="White">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="White">
                       <Border Width="20" Height="20" CornerRadius="2" Background="White"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Black"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Black">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="Black">
                       <Border Width="20" Height="20" CornerRadius="2" Background="Black" BorderBrush="#555" BorderThickness="1"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Red"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Red">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="Red">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FF0000"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Green"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Green">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="Green">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#00FF00"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Blue"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Blue">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="Blue">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#0000FF"/>
                     </Button>
                     <Button Width="24" Height="24" Padding="0" ToolTip.Tip="Yellow"
-                            Command="{Binding ImageEditor.SetShapeFillPresetCommand}" CommandParameter="Yellow">
+                            Command="{Binding ImageEditor.DrawingTools.SetShapeFillPresetCommand}" CommandParameter="Yellow">
                       <Border Width="20" Height="20" CornerRadius="2" Background="#FFFF00"/>
                     </Button>
                   </StackPanel>
@@ -887,41 +887,41 @@
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- RGB Sliders for Freehand -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
+                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="R" FontSize="11" VerticalAlignment="Center" Foreground="#FF6666" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingBrushRed}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingBrushRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.DrawingBrushRed}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.DrawingBrushRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="G" FontSize="11" VerticalAlignment="Center" Foreground="#66FF66" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingBrushGreen}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingBrushGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.DrawingBrushGreen}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.DrawingBrushGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="B" FontSize="11" VerticalAlignment="Center" Foreground="#6666FF" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingBrushBlue}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingBrushBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.DrawingBrushBlue}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.DrawingBrushBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
                 <!-- Stroke RGB Sliders for Shapes -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.IsShapeMode}">
+                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Stroke RGB" FontSize="10" Opacity="0.6"/>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="R" FontSize="11" VerticalAlignment="Center" Foreground="#FF6666" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeStrokeRed}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeStrokeRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeStrokeRed}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="G" FontSize="11" VerticalAlignment="Center" Foreground="#66FF66" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeStrokeGreen}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeStrokeGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeStrokeGreen}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="B" FontSize="11" VerticalAlignment="Center" Foreground="#6666FF" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeStrokeBlue}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeStrokeBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeStrokeBlue}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
@@ -929,70 +929,70 @@
                 <StackPanel Spacing="6">
                   <StackPanel.IsVisible>
                     <MultiBinding Converter="{x:Static BoolConverters.And}">
-                      <Binding Path="ImageEditor.IsShapeMode"/>
-                      <Binding Path="!ImageEditor.IsShapeStrokeOnly"/>
+                      <Binding Path="ImageEditor.DrawingTools.IsShapeMode"/>
+                      <Binding Path="!ImageEditor.DrawingTools.IsShapeStrokeOnly"/>
                     </MultiBinding>
                   </StackPanel.IsVisible>
                   <TextBlock Text="Fill RGB" FontSize="10" Opacity="0.6"/>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="R" FontSize="11" VerticalAlignment="Center" Foreground="#FF6666" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeFillRed}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeFillRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeFillRed}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeFillRed}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="G" FontSize="11" VerticalAlignment="Center" Foreground="#66FF66" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeFillGreen}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeFillGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeFillGreen}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeFillGreen}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                   <Grid ColumnDefinitions="30,*,35">
                     <TextBlock Grid.Column="0" Text="B" FontSize="11" VerticalAlignment="Center" Foreground="#6666FF" FontWeight="Bold"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.ShapeFillBlue}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeFillBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding ImageEditor.DrawingTools.ShapeFillBlue}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeFillBlue}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Brush Size for Freehand -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <TextBlock Text="Brush Size" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="35,*,50">
                     <TextBlock Grid.Column="0" Text="1" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                    <Slider Grid.Column="1" Minimum="1" Maximum="100" Value="{Binding ImageEditor.DrawingBrushSize}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="1" Maximum="100" Value="{Binding ImageEditor.DrawingTools.DrawingBrushSize}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.DrawingBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
                 <!-- Stroke Width for Shapes -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeMode}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Stroke Width" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="35,*,50">
                     <TextBlock Grid.Column="0" Text="1" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                    <Slider Grid.Column="1" Minimum="1" Maximum="50" Value="{Binding ImageEditor.ShapeStrokeWidth}" TickFrequency="1"/>
-                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.ShapeStrokeWidthText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                    <Slider Grid.Column="1" Minimum="1" Maximum="50" Value="{Binding ImageEditor.DrawingTools.ShapeStrokeWidth}" TickFrequency="1"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeWidthText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                   </Grid>
                 </StackPanel>
                 
-                <Border Height="1" Background="#444" Margin="0,4" IsVisible="{Binding ImageEditor.IsShapeFreehand}"/>
+                <Border Height="1" Background="#444" Margin="0,4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}"/>
                 
                 <!-- Brush Shape for Freehand -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsShapeFreehand}">
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <TextBlock Text="Brush Shape" FontSize="11" Opacity="0.7"/>
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <RadioButton Content="Round" IsChecked="{Binding ImageEditor.IsRoundBrush, Mode=TwoWay}" GroupName="BrushShape"/>
-                    <RadioButton Content="Square" IsChecked="{Binding ImageEditor.IsSquareBrush, Mode=TwoWay}" GroupName="BrushShape"/>
+                    <RadioButton Content="Round" IsChecked="{Binding ImageEditor.DrawingTools.IsRoundBrush, Mode=TwoWay}" GroupName="BrushShape"/>
+                    <RadioButton Content="Square" IsChecked="{Binding ImageEditor.DrawingTools.IsSquareBrush, Mode=TwoWay}" GroupName="BrushShape"/>
                   </StackPanel>
                 </StackPanel>
                 
                 <!-- Placed Shape Actions (visible when a shape is placed and awaiting commit) -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.HasPlacedShape}">
+                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.DrawingTools.HasPlacedShape}">
                   <Border Height="1" Background="#444" Margin="0,4"/>
                   <TextBlock Text="Shape placed — drag to move, corners to resize, top handle to rotate." 
                              FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
                   <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
-                    <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.CancelPlacedShapeCommand}" 
+                    <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.DrawingTools.CancelPlacedShapeCommand}" 
                             HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
-                    <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.CommitPlacedShapeCommand}" 
+                    <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.DrawingTools.CommitPlacedShapeCommand}" 
                             Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                   </Grid>
                   <TextBlock Text="Enter = Apply, Esc = Cancel, ✕ = Delete" FontSize="9" Opacity="0.4" HorizontalAlignment="Center"/>
@@ -1002,7 +1002,7 @@
           </StackPanel>
           
           <!-- Inpainting Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsInpaintingPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Inpainting.IsPanelOpen}">
             <TextBlock Text="Inpainting" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -1017,14 +1017,14 @@
                 <Border Background="#252525" CornerRadius="4" Padding="4" MinHeight="60">
                   <Grid RowDefinitions="Auto,Auto">
                     <Border Grid.Row="0" CornerRadius="2" ClipToBounds="True" HorizontalAlignment="Center"
-                            IsVisible="{Binding ImageEditor.HasInpaintBase}">
-                      <Image Source="{Binding ImageEditor.InpaintBaseThumbnail}" MaxHeight="100" Stretch="Uniform"/>
+                            IsVisible="{Binding ImageEditor.Inpainting.HasBase}">
+                      <Image Source="{Binding ImageEditor.Inpainting.BaseThumbnail}" MaxHeight="100" Stretch="Uniform"/>
                     </Border>
                     <TextBlock Grid.Row="0" Text="No base captured" FontSize="10" Opacity="0.4"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                               IsVisible="{Binding !ImageEditor.HasInpaintBase}"/>
+                               IsVisible="{Binding !ImageEditor.Inpainting.HasBase}"/>
                     <Button Grid.Row="1" Content="Use Current as Base" 
-                            Command="{Binding ImageEditor.UseCurrentAsInpaintBaseCommand}"
+                            Command="{Binding ImageEditor.Inpainting.UseCurrentAsBaseCommand}"
                             HorizontalAlignment="Stretch" Padding="6,4" FontSize="10" Margin="0,4,0,0"
                             ToolTip.Tip="Capture the current flattened state as the source image for all future inpaint generations"/>
                   </Grid>
@@ -1035,7 +1035,7 @@
                 <!-- Positive Prompt -->
                 <TextBlock Text="Prompt" FontSize="11" Opacity="0.7"/>
                 <TextBox x:Name="InpaintPromptTextBox"
-                         Text="{Binding ImageEditor.InpaintPositivePrompt, Mode=TwoWay}"
+                         Text="{Binding ImageEditor.Inpainting.PositivePrompt, Mode=TwoWay}"
                          Watermark="Describe what to generate..."
                          TextWrapping="Wrap" AcceptsReturn="True"
                          MinHeight="60" MaxHeight="120" FontSize="11"/>
@@ -1046,46 +1046,46 @@
                 <TextBlock Text="Brush Size" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="35,*,50">
                   <TextBlock Grid.Column="0" Text="1" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                  <Slider Grid.Column="1" Minimum="1" Maximum="200" Value="{Binding ImageEditor.InpaintBrushSize}" TickFrequency="1"/>
-                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintBrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                  <Slider Grid.Column="1" Minimum="1" Maximum="200" Value="{Binding ImageEditor.Inpainting.BrushSize}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.Inpainting.BrushSizeText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                 </Grid>
                 
                 <!-- Mask Feather -->
                 <TextBlock Text="Mask Feather" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="35,*,50">
                   <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                  <Slider Grid.Column="1" Minimum="0" Maximum="50" Value="{Binding ImageEditor.InpaintMaskFeather}" TickFrequency="1"/>
-                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintMaskFeatherText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="50" Value="{Binding ImageEditor.Inpainting.MaskFeather}" TickFrequency="1"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.Inpainting.MaskFeatherText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                 </Grid>
                 
                 <!-- Denoise Strength -->
                 <TextBlock Text="Denoise" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="35,*,50">
                   <TextBlock Grid.Column="0" Text="0" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                  <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding ImageEditor.InpaintDenoise}" TickFrequency="0.05"/>
-                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.InpaintDenoiseText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
+                  <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding ImageEditor.Inpainting.Denoise}" TickFrequency="0.05"/>
+                  <TextBlock Grid.Column="2" Text="{Binding ImageEditor.Inpainting.DenoiseText}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7"/>
                 </Grid>
                 
                 <Border Height="1" Background="#444" Margin="0,4"/>
                 
                 <!-- Action Buttons -->
-                <Button Content="Clear Mask" Command="{Binding ImageEditor.ClearInpaintMaskCommand}" 
+                <Button Content="Clear Mask" Command="{Binding ImageEditor.Inpainting.ClearMaskCommand}" 
                         HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
                         ToolTip.Tip="Remove all painted mask areas"/>
                 
-                <Button Content="Generate" Command="{Binding ImageEditor.GenerateInpaintCommand}" 
+                <Button Content="Generate" Command="{Binding ImageEditor.Inpainting.GenerateCommand}" 
                         HorizontalAlignment="Stretch" Padding="8,6" FontSize="12" FontWeight="SemiBold"
                         Background="#2D7D46" Foreground="White"
                         ToolTip.Tip="Send image and mask to ComfyUI for AI inpainting"/>
                 
-                <Button Content="Generate and Compare" Command="{Binding ImageEditor.GenerateAndCompareInpaintCommand}" 
+                <Button Content="Generate and Compare" Command="{Binding ImageEditor.Inpainting.GenerateAndCompareCommand}" 
                         HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
                         Background="#5E35B1" Foreground="White"
                         ToolTip.Tip="Generate inpainting and open before/after in Image Comparer"/>
                 
                 <!-- Progress (shown when busy) -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.IsInpaintingBusy}">
-                  <TextBlock Text="{Binding ImageEditor.InpaintingStatus}" 
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Inpainting.IsBusy}">
+                  <TextBlock Text="{Binding ImageEditor.Inpainting.Status}" 
                              FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
                 </StackPanel>
                 

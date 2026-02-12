@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using SkiaSharp;
 
@@ -7,28 +8,74 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// Platform-independent image editor core using SkiaSharp.
 /// Supports layer-based editing with compositing.
 /// </summary>
-public class ImageEditorCore : IDisposable
+public partial class ImageEditorCore : IDisposable
 {
+    private EditorServices? _services;
     private SKBitmap? _originalBitmap;
     private SKBitmap? _workingBitmap;
     private SKBitmap? _previewBitmap;
     private SKBitmap? _inpaintBaseBitmap;
     private long _inpaintBaseVersion;
-    private LayerStack? _layers;
     private bool _isPreviewActive;
     private bool _disposed;
-    private float _zoomLevel = 1f;
-    private float _panX;
-    private float _panY;
-    private bool _isFitMode = true;
     private int _imageDpi = 72;
     private readonly object _bitmapLock = new();
-    private bool _isLayerMode;
     private SKRect _lastImageRect;
 
-    private const float MinZoom = 0.1f;
-    private const float MaxZoom = 10f;
-    private const float ZoomStep = 0.1f;
+    // Layer state — delegated to LayerManager when services are wired
+    private LayerStack? _layers => _services?.Layers.Stack;
+    private bool _isLayerMode => _services?.Layers.IsLayerMode ?? false;
+
+    // Viewport state — delegated to ViewportManager when services are wired
+    private float _zoomLevel
+    {
+        get => _services?.Viewport.ZoomLevel ?? 1f;
+        set { if (_services is not null) _services.Viewport.ZoomLevel = value; }
+    }
+    private float _panX
+    {
+        get => _services?.Viewport.PanX ?? 0f;
+        set { if (_services is not null) _services.Viewport.PanX = value; }
+    }
+    private float _panY
+    {
+        get => _services?.Viewport.PanY ?? 0f;
+        set { if (_services is not null) _services.Viewport.PanY = value; }
+    }
+    private bool _isFitMode
+    {
+        get => _services?.Viewport.IsFitMode ?? true;
+        set { if (_services is not null) _services.Viewport.IsFitMode = value; }
+    }
+
+    /// <summary>
+    /// Wires the editor to the service graph. Must be called once before use.
+    /// </summary>
+    public void SetServices(EditorServices services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        if (_services is not null)
+            throw new InvalidOperationException("Services have already been wired. SetServices must only be called once.");
+
+        _services = services;
+
+        // Subscribe to service events so EditorCore stays reactive
+        _services.Layers.ContentChanged += OnLayersContentChanged;
+        _services.Layers.LayersChanged += OnLayersCollectionChanged;
+        _services.Layers.LayerModeChanged += OnLayerModeChanged;
+        _services.Viewport.Changed += OnViewportChanged;
+    }
+
+    private void OnLayerModeChanged(object? sender, EventArgs e)
+    {
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnViewportChanged(object? sender, EventArgs e)
+    {
+        OnZoomChanged();
+    }
 
     /// <summary>
     /// Gets the crop tool instance.
@@ -60,7 +107,7 @@ public class ImageEditorCore : IDisposable
         {
             if (_isLayerMode != value)
             {
-                _isLayerMode = value;
+                if (_services is not null) _services.Layers.IsLayerMode = value;
                 if (value && _layers == null && _workingBitmap != null)
                 {
                     EnableLayerMode();
@@ -103,8 +150,7 @@ public class ImageEditorCore : IDisposable
         get => _zoomLevel;
         set
         {
-            _zoomLevel = Math.Clamp(value, MinZoom, MaxZoom);
-            _isFitMode = false;
+            _zoomLevel = value;
             OnZoomChanged();
         }
     }
@@ -112,7 +158,7 @@ public class ImageEditorCore : IDisposable
     /// <summary>
     /// Gets the zoom level as a percentage (0-1000).
     /// </summary>
-    public int ZoomPercentage => (int)Math.Round(_zoomLevel * 100);
+    public int ZoomPercentage => _services?.Viewport.ZoomPercentage ?? (int)Math.Round(_zoomLevel * 100);
 
     /// <summary>
     /// Gets or sets the horizontal pan offset.
@@ -141,11 +187,6 @@ public class ImageEditorCore : IDisposable
         set
         {
             _isFitMode = value;
-            if (value)
-            {
-                _panX = 0;
-                _panY = 0;
-            }
             OnZoomChanged();
         }
     }
@@ -188,20 +229,14 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void EnableLayerMode()
     {
-        if (_layers != null || _workingBitmap == null) return;
+        if (_layers != null || _workingBitmap == null || _services is null) return;
 
-        // Use the filename for the initial layer name
         var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
             ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
             : "Background";
 
-        _layers = new LayerStack(_workingBitmap.Width, _workingBitmap.Height);
-        _layers.AddLayerFromBitmap(_workingBitmap, layerName);
-        _layers.ContentChanged += OnLayersContentChanged;
-        _layers.LayersChanged += OnLayersCollectionChanged;
-        _isLayerMode = true;
+        _services.Layers.EnableLayerMode(_workingBitmap, layerName);
         OnImageChanged();
-        LayerModeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -209,22 +244,16 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void DisableLayerMode()
     {
-        if (_layers == null) return;
+        if (_layers == null || _services is null) return;
 
-        var flattened = _layers.Flatten();
+        var flattened = _services.Layers.DisableLayerMode();
         if (flattened != null)
         {
             _workingBitmap?.Dispose();
             _workingBitmap = flattened;
         }
 
-        _layers.ContentChanged -= OnLayersContentChanged;
-        _layers.LayersChanged -= OnLayersCollectionChanged;
-        _layers.Dispose();
-        _layers = null;
-        _isLayerMode = false;
         OnImageChanged();
-        LayerModeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -232,34 +261,9 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void FlattenAllLayers()
     {
-        if (_layers == null || _layers.Count == 0) return;
-
-        var flattened = _layers.Flatten();
-        if (flattened == null) return;
-
-        // Get the name of the bottom layer or use "Flattened"
-        var layerName = _layers.Count > 0 ? _layers[0].Name : "Flattened";
-        if (_layers.Count > 1)
-        {
-            layerName = "Flattened";
-        }
-
-        // Clear all layers
-        _layers.ContentChanged -= OnLayersContentChanged;
-        _layers.LayersChanged -= OnLayersCollectionChanged;
-        _layers.Dispose();
-
-        // Create new layer stack with the flattened image
-        _layers = new LayerStack(flattened.Width, flattened.Height);
-        _layers.AddLayerFromBitmap(flattened, layerName);
-        _layers.ContentChanged += OnLayersContentChanged;
-        _layers.LayersChanged += OnLayersCollectionChanged;
-
-        // Clean up
-        flattened.Dispose();
-
+        if (_services is null) return;
+        _services.Layers.FlattenAllLayers();
         OnImageChanged();
-        LayersChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -269,8 +273,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayer(string? name = null)
     {
-        if (!_isLayerMode || _layers == null) return null;
-        return _layers.AddLayer(name);
+        return _services?.Layers.AddLayer(name);
     }
 
     /// <summary>
@@ -281,8 +284,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
     {
-        if (!_isLayerMode || _layers == null) return null;
-        return _layers.AddLayerFromBitmap(bitmap, name);
+        return _services?.Layers.AddLayerFromBitmap(bitmap, name);
     }
 
     /// <summary>
@@ -292,8 +294,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if removed successfully.</returns>
     public bool RemoveLayer(Layer layer)
     {
-        if (!_isLayerMode || _layers == null) return false;
-        return _layers.RemoveLayer(layer);
+        return _services?.Layers.RemoveLayer(layer) ?? false;
     }
 
     /// <summary>
@@ -303,8 +304,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>The duplicated layer, or null if failed.</returns>
     public Layer? DuplicateLayer(Layer layer)
     {
-        if (!_isLayerMode || _layers == null) return null;
-        return _layers.DuplicateLayer(layer);
+        return _services?.Layers.DuplicateLayer(layer);
     }
 
     /// <summary>
@@ -314,8 +314,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if moved successfully.</returns>
     public bool MoveLayerUp(Layer layer)
     {
-        if (!_isLayerMode || _layers == null) return false;
-        return _layers.MoveLayerUp(layer);
+        return _services?.Layers.MoveLayerUp(layer) ?? false;
     }
 
     /// <summary>
@@ -325,8 +324,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if moved successfully.</returns>
     public bool MoveLayerDown(Layer layer)
     {
-        if (!_isLayerMode || _layers == null) return false;
-        return _layers.MoveLayerDown(layer);
+        return _services?.Layers.MoveLayerDown(layer) ?? false;
     }
 
     /// <summary>
@@ -336,8 +334,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if merged successfully.</returns>
     public bool MergeLayerDown(Layer layer)
     {
-        if (!_isLayerMode || _layers == null) return false;
-        return _layers.MergeDown(layer);
+        return _services?.Layers.MergeLayerDown(layer) ?? false;
     }
 
     /// <summary>
@@ -345,18 +342,7 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void MergeVisibleLayers()
     {
-        if (!_isLayerMode || _layers == null) return;
-        _layers.MergeVisible();
-    }
-
-    /// <summary>
-    /// Flattens all layers to a single bitmap.
-    /// </summary>
-    /// <returns>The flattened bitmap, or null if not in layer mode.</returns>
-    public SKBitmap? FlattenLayers()
-    {
-        if (!_isLayerMode || _layers == null) return null;
-        return _layers.Flatten();
+        _services?.Layers.MergeVisibleLayers();
     }
 
     /// <summary>
@@ -364,12 +350,12 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public Layer? ActiveLayer
     {
-        get => _layers?.ActiveLayer;
+        get => _services?.Layers.ActiveLayer;
         set
         {
-            if (_layers != null)
+            if (_services is not null)
             {
-                _layers.ActiveLayer = value;
+                _services.Layers.ActiveLayer = value;
             }
         }
     }
@@ -403,13 +389,10 @@ public class ImageEditorCore : IDisposable
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
             
-            // Dispose existing layers if any
-            if (_layers != null)
+            // Tear down existing layer stack without flattening (we're discarding it)
+            if (_isLayerMode && _services is not null)
             {
-                _layers.ContentChanged -= OnLayersContentChanged;
-                _layers.LayersChanged -= OnLayersCollectionChanged;
-                _layers.Dispose();
-                _layers = null;
+                _services.Layers.Reset();
             }
             
             _originalBitmap?.Dispose();
@@ -420,16 +403,9 @@ public class ImageEditorCore : IDisposable
             FileSizeBytes = fileInfo.Length;
 
             using var stream = File.OpenRead(filePath);
-            using var codec = SKCodec.Create(stream);
-            if (codec is not null)
-                stream.Position = 0;
-
             _originalBitmap = SKBitmap.Decode(stream);
             if (_originalBitmap is null)
                 return false;
-
-            // Try to extract DPI (default to 72 if not available)
-            _imageDpi = 72; // SkiaSharp doesn't directly expose DPI, would need EXIF parsing
 
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
@@ -438,9 +414,8 @@ public class ImageEditorCore : IDisposable
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
 
-            // Reset inpaint base to the newly loaded image
+            // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
-            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -467,13 +442,10 @@ public class ImageEditorCore : IDisposable
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
             
-            // Dispose existing layers if any
-            if (_layers != null)
+            // Tear down existing layer stack without flattening (we're discarding it)
+            if (_isLayerMode && _services is not null)
             {
-                _layers.ContentChanged -= OnLayersContentChanged;
-                _layers.LayersChanged -= OnLayersCollectionChanged;
-                _layers.Dispose();
-                _layers = null;
+                _services.Layers.Reset();
             }
             
             _originalBitmap?.Dispose();
@@ -489,9 +461,8 @@ public class ImageEditorCore : IDisposable
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
 
-            // Reset inpaint base to the newly loaded image
+            // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
-            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -499,62 +470,6 @@ public class ImageEditorCore : IDisposable
         catch
         {
             return false;
-        }
-    }
-
-    /// <summary>
-    /// Renders the current image to an SKCanvas at the specified position and scale.
-    /// </summary>
-    /// <param name="canvas">The canvas to render to.</param>
-    /// <param name="destRect">Destination rectangle for rendering.</param>
-    public void Render(SKCanvas canvas, SKRect destRect)
-    {
-        if (canvas is null)
-            return;
-            
-        SKBitmap? bitmap;
-        lock (_bitmapLock)
-        {
-            bitmap = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-            if (bitmap is null)
-                return;
-            
-            canvas.DrawBitmap(bitmap, destRect);
-        }
-    }
-
-    /// <summary>
-    /// Renders the current image centered within the given bounds, maintaining aspect ratio.
-    /// </summary>
-    /// <param name="canvas">The canvas to render to.</param>
-    /// <param name="canvasWidth">Available canvas width.</param>
-    /// <param name="canvasHeight">Available canvas height.</param>
-    /// <param name="backgroundColor">Background color to clear with.</param>
-    /// <returns>The actual rectangle where the image was rendered.</returns>
-    public SKRect RenderCentered(SKCanvas canvas, float canvasWidth, float canvasHeight, SKColor backgroundColor)
-    {
-        canvas.Clear(backgroundColor);
-
-        lock (_bitmapLock)
-        {
-            var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-            if (bitmapToRender is null)
-                return SKRect.Empty;
-
-            var imageRect = CalculateFitRectInternal(bitmapToRender, canvasWidth, canvasHeight);
-            canvas.DrawBitmap(bitmapToRender, imageRect);
-
-            // Update crop tool with current image bounds and render overlay
-            CropTool.SetImageBounds(imageRect);
-            CropTool.ImagePixelWidth = bitmapToRender.Width;
-            CropTool.ImagePixelHeight = bitmapToRender.Height;
-            CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
-
-            // Update drawing tool with current image bounds and render overlay
-            DrawingTool.SetImageBounds(imageRect);
-            DrawingTool.Render(canvas);
-
-            return imageRect;
         }
     }
 
@@ -605,32 +520,28 @@ public class ImageEditorCore : IDisposable
             return;
 
         ClearPreview();
+        ClearInpaintBase();
 
-        // If in layer mode, dispose the current layer stack
-        if (_isLayerMode && _layers != null)
+        var wasLayerMode = _isLayerMode;
+
+        // If in layer mode, disable it through LayerManager
+        if (wasLayerMode && _services is not null)
         {
-            _layers.ContentChanged -= OnLayersContentChanged;
-            _layers.LayersChanged -= OnLayersCollectionChanged;
-            _layers.Dispose();
-            _layers = null;
+            _services.Layers.DisableLayerMode()?.Dispose();
         }
 
         // Reset working bitmap from original
         _workingBitmap?.Dispose();
         _workingBitmap = _originalBitmap.Copy();
 
-        // If was in layer mode, recreate the layer stack from the reset working bitmap
-        if (_isLayerMode)
+        // If was in layer mode, recreate via LayerManager
+        if (wasLayerMode && _services is not null)
         {
             var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
                 ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
                 : "Background";
 
-            _layers = new LayerStack(_workingBitmap.Width, _workingBitmap.Height);
-            _layers.AddLayerFromBitmap(_workingBitmap, layerName);
-            _layers.ContentChanged += OnLayersContentChanged;
-            _layers.LayersChanged += OnLayersCollectionChanged;
-            LayersChanged?.Invoke(this, EventArgs.Empty);
+            _services.Layers.EnableLayerMode(_workingBitmap, layerName);
         }
 
         OnImageChanged();
@@ -642,6 +553,14 @@ public class ImageEditorCore : IDisposable
     public void Clear()
     {
         ClearPreview();
+        ClearInpaintBase();
+
+        // Disable layer mode if active
+        if (_isLayerMode && _services is not null)
+        {
+            _services.Layers.DisableLayerMode()?.Dispose();
+        }
+
         _originalBitmap?.Dispose();
         _workingBitmap?.Dispose();
         _originalBitmap = null;
@@ -651,35 +570,12 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Gets the working bitmap for external rendering.
-    /// Returns preview bitmap if preview is active.
-    /// </summary>
-    public SKBitmap? GetWorkingBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            return _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-        }
-    }
-
-    /// <summary>
-    /// Gets the actual working bitmap without preview.
-    /// </summary>
-    public SKBitmap? GetActualWorkingBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            return _workingBitmap;
-        }
-    }
-
-    /// <summary>
     /// Crops the image to the specified rectangle in image coordinates.
     /// When in layer mode, crops all layers.
     /// </summary>
     /// <param name="cropRect">The crop rectangle in image pixel coordinates.</param>
     /// <returns>True if the crop was successful.</returns>
-    public bool Crop(SKRectI cropRect)
+    private bool Crop(SKRectI cropRect)
     {
         // Get the current image dimensions
         int currentWidth, currentHeight;
@@ -781,6 +677,7 @@ public class ImageEditorCore : IDisposable
     /// <summary>
     /// Saves the current working image to a file.
     /// If in layer mode, flattens all layers before saving.
+    /// Delegates file I/O to DocumentService.
     /// </summary>
     /// <param name="filePath">The file path to save to.</param>
     /// <param name="format">The image format (default: PNG).</param>
@@ -797,8 +694,8 @@ public class ImageEditorCore : IDisposable
         if (_isLayerMode && _layers != null && _layers.Count > 0)
         {
             FileLogger.Log("Layer mode active, flattening layers for save...");
-            bitmapToSave = _layers.Flatten();
-            needsDispose = true; // We own this flattened bitmap
+            bitmapToSave = _services?.Layers.Flatten();
+            needsDispose = true;
         }
         else
         {
@@ -811,152 +708,32 @@ public class ImageEditorCore : IDisposable
             FileLogger.LogExit("false");
             return false;
         }
-        
-        if (string.IsNullOrWhiteSpace(filePath))
-        {
-            FileLogger.LogWarning("filePath is null or whitespace, cannot save");
-            if (needsDispose) bitmapToSave.Dispose();
-            FileLogger.LogExit("false");
-            return false;
-        }
 
+        // Determine format from extension if not explicitly provided
+        var resolvedFormat = format;
+        if (_services is not null)
+        {
+            resolvedFormat = _services.Document.GetFormatFromExtension(filePath);
+        }
+        
         FileLogger.Log($"Bitmap to save size: {bitmapToSave.Width}x{bitmapToSave.Height}");
 
         try
         {
-            // Ensure the directory exists
-            var directory = Path.GetDirectoryName(filePath);
-            FileLogger.Log($"Directory: {directory ?? "(null)"}");
-            
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                FileLogger.Log($"Creating directory: {directory}");
-                Directory.CreateDirectory(directory);
-            }
+            var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
-            FileLogger.Log("Creating SKImage from bitmap...");
-            using var image = SKImage.FromBitmap(bitmapToSave);
-            if (image is null)
-            {
-                FileLogger.LogError("SKImage.FromBitmap returned null");
-                if (needsDispose) bitmapToSave.Dispose();
-                FileLogger.LogExit("false");
-                return false;
-            }
-            
-            FileLogger.Log($"Encoding image as {format}...");
-            using var data = image.Encode(format, quality);
-            
-            
-            if (data is null)
-            {
-                FileLogger.LogError("image.Encode returned null");
-                if (needsDispose) bitmapToSave.Dispose();
-                FileLogger.LogExit("false");
-                return false;
-            }
-
-            FileLogger.Log($"Encoded data size: {data.Size} bytes");
-            FileLogger.Log($"Opening file stream for writing: {filePath}");
-            
-            // Use FileMode.Create to truncate existing file or create new
-            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            FileLogger.Log("Saving data to stream...");
-            data.SaveTo(stream);
-            
-            // Clean up flattened bitmap if we created one
             if (needsDispose) bitmapToSave.Dispose();
-            
-            FileLogger.Log("Save completed successfully");
-            FileLogger.LogExit("true");
-            return true;
+            FileLogger.Log(result ? "Save completed successfully" : "Save failed");
+            FileLogger.LogExit(result.ToString());
+            return result;
         }
         catch (Exception ex)
         {
             FileLogger.LogError($"Exception during save to {filePath}", ex);
+            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.LogExit("false");
             return false;
         }
-    }
-
-    /// <summary>
-    /// Saves the current working image, overwriting the original file.
-    /// </summary>
-    /// <returns>True if saved successfully.</returns>
-    public bool SaveOverwrite()
-    {
-        FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
-        
-        if (string.IsNullOrWhiteSpace(CurrentImagePath))
-        {
-            FileLogger.LogWarning("CurrentImagePath is null or whitespace");
-            FileLogger.LogExit("false");
-            return false;
-        }
-
-        var format = GetFormatFromExtension(CurrentImagePath);
-        FileLogger.Log($"Detected format: {format}");
-        var result = SaveImage(CurrentImagePath, format);
-        FileLogger.LogExit(result.ToString());
-        return result;
-    }
-
-    /// <summary>
-    /// Saves the current working image as a new file with auto-generated name.
-    /// </summary>
-    /// <returns>The new file path if saved successfully, null otherwise.</returns>
-    public string? SaveAsNew()
-    {
-        if (_workingBitmap is null || string.IsNullOrWhiteSpace(CurrentImagePath))
-            return null;
-
-        var directory = Path.GetDirectoryName(CurrentImagePath);
-        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
-        var extension = Path.GetExtension(CurrentImagePath);
-
-        if (string.IsNullOrEmpty(directory))
-            return null;
-
-        // Generate unique filename with suffix
-        var newPath = GenerateUniqueFilePath(directory, fileName, extension);
-        var format = GetFormatFromExtension(newPath);
-
-        if (SaveImage(newPath, format))
-        {
-            return newPath;
-        }
-
-        return null;
-    }
-
-    private static string GenerateUniqueFilePath(string directory, string baseName, string extension)
-    {
-        var counter = 1;
-        string newPath;
-
-        do
-        {
-            var suffix = $"_edited_{counter:D3}";
-            newPath = Path.Combine(directory, $"{baseName}{suffix}{extension}");
-            counter++;
-        }
-        while (File.Exists(newPath) && counter < 1000);
-
-        return newPath;
-    }
-
-    private static SKEncodedImageFormat GetFormatFromExtension(string filePath)
-    {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
-        {
-            ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
-            ".png" => SKEncodedImageFormat.Png,
-            ".webp" => SKEncodedImageFormat.Webp,
-            ".bmp" => SKEncodedImageFormat.Bmp,
-            ".gif" => SKEncodedImageFormat.Gif,
-            _ => SKEncodedImageFormat.Png
-        };
     }
 
     /// <summary>
@@ -1008,16 +785,20 @@ public class ImageEditorCore : IDisposable
             }
 
             // Render based on mode
-            if (_isLayerMode && _layers != null)
+            if (_isPreviewActive && _previewBitmap is not null)
+            {
+                // Preview takes priority over layer compositing (e.g., color balance live preview)
+                canvas.DrawBitmap(_previewBitmap, imageRect);
+            }
+            else if (_isLayerMode && _layers != null)
             {
                 LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect);
             }
             else
             {
-                var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-                if (bitmapToRender != null)
+                if (_workingBitmap != null)
                 {
-                    canvas.DrawBitmap(bitmapToRender, imageRect);
+                    canvas.DrawBitmap(_workingBitmap, imageRect);
                 }
             }
 
@@ -1063,17 +844,17 @@ public class ImageEditorCore : IDisposable
     /// <summary>
     /// Increases the zoom level to zoom in.
     /// </summary>
-    public void ZoomIn() => ZoomLevel += ZoomStep;
+    public void ZoomIn() => _services?.Viewport.ZoomIn();
 
     /// <summary>
     /// Decreases the zoom level to zoom out.
     /// </summary>
-    public void ZoomOut() => ZoomLevel -= ZoomStep;
+    public void ZoomOut() => _services?.Viewport.ZoomOut();
 
     /// <summary>
     /// Sets the zoom level to fit the image within the canvas.
     /// </summary>
-    public void ZoomToFit() => IsFitMode = true;
+    public void ZoomToFit() => _services?.Viewport.ZoomToFit();
 
     /// <summary>
     /// Sets fit mode with a pre-calculated zoom level.
@@ -1082,11 +863,7 @@ public class ImageEditorCore : IDisposable
     /// <param name="fitZoom">The calculated zoom level for fit mode.</param>
     public void SetFitModeWithZoom(float fitZoom)
     {
-        _zoomLevel = Math.Clamp(fitZoom, MinZoom, MaxZoom);
-        _isFitMode = true;
-        _panX = 0;
-        _panY = 0;
-        OnZoomChanged();
+        _services?.Viewport.SetFitModeWithZoom(fitZoom);
     }
 
     /// <summary>
@@ -1094,9 +871,7 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void ZoomToActual()
     {
-        ZoomLevel = 1f;
-        _panX = 0;
-        _panY = 0;
+        _services?.Viewport.ZoomToActual();
     }
 
     /// <summary>
@@ -1104,11 +879,7 @@ public class ImageEditorCore : IDisposable
     /// </summary>
     public void ResetZoom()
     {
-        _zoomLevel = 1f;
-        _panX = 0;
-        _panY = 0;
-        _isFitMode = true;
-        OnZoomChanged();
+        _services?.Viewport.Reset();
     }
 
     /// <summary>
@@ -1124,247 +895,10 @@ public class ImageEditorCore : IDisposable
     /// <param name="deltaY">The delta value for the Y axis.</param>
     public void Pan(float deltaX, float deltaY)
     {
-        if (_isFitMode) return;
-        _panX += deltaX;
-        _panY += deltaY;
+        _services?.Viewport.Pan(deltaX, deltaY);
     }
 
-    #region Transform Operations
-
-    /// <summary>
-    /// Rotates the image 90 degrees clockwise.
-    /// When in layer mode, rotates all layers.
-    /// </summary>
-    public bool RotateRight()
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null) return false;
-        try
-        {
-            var rotated = new SKBitmap(targetBitmap.Height, targetBitmap.Width);
-            using (var canvas = new SKCanvas(rotated))
-            {
-                canvas.Translate(rotated.Width, 0);
-                canvas.RotateDegrees(90);
-                canvas.DrawBitmap(targetBitmap, 0, 0);
-            }
-            
-            if (_isLayerMode && _layers != null)
-            {
-                // Rotate all layers
-                _layers.TransformAll(layer => RotateBitmapRight(layer.Bitmap));
-            }
-            else
-            {
-                _workingBitmap?.Dispose();
-                _workingBitmap = rotated;
-            }
-            
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Rotates the image 90 degrees counter-clockwise.
-    /// When in layer mode, rotates all layers.
-    /// </summary>
-    public bool RotateLeft()
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null) return false;
-        try
-        {
-            var rotated = new SKBitmap(targetBitmap.Height, targetBitmap.Width);
-            using (var canvas = new SKCanvas(rotated))
-            {
-                canvas.Translate(0, rotated.Height);
-                canvas.RotateDegrees(-90);
-                canvas.DrawBitmap(targetBitmap, 0, 0);
-            }
-            
-            if (_isLayerMode && _layers != null)
-            {
-                // Rotate all layers
-                _layers.TransformAll(layer => RotateBitmapLeft(layer.Bitmap));
-            }
-            else
-            {
-                _workingBitmap?.Dispose();
-                _workingBitmap = rotated;
-            }
-            
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Rotates the image 180 degrees.
-    /// When in layer mode, rotates all layers.
-    /// </summary>
-    public bool Rotate180()
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null) return false;
-        try
-        {
-            var rotated = new SKBitmap(targetBitmap.Width, targetBitmap.Height);
-            using (var canvas = new SKCanvas(rotated))
-            {
-                canvas.Translate(rotated.Width, rotated.Height);
-                canvas.RotateDegrees(180);
-                canvas.DrawBitmap(targetBitmap, 0, 0);
-            }
-            
-            if (_isLayerMode && _layers != null)
-            {
-                // Rotate all layers
-                _layers.TransformAll(layer => RotateBitmap180(layer.Bitmap));
-            }
-            else
-            {
-                _workingBitmap?.Dispose();
-                _workingBitmap = rotated;
-            }
-            
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Flips the image horizontally (mirror).
-    /// When in layer mode, flips all layers.
-    /// </summary>
-    public bool FlipHorizontal()
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null) return false;
-        try
-        {
-            var flipped = new SKBitmap(targetBitmap.Width, targetBitmap.Height);
-            using (var canvas = new SKCanvas(flipped))
-            {
-                canvas.Translate(flipped.Width, 0);
-                canvas.Scale(-1, 1);
-                canvas.DrawBitmap(targetBitmap, 0, 0);
-            }
-            
-            if (_isLayerMode && _layers != null)
-            {
-                // Flip all layers
-                _layers.TransformAll(layer => FlipBitmapHorizontal(layer.Bitmap));
-            }
-            else
-            {
-                _workingBitmap?.Dispose();
-                _workingBitmap = flipped;
-            }
-            
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Flips the image vertically.
-    /// When in layer mode, flips all layers.
-    /// </summary>
-    public bool FlipVertical()
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null) return false;
-        try
-        {
-            var flipped = new SKBitmap(targetBitmap.Width, targetBitmap.Height);
-            using (var canvas = new SKCanvas(flipped))
-            {
-                canvas.Translate(0, flipped.Height);
-                canvas.Scale(1, -1);
-                canvas.DrawBitmap(targetBitmap, 0, 0);
-            }
-            
-            if (_isLayerMode && _layers != null)
-            {
-                // Flip all layers
-                _layers.TransformAll(layer => FlipBitmapVertical(layer.Bitmap));
-            }
-            else
-            {
-                _workingBitmap?.Dispose();
-                _workingBitmap = flipped;
-            }
-            
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    // Helper methods for bitmap transformations
-    private static SKBitmap? RotateBitmapRight(SKBitmap? source)
-    {
-        if (source is null) return null;
-        var rotated = new SKBitmap(source.Height, source.Width);
-        using var canvas = new SKCanvas(rotated);
-        canvas.Translate(rotated.Width, 0);
-        canvas.RotateDegrees(90);
-        canvas.DrawBitmap(source, 0, 0);
-        return rotated;
-    }
-
-    private static SKBitmap? RotateBitmapLeft(SKBitmap? source)
-    {
-        if (source is null) return null;
-        var rotated = new SKBitmap(source.Height, source.Width);
-        using var canvas = new SKCanvas(rotated);
-        canvas.Translate(0, rotated.Height);
-        canvas.RotateDegrees(-90);
-        canvas.DrawBitmap(source, 0, 0);
-        return rotated;
-    }
-
-    private static SKBitmap? RotateBitmap180(SKBitmap? source)
-    {
-        if (source is null) return null;
-        var rotated = new SKBitmap(source.Width, source.Height);
-        using var canvas = new SKCanvas(rotated);
-        canvas.Translate(rotated.Width, rotated.Height);
-        canvas.RotateDegrees(180);
-        canvas.DrawBitmap(source, 0, 0);
-        return rotated;
-    }
-
-    private static SKBitmap? FlipBitmapHorizontal(SKBitmap? source)
-    {
-        if (source is null) return null;
-        var flipped = new SKBitmap(source.Width, source.Height);
-        using var canvas = new SKCanvas(flipped);
-        canvas.Translate(flipped.Width, 0);
-        canvas.Scale(-1, 1);
-        canvas.DrawBitmap(source, 0, 0);
-        return flipped;
-    }
-
-    private static SKBitmap? FlipBitmapVertical(SKBitmap? source)
-    {
-        if (source is null) return null;
-        var flipped = new SKBitmap(source.Width, source.Height);
-        using var canvas = new SKCanvas(flipped);
-        canvas.Translate(0, flipped.Height);
-        canvas.Scale(1, -1);
-        canvas.DrawBitmap(source, 0, 0);
-        return flipped;
-    }
-
-    #endregion
-
-    #region Color Balance
+    #region Shared Operation Helpers
 
     /// <summary>
     /// Gets the bitmap to apply operations to (active layer bitmap when in layer mode, otherwise working bitmap).
@@ -1396,203 +930,7 @@ public class ImageEditorCore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Applies color balance adjustments to the image.
-    /// When in layer mode, applies to the active layer.
-    /// </summary>
-    public bool ApplyColorBalance(ColorBalanceSettings settings)
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null || settings is null || !settings.HasAdjustments)
-            return false;
-
-        try
-        {
-            var width = targetBitmap.Width;
-            var height = targetBitmap.Height;
-            var result = new SKBitmap(width, height);
-
-            var srcPixels = targetBitmap.Pixels;
-            var dstPixels = new SKColor[srcPixels.Length];
-
-            var shadowsCR = settings.ShadowsCyanRed / 100f;
-            var shadowsMG = settings.ShadowsMagentaGreen / 100f;
-            var shadowsYB = settings.ShadowsYellowBlue / 100f;
-            var midtonesCR = settings.MidtonesCyanRed / 100f;
-            var midtonesMG = settings.MidtonesMagentaGreen / 100f;
-            var midtonesYB = settings.MidtonesYellowBlue / 100f;
-            var highlightsCR = settings.HighlightsCyanRed / 100f;
-            var highlightsMG = settings.HighlightsMagentaGreen / 100f;
-            var highlightsYB = settings.HighlightsYellowBlue / 100f;
-
-            for (var i = 0; i < srcPixels.Length; i++)
-            {
-                var pixel = srcPixels[i];
-                var r = pixel.Red / 255f;
-                var g = pixel.Green / 255f;
-                var b = pixel.Blue / 255f;
-
-                var lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-
-                var shadowWeight = 1f - Math.Clamp(lum * 2f, 0f, 1f);
-                var highlightWeight = Math.Clamp((lum - 0.5f) * 2f, 0f, 1f);
-                var midtoneWeight = 1f - shadowWeight - highlightWeight;
-
-                var rAdjust = shadowsCR * shadowWeight + midtonesCR * midtoneWeight + highlightsCR * highlightWeight;
-                var gAdjust = shadowsMG * shadowWeight + midtonesMG * midtoneWeight + highlightsMG * highlightWeight;
-                var bAdjust = shadowsYB * shadowWeight + midtonesYB * midtoneWeight + highlightsYB * highlightWeight;
-
-                r += rAdjust * 0.5f;
-                g += gAdjust * 0.5f - rAdjust * 0.15f;
-                b += bAdjust * 0.5f - rAdjust * 0.15f;
-
-                if (bAdjust < 0) { r -= bAdjust * 0.3f; g -= bAdjust * 0.3f; }
-                if (gAdjust < 0) { r -= gAdjust * 0.3f; b -= gAdjust * 0.3f; }
-
-                if (settings.PreserveLuminosity)
-                {
-                    var newLum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                    if (newLum > 0.001f)
-                    {
-                        var lumRatio = lum / newLum;
-                        r *= lumRatio; g *= lumRatio; b *= lumRatio;
-                    }
-                }
-
-                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
-                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
-                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
-
-                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
-            }
-
-            result.Pixels = dstPixels;
-            SetOperationTargetBitmap(result);
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Sets a preview bitmap to display instead of the working bitmap.
-    /// </summary>
-    public bool SetColorBalancePreview(ColorBalanceSettings settings)
-    {
-        if (settings is null)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return false;
-
-            // Dispose old preview
-            var oldPreview = _previewBitmap;
-            _previewBitmap = null;
-
-            if (!settings.HasAdjustments)
-            {
-                _isPreviewActive = false;
-                oldPreview?.Dispose();
-                OnImageChanged();
-                return true;
-            }
-
-            // Create new preview from target bitmap (not swapping)
-            var newPreview = CreateColorBalancePreview(targetBitmap, settings);
-            
-            
-            // Only after new preview is ready, dispose old and assign new
-            _previewBitmap = newPreview;
-            _isPreviewActive = _previewBitmap is not null;
-            oldPreview?.Dispose();
-        }
-
-        OnImageChanged();
-        return _isPreviewActive;
-    }
-
-    /// <summary>
-    /// Creates a color balance preview bitmap from the source bitmap.
-    /// Does not modify any class fields.
-    /// </summary>
-    private static SKBitmap? CreateColorBalancePreview(SKBitmap source, ColorBalanceSettings settings)
-    {
-        if (source is null || settings is null || !settings.HasAdjustments)
-            return null;
-
-        try
-        {
-            var width = source.Width;
-            var height = source.Height;
-            var result = new SKBitmap(width, height);
-
-            var srcPixels = source.Pixels;
-            var dstPixels = new SKColor[srcPixels.Length];
-
-            var shadowsCR = settings.ShadowsCyanRed / 100f;
-            var shadowsMG = settings.ShadowsMagentaGreen / 100f;
-            var shadowsYB = settings.ShadowsYellowBlue / 100f;
-            var midtonesCR = settings.MidtonesCyanRed / 100f;
-            var midtonesMG = settings.MidtonesMagentaGreen / 100f;
-            var midtonesYB = settings.MidtonesYellowBlue / 100f;
-            var highlightsCR = settings.HighlightsCyanRed / 100f;
-            var highlightsMG = settings.HighlightsMagentaGreen / 100f;
-            var highlightsYB = settings.HighlightsYellowBlue / 100f;
-
-            for (var i = 0; i < srcPixels.Length; i++)
-            {
-                var pixel = srcPixels[i];
-                var r = pixel.Red / 255f;
-                var g = pixel.Green / 255f;
-                var b = pixel.Blue / 255f;
-
-                var lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-
-                var shadowWeight = 1f - Math.Clamp(lum * 2f, 0f, 1f);
-                var highlightWeight = Math.Clamp((lum - 0.5f) * 2f, 0f, 1f);
-                var midtoneWeight = 1f - shadowWeight - highlightWeight;
-
-                var rAdjust = shadowsCR * shadowWeight + midtonesCR * midtoneWeight + highlightsCR * highlightWeight;
-                var gAdjust = shadowsMG * shadowWeight + midtonesMG * midtoneWeight + highlightsMG * highlightWeight;
-                var bAdjust = shadowsYB * shadowWeight + midtonesYB * midtoneWeight + highlightsYB * highlightWeight;
-
-                r += rAdjust * 0.5f;
-                g += gAdjust * 0.5f - rAdjust * 0.15f;
-                b += bAdjust * 0.5f - rAdjust * 0.15f;
-
-                if (bAdjust < 0) { r -= bAdjust * 0.3f; g -= bAdjust * 0.3f; }
-                if (gAdjust < 0) { r -= gAdjust * 0.3f; b -= gAdjust * 0.3f; }
-
-                if (settings.PreserveLuminosity)
-                {
-                    var newLum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                    if (newLum > 0.001f)
-                    {
-                        var lumRatio = lum / newLum;
-                        r *= lumRatio; g *= lumRatio; b *= lumRatio;
-                    }
-                }
-
-                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
-                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
-                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
-
-                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
-            }
-
-            result.Pixels = dstPixels;
-            return result;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    #endregion Color Balance
+    #endregion Shared Operation Helpers
 
     #region Preview Management
 
@@ -1621,547 +959,7 @@ public class ImageEditorCore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Applies the current preview to the working bitmap.
-    /// </summary>
-    public bool ApplyPreview()
-    {
-        SKBitmap? oldWorking;
-        
-        lock (_bitmapLock)
-        {
-            if (!_isPreviewActive || _previewBitmap is null)
-                return false;
-
-            oldWorking = _workingBitmap;
-            _workingBitmap = _previewBitmap;
-            _previewBitmap = null;
-            _isPreviewActive = false;
-        }
-        
-        oldWorking?.Dispose();
-        OnImageChanged();
-        return true;
-    }
-
     #endregion Preview Management
-
-    #region Brightness and Contrast
-
-    /// <summary>
-    /// Applies brightness and contrast adjustments to the image.
-    /// When in layer mode, applies to the active layer.
-    /// </summary>
-    public bool ApplyBrightnessContrast(BrightnessContrastSettings settings)
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null || settings is null || !settings.HasAdjustments)
-            return false;
-
-        try
-        {
-            var result = CreateBrightnessContrastPreview(targetBitmap, settings);
-            if (result is null)
-                return false;
-
-            SetOperationTargetBitmap(result);
-            OnImageChanged();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>
-    /// Sets a preview bitmap with brightness/contrast adjustments.
-    /// </summary>
-    public bool SetBrightnessContrastPreview(BrightnessContrastSettings settings)
-    {
-        if (settings is null)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return false;
-
-            // Dispose old preview
-            var oldPreview = _previewBitmap;
-            _previewBitmap = null;
-
-            if (!settings.HasAdjustments)
-            {
-                _isPreviewActive = false;
-                oldPreview?.Dispose();
-                OnImageChanged();
-                return true;
-            }
-
-            // Create new preview from target bitmap
-            var newPreview = CreateBrightnessContrastPreview(targetBitmap, settings);
-            
-            // Only after new preview is ready, dispose old and assign new
-            _previewBitmap = newPreview;
-            _isPreviewActive = _previewBitmap is not null;
-            oldPreview?.Dispose();
-        }
-
-        OnImageChanged();
-        return _isPreviewActive;
-    }
-
-    /// <summary>
-    /// Creates a brightness/contrast preview bitmap from the source bitmap.
-    /// Does not modify any class fields.
-    /// </summary>
-    private static SKBitmap? CreateBrightnessContrastPreview(SKBitmap source, BrightnessContrastSettings settings)
-    {
-        if (source is null || settings is null || !settings.HasAdjustments)
-            return null;
-
-        try
-        {
-            var width = source.Width;
-            var height = source.Height;
-            var result = new SKBitmap(width, height);
-
-            var srcPixels = source.Pixels;
-            var dstPixels = new SKColor[srcPixels.Length];
-
-            // Normalize brightness (-100 to +100) to a factor
-            // Brightness: add/subtract from pixel values
-            var brightnessFactor = settings.Brightness / 100f;
-            
-            // Normalize contrast (-100 to +100) to a factor
-            // Contrast: 0 = gray, 1 = normal, >1 = more contrast
-            // Map -100..+100 to 0..2 (with 0 = no change)
-            var contrastFactor = (settings.Contrast + 100f) / 100f;
-
-            for (var i = 0; i < srcPixels.Length; i++)
-            {
-                var pixel = srcPixels[i];
-                
-                // Convert to 0-1 range
-                var r = pixel.Red / 255f;
-                var g = pixel.Green / 255f;
-                var b = pixel.Blue / 255f;
-
-                // Apply brightness (additive)
-                r += brightnessFactor;
-                g += brightnessFactor;
-                b += brightnessFactor;
-
-                // Apply contrast (multiply around 0.5 midpoint)
-                r = (r - 0.5f) * contrastFactor + 0.5f;
-                g = (g - 0.5f) * contrastFactor + 0.5f;
-                b = (b - 0.5f) * contrastFactor + 0.5f;
-
-                // Clamp and convert back to byte
-                var newR = (byte)Math.Clamp((int)(r * 255f), 0, 255);
-                var newG = (byte)Math.Clamp((int)(g * 255f), 0, 255);
-                var newB = (byte)Math.Clamp((int)(b * 255f), 0, 255);
-
-                dstPixels[i] = new SKColor(newR, newG, newB, pixel.Alpha);
-            }
-
-            result.Pixels = dstPixels;
-            return result;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    #endregion Brightness and Contrast
-
-
-    #region Background Removal
-
-    /// <summary>
-    /// Applies an alpha mask to the current image for background removal.
-    /// When in layer mode, applies to the active layer.
-    /// </summary>
-    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
-    /// <param name="width">Width of the mask in pixels.</param>
-    /// <param name="height">Height of the mask in pixels.</param>
-    /// <returns>True if the mask was applied successfully.</returns>
-    public bool ApplyBackgroundMask(byte[] maskData, int width, int height)
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (maskData is null || targetBitmap is null)
-            return false;
-
-        if (width != targetBitmap.Width || height != targetBitmap.Height)
-            return false;
-
-        if (maskData.Length != width * height)
-            return false;
-
-        try
-        {
-            lock (_bitmapLock)
-            {
-                var pixels = targetBitmap.Pixels;
-                var newPixels = new SKColor[pixels.Length];
-
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var pixel = pixels[i];
-                    var maskValue = maskData[i];
-
-                    // Apply mask as alpha channel
-                    newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
-                }
-
-                // Create new bitmap with the masked pixels
-                var result = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                result.Pixels = newPixels;
-                SetOperationTargetBitmap(result);
-            }
-
-            OnImageChanged();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Applies the background removal mask as layers, creating:
-    /// 1. Subject layer (top) - foreground with background transparent
-    /// 2. Background layer (middle) - background with subject transparent (inverted mask)
-    /// 3. Original layer (bottom) - the existing layer is kept as the original
-    /// Automatically enables layer mode if not already enabled.
-    /// </summary>
-    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
-    /// <param name="width">Width of the mask in pixels.</param>
-    /// <param name="height">Height of the mask in pixels.</param>
-    /// <returns>True if the layers were created successfully.</returns>
-    public bool ApplyBackgroundMaskWithLayers(byte[] maskData, int width, int height)
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (maskData is null || targetBitmap is null)
-            return false;
-
-        if (width != targetBitmap.Width || height != targetBitmap.Height)
-            return false;
-
-        if (maskData.Length != width * height)
-            return false;
-
-        try
-        {
-            lock (_bitmapLock)
-            {
-                var pixels = targetBitmap.Pixels;
-
-                // Create subject bitmap (foreground with background transparent)
-                var subjectPixels = new SKColor[pixels.Length];
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var pixel = pixels[i];
-                    var maskValue = maskData[i];
-                    subjectPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
-                }
-                var subjectBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                subjectBitmap.Pixels = subjectPixels;
-
-                // Create background bitmap (background with subject transparent - inverted mask)
-                var backgroundPixels = new SKColor[pixels.Length];
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var pixel = pixels[i];
-                    var invertedMaskValue = (byte)(255 - maskData[i]);
-                    backgroundPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, invertedMaskValue);
-                }
-                var backgroundBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                backgroundBitmap.Pixels = backgroundPixels;
-
-                if (_layers != null)
-                {
-                    // Already in layer mode - the active layer IS the original, just rename it
-                    // and add Subject and Background layers above it
-                    var activeLayer = _layers.ActiveLayer;
-                    if (activeLayer != null)
-                    {
-                        activeLayer.Name = "Original";
-                    }
-                    
-                    // Add Background and Subject layers on top
-                    _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
-                    _layers.AddLayerFromBitmap(subjectBitmap, "Subject");
-                }
-                else
-                {
-                    // Not in layer mode - enable it with the 3-layer structure
-                    // Create original bitmap (unchanged copy) only when starting fresh
-                    var originalBitmap = targetBitmap.Copy();
-                    
-                    _layers = new LayerStack(width, height);
-                    _layers.AddLayerFromBitmap(originalBitmap, "Original");
-                    _layers.AddLayerFromBitmap(backgroundBitmap, "Background");
-                    _layers.AddLayerFromBitmap(subjectBitmap, "Subject");
-                    _layers.ContentChanged += OnLayersContentChanged;
-                    _layers.LayersChanged += OnLayersCollectionChanged;
-                    _isLayerMode = true;
-                    LayerModeChanged?.Invoke(this, EventArgs.Empty);
-                }
-            }
-
-            OnImageChanged();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Sets a preview with background removed using the provided mask.
-    /// Does not modify the working bitmap until ApplyPreview is called.
-    /// </summary>
-    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
-    /// <param name="width">Width of the mask in pixels.</param>
-    /// <param name="height">Height of the mask in pixels.</param>
-    /// <returns>True if the preview was set successfully.</returns>
-    public bool SetBackgroundRemovalPreview(byte[] maskData, int width, int height)
-    {
-        if (maskData is null)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return false;
-
-            if (width != targetBitmap.Width || height != targetBitmap.Height)
-                return false;
-
-            if (maskData.Length != width * height)
-                return false;
-
-            // Dispose old preview
-            var oldPreview = _previewBitmap;
-            _previewBitmap = null;
-
-            try
-            {
-                // Create new preview with alpha applied
-                var newPreview = new SKBitmap(targetBitmap.Width, targetBitmap.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                var pixels = targetBitmap.Pixels;
-                var newPixels = new SKColor[pixels.Length];
-
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var pixel = pixels[i];
-                    var maskValue = maskData[i];
-                    newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
-                }
-
-                newPreview.Pixels = newPixels;
-
-                _previewBitmap = newPreview;
-                _isPreviewActive = true;
-                oldPreview?.Dispose();
-            }
-            catch
-            {
-                oldPreview?.Dispose();
-                return false;
-            }
-        }
-
-        OnImageChanged();
-        return true;
-    }
-
-    /// <summary>
-    /// Gets the raw RGBA pixel data from the current target bitmap (active layer or working bitmap).
-    /// Used for passing to background removal service.
-    /// </summary>
-    /// <returns>Tuple of (imageData, width, height) or null if no image is loaded.</returns>
-    public (byte[] Data, int Width, int Height)? GetWorkingBitmapData()
-    {
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return null;
-
-            var width = targetBitmap.Width;
-            var height = targetBitmap.Height;
-            var pixels = targetBitmap.Pixels;
-            var data = new byte[width * height * 4]; // RGBA
-
-            for (var i = 0; i < pixels.Length; i++)
-            {
-                var pixel = pixels[i];
-                var offset = i * 4;
-                data[offset] = pixel.Red;
-                data[offset + 1] = pixel.Green;
-                data[offset + 2] = pixel.Blue;
-                data[offset + 3] = pixel.Alpha;
-            }
-
-            return (data, width, height);
-        }
-    }
-
-    #endregion Background Removal
-
-    #region Background Fill
-
-
-
-    /// <summary>
-    /// Fills transparent areas of the image with the specified solid color.
-    /// Uses alpha compositing to blend the fill color behind the existing image.
-    /// When in layer mode, applies to the active layer.
-    /// </summary>
-    /// <param name="settings">The background fill settings containing the fill color.</param>
-    /// <returns>True if the fill was applied successfully.</returns>
-    public bool ApplyBackgroundFill(BackgroundFillSettings settings)
-    {
-        var targetBitmap = GetOperationTargetBitmap();
-        if (targetBitmap is null || settings is null)
-            return false;
-
-        try
-        {
-            var result = CreateBackgroundFillBitmap(targetBitmap, settings);
-            if (result is null)
-                return false;
-
-            lock (_bitmapLock)
-            {
-                SetOperationTargetBitmap(result);
-            }
-
-            OnImageChanged();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Sets a preview with the background filled using the specified color.
-    /// Does not modify the working bitmap until ApplyPreview is called.
-    /// </summary>
-    /// <param name="settings">The background fill settings containing the fill color.</param>
-    /// <returns>True if the preview was set successfully.</returns>
-    public bool SetBackgroundFillPreview(BackgroundFillSettings settings)
-    {
-        if (settings is null)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return false;
-
-            // Dispose old preview
-            var oldPreview = _previewBitmap;
-            _previewBitmap = null;
-
-
-            try
-            {
-                // Create new preview with background filled
-                var newPreview = CreateBackgroundFillBitmap(targetBitmap, settings);
-
-                _previewBitmap = newPreview;
-                _isPreviewActive = _previewBitmap is not null;
-                oldPreview?.Dispose();
-            }
-            catch
-            {
-                oldPreview?.Dispose();
-                return false;
-            }
-        }
-
-        OnImageChanged();
-        return _isPreviewActive;
-    }
-
-    /// <summary>
-    /// Creates a new bitmap with transparent areas filled with the specified color.
-    /// Uses alpha compositing: result = foreground * alpha + background * (1 - alpha)
-    /// </summary>
-    private static SKBitmap? CreateBackgroundFillBitmap(SKBitmap source, BackgroundFillSettings settings)
-    {
-        if (source is null || settings is null)
-            return null;
-
-        try
-        {
-            var width = source.Width;
-            var height = source.Height;
-            
-            // Create result bitmap without alpha (opaque)
-            var result = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
-
-            var srcPixels = source.Pixels;
-            var dstPixels = new SKColor[srcPixels.Length];
-
-            var fillR = settings.Red;
-            var fillG = settings.Green;
-            var fillB = settings.Blue;
-
-            for (var i = 0; i < srcPixels.Length; i++)
-            {
-                var pixel = srcPixels[i];
-                var alpha = pixel.Alpha / 255f;
-
-                // Alpha compositing: foreground * alpha + background * (1 - alpha)
-                var r = (byte)Math.Clamp((int)(pixel.Red * alpha + fillR * (1f - alpha)), 0, 255);
-                var g = (byte)Math.Clamp((int)(pixel.Green * alpha + fillG * (1f - alpha)), 0, 255);
-                var b = (byte)Math.Clamp((int)(pixel.Blue * alpha + fillB * (1f - alpha)), 0, 255);
-
-                dstPixels[i] = new SKColor(r, g, b, 255);
-            }
-
-            result.Pixels = dstPixels;
-            return result;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Checks if the current working image has any transparency.
-    /// </summary>
-    /// <returns>True if the image contains transparent pixels.</returns>
-    public bool HasTransparency()
-    {
-        lock (_bitmapLock)
-        {
-            if (_workingBitmap is null)
-                return false;
-
-            var pixels = _workingBitmap.Pixels;
-            for (var i = 0; i < pixels.Length; i++)
-            {
-                if (pixels[i].Alpha < 255)
-                    return true;
-            }
-
-            return false;
-        }
-    }
-
-    #endregion Background Fill
 
     #region Drawing
 
@@ -2371,260 +1169,7 @@ public class ImageEditorCore : IDisposable
 
     #endregion Shape Drawing
 
-    #region Inpainting
-
-    /// <summary>
-    /// Finds the existing inpaint mask layer, or creates one if none exists.
-    /// Ensures layer mode is enabled before creating.
-    /// </summary>
-    /// <returns>The inpaint mask layer, or null if creation failed.</returns>
-    private Layer? GetOrCreateInpaintMaskLayer()
-    {
-        // Ensure layer mode is active
-        if (!_isLayerMode)
-        {
-            EnableLayerMode();
-        }
-
-        if (_layers is null) return null;
-
-        // Look for existing inpaint mask layer
-        var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
-        if (maskLayer is not null) return maskLayer;
-
-        // Remember which layer the user was editing before we create the mask
-        var previousActive = _layers.ActiveLayer;
-
-        // Create the inpaint mask layer directly at the top of the stack
-        // (bypassing AddLayer which would insert below an existing mask)
-        var newLayer = new Layer(_layers.Width, _layers.Height, "Inpaint Mask")
-        {
-            IsInpaintMask = true
-        };
-        _layers.Layers.Add(newLayer);
-
-        // Restore the previous active layer so drawing/shape tools still target it
-        _layers.ActiveLayer = previousActive ?? newLayer;
-
-        return newLayer;
-    }
-
-    /// <summary>
-    /// Applies an inpainting brush stroke to the inpaint mask layer.
-    /// Paints white (opaque) pixels on a transparent layer; the compositor
-    /// renders these areas as a checkerboard pattern.
-    /// </summary>
-    /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
-    /// <param name="brushSize">Brush size in image pixels.</param>
-    /// <returns>True if the stroke was applied successfully.</returns>
-    public bool ApplyInpaintStroke(IReadOnlyList<SKPoint> normalizedPoints, float brushSize)
-    {
-        if (normalizedPoints is null || normalizedPoints.Count == 0)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var maskLayer = GetOrCreateInpaintMaskLayer();
-            if (maskLayer?.Bitmap is null || !maskLayer.CanEdit)
-                return false;
-
-            try
-            {
-                var width = maskLayer.Bitmap.Width;
-                var height = maskLayer.Bitmap.Height;
-
-                var imagePoints = normalizedPoints
-                    .Select(p => new SKPoint(p.X * width, p.Y * height))
-                    .ToList();
-
-                var scaledBrushSize = brushSize * width;
-
-                using var canvas = new SKCanvas(maskLayer.Bitmap);
-                using var paint = new SKPaint
-                {
-                    Color = SKColors.White,
-                    IsAntialias = true,
-                    Style = SKPaintStyle.Stroke,
-                    StrokeWidth = scaledBrushSize,
-                    StrokeCap = SKStrokeCap.Round,
-                    StrokeJoin = SKStrokeJoin.Round
-                };
-
-                if (imagePoints.Count == 1)
-                {
-                    paint.Style = SKPaintStyle.Fill;
-                    canvas.DrawCircle(imagePoints[0], scaledBrushSize / 2, paint);
-                }
-                else if (imagePoints.Count == 2)
-                {
-                    canvas.DrawLine(imagePoints[0], imagePoints[1], paint);
-                }
-                else
-                {
-                    using var path = new SKPath();
-                    path.MoveTo(imagePoints[0]);
-                    for (var i = 1; i < imagePoints.Count; i++)
-                    {
-                        path.LineTo(imagePoints[i]);
-                    }
-                    canvas.DrawPath(path, paint);
-                }
-
-                canvas.Flush();
-                maskLayer.NotifyContentChanged();
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        OnImageChanged();
-        return true;
-    }
-
-    /// <summary>
-    /// Clears the inpaint mask layer, removing all painted mask areas.
-    /// </summary>
-    public void ClearInpaintMask()
-    {
-        if (_layers is null) return;
-
-        lock (_bitmapLock)
-        {
-            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
-            maskLayer?.Clear();
-        }
-
-        OnImageChanged();
-    }
-
-    /// <summary>
-    /// Extracts the inpaint mask bitmap (white = inpaint, black = keep).
-    /// Returns null if no mask layer exists or it is empty.
-    /// </summary>
-    /// <returns>A copy of the mask bitmap, or null.</returns>
-    public SKBitmap? GetInpaintMaskBitmap()
-    {
-        if (_layers is null) return null;
-
-        lock (_bitmapLock)
-        {
-            var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
-            return maskLayer?.Bitmap?.Copy();
-        }
-    }
-
-    /// <summary>
-    /// Captures the current flattened state as the inpaint base image.
-    /// Subsequent inpainting generations will use this bitmap instead of re-flattening.
-    /// </summary>
-    public void SetInpaintBaseBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            _inpaintBaseBitmap?.Dispose();
-            _inpaintBaseBitmap = _isLayerMode && _layers != null
-                ? _layers.Flatten()
-                : _workingBitmap?.Copy();
-            Interlocked.Increment(ref _inpaintBaseVersion);
-        }
-    }
-
-    /// <summary>
-    /// Returns a copy of the stored inpaint base bitmap, or null if none has been set.
-    /// </summary>
-    public SKBitmap? GetInpaintBaseBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            return _inpaintBaseBitmap?.Copy();
-        }
-    }
-
-    /// <summary>
-    /// Gets whether an inpaint base bitmap is currently stored.
-    /// </summary>
-    public bool HasInpaintBase => _inpaintBaseBitmap is not null;
-
-    /// <summary>
-    /// Monotonically increasing version that changes whenever the inpaint base is set or cleared.
-    /// </summary>
-    public long InpaintBaseVersion => Interlocked.Read(ref _inpaintBaseVersion);
-
-    /// <summary>
-    /// Clears the stored inpaint base bitmap.
-    /// </summary>
-    public void ClearInpaintBase()
-    {
-        lock (_bitmapLock)
-        {
-            _inpaintBaseBitmap?.Dispose();
-            _inpaintBaseBitmap = null;
-            Interlocked.Increment(ref _inpaintBaseVersion);
-        }
-    }
-
-    #endregion Inpainting
-
     #region Save with Layers
-
-    /// <summary>
-    /// Saves the image, flattening layers if in layer mode.
-    /// </summary>
-    /// <param name="filePath">Output file path.</param>
-    /// <param name="format">Image format.</param>
-    /// <param name="quality">Quality for lossy formats.</param>
-    /// <returns>True if saved successfully.</returns>
-    public bool SaveImageFlattened(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
-    {
-        SKBitmap? bitmapToSave;
-
-        lock (_bitmapLock)
-        {
-            if (_isLayerMode && _layers != null)
-            {
-                bitmapToSave = _layers.Flatten();
-            }
-            else
-            {
-                bitmapToSave = _workingBitmap?.Copy();
-            }
-        }
-
-        if (bitmapToSave == null)
-            return false;
-
-        try
-        {
-            var directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            using var image = SKImage.FromBitmap(bitmapToSave);
-            if (image is null)
-                return false;
-
-            using var data = image.Encode(format, quality);
-            if (data is null)
-                return false;
-
-            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            data.SaveTo(stream);
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            bitmapToSave.Dispose();
-        }
-    }
 
     /// <summary>
     /// Saves layers to a multi-page TIFF file.
@@ -2646,7 +1191,7 @@ public class ImageEditorCore : IDisposable
     /// <returns>True if loaded successfully.</returns>
     public bool LoadLayeredTiff(string filePath)
     {
-        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || _services is null)
             return false;
 
         var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
@@ -2655,12 +1200,10 @@ public class ImageEditorCore : IDisposable
 
         ClearPreview(raiseEvent: false);
 
-        // Dispose existing layers
-        if (_layers != null)
+        // Disable existing layer mode if active
+        if (_isLayerMode)
         {
-            _layers.ContentChanged -= OnLayersContentChanged;
-            _layers.LayersChanged -= OnLayersCollectionChanged;
-            _layers.Dispose();
+            _services.Layers.DisableLayerMode()?.Dispose();
         }
 
         // Dispose old bitmaps
@@ -2676,15 +1219,24 @@ public class ImageEditorCore : IDisposable
         var fileInfo = new FileInfo(filePath);
         FileSizeBytes = fileInfo.Length;
 
-        _layers = loadedLayers;
-        _layers.ContentChanged += OnLayersContentChanged;
-        _layers.LayersChanged += OnLayersCollectionChanged;
-        _isLayerMode = true;
+        // Initialize layer mode from the loaded stack via LayerManager
+        // We enable with the first layer, then add the rest
+        var firstLayer = loadedLayers[0];
+        _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
+
+        for (var i = 1; i < loadedLayers.Count; i++)
+        {
+            var layer = loadedLayers[i];
+            _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
+        }
+
+        // Dispose the original loaded stack (we've copied the bitmaps)
+        loadedLayers.Dispose();
+
         CurrentImagePath = filePath;
 
         ResetZoom();
         OnImageChanged();
-        LayerModeChanged?.Invoke(this, EventArgs.Empty);
         LayersChanged?.Invoke(this, EventArgs.Empty);
 
         return true;
@@ -2710,17 +1262,21 @@ public class ImageEditorCore : IDisposable
             _workingBitmap?.Dispose();
             _previewBitmap?.Dispose();
             _inpaintBaseBitmap?.Dispose();
-            if (_layers != null)
+
+            // Unsubscribe all service event handlers
+            if (_services is not null)
             {
-                _layers.ContentChanged -= OnLayersContentChanged;
-                _layers.LayersChanged -= OnLayersCollectionChanged;
-                _layers.Dispose();
+                _services.Layers.ContentChanged -= OnLayersContentChanged;
+                _services.Layers.LayersChanged -= OnLayersCollectionChanged;
+                _services.Layers.LayerModeChanged -= OnLayerModeChanged;
+                _services.Viewport.Changed -= OnViewportChanged;
+                _services.Dispose();
             }
+
             _originalBitmap = null;
             _workingBitmap = null;
             _previewBitmap = null;
             _inpaintBaseBitmap = null;
-            _layers = null;
         }
         _disposed = true;
     }
