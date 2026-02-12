@@ -86,6 +86,7 @@ public partial class InpaintingViewModel : ObservableObject
                 }
                 ToolActivated?.Invoke(this, value);
                 ClearMaskCommand.NotifyCanExecuteChanged();
+                ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.Inpainting, value));
                 ToolStateChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -206,6 +207,9 @@ public partial class InpaintingViewModel : ObservableObject
 
     /// <summary>Event raised when tool state changes.</summary>
     public event EventHandler? ToolStateChanged;
+
+    /// <summary>Raised when the tool is toggled, for ToolManager coordination.</summary>
+    public event EventHandler<(string ToolId, bool IsActive)>? ToolToggled;
 
     /// <summary>Event raised when the inpainting tool is activated or deactivated.</summary>
     public event EventHandler<bool>? ToolActivated;

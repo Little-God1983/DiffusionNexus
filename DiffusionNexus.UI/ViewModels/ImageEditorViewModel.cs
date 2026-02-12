@@ -373,15 +373,35 @@ public partial class ImageEditorViewModel : ObservableObject
 
         BackgroundRemoval.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundRemoval.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        BackgroundRemoval.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
 
         BackgroundFill.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundFill.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        BackgroundFill.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
 
         Upscaling.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         Upscaling.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        Upscaling.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
 
         Inpainting.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         Inpainting.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        Inpainting.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
 
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
@@ -398,8 +418,12 @@ public partial class ImageEditorViewModel : ObservableObject
             CropToolDeactivated?.Invoke(this, EventArgs.Empty);
         }
 
-        ColorTools.CloseAllPanels();
-        DrawingTools.CloseAll();
+        if (exceptTool != nameof(ColorToolsViewModel.IsColorBalancePanelOpen) &&
+            exceptTool != nameof(ColorToolsViewModel.IsBrightnessContrastPanelOpen))
+            ColorTools.CloseAllPanels();
+
+        if (exceptTool != nameof(DrawingToolsViewModel.IsDrawingToolActive))
+            DrawingTools.CloseAll();
 
         if (exceptTool != nameof(BackgroundRemovalViewModel.IsPanelOpen))
             BackgroundRemoval.ClosePanel();

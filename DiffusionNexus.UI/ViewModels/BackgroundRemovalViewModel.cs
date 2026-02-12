@@ -49,6 +49,7 @@ public partial class BackgroundRemovalViewModel : ObservableObject
                     _deactivateOtherTools(nameof(IsPanelOpen));
                 RemoveBackgroundCommand.NotifyCanExecuteChanged();
                 DownloadModelCommand.NotifyCanExecuteChanged();
+                ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.BackgroundRemoval, value));
                 ToolStateChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -113,6 +114,9 @@ public partial class BackgroundRemovalViewModel : ObservableObject
 
     /// <summary>Event raised when tool state changes (panel open/close).</summary>
     public event EventHandler? ToolStateChanged;
+
+    /// <summary>Raised when the tool is toggled, for ToolManager coordination.</summary>
+    public event EventHandler<(string ToolId, bool IsActive)>? ToolToggled;
 
     /// <summary>Event raised to request image data for background removal.</summary>
     public event EventHandler? RemoveBackgroundRequested;

@@ -50,6 +50,7 @@ public partial class BackgroundFillViewModel : ObservableObject
                     CancelPreviewRequested?.Invoke(this, EventArgs.Empty);
                 }
                 ApplyCommand.NotifyCanExecuteChanged();
+                ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.BackgroundFill, value));
                 ToolStateChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -142,6 +143,9 @@ public partial class BackgroundFillViewModel : ObservableObject
 
     /// <summary>Event raised when tool state changes (panel open/close).</summary>
     public event EventHandler? ToolStateChanged;
+
+    /// <summary>Raised when the tool is toggled, for ToolManager coordination.</summary>
+    public event EventHandler<(string ToolId, bool IsActive)>? ToolToggled;
 
     /// <summary>Event raised to request background fill preview.</summary>
     public event EventHandler<BackgroundFillSettings>? PreviewRequested;
