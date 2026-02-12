@@ -63,7 +63,7 @@ public partial class DrawingToolsViewModel : ObservableObject
             if (SetProperty(ref _isDrawingToolActive, value))
             {
                 if (value)
-                    _deactivateOtherTools(nameof(IsDrawingToolActive));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.Drawing);
                 DrawingToolActivated?.Invoke(this, value);
                 ToolStateChanged?.Invoke(this, EventArgs.Empty);
                 StatusMessageChanged?.Invoke(this, value ? "Draw: Click and drag to draw. Hold Shift for straight lines." : null);

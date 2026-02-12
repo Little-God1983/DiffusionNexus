@@ -1,4 +1,5 @@
 using DiffusionNexus.UI.ImageEditor;
+using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -59,7 +60,7 @@ public class ColorToolsViewModelTests
     {
         _sut.IsColorBalancePanelOpen = true;
 
-        _deactivatedTools.Should().Contain(nameof(ColorToolsViewModel.IsColorBalancePanelOpen));
+        _deactivatedTools.Should().Contain(ToolIds.ColorBalance);
     }
 
     [Fact]
@@ -211,7 +212,7 @@ public class ColorToolsViewModelTests
     {
         _sut.IsBrightnessContrastPanelOpen = true;
 
-        _deactivatedTools.Should().Contain(nameof(ColorToolsViewModel.IsBrightnessContrastPanelOpen));
+        _deactivatedTools.Should().Contain(ToolIds.BrightnessContrast);
     }
 
     [Fact]

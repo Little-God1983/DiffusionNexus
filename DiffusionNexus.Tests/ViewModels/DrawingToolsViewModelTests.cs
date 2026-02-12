@@ -1,4 +1,5 @@
 using DiffusionNexus.UI.ImageEditor;
+using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -72,7 +73,7 @@ public class DrawingToolsViewModelTests
     {
         _sut.IsDrawingToolActive = true;
 
-        _deactivatedTools.Should().Contain(nameof(DrawingToolsViewModel.IsDrawingToolActive));
+        _deactivatedTools.Should().Contain(ToolIds.Drawing);
     }
 
     [Fact]

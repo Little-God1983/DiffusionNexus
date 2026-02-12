@@ -150,7 +150,7 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SetProperty(ref _isCropToolActive, value))
             {
                 if (value)
-                    DeactivateOtherTools(nameof(IsCropToolActive));
+                    DeactivateOtherTools(ToolIds.Crop);
                 ColorTools.IsCropToolActive = value;
                 ToggleCropToolCommand.NotifyCanExecuteChanged();
                 ApplyCropCommand.NotifyCanExecuteChanged();
@@ -408,33 +408,32 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Tool Coordination
 
-    /// <summary>Deactivates all tools except the one specified.</summary>
-    private void DeactivateOtherTools(string exceptTool)
+    /// <summary>Deactivates all tools except the one identified by its <see cref="ToolIds"/> constant.</summary>
+    private void DeactivateOtherTools(string exceptToolId)
     {
-        if (exceptTool != nameof(IsCropToolActive) && _isCropToolActive)
+        if (exceptToolId != ToolIds.Crop && _isCropToolActive)
         {
             _isCropToolActive = false;
             OnPropertyChanged(nameof(IsCropToolActive));
             CropToolDeactivated?.Invoke(this, EventArgs.Empty);
         }
 
-        if (exceptTool != nameof(ColorToolsViewModel.IsColorBalancePanelOpen) &&
-            exceptTool != nameof(ColorToolsViewModel.IsBrightnessContrastPanelOpen))
+        if (exceptToolId != ToolIds.ColorBalance && exceptToolId != ToolIds.BrightnessContrast)
             ColorTools.CloseAllPanels();
 
-        if (exceptTool != nameof(DrawingToolsViewModel.IsDrawingToolActive))
+        if (exceptToolId != ToolIds.Drawing)
             DrawingTools.CloseAll();
 
-        if (exceptTool != nameof(BackgroundRemovalViewModel.IsPanelOpen))
+        if (exceptToolId != ToolIds.BackgroundRemoval)
             BackgroundRemoval.ClosePanel();
 
-        if (exceptTool != nameof(BackgroundFillViewModel.IsPanelOpen))
+        if (exceptToolId != ToolIds.BackgroundFill)
             BackgroundFill.ClosePanel();
 
-        if (exceptTool != nameof(UpscalingViewModel.IsPanelOpen))
+        if (exceptToolId != ToolIds.Upscaling)
             Upscaling.ClosePanel();
 
-        if (exceptTool != nameof(InpaintingViewModel.IsPanelOpen))
+        if (exceptToolId != ToolIds.Inpainting)
             Inpainting.ClosePanel();
     }
 

@@ -74,7 +74,7 @@ public partial class InpaintingViewModel : ObservableObject
             {
                 if (value)
                 {
-                    _deactivateOtherTools(nameof(IsPanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.Inpainting);
                     StatusMessageChanged?.Invoke(this, "Inpaint: Paint over areas to mark them for AI regeneration.");
 
                     if (!HasBase)

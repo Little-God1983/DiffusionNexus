@@ -62,7 +62,7 @@ public partial class ColorToolsViewModel : ObservableObject
             {
                 if (value)
                 {
-                    _deactivateOtherTools(nameof(IsColorBalancePanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.ColorBalance);
                 }
                 else
                 {
@@ -236,7 +236,7 @@ public partial class ColorToolsViewModel : ObservableObject
             {
                 if (value)
                 {
-                    _deactivateOtherTools(nameof(IsBrightnessContrastPanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.BrightnessContrast);
                 }
                 else
                 {

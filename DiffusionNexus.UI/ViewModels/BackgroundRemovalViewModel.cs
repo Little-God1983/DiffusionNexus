@@ -46,7 +46,7 @@ public partial class BackgroundRemovalViewModel : ObservableObject
             if (SetProperty(ref _isPanelOpen, value))
             {
                 if (value)
-                    _deactivateOtherTools(nameof(IsPanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.BackgroundRemoval);
                 RemoveBackgroundCommand.NotifyCanExecuteChanged();
                 DownloadModelCommand.NotifyCanExecuteChanged();
                 ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.BackgroundRemoval, value));

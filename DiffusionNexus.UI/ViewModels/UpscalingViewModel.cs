@@ -54,7 +54,7 @@ public partial class UpscalingViewModel : ObservableObject
             if (SetProperty(ref _isPanelOpen, value))
             {
                 if (value)
-                    _deactivateOtherTools(nameof(IsPanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.Upscaling);
                 UpscaleCommand.NotifyCanExecuteChanged();
                 DownloadModelCommand.NotifyCanExecuteChanged();
                 ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.Upscaling, value));

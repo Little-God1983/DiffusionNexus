@@ -42,7 +42,7 @@ public partial class BackgroundFillViewModel : ObservableObject
             {
                 if (value)
                 {
-                    _deactivateOtherTools(nameof(IsPanelOpen));
+                    _deactivateOtherTools(ImageEditor.Services.ToolIds.BackgroundFill);
                     RequestPreview();
                 }
                 else
