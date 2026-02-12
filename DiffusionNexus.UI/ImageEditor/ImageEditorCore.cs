@@ -783,16 +783,20 @@ public partial class ImageEditorCore : IDisposable
             }
 
             // Render based on mode
-            if (_isLayerMode && _layers != null)
+            if (_isPreviewActive && _previewBitmap is not null)
+            {
+                // Preview takes priority over layer compositing (e.g., color balance live preview)
+                canvas.DrawBitmap(_previewBitmap, imageRect);
+            }
+            else if (_isLayerMode && _layers != null)
             {
                 LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect);
             }
             else
             {
-                var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-                if (bitmapToRender != null)
+                if (_workingBitmap != null)
                 {
-                    canvas.DrawBitmap(bitmapToRender, imageRect);
+                    canvas.DrawBitmap(_workingBitmap, imageRect);
                 }
             }
 
