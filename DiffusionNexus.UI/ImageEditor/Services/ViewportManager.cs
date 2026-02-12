@@ -1,26 +1,17 @@
-using DiffusionNexus.UI.ImageEditor.Events;
-
 namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
 /// Manages viewport state: zoom, pan, fit mode.
-/// Publishes <see cref="ViewportChangedEvent"/> via the event bus on changes.
+/// Single source of truth for zoom/pan — fires <see cref="Changed"/> on updates.
 /// </summary>
 internal sealed class ViewportManager : IViewportManager
 {
-    private readonly IEventBus _eventBus;
     private float _zoomLevel = 1f;
     private float _panX;
     private float _panY;
     private bool _isFitMode = true;
 
     private const float ZoomStep = 0.1f;
-
-    public ViewportManager(IEventBus eventBus)
-    {
-        ArgumentNullException.ThrowIfNull(eventBus);
-        _eventBus = eventBus;
-    }
 
     /// <inheritdoc />
     public float MinZoom => 0.1f;
@@ -129,6 +120,5 @@ internal sealed class ViewportManager : IViewportManager
     private void OnChanged()
     {
         Changed?.Invoke(this, EventArgs.Empty);
-        _eventBus.Publish(new ViewportChangedEvent(_zoomLevel, _isFitMode, _panX, _panY));
     }
 }

@@ -1,4 +1,3 @@
-using DiffusionNexus.UI.ImageEditor.Events;
 using DiffusionNexus.UI.ImageEditor.Services;
 using FluentAssertions;
 
@@ -330,58 +329,6 @@ public class ToolManagerTests
         received.Should().NotBeNull();
         received!.OldToolId.Should().Be(ToolIds.Crop);
         received.NewToolId.Should().BeNull();
-    }
-
-    #endregion
-
-    #region EventBus Integration
-
-    [Fact]
-    public void WhenActivateTool_ToolPanelToggledEventPublished()
-    {
-        // Arrange
-        var events = new List<ToolPanelToggledEvent>();
-        _services.EventBus.Subscribe<ToolPanelToggledEvent>(e => events.Add(e));
-
-        // Act
-        _sut.Activate(ToolIds.Crop);
-
-        // Assert
-        events.Should().ContainSingle(e => e.ToolId == ToolIds.Crop && e.IsActive);
-    }
-
-    [Fact]
-    public void WhenSwitchTools_TwoToggleEventsPublished()
-    {
-        // Arrange
-        _sut.Activate(ToolIds.Crop);
-        var events = new List<ToolPanelToggledEvent>();
-        _services.EventBus.Subscribe<ToolPanelToggledEvent>(e => events.Add(e));
-
-        // Act
-        _sut.Activate(ToolIds.Drawing);
-
-        // Assert — deactivate old + activate new
-        events.Should().HaveCount(2);
-        events[0].ToolId.Should().Be(ToolIds.Crop);
-        events[0].IsActive.Should().BeFalse();
-        events[1].ToolId.Should().Be(ToolIds.Drawing);
-        events[1].IsActive.Should().BeTrue();
-    }
-
-    [Fact]
-    public void WhenActivateTool_ToolChangedEventPublishedOnBus()
-    {
-        // Arrange
-        ToolChangedEvent? received = null;
-        _services.EventBus.Subscribe<ToolChangedEvent>(e => received = e);
-
-        // Act
-        _sut.Activate(ToolIds.Crop);
-
-        // Assert
-        received.Should().NotBeNull();
-        received!.NewToolId.Should().Be(ToolIds.Crop);
     }
 
     #endregion

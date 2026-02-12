@@ -50,20 +50,16 @@
 
   <ItemGroup>
     <Folder Include="Assets\Workflows\" />
+    <Folder Include="ImageEditor\Events\" />
   </ItemGroup>
 
   <!-- LlamaSharp.Backend.Cpu ships duplicate native DLLs under avx / avx2 / avx512 / noavx.
        During single-file publish the bundler sees them all with the same BundleRelativePath
        and fails (MSB4018). This target strips the non-avx2 duplicates from
        ResolvedFileToPublish before _ComputeFilesToBundle feeds them to the bundler. -->
-  <Target Name="DeduplicateLlamaSharpNatives"
-          BeforeTargets="_ComputeFilesToBundle"
-          AfterTargets="_HandleFileConflictsForPublish"
-          Condition="'$(PublishSingleFile)' == 'true'">
+  <Target Name="DeduplicateLlamaSharpNatives" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
-          Condition="$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/llamasharp.backend.cpu/'))
-                     And !$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/avx2/'))" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/llamasharp.backend.cpu/'))&#xD;&#xA;                     And !$([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/avx2/'))" />
     </ItemGroup>
   </Target>
 

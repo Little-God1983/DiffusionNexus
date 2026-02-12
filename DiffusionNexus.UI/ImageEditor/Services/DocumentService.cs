@@ -1,4 +1,3 @@
-using DiffusionNexus.UI.ImageEditor.Events;
 using DiffusionNexus.UI.Services;
 using SkiaSharp;
 
@@ -6,18 +5,9 @@ namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
 /// Handles save/load/export operations.
-/// Publishes <see cref="ImageSavedEvent"/> on successful saves.
 /// </summary>
 internal sealed class DocumentService : IDocumentService
 {
-    private readonly IEventBus _eventBus;
-
-    public DocumentService(IEventBus eventBus)
-    {
-        ArgumentNullException.ThrowIfNull(eventBus);
-        _eventBus = eventBus;
-    }
-
     /// <inheritdoc />
     public bool Save(SKBitmap bitmap, string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
     {
@@ -42,7 +32,6 @@ internal sealed class DocumentService : IDocumentService
             using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             data.SaveTo(stream);
 
-            _eventBus.Publish(new ImageSavedEvent(filePath));
             return true;
         }
         catch (Exception ex)

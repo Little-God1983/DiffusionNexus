@@ -1,23 +1,16 @@
-using DiffusionNexus.UI.ImageEditor.Events;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
-/// Facade over <see cref="LayerStack"/> that publishes layer events via <see cref="IEventBus"/>.
-/// Owns the layer stack lifecycle and event subscriptions.
+/// Facade over <see cref="LayerStack"/> that owns the layer stack lifecycle.
+/// Fires <see cref="ContentChanged"/>, <see cref="LayersChanged"/>, and <see cref="LayerModeChanged"/>
+/// so consumers (ImageEditorCore, ViewModel) stay in sync.
 /// </summary>
 internal sealed class LayerManager : ILayerManager, IDisposable
 {
-    private readonly IEventBus _eventBus;
     private LayerStack? _stack;
     private bool _isLayerMode;
-
-    public LayerManager(IEventBus eventBus)
-    {
-        ArgumentNullException.ThrowIfNull(eventBus);
-        _eventBus = eventBus;
-    }
 
     /// <inheritdoc />
     public LayerStack? Stack => _stack;
@@ -41,12 +34,7 @@ internal sealed class LayerManager : ILayerManager, IDisposable
         set
         {
             if (_stack is null) return;
-            var old = _stack.ActiveLayer;
             _stack.ActiveLayer = value;
-            if (old != value)
-            {
-                _eventBus.Publish(new ActiveLayerChangedEvent(old, value));
-            }
         }
     }
 
@@ -72,7 +60,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
         _stack.LayersChanged += OnStackLayersChanged;
         _isLayerMode = true;
         LayerModeChanged?.Invoke(this, EventArgs.Empty);
-        _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Added, _stack.ActiveLayer));
     }
 
     /// <inheritdoc />
@@ -92,7 +79,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return null;
         var layer = _stack.AddLayer(name);
-        _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Added, layer));
         return layer;
     }
 
@@ -101,7 +87,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return null;
         var layer = _stack.AddLayerFromBitmap(bitmap, name);
-        _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Added, layer));
         return layer;
     }
 
@@ -110,8 +95,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return false;
         var removed = _stack.RemoveLayer(layer);
-        if (removed)
-            _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Removed, layer));
         return removed;
     }
 
@@ -120,8 +103,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return null;
         var clone = _stack.DuplicateLayer(layer);
-        if (clone is not null)
-            _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Duplicated, clone));
         return clone;
     }
 
@@ -130,8 +111,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return false;
         var moved = _stack.MoveLayerUp(layer);
-        if (moved)
-            _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Reordered, layer));
         return moved;
     }
 
@@ -140,8 +119,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return false;
         var moved = _stack.MoveLayerDown(layer);
-        if (moved)
-            _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Reordered, layer));
         return moved;
     }
 
@@ -150,8 +127,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return false;
         var merged = _stack.MergeDown(layer);
-        if (merged)
-            _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.MergedDown, _stack.ActiveLayer));
         return merged;
     }
 
@@ -160,7 +135,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     {
         if (!_isLayerMode || _stack is null) return;
         _stack.MergeVisible();
-        _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.MergedVisible, _stack.ActiveLayer));
     }
 
     /// <inheritdoc />
@@ -191,7 +165,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
         _stack.LayersChanged += OnStackLayersChanged;
         flattened.Dispose();
 
-        _eventBus.Publish(new LayerStackChangedEvent(LayerChangeType.Flattened, _stack.ActiveLayer));
         LayersChanged?.Invoke(this, EventArgs.Empty);
         ContentChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -208,7 +181,6 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     private void OnStackContentChanged(object? sender, EventArgs e)
     {
         ContentChanged?.Invoke(this, EventArgs.Empty);
-        _eventBus.Publish(new RenderRequestedEvent());
     }
 
     private void OnStackLayersChanged(object? sender, EventArgs e)

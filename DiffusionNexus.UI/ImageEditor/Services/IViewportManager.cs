@@ -1,5 +1,3 @@
-using DiffusionNexus.UI.ImageEditor.Events;
-
 namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>

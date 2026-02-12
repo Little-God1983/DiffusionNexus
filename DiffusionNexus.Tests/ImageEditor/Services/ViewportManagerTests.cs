@@ -1,4 +1,3 @@
-using DiffusionNexus.UI.ImageEditor.Events;
 using DiffusionNexus.UI.ImageEditor.Services;
 using FluentAssertions;
 
@@ -284,42 +283,6 @@ public class ViewportManagerTests
 
         // Assert
         raised.Should().BeFalse();
-    }
-
-    #endregion
-
-    #region EventBus Integration
-
-    [Fact]
-    public void WhenZoomChanges_ViewportChangedEventPublishedOnBus()
-    {
-        // Arrange
-        ViewportChangedEvent? received = null;
-        _services.EventBus.Subscribe<ViewportChangedEvent>(e => received = e);
-
-        // Act
-        _sut.ZoomLevel = 2.5f;
-
-        // Assert
-        received.Should().NotBeNull();
-        received!.ZoomLevel.Should().BeApproximately(2.5f, 0.001f);
-        received.IsFitMode.Should().BeFalse();
-    }
-
-    [Fact]
-    public void WhenReset_ViewportChangedEventPublishedOnBus()
-    {
-        // Arrange
-        ViewportChangedEvent? received = null;
-        _services.EventBus.Subscribe<ViewportChangedEvent>(e => received = e);
-
-        // Act
-        _sut.Reset();
-
-        // Assert
-        received.Should().NotBeNull();
-        received!.ZoomLevel.Should().Be(1f);
-        received.IsFitMode.Should().BeTrue();
     }
 
     #endregion

@@ -49,18 +49,32 @@ public partial class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Wires the editor to the service graph. Must be called before use.
+    /// Wires the editor to the service graph. Must be called once before use.
     /// </summary>
     public void SetServices(EditorServices services)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        if (_services is not null)
+            throw new InvalidOperationException("Services have already been wired. SetServices must only be called once.");
+
         _services = services;
 
         // Subscribe to service events so EditorCore stays reactive
         _services.Layers.ContentChanged += OnLayersContentChanged;
         _services.Layers.LayersChanged += OnLayersCollectionChanged;
-        _services.Layers.LayerModeChanged += (_, _) => LayerModeChanged?.Invoke(this, EventArgs.Empty);
-        _services.Viewport.Changed += (_, _) => OnZoomChanged();
+        _services.Layers.LayerModeChanged += OnLayerModeChanged;
+        _services.Viewport.Changed += OnViewportChanged;
+    }
+
+    private void OnLayerModeChanged(object? sender, EventArgs e)
+    {
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnViewportChanged(object? sender, EventArgs e)
+    {
+        OnZoomChanged();
     }
 
     /// <summary>
@@ -1252,11 +1266,13 @@ public partial class ImageEditorCore : IDisposable
             _previewBitmap?.Dispose();
             _inpaintBaseBitmap?.Dispose();
 
-            // LayerManager owns the layer stack lifecycle
+            // Unsubscribe all service event handlers
             if (_services is not null)
             {
                 _services.Layers.ContentChanged -= OnLayersContentChanged;
                 _services.Layers.LayersChanged -= OnLayersCollectionChanged;
+                _services.Layers.LayerModeChanged -= OnLayerModeChanged;
+                _services.Viewport.Changed -= OnViewportChanged;
                 _services.Dispose();
             }
 

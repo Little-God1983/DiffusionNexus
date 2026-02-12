@@ -16,7 +16,6 @@ public class EditorServiceFactoryTests
         var services = EditorServiceFactory.Create();
 
         // Assert
-        services.EventBus.Should().NotBeNull();
         services.Viewport.Should().NotBeNull();
         services.Tools.Should().NotBeNull();
         services.Document.Should().NotBeNull();
@@ -24,12 +23,12 @@ public class EditorServiceFactoryTests
     }
 
     [Fact]
-    public void WhenCreate_ServicesShareSameEventBus()
+    public void WhenCreate_ServicesAreWiredCorrectly()
     {
         // Act
         var services = EditorServiceFactory.Create();
 
-        // Assert — publish via event bus and verify viewport manager receives it
+        // Assert — publish via viewport and verify event fires
         var raised = false;
         services.Viewport.Changed += (_, _) => raised = true;
         services.Viewport.ZoomIn();

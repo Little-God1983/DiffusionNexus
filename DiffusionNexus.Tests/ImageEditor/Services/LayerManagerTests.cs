@@ -1,5 +1,4 @@
 using DiffusionNexus.UI.ImageEditor;
-using DiffusionNexus.UI.ImageEditor.Events;
 using DiffusionNexus.UI.ImageEditor.Services;
 using FluentAssertions;
 using SkiaSharp;
@@ -107,18 +106,17 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenEnableLayerMode_LayerStackChangedEventPublished()
+    public void WhenEnableLayerMode_LayersChangedEventRaised()
     {
         // Arrange
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.EnableLayerMode(_testBitmap, "Background");
 
-        // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.Added);
+        // Assert — LayerStack fires LayersChanged when a layer is added
+        raised.Should().BeTrue();
     }
 
     #endregion
@@ -182,19 +180,18 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenAddLayer_LayerStackChangedEventPublished()
+    public void WhenAddLayer_LayersChangedEventRaised()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.AddLayer("Layer 2");
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.Added);
+        raised.Should().BeTrue();
     }
 
     #endregion
@@ -263,20 +260,19 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenRemoveLayer_LayerStackChangedEventPublished()
+    public void WhenRemoveLayer_LayersChangedEventRaised()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         var layer2 = _sut.AddLayer("Layer 2")!;
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.RemoveLayer(layer2);
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.Removed);
+        raised.Should().BeTrue();
     }
 
     #endregion
@@ -335,21 +331,20 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenMoveLayerUp_LayerStackChangedEventPublished()
+    public void WhenMoveLayerUp_LayersChangedEventRaised()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         _sut.AddLayer("Layer 2");
         var background = _sut.Stack![0];
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.MoveLayerUp(background);
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.Reordered);
+        raised.Should().BeTrue();
     }
 
     [Fact]
@@ -416,20 +411,19 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenMergeLayerDown_EventPublished()
+    public void WhenMergeLayerDown_LayersChangedEventRaised()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         var layer2 = _sut.AddLayer("Layer 2")!;
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.MergeLayerDown(layer2);
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.MergedDown);
+        raised.Should().BeTrue();
     }
 
     [Fact]
@@ -467,20 +461,19 @@ public class LayerManagerTests : IDisposable
     }
 
     [Fact]
-    public void WhenMergeVisibleLayers_EventPublished()
+    public void WhenMergeVisibleLayers_LayersChangedEventRaised()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         _sut.AddLayer("Layer 2");
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var raised = false;
+        _sut.LayersChanged += (_, _) => raised = true;
 
         // Act
         _sut.MergeVisibleLayers();
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.MergedVisible);
+        raised.Should().BeTrue();
     }
 
     #endregion
@@ -540,29 +533,29 @@ public class LayerManagerTests : IDisposable
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         _sut.AddLayer("Layer 2");
-        LayerStackChangedEvent? received = null;
-        _services.EventBus.Subscribe<LayerStackChangedEvent>(e => received = e);
+        var layersRaised = false;
+        var contentRaised = false;
+        _sut.LayersChanged += (_, _) => layersRaised = true;
+        _sut.ContentChanged += (_, _) => contentRaised = true;
 
         // Act
         _sut.FlattenAllLayers();
 
         // Assert
-        received.Should().NotBeNull();
-        received!.ChangeType.Should().Be(LayerChangeType.Flattened);
+        layersRaised.Should().BeTrue();
+        contentRaised.Should().BeTrue();
     }
 
     #endregion
 
-    #region ActiveLayer Changed Event
+    #region ActiveLayer
 
     [Fact]
-    public void WhenSetActiveLayer_EventPublishedOnBus()
+    public void WhenSetActiveLayer_ActiveLayerChanges()
     {
         // Arrange
         _sut.EnableLayerMode(_testBitmap, "Background");
         var layer2 = _sut.AddLayer("Layer 2")!;
-        ActiveLayerChangedEvent? received = null;
-        _services.EventBus.Subscribe<ActiveLayerChangedEvent>(e => received = e);
 
         // Set active to background
         var background = _sut.Stack![0];
@@ -571,9 +564,7 @@ public class LayerManagerTests : IDisposable
         _sut.ActiveLayer = background;
 
         // Assert
-        received.Should().NotBeNull();
-        received!.OldLayer.Should().Be(layer2);
-        received.NewLayer.Should().Be(background);
+        _sut.ActiveLayer.Should().Be(background);
     }
 
     #endregion
@@ -593,21 +584,6 @@ public class LayerManagerTests : IDisposable
 
         // Assert
         raised.Should().BeTrue();
-    }
-
-    [Fact]
-    public void WhenLayerContentChanges_RenderRequestedEventPublished()
-    {
-        // Arrange
-        _sut.EnableLayerMode(_testBitmap, "Background");
-        var received = false;
-        _services.EventBus.Subscribe<RenderRequestedEvent>(_ => received = true);
-
-        // Act
-        _sut.ActiveLayer!.NotifyContentChanged();
-
-        // Assert
-        received.Should().BeTrue();
     }
 
     #endregion

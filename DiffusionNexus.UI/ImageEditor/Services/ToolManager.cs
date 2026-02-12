@@ -1,23 +1,15 @@
 using System.Collections.Concurrent;
-using DiffusionNexus.UI.ImageEditor.Events;
 
 namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
 /// Manages tool activation with mutual exclusion.
-/// Publishes <see cref="ToolChangedEvent"/> and <see cref="ToolPanelToggledEvent"/> via the event bus.
+/// Fires <see cref="ActiveToolChanged"/> on tool switches.
 /// </summary>
 internal sealed class ToolManager : IToolManager
 {
-    private readonly IEventBus _eventBus;
     private readonly ConcurrentDictionary<string, Action> _deactivationCallbacks = new();
     private string? _activeToolId;
-
-    public ToolManager(IEventBus eventBus)
-    {
-        ArgumentNullException.ThrowIfNull(eventBus);
-        _eventBus = eventBus;
-    }
 
     /// <inheritdoc />
     public string? ActiveToolId => _activeToolId;
@@ -34,12 +26,9 @@ internal sealed class ToolManager : IToolManager
         if (oldTool is not null)
         {
             InvokeDeactivation(oldTool);
-            _eventBus.Publish(new ToolPanelToggledEvent(oldTool, false));
         }
 
         _activeToolId = toolId;
-        _eventBus.Publish(new ToolPanelToggledEvent(toolId, true));
-        _eventBus.Publish(new ToolChangedEvent(oldTool, toolId));
         ActiveToolChanged?.Invoke(this, new ToolChangedEventArgs(oldTool, toolId));
     }
 
@@ -52,8 +41,6 @@ internal sealed class ToolManager : IToolManager
 
         InvokeDeactivation(toolId);
         _activeToolId = null;
-        _eventBus.Publish(new ToolPanelToggledEvent(toolId, false));
-        _eventBus.Publish(new ToolChangedEvent(toolId, null!));
         ActiveToolChanged?.Invoke(this, new ToolChangedEventArgs(toolId, null));
     }
 

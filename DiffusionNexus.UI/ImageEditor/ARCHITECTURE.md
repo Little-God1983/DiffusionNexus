@@ -15,7 +15,8 @@ the **EditorServices** graph, which owns the single source of truth for:
 - **Viewport** ? `ViewportManager` owns zoom, pan, and fit-mode state
 - **Save/Export** ? `DocumentService` handles file I/O
 - **Tools** ? `ToolManager` handles mutual-exclusion activation
-- **Events** ? `EventBus` provides decoupled pub/sub between services
+
+Services communicate via standard C# events (no event bus or mediator).
 
 ---
 
@@ -72,7 +73,6 @@ Created via `EditorServiceFactory.Create()`, shared between ViewModel and Editor
 
 ```
 EditorServices (record)
-??? EventBus        ? IEventBus          (shared pub/sub backbone)
 ??? ViewportManager ? IViewportManager   (zoom, pan, fit mode)
 ??? ToolManager     ? IToolManager       (tool activation / mutual exclusion)
 ??? DocumentService ? IDocumentService   (save, export, format detection)
@@ -103,7 +103,6 @@ User ? RotateRightCommand ? ViewModel raises RotateRightRequested
 View ? EditorCore.AddLayer("New Layer")
      ? delegates to LayerManager.AddLayer()
      ? LayerManager creates layer on its Stack
-     ? publishes LayerStackChangedEvent via EventBus
      ? fires LayerManager.LayersChanged
      ? EditorCore.OnLayersCollectionChanged ? fires LayersChanged + ImageChanged
 ```
@@ -113,13 +112,12 @@ View ? EditorCore.AddLayer("New Layer")
 View ? EditorCore.SaveImage(path)
      ? flattens via LayerManager.Flatten()
      ? delegates file I/O to DocumentService.Save()
-     ? DocumentService publishes ImageSavedEvent via EventBus
 ```
 
 ### Zoom In
 ```
 ViewModel ? _services.Viewport.ZoomIn()
-         ? ViewportManager updates state, publishes ViewportChangedEvent
+         ? ViewportManager updates state, fires Changed event
          ? ViewModel receives Changed event ? updates ZoomPercentage
 ImageEditorControl ? EditorCore.ZoomIn()
                    ? delegates to ViewportManager.ZoomIn()
@@ -158,13 +156,6 @@ ImageEditorControl ? EditorCore.ZoomIn()
 | `IDocumentService.cs` / `DocumentService.cs` | Save/export file I/O |
 | `ILayerManager.cs` / `LayerManager.cs` | Layer stack lifecycle and CRUD |
 
-### `ImageEditor/Events/` — Event Types
-
-| File | Description |
-|------|-------------|
-| `IEventBus.cs` / `EventBus.cs` | Pub/sub backbone |
-| `EditorEvents.cs` | All event record types |
-
 ---
 
 ## Test Coverage
@@ -172,7 +163,6 @@ ImageEditorControl ? EditorCore.ZoomIn()
 | Test File | Tests |
 |-----------|-------|
 | `EditorServiceFactoryTests.cs` | Factory creates all services, services are independent |
-| `EventBusTests.cs` | Pub/sub, unsubscribe, multiple subscribers |
 | `LayerManagerTests.cs` | Layer CRUD, flatten, merge, mode toggle |
 | `ToolManagerTests.cs` | Activation, deactivation, mutual exclusion, callbacks |
 | `ViewportManagerTests.cs` | Zoom, pan, fit mode, clamping |
