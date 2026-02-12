@@ -55,9 +55,9 @@ internal sealed class LayerManager : ILayerManager, IDisposable
         if (_stack != null) return; // Already enabled
 
         _stack = new LayerStack(workingBitmap.Width, workingBitmap.Height);
-        _stack.AddLayerFromBitmap(workingBitmap, layerName);
         _stack.ContentChanged += OnStackContentChanged;
         _stack.LayersChanged += OnStackLayersChanged;
+        _stack.AddLayerFromBitmap(workingBitmap, layerName);
         _isLayerMode = true;
         LayerModeChanged?.Invoke(this, EventArgs.Empty);
     }
