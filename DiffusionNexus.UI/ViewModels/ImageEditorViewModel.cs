@@ -290,32 +290,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? Rotate180Requested;
     public event EventHandler? FlipHorizontalRequested;
     public event EventHandler? FlipVerticalRequested;
-    public event EventHandler<ColorBalanceSettings>? ApplyColorBalanceRequested;
-    public event EventHandler<ColorBalanceSettings>? ColorBalancePreviewRequested;
-    public event EventHandler? CancelColorBalancePreviewRequested;
-    public event EventHandler<BrightnessContrastSettings>? ApplyBrightnessContrastRequested;
-    public event EventHandler<BrightnessContrastSettings>? BrightnessContrastPreviewRequested;
-    public event EventHandler? CancelBrightnessContrastPreviewRequested;
     public event EventHandler<string>? ImageSaved;
-    public event EventHandler<bool>? DrawingToolActivated;
-    public event EventHandler<ImageEditor.DrawingSettings>? DrawingSettingsChanged;
-    public event EventHandler? ShapeSettingsChanged;
-    public event EventHandler? CommitPlacedShapeRequested;
-    public event EventHandler? CancelPlacedShapeRequested;
-    public event EventHandler<Layer?>? LayerSelectionChanged;
-    public event EventHandler? SyncLayersRequested;
-    public event Func<string, Task<bool>>? SaveLayeredTiffRequested;
-
-    // Layer events for View wiring
-    public event EventHandler<bool>? EnableLayerModeRequested;
-    public event EventHandler? AddLayerRequested;
-    public event EventHandler<Layer>? DeleteLayerRequested;
-    public event EventHandler<Layer>? DuplicateLayerRequested;
-    public event EventHandler<Layer>? MoveLayerUpRequested;
-    public event EventHandler<Layer>? MoveLayerDownRequested;
-    public event EventHandler<Layer>? MergeLayerDownRequested;
-    public event EventHandler? MergeVisibleLayersRequested;
-    public event EventHandler? FlattenLayersRequested;
 
     #endregion
 
@@ -376,31 +351,11 @@ public partial class ImageEditorViewModel : ObservableObject
         FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
     }
 
-    /// <summary>Wires events from sub-ViewModels to parent for forwarding.</summary>
+    /// <summary>Wires internal coordination events from sub-ViewModels (status, tool state, services).</summary>
     private void WireSubViewModelEvents()
     {
-        // LayerPanel
-        LayerPanel.LayerSelectionChanged += (_, layer) => LayerSelectionChanged?.Invoke(this, layer);
-        LayerPanel.SyncLayersRequested += (_, _) => SyncLayersRequested?.Invoke(this, EventArgs.Empty);
-        LayerPanel.SaveLayeredTiffRequested += path => SaveLayeredTiffRequested?.Invoke(path) ?? Task.FromResult(false);
-        LayerPanel.EnableLayerModeRequested += (_, enable) => EnableLayerModeRequested?.Invoke(this, enable);
-        LayerPanel.AddLayerRequested += (_, _) => AddLayerRequested?.Invoke(this, EventArgs.Empty);
-        LayerPanel.DeleteLayerRequested += (_, layer) => DeleteLayerRequested?.Invoke(this, layer);
-        LayerPanel.DuplicateLayerRequested += (_, layer) => DuplicateLayerRequested?.Invoke(this, layer);
-        LayerPanel.MoveLayerUpRequested += (_, layer) => MoveLayerUpRequested?.Invoke(this, layer);
-        LayerPanel.MoveLayerDownRequested += (_, layer) => MoveLayerDownRequested?.Invoke(this, layer);
-        LayerPanel.MergeLayerDownRequested += (_, layer) => MergeLayerDownRequested?.Invoke(this, layer);
-        LayerPanel.MergeVisibleLayersRequested += (_, _) => MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
-        LayerPanel.FlattenLayersRequested += (_, _) => FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
         LayerPanel.SaveCompleted += (_, msg) => StatusMessage = msg;
 
-        // ColorTools
-        ColorTools.ApplyColorBalanceRequested += (_, s) => ApplyColorBalanceRequested?.Invoke(this, s);
-        ColorTools.ColorBalancePreviewRequested += (_, s) => ColorBalancePreviewRequested?.Invoke(this, s);
-        ColorTools.CancelColorBalancePreviewRequested += (_, _) => CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
-        ColorTools.ApplyBrightnessContrastRequested += (_, s) => ApplyBrightnessContrastRequested?.Invoke(this, s);
-        ColorTools.BrightnessContrastPreviewRequested += (_, s) => BrightnessContrastPreviewRequested?.Invoke(this, s);
-        ColorTools.CancelBrightnessContrastPreviewRequested += (_, _) => CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
         ColorTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         ColorTools.ToolToggled += (_, args) =>
         {
@@ -408,37 +363,26 @@ public partial class ImageEditorViewModel : ObservableObject
             else _services.Tools.Deactivate(args.ToolId);
         };
 
-        // DrawingTools
-        DrawingTools.DrawingToolActivated += (_, isActive) => DrawingToolActivated?.Invoke(this, isActive);
-        DrawingTools.DrawingSettingsChanged += (_, settings) => DrawingSettingsChanged?.Invoke(this, settings);
-        DrawingTools.ShapeSettingsChanged += (_, _) => ShapeSettingsChanged?.Invoke(this, EventArgs.Empty);
         DrawingTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         DrawingTools.StatusMessageChanged += (_, msg) => StatusMessage = msg;
-        DrawingTools.CommitPlacedShapeRequested += (_, _) => CommitPlacedShapeRequested?.Invoke(this, EventArgs.Empty);
-        DrawingTools.CancelPlacedShapeRequested += (_, _) => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty);
         DrawingTools.ToolToggled += (_, args) =>
         {
             if (args.IsActive) _services.Tools.Activate(args.ToolId);
             else _services.Tools.Deactivate(args.ToolId);
         };
 
-        // BackgroundRemoval
         BackgroundRemoval.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundRemoval.StatusMessageChanged += (_, msg) => StatusMessage = msg;
 
-        // BackgroundFill
         BackgroundFill.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundFill.StatusMessageChanged += (_, msg) => StatusMessage = msg;
 
-        // Upscaling
         Upscaling.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         Upscaling.StatusMessageChanged += (_, msg) => StatusMessage = msg;
 
-        // Inpainting
         Inpainting.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         Inpainting.StatusMessageChanged += (_, msg) => StatusMessage = msg;
 
-        // Rating
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
 

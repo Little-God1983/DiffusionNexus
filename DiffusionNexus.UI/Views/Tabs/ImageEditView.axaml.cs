@@ -28,6 +28,8 @@ public partial class ImageEditView : UserControl
     private Button? _openImageButton;
     private bool _eventsWired;
     private long _lastSyncedInpaintBaseVersion = -1;
+    private ImageEditorViewModel? _wiredImageEditor;
+    private readonly List<Action> _eventCleanup = [];
 
 
     public ImageEditView()
@@ -64,17 +66,50 @@ public partial class ImageEditView : UserControl
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         FileLogger.Log($"[Instance #{_instanceId}] OnDataContextChanged called, _eventsWired={_eventsWired}, DataContext type={(DataContext?.GetType().Name ?? "null")}");
-        
-        if (_eventsWired)
-        {
-            FileLogger.Log($"[Instance #{_instanceId}] Already wired, skipping");
-            return;
-        }
+
+        // Unwire previous subscriptions before wiring new ones
+        UnwireEvents();
 
         if (DataContext is ImageEditTabViewModel vm)
         {
             TryWireUpImageEditorEvents(vm);
         }
+    }
+
+    /// <summary>
+    /// Unsubscribes all tracked event handlers and clears ViewModel callbacks.
+    /// </summary>
+    private void UnwireEvents()
+    {
+        foreach (var cleanup in _eventCleanup)
+            cleanup();
+        _eventCleanup.Clear();
+
+        if (_wiredImageEditor is not null)
+        {
+            _wiredImageEditor.SaveImageFunc = null;
+            _wiredImageEditor.ShowSaveFileDialogFunc = null;
+            _wiredImageEditor = null;
+        }
+
+        _eventsWired = false;
+    }
+
+    /// <inheritdoc />
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        UnwireEvents();
+
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageDropZone.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageDropZone.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
+        if (_openImageButton is not null)
+            _openImageButton.Click -= OnOpenImageButtonClick;
     }
 
     private void TryWireUpImageEditorEvents(ImageEditTabViewModel vm)
@@ -138,6 +173,7 @@ public partial class ImageEditView : UserControl
         _eventsWired = true;
         
         var imageEditor = vm.ImageEditor;
+        _wiredImageEditor = imageEditor;
         
         FileLogger.Log($"[Instance #{_instanceId}] Wiring events for CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
 
@@ -157,10 +193,10 @@ public partial class ImageEditView : UserControl
 
     private void WireCanvasEvents(ImageEditorViewModel imageEditor)
     {
-        _imageEditorCanvas!.ImageChanged += (_, _) =>
+        EventHandler onImageChanged = (_, _) =>
         {
             imageEditor.UpdateDimensions(
-                _imageEditorCanvas.ImageWidth,
+                _imageEditorCanvas!.ImageWidth,
                 _imageEditorCanvas.ImageHeight);
             imageEditor.UpdateFileInfo(
                 _imageEditorCanvas.ImageDpi,
@@ -179,88 +215,134 @@ public partial class ImageEditView : UserControl
                         : null);
             }
         };
+        _imageEditorCanvas!.ImageChanged += onImageChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.ImageChanged -= onImageChanged);
 
-        _imageEditorCanvas.ZoomChanged += (_, _) =>
+        EventHandler onZoomChanged = (_, _) =>
         {
             imageEditor.UpdateZoomInfo(
-                _imageEditorCanvas.ZoomPercentage,
+                _imageEditorCanvas!.ZoomPercentage,
                 _imageEditorCanvas.IsFitMode);
         };
+        _imageEditorCanvas.ZoomChanged += onZoomChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.ZoomChanged -= onZoomChanged);
 
-        _imageEditorCanvas.CropApplied += (_, _) =>
-        {
-            imageEditor.OnCropApplied();
-        };
+        EventHandler onCropApplied = (_, _) => imageEditor.OnCropApplied();
+        _imageEditorCanvas.CropApplied += onCropApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CropApplied -= onCropApplied);
     }
 
     private void WireCropEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.ClearRequested += (_, _) => _imageEditorCanvas!.ClearImage();
-        imageEditor.ResetRequested += (_, _) => _imageEditorCanvas!.ResetToOriginal();
+        EventHandler onClear = (_, _) => _imageEditorCanvas!.ClearImage();
+        imageEditor.ClearRequested += onClear;
+        _eventCleanup.Add(() => imageEditor.ClearRequested -= onClear);
 
-        imageEditor.CropToolActivated += (_, _) => _imageEditorCanvas!.ActivateCropTool();
-        imageEditor.CropToolDeactivated += (_, _) => _imageEditorCanvas!.DeactivateCropTool();
+        EventHandler onReset = (_, _) => _imageEditorCanvas!.ResetToOriginal();
+        imageEditor.ResetRequested += onReset;
+        _eventCleanup.Add(() => imageEditor.ResetRequested -= onReset);
 
-        imageEditor.ApplyCropRequested += (_, _) =>
+        EventHandler onCropActivated = (_, _) => _imageEditorCanvas!.ActivateCropTool();
+        imageEditor.CropToolActivated += onCropActivated;
+        _eventCleanup.Add(() => imageEditor.CropToolActivated -= onCropActivated);
+
+        EventHandler onCropDeactivated = (_, _) => _imageEditorCanvas!.DeactivateCropTool();
+        imageEditor.CropToolDeactivated += onCropDeactivated;
+        _eventCleanup.Add(() => imageEditor.CropToolDeactivated -= onCropDeactivated);
+
+        EventHandler onApplyCrop = (_, _) =>
         {
             if (_imageEditorCanvas!.ApplyCrop())
                 imageEditor.OnCropApplied();
         };
+        imageEditor.ApplyCropRequested += onApplyCrop;
+        _eventCleanup.Add(() => imageEditor.ApplyCropRequested -= onApplyCrop);
 
-        imageEditor.CancelCropRequested += (_, _) =>
+        EventHandler onCancelCrop = (_, _) =>
         {
             _imageEditorCanvas!.EditorCore.CropTool.ClearCropRegion();
             _imageEditorCanvas.DeactivateCropTool();
         };
+        imageEditor.CancelCropRequested += onCancelCrop;
+        _eventCleanup.Add(() => imageEditor.CancelCropRequested -= onCancelCrop);
 
-        imageEditor.FitCropRequested += (_, _) =>
+        EventHandler onFitCrop = (_, _) =>
         {
             _imageEditorCanvas!.EditorCore.CropTool.FitToImage();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.FitCropRequested += onFitCrop;
+        _eventCleanup.Add(() => imageEditor.FitCropRequested -= onFitCrop);
 
-        imageEditor.FillCropRequested += (_, _) =>
+        EventHandler onFillCrop = (_, _) =>
         {
             _imageEditorCanvas!.EditorCore.CropTool.FillImage();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.FillCropRequested += onFillCrop;
+        _eventCleanup.Add(() => imageEditor.FillCropRequested -= onFillCrop);
 
-        imageEditor.SetCropAspectRatioRequested += (_, ratio) =>
+        EventHandler<(float W, float H)> onSetAspect = (_, ratio) =>
         {
             _imageEditorCanvas!.EditorCore.CropTool.SetAspectRatio(ratio.W, ratio.H);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.SetCropAspectRatioRequested += onSetAspect;
+        _eventCleanup.Add(() => imageEditor.SetCropAspectRatioRequested -= onSetAspect);
 
-        imageEditor.SwitchCropAspectRatioRequested += (_, _) =>
+        EventHandler onSwitchAspect = (_, _) =>
         {
             _imageEditorCanvas!.EditorCore.CropTool.SwitchAspectRatio();
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.SwitchCropAspectRatioRequested += onSwitchAspect;
+        _eventCleanup.Add(() => imageEditor.SwitchCropAspectRatioRequested -= onSwitchAspect);
 
-        _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged += (_, _) =>
+        EventHandler onCropRegionChanged = (_, _) =>
         {
-            var (w, h) = _imageEditorCanvas.EditorCore.CropTool.GetCropPixelDimensions();
+            var (w, h) = _imageEditorCanvas!.EditorCore.CropTool.GetCropPixelDimensions();
             imageEditor.UpdateCropResolution(w, h);
         };
+        _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged += onCropRegionChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged -= onCropRegionChanged);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.ZoomInRequested += (_, _) => _imageEditorCanvas!.ZoomIn();
-        imageEditor.ZoomOutRequested += (_, _) => _imageEditorCanvas!.ZoomOut();
-        imageEditor.ZoomToFitRequested += (_, _) => _imageEditorCanvas!.ZoomToFit();
-        imageEditor.ZoomToActualRequested += (_, _) => _imageEditorCanvas!.ZoomToActual();
+        EventHandler onZoomIn = (_, _) => _imageEditorCanvas!.ZoomIn();
+        EventHandler onZoomOut = (_, _) => _imageEditorCanvas!.ZoomOut();
+        EventHandler onZoomFit = (_, _) => _imageEditorCanvas!.ZoomToFit();
+        EventHandler onZoomActual = (_, _) => _imageEditorCanvas!.ZoomToActual();
+        EventHandler onRotateL = (_, _) => _imageEditorCanvas!.EditorCore.RotateLeft();
+        EventHandler onRotateR = (_, _) => _imageEditorCanvas!.EditorCore.RotateRight();
+        EventHandler onRotate180 = (_, _) => _imageEditorCanvas!.EditorCore.Rotate180();
+        EventHandler onFlipH = (_, _) => _imageEditorCanvas!.EditorCore.FlipHorizontal();
+        EventHandler onFlipV = (_, _) => _imageEditorCanvas!.EditorCore.FlipVertical();
 
-        imageEditor.RotateLeftRequested += (_, _) => _imageEditorCanvas!.EditorCore.RotateLeft();
-        imageEditor.RotateRightRequested += (_, _) => _imageEditorCanvas!.EditorCore.RotateRight();
-        imageEditor.Rotate180Requested += (_, _) => _imageEditorCanvas!.EditorCore.Rotate180();
-        imageEditor.FlipHorizontalRequested += (_, _) => _imageEditorCanvas!.EditorCore.FlipHorizontal();
-        imageEditor.FlipVerticalRequested += (_, _) => _imageEditorCanvas!.EditorCore.FlipVertical();
+        imageEditor.ZoomInRequested += onZoomIn;
+        imageEditor.ZoomOutRequested += onZoomOut;
+        imageEditor.ZoomToFitRequested += onZoomFit;
+        imageEditor.ZoomToActualRequested += onZoomActual;
+        imageEditor.RotateLeftRequested += onRotateL;
+        imageEditor.RotateRightRequested += onRotateR;
+        imageEditor.Rotate180Requested += onRotate180;
+        imageEditor.FlipHorizontalRequested += onFlipH;
+        imageEditor.FlipVerticalRequested += onFlipV;
+
+        _eventCleanup.Add(() => imageEditor.ZoomInRequested -= onZoomIn);
+        _eventCleanup.Add(() => imageEditor.ZoomOutRequested -= onZoomOut);
+        _eventCleanup.Add(() => imageEditor.ZoomToFitRequested -= onZoomFit);
+        _eventCleanup.Add(() => imageEditor.ZoomToActualRequested -= onZoomActual);
+        _eventCleanup.Add(() => imageEditor.RotateLeftRequested -= onRotateL);
+        _eventCleanup.Add(() => imageEditor.RotateRightRequested -= onRotateR);
+        _eventCleanup.Add(() => imageEditor.Rotate180Requested -= onRotate180);
+        _eventCleanup.Add(() => imageEditor.FlipHorizontalRequested -= onFlipH);
+        _eventCleanup.Add(() => imageEditor.FlipVerticalRequested -= onFlipV);
     }
 
     private void WireColorToolEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.ApplyColorBalanceRequested += (_, settings) =>
+        EventHandler<ColorBalanceSettings> onApplyCB = (_, settings) =>
         {
             _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyColorBalance(settings))
@@ -268,14 +350,19 @@ public partial class ImageEditView : UserControl
             else
                 imageEditor.StatusMessage = "Failed to apply color balance.";
         };
+        imageEditor.ColorTools.ApplyColorBalanceRequested += onApplyCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ApplyColorBalanceRequested -= onApplyCB);
 
-        imageEditor.ColorBalancePreviewRequested += (_, settings) =>
+        EventHandler<ColorBalanceSettings> onPreviewCB = (_, settings) =>
             _imageEditorCanvas!.EditorCore.SetColorBalancePreview(settings);
+        imageEditor.ColorTools.ColorBalancePreviewRequested += onPreviewCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ColorBalancePreviewRequested -= onPreviewCB);
 
-        imageEditor.CancelColorBalancePreviewRequested += (_, _) =>
-            _imageEditorCanvas!.EditorCore.ClearPreview();
+        EventHandler onCancelCB = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.ColorTools.CancelColorBalancePreviewRequested += onCancelCB;
+        _eventCleanup.Add(() => imageEditor.ColorTools.CancelColorBalancePreviewRequested -= onCancelCB);
 
-        imageEditor.ApplyBrightnessContrastRequested += (_, settings) =>
+        EventHandler<BrightnessContrastSettings> onApplyBC = (_, settings) =>
         {
             _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyBrightnessContrast(settings))
@@ -283,17 +370,22 @@ public partial class ImageEditView : UserControl
             else
                 imageEditor.StatusMessage = "Failed to apply brightness/contrast.";
         };
+        imageEditor.ColorTools.ApplyBrightnessContrastRequested += onApplyBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.ApplyBrightnessContrastRequested -= onApplyBC);
 
-        imageEditor.BrightnessContrastPreviewRequested += (_, settings) =>
+        EventHandler<BrightnessContrastSettings> onPreviewBC = (_, settings) =>
             _imageEditorCanvas!.EditorCore.SetBrightnessContrastPreview(settings);
+        imageEditor.ColorTools.BrightnessContrastPreviewRequested += onPreviewBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.BrightnessContrastPreviewRequested -= onPreviewBC);
 
-        imageEditor.CancelBrightnessContrastPreviewRequested += (_, _) =>
-            _imageEditorCanvas!.EditorCore.ClearPreview();
+        EventHandler onCancelBC = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.ColorTools.CancelBrightnessContrastPreviewRequested += onCancelBC;
+        _eventCleanup.Add(() => imageEditor.ColorTools.CancelBrightnessContrastPreviewRequested -= onCancelBC);
     }
 
     private void WireBackgroundRemovalEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.BackgroundRemoval.RemoveBackgroundRequested += async (_, _) =>
+        EventHandler onRemoveBg = async (_, _) =>
         {
             var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
             if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
@@ -301,8 +393,10 @@ public partial class ImageEditView : UserControl
             await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalAsync(
                 imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.BackgroundRemoval.RemoveBackgroundRequested += onRemoveBg;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.RemoveBackgroundRequested -= onRemoveBg);
 
-        imageEditor.BackgroundRemoval.BackgroundRemovalCompleted += (_, result) =>
+        EventHandler<BackgroundRemovalResult> onBgCompleted = (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
@@ -312,8 +406,10 @@ public partial class ImageEditView : UserControl
                     imageEditor.StatusMessage = "Failed to apply background removal mask";
             }
         };
+        imageEditor.BackgroundRemoval.BackgroundRemovalCompleted += onBgCompleted;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.BackgroundRemovalCompleted -= onBgCompleted);
 
-        imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested += async (_, _) =>
+        EventHandler onRemoveBgToLayer = async (_, _) =>
         {
             var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
             if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
@@ -321,8 +417,10 @@ public partial class ImageEditView : UserControl
             await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalToLayerAsync(
                 imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested += onRemoveBgToLayer;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested -= onRemoveBgToLayer);
 
-        imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted += (_, result) =>
+        EventHandler<BackgroundRemovalResult> onBgLayerCompleted = (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
@@ -337,17 +435,22 @@ public partial class ImageEditView : UserControl
                 }
             }
         };
+        imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted += onBgLayerCompleted;
+        _eventCleanup.Add(() => imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted -= onBgLayerCompleted);
     }
 
     private void WireBackgroundFillEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.BackgroundFill.PreviewRequested += (_, settings) =>
+        EventHandler<BackgroundFillSettings> onPreview = (_, settings) =>
             _imageEditorCanvas!.EditorCore.SetBackgroundFillPreview(settings);
+        imageEditor.BackgroundFill.PreviewRequested += onPreview;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.PreviewRequested -= onPreview);
 
-        imageEditor.BackgroundFill.CancelPreviewRequested += (_, _) =>
-            _imageEditorCanvas!.EditorCore.ClearPreview();
+        EventHandler onCancelPreview = (_, _) => _imageEditorCanvas!.EditorCore.ClearPreview();
+        imageEditor.BackgroundFill.CancelPreviewRequested += onCancelPreview;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.CancelPreviewRequested -= onCancelPreview);
 
-        imageEditor.BackgroundFill.ApplyRequested += (_, settings) =>
+        EventHandler<BackgroundFillSettings> onApply = (_, settings) =>
         {
             _imageEditorCanvas!.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyBackgroundFill(settings))
@@ -355,11 +458,13 @@ public partial class ImageEditView : UserControl
             else
                 imageEditor.StatusMessage = "Failed to apply background fill";
         };
+        imageEditor.BackgroundFill.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.BackgroundFill.ApplyRequested -= onApply);
     }
 
     private void WireUpscalingEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.Upscaling.UpscaleRequested += async (_, _) =>
+        EventHandler onUpscale = async (_, _) =>
         {
             var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
             if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
@@ -367,8 +472,10 @@ public partial class ImageEditView : UserControl
             await imageEditor.Upscaling.ProcessUpscalingAsync(
                 imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
         };
+        imageEditor.Upscaling.UpscaleRequested += onUpscale;
+        _eventCleanup.Add(() => imageEditor.Upscaling.UpscaleRequested -= onUpscale);
 
-        imageEditor.Upscaling.UpscalingCompleted += (_, result) =>
+        EventHandler<ImageUpscalingResult> onUpscaleCompleted = (_, result) =>
         {
             if (result.Success && result.ImageData is not null)
             {
@@ -384,19 +491,23 @@ public partial class ImageEditView : UserControl
                 }
             }
         };
+        imageEditor.Upscaling.UpscalingCompleted += onUpscaleCompleted;
+        _eventCleanup.Add(() => imageEditor.Upscaling.UpscalingCompleted -= onUpscaleCompleted);
     }
 
     private void WireDrawingEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.DrawingToolActivated += (_, isActive) =>
+        EventHandler<bool> onDrawingActivated = (_, isActive) =>
         {
             var drawingTool = _imageEditorCanvas!.EditorCore.DrawingTool;
             drawingTool.IsActive = isActive;
             if (isActive)
                 ApplyDrawingSettingsToTool(imageEditor, drawingTool);
         };
+        imageEditor.DrawingTools.DrawingToolActivated += onDrawingActivated;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.DrawingToolActivated -= onDrawingActivated);
 
-        imageEditor.DrawingSettingsChanged += (_, _) =>
+        EventHandler<ImageEditor.DrawingSettings> onSettingsChanged = (_, _) =>
         {
             var drawingTool = _imageEditorCanvas!.EditorCore.DrawingTool;
             drawingTool.BrushColor = new SkiaSharp.SKColor(
@@ -406,45 +517,62 @@ public partial class ImageEditView : UserControl
             drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
             drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
         };
+        imageEditor.DrawingTools.DrawingSettingsChanged += onSettingsChanged;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.DrawingSettingsChanged -= onSettingsChanged);
 
-        imageEditor.CommitPlacedShapeRequested += (_, _) => _imageEditorCanvas!.CommitPlacedShape();
-        imageEditor.CancelPlacedShapeRequested += (_, _) => _imageEditorCanvas!.CancelPlacedShape();
+        EventHandler onCommitShape = (_, _) => _imageEditorCanvas!.CommitPlacedShape();
+        imageEditor.DrawingTools.CommitPlacedShapeRequested += onCommitShape;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.CommitPlacedShapeRequested -= onCommitShape);
 
-        _imageEditorCanvas!.PlacedShapeStateChanged += (_, _) =>
-        {
-            imageEditor.DrawingTools.HasPlacedShape = _imageEditorCanvas.HasPlacedShape;
-        };
+        EventHandler onCancelShape = (_, _) => _imageEditorCanvas!.CancelPlacedShape();
+        imageEditor.DrawingTools.CancelPlacedShapeRequested += onCancelShape;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.CancelPlacedShapeRequested -= onCancelShape);
+
+        EventHandler onPlacedShapeState = (_, _) =>
+            imageEditor.DrawingTools.HasPlacedShape = _imageEditorCanvas!.HasPlacedShape;
+        _imageEditorCanvas!.PlacedShapeStateChanged += onPlacedShapeState;
+        _eventCleanup.Add(() => _imageEditorCanvas!.PlacedShapeStateChanged -= onPlacedShapeState);
     }
 
     private void WireInpaintingEvents(ImageEditorViewModel imageEditor)
     {
-        imageEditor.Inpainting.SetBaseRequested += (_, _) =>
+        EventHandler onSetBase = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
             _lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
             imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
         };
+        imageEditor.Inpainting.SetBaseRequested += onSetBase;
+        _eventCleanup.Add(() => imageEditor.Inpainting.SetBaseRequested -= onSetBase);
 
-        imageEditor.Inpainting.ToolActivated += (_, isActive) =>
+        EventHandler<bool> onToolActivated = (_, isActive) =>
             _imageEditorCanvas!.IsInpaintingToolActive = isActive;
+        imageEditor.Inpainting.ToolActivated += onToolActivated;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ToolActivated -= onToolActivated);
 
-        imageEditor.Inpainting.SettingsChanged += (_, _) =>
+        EventHandler onSettingsChanged = (_, _) =>
             _imageEditorCanvas!.InpaintBrushSize = imageEditor.Inpainting.BrushSize;
+        imageEditor.Inpainting.SettingsChanged += onSettingsChanged;
+        _eventCleanup.Add(() => imageEditor.Inpainting.SettingsChanged -= onSettingsChanged);
 
-        _imageEditorCanvas!.InpaintBrushSizeChanged += (_, newSize) =>
+        EventHandler<float> onBrushSizeChanged = (_, newSize) =>
             imageEditor.Inpainting.BrushSize = newSize;
+        _imageEditorCanvas!.InpaintBrushSizeChanged += onBrushSizeChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintBrushSizeChanged -= onBrushSizeChanged);
 
-        _imageEditorCanvas.InpaintGenerateRequested += (_, _) =>
+        EventHandler onGenerateRequested = (_, _) =>
         {
             if (imageEditor.Inpainting.GenerateCommand.CanExecute(null))
                 imageEditor.Inpainting.GenerateCommand.Execute(null);
         };
+        _imageEditorCanvas.InpaintGenerateRequested += onGenerateRequested;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintGenerateRequested -= onGenerateRequested);
 
         var inpaintPromptTextBox = this.FindControl<TextBox>("InpaintPromptTextBox");
         if (inpaintPromptTextBox is not null)
         {
-            inpaintPromptTextBox.KeyDown += (_, e) =>
+            EventHandler<KeyEventArgs> onKeyDown = (_, e) =>
             {
                 if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
                 {
@@ -453,16 +581,20 @@ public partial class ImageEditView : UserControl
                     e.Handled = true;
                 }
             };
+            inpaintPromptTextBox.KeyDown += onKeyDown;
+            _eventCleanup.Add(() => inpaintPromptTextBox.KeyDown -= onKeyDown);
         }
 
-        imageEditor.Inpainting.ClearMaskRequested += (_, _) =>
+        EventHandler onClearMask = (_, _) =>
         {
-            _imageEditorCanvas.EditorCore.ClearInpaintMask();
+            _imageEditorCanvas!.EditorCore.ClearInpaintMask();
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.Inpainting.ClearMaskRequested += onClearMask;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ClearMaskRequested -= onClearMask);
 
-        imageEditor.Inpainting.GenerateRequested += async (_, _) =>
+        EventHandler onGenerate = async (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
 
@@ -511,8 +643,10 @@ public partial class ImageEditView : UserControl
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
             }
         };
+        imageEditor.Inpainting.GenerateRequested += onGenerate;
+        _eventCleanup.Add(() => imageEditor.Inpainting.GenerateRequested -= onGenerate);
 
-        imageEditor.Inpainting.ResultReady += (_, imageBytes) =>
+        EventHandler<byte[]> onResultReady = (_, imageBytes) =>
         {
             if (_imageEditorCanvas is null) return;
 
@@ -538,14 +672,18 @@ public partial class ImageEditView : UserControl
             imageEditor.LayerPanel.SyncLayers(editorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.Inpainting.ResultReady += onResultReady;
+        _eventCleanup.Add(() => imageEditor.Inpainting.ResultReady -= onResultReady);
 
-        _imageEditorCanvas.InpaintMaskChanged += (_, _) =>
-            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+        EventHandler onMaskChanged = (_, _) =>
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
+        _imageEditorCanvas.InpaintMaskChanged += onMaskChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintMaskChanged -= onMaskChanged);
     }
 
     private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
     {
-        // Provide the View's save capability to the ViewModel
+        // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
         imageEditor.SaveImageFunc = path =>
             _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
 
@@ -555,7 +693,7 @@ public partial class ImageEditView : UserControl
             return await vm.DialogService.ShowSaveFileDialogAsync(title, suggestedFileName, filter);
         };
 
-        imageEditor.SaveAsDialogRequested += async () =>
+        Func<Task<SaveAsResult>> onSaveAsDialog = async () =>
         {
             if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
                 return SaveAsResult.Cancelled();
@@ -566,8 +704,10 @@ public partial class ImageEditView : UserControl
                 vm.SelectedEditorDataset?.Name,
                 vm.SelectedEditorVersion?.Version);
         };
+        imageEditor.SaveAsDialogRequested += onSaveAsDialog;
+        _eventCleanup.Add(() => imageEditor.SaveAsDialogRequested -= onSaveAsDialog);
 
-        imageEditor.SaveOverwriteConfirmRequested += async () =>
+        Func<Task<bool>> onOverwriteConfirm = async () =>
         {
             if (vm.DialogService is not null)
             {
@@ -577,11 +717,13 @@ public partial class ImageEditView : UserControl
             }
             return false;
         };
+        imageEditor.SaveOverwriteConfirmRequested += onOverwriteConfirm;
+        _eventCleanup.Add(() => imageEditor.SaveOverwriteConfirmRequested -= onOverwriteConfirm);
     }
 
     private void WireLayerEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
     {
-        imageEditor.EnableLayerModeRequested += (_, enable) =>
+        EventHandler<bool> onEnableLayer = (_, enable) =>
         {
             if (_imageEditorCanvas is null) return;
             if (enable) _imageEditorCanvas.EditorCore.EnableLayerMode();
@@ -589,78 +731,98 @@ public partial class ImageEditView : UserControl
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.EnableLayerModeRequested += onEnableLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.EnableLayerModeRequested -= onEnableLayer);
 
-        imageEditor.AddLayerRequested += (_, _) =>
+        EventHandler onAddLayer = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.AddLayer();
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.AddLayerRequested += onAddLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.AddLayerRequested -= onAddLayer);
 
-        imageEditor.DeleteLayerRequested += (_, layer) =>
+        EventHandler<Layer> onDeleteLayer = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.RemoveLayer(layer);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.DeleteLayerRequested += onDeleteLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.DeleteLayerRequested -= onDeleteLayer);
 
-        imageEditor.DuplicateLayerRequested += (_, layer) =>
+        EventHandler<Layer> onDuplicateLayer = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.DuplicateLayer(layer);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.DuplicateLayerRequested += onDuplicateLayer;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.DuplicateLayerRequested -= onDuplicateLayer);
 
-        imageEditor.MoveLayerUpRequested += (_, layer) =>
+        EventHandler<Layer> onMoveUp = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MoveLayerUp(layer);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MoveLayerUpRequested += onMoveUp;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MoveLayerUpRequested -= onMoveUp);
 
-        imageEditor.MoveLayerDownRequested += (_, layer) =>
+        EventHandler<Layer> onMoveDown = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MoveLayerDown(layer);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MoveLayerDownRequested += onMoveDown;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MoveLayerDownRequested -= onMoveDown);
 
-        imageEditor.MergeLayerDownRequested += (_, layer) =>
+        EventHandler<Layer> onMergeDown = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeLayerDown(layer);
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MergeLayerDownRequested += onMergeDown;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MergeLayerDownRequested -= onMergeDown);
 
-        imageEditor.MergeVisibleLayersRequested += (_, _) =>
+        EventHandler onMergeVisible = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.MergeVisibleLayers();
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.MergeVisibleLayersRequested += onMergeVisible;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.MergeVisibleLayersRequested -= onMergeVisible);
 
-        imageEditor.FlattenLayersRequested += (_, _) =>
+        EventHandler onFlatten = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.FlattenAllLayers();
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
             _imageEditorCanvas.InvalidateVisual();
         };
+        imageEditor.LayerPanel.FlattenLayersRequested += onFlatten;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.FlattenLayersRequested -= onFlatten);
 
-        imageEditor.LayerSelectionChanged += (_, layer) =>
+        EventHandler<Layer?> onLayerSelection = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.ActiveLayer = layer;
         };
+        imageEditor.LayerPanel.LayerSelectionChanged += onLayerSelection;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.LayerSelectionChanged -= onLayerSelection);
 
-        imageEditor.SaveLayeredTiffRequested += async (suggestedPath) =>
+        Func<string, Task<bool>> onSaveTiff = async (suggestedPath) =>
         {
             if (_imageEditorCanvas is null || vm.DialogService is null) return false;
             
@@ -670,6 +832,8 @@ public partial class ImageEditView : UserControl
             if (string.IsNullOrEmpty(savePath)) return false;
             return _imageEditorCanvas.EditorCore.SaveLayeredTiff(savePath);
         };
+        imageEditor.LayerPanel.SaveLayeredTiffRequested += onSaveTiff;
+        _eventCleanup.Add(() => imageEditor.LayerPanel.SaveLayeredTiffRequested -= onSaveTiff);
     }
 
     private void WireZoomSlider()
@@ -677,7 +841,7 @@ public partial class ImageEditView : UserControl
         var zoomSlider = this.FindControl<Slider>("ZoomSlider");
         if (zoomSlider is not null)
         {
-            zoomSlider.PropertyChanged += (_, args) =>
+            EventHandler<AvaloniaPropertyChangedEventArgs> onSliderChanged = (_, args) =>
             {
                 if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
@@ -685,6 +849,8 @@ public partial class ImageEditView : UserControl
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
+            zoomSlider.PropertyChanged += onSliderChanged;
+            _eventCleanup.Add(() => zoomSlider.PropertyChanged -= onSliderChanged);
         }
     }
 
