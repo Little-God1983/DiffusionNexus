@@ -389,10 +389,10 @@ public partial class ImageEditorCore : IDisposable
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
             
-            // Disable existing layer mode if active
+            // Tear down existing layer stack without flattening (we're discarding it)
             if (_isLayerMode && _services is not null)
             {
-                _services.Layers.DisableLayerMode()?.Dispose();
+                _services.Layers.Reset();
             }
             
             _originalBitmap?.Dispose();
@@ -403,16 +403,9 @@ public partial class ImageEditorCore : IDisposable
             FileSizeBytes = fileInfo.Length;
 
             using var stream = File.OpenRead(filePath);
-            using var codec = SKCodec.Create(stream);
-            if (codec is not null)
-                stream.Position = 0;
-
             _originalBitmap = SKBitmap.Decode(stream);
             if (_originalBitmap is null)
                 return false;
-
-            // Try to extract DPI (default to 72 if not available)
-            _imageDpi = 72; // SkiaSharp doesn't directly expose DPI, would need EXIF parsing
 
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
@@ -421,9 +414,8 @@ public partial class ImageEditorCore : IDisposable
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
 
-            // Reset inpaint base to the newly loaded image
+            // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
-            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;
@@ -450,10 +442,10 @@ public partial class ImageEditorCore : IDisposable
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
             
-            // Disable existing layer mode if active
+            // Tear down existing layer stack without flattening (we're discarding it)
             if (_isLayerMode && _services is not null)
             {
-                _services.Layers.DisableLayerMode()?.Dispose();
+                _services.Layers.Reset();
             }
             
             _originalBitmap?.Dispose();
@@ -469,9 +461,8 @@ public partial class ImageEditorCore : IDisposable
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
 
-            // Reset inpaint base to the newly loaded image
+            // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
-            SetInpaintBaseBitmap();
             
             OnImageChanged();
             return true;

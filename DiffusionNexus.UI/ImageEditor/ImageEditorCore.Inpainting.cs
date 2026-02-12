@@ -165,12 +165,17 @@ public partial class ImageEditorCore
     }
 
     /// <summary>
-    /// Returns a copy of the stored inpaint base bitmap, or null if none has been set.
+    /// Returns a copy of the stored inpaint base bitmap.
+    /// If none has been captured yet, auto-captures the current state.
     /// </summary>
     public SKBitmap? GetInpaintBaseBitmap()
     {
         lock (_bitmapLock)
         {
+            if (_inpaintBaseBitmap is null)
+            {
+                SetInpaintBaseBitmap();
+            }
             return _inpaintBaseBitmap?.Copy();
         }
     }

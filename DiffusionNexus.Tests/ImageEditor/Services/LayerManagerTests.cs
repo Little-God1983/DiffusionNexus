@@ -152,6 +152,51 @@ public class LayerManagerTests : IDisposable
 
     #endregion
 
+    #region Reset
+
+    [Fact]
+    public void WhenReset_StackIsDisposedWithoutFlatten()
+    {
+        // Arrange
+        _sut.EnableLayerMode(_testBitmap, "Background");
+        _sut.AddLayer("Layer 2");
+
+        // Act
+        _sut.Reset();
+
+        // Assert
+        _sut.IsLayerMode.Should().BeFalse();
+        _sut.Stack.Should().BeNull();
+        _sut.Count.Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenReset_LayerModeChangedEventRaised()
+    {
+        // Arrange
+        _sut.EnableLayerMode(_testBitmap, "Background");
+        var raised = false;
+        _sut.LayerModeChanged += (_, _) => raised = true;
+
+        // Act
+        _sut.Reset();
+
+        // Assert
+        raised.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WhenResetWithNoStack_DoesNotThrow()
+    {
+        // Act
+        var act = () => _sut.Reset();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    #endregion
+
     #region AddLayer
 
     [Fact]

@@ -4,7 +4,7 @@ namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
 /// Manages the layer stack and provides a high-level API for layer operations.
-/// Acts as a facade over <see cref="LayerStack"/>, publishing events via <see cref="Events.IEventBus"/>.
+/// Acts as a facade over <see cref="LayerStack"/>.
 /// </summary>
 public interface ILayerManager
 {
@@ -110,6 +110,12 @@ public interface ILayerManager
     /// Flattens all layers into a single layer, keeping layer mode active.
     /// </summary>
     void FlattenAllLayers();
+
+    /// <summary>
+    /// Tears down the layer stack and resets to non-layer mode without flattening.
+    /// Use when the current image is being discarded (e.g., loading a new image).
+    /// </summary>
+    void Reset();
 
     /// <summary>
     /// Raised when the layer stack structure changes (add/remove/reorder).

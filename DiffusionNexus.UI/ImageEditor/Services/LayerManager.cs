@@ -170,6 +170,14 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void Reset()
+    {
+        UnsubscribeAndDispose();
+        _isLayerMode = false;
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
     public event EventHandler? LayersChanged;
 
     /// <inheritdoc />
