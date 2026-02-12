@@ -138,6 +138,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         get => _selectedEditorDataset;
         set
         {
+            // Ignore null pushed by Avalonia ComboBox TwoWay binding when the
+            // control is detached from the visual tree during tab switches.
+            if (value is null && _selectedEditorDataset is not null) return;
+
             if (SetProperty(ref _selectedEditorDataset, value))
             {
                 _state.SelectedEditorDataset = value;
@@ -154,6 +158,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         get => _selectedEditorVersion;
         set
         {
+            // Ignore null pushed by Avalonia ComboBox TwoWay binding when the
+            // control is detached from the visual tree during tab switches.
+            if (value is null && _selectedEditorVersion is not null) return;
+
             if (SetProperty(ref _selectedEditorVersion, value))
             {
                 _state.SelectedEditorVersion = value;

@@ -47,32 +47,27 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
         _imageDropZone = this.FindControl<Border>("ImageDropZone");
         _openImageButton = this.FindControl<Button>("OpenImageButton");
-        
-        // Set up drag-drop handlers for drop zone
-        if (_imageDropZone is not null)
-        {
-            _imageDropZone.AddHandler(DragDrop.DropEvent, OnImageDrop);
-            _imageDropZone.AddHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
-            _imageDropZone.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
-        }
-        
-        // Set up open image button click handler
-        if (_openImageButton is not null)
-        {
-            _openImageButton.Click += OnOpenImageButtonClick;
-        }
+        // Drag-drop and button handlers are registered in OnAttachedToVisualTree
+        // so they survive TabControl detach/reattach cycles.
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         FileLogger.Log($"[Instance #{_instanceId}] OnDataContextChanged called, _eventsWired={_eventsWired}, DataContext type={(DataContext?.GetType().Name ?? "null")}");
 
-        // Unwire previous subscriptions before wiring new ones
-        UnwireEvents();
+        // Ignore null DataContext caused by binding deactivation during tab switches.
+        // The same View/ViewModel pair is reused, so events should stay connected.
+        if (DataContext is null)
+            return;
 
         if (DataContext is ImageEditTabViewModel vm)
         {
-            TryWireUpImageEditorEvents(vm);
+            // Only unwire if the DataContext genuinely changed to a different ViewModel.
+            if (_wiredImageEditor is not null && _wiredImageEditor != vm.ImageEditor)
+                UnwireEvents();
+
+            if (!_eventsWired)
+                TryWireUpImageEditorEvents(vm);
         }
     }
 
@@ -96,11 +91,36 @@ public partial class ImageEditView : UserControl
     }
 
     /// <inheritdoc />
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        // Re-register infrastructure handlers removed during detach.
+        if (_imageDropZone is not null)
+        {
+            _imageDropZone.AddHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageDropZone.AddHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageDropZone.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
+        if (_openImageButton is not null)
+            _openImageButton.Click += OnOpenImageButtonClick;
+
+        // Re-wire ViewModel events if DataContext is already available.
+        if (!_eventsWired && DataContext is ImageEditTabViewModel vm)
+            TryWireUpImageEditorEvents(vm);
+
+        // Force canvas redraw so the image reappears after reattach.
+        _imageEditorCanvas?.InvalidateVisual();
+    }
+
+    /// <inheritdoc />
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        UnwireEvents();
 
+        // Only remove infrastructure handlers; ViewModel events stay connected
+        // because the same control/ViewModel pair is reused across tab switches.
         if (_imageDropZone is not null)
         {
             _imageDropZone.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
