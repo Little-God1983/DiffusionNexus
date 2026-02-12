@@ -2565,6 +2565,158 @@ public class ImageEditorCore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Prepares a masked image for AI inpainting by compositing the inpaint base with the
+    /// painted mask. Transparent pixels in the result mark the regions to regenerate.
+    /// If no inpaint base exists, the current state is auto-captured.
+    /// </summary>
+    /// <param name="featherRadius">Mask feather radius for softening brush edges (0 = hard).</param>
+    /// <returns>Result containing PNG bytes of the masked image, or an error.</returns>
+    public InpaintPrepareResult PrepareInpaintMaskedImage(float featherRadius)
+    {
+        bool baseCaptured = false;
+        SKBitmap? baseCopy;
+        SKBitmap? maskCopy;
+
+        lock (_bitmapLock)
+        {
+            if (_inpaintBaseBitmap is null)
+            {
+                _inpaintBaseBitmap = _isLayerMode && _layers is not null
+                    ? _layers.Flatten()
+                    : _workingBitmap?.Copy();
+                Interlocked.Increment(ref _inpaintBaseVersion);
+                baseCaptured = true;
+            }
+
+            baseCopy = _inpaintBaseBitmap?.Copy();
+            if (baseCopy is null)
+                return InpaintPrepareResult.Failed("No image to inpaint.");
+
+            maskCopy = _layers?.Layers
+                .FirstOrDefault(l => l.IsInpaintMask)?.Bitmap?.Copy();
+        }
+
+        if (maskCopy is null)
+        {
+            baseCopy.Dispose();
+            return InpaintPrepareResult.Failed(
+                "No inpaint mask painted. Paint over areas to regenerate.",
+                baseCaptured);
+        }
+
+        return CompositeAndEncode(baseCopy, maskCopy, featherRadius, baseCaptured);
+    }
+
+    /// <summary>
+    /// Exports the current inpaint base bitmap as PNG bytes.
+    /// Useful for saving a "before" image for comparison workflows.
+    /// </summary>
+    /// <returns>PNG bytes, or null if no inpaint base has been captured.</returns>
+    public byte[]? GetInpaintBaseAsPng()
+    {
+        SKBitmap? copy;
+        lock (_bitmapLock)
+        {
+            copy = _inpaintBaseBitmap?.Copy();
+        }
+
+        if (copy is null) return null;
+
+        try
+        {
+            using var image = SKImage.FromBitmap(copy);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
+        }
+        finally
+        {
+            copy.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Composites the base image with the feathered mask and encodes to PNG.
+    /// Disposes both input bitmaps.
+    /// </summary>
+    private static InpaintPrepareResult CompositeAndEncode(
+        SKBitmap baseBitmap, SKBitmap maskBitmap, float featherRadius, bool baseCaptured)
+    {
+        try
+        {
+            using var feathered = FeatherMask(maskBitmap, featherRadius);
+
+            // Convert base to unpremultiplied alpha so RGB values are stored straight
+            using var unpremul = new SKBitmap(
+                baseBitmap.Width, baseBitmap.Height,
+                SKColorType.Rgba8888, SKAlphaType.Unpremul);
+            using (var canvas = new SKCanvas(unpremul))
+                canvas.DrawBitmap(baseBitmap, 0, 0);
+
+            // Set alpha from inverted mask: white (painted) ? alpha 0 (inpaint region)
+            var src = unpremul.Pixels;
+            var mask = feathered.Pixels;
+            var dst = new SKColor[src.Length];
+            for (var i = 0; i < src.Length; i++)
+            {
+                var p = src[i];
+                dst[i] = new SKColor(p.Red, p.Green, p.Blue, (byte)(255 - mask[i].Alpha));
+            }
+
+            using var result = new SKBitmap(
+                baseBitmap.Width, baseBitmap.Height,
+                SKColorType.Rgba8888, SKAlphaType.Unpremul);
+            result.Pixels = dst;
+
+            using var img = SKImage.FromBitmap(result);
+            using var encoded = img.Encode(SKEncodedImageFormat.Png, 100);
+            return InpaintPrepareResult.Succeeded(encoded.ToArray(), baseCaptured);
+        }
+        finally
+        {
+            baseBitmap.Dispose();
+            maskBitmap.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Feathers an inpaint mask by dilating then blurring.
+    /// Softens hard binary brush edges so the inpainting model can blend at boundaries.
+    /// </summary>
+    private static SKBitmap FeatherMask(SKBitmap maskBitmap, float featherRadius)
+    {
+        if (featherRadius < 0.5f)
+            return maskBitmap.Copy();
+
+        var dilateRadius = Math.Max(1, (int)(featherRadius * 0.5f));
+        var blurSigma = featherRadius;
+
+        var dilated = new SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SKColorType.Rgba8888, SKAlphaType.Premul);
+        using (var canvas = new SKCanvas(dilated))
+        {
+            canvas.Clear(SKColors.Transparent);
+            using var paint = new SKPaint();
+            paint.ImageFilter = SKImageFilter.CreateDilate(dilateRadius, dilateRadius);
+            canvas.DrawBitmap(maskBitmap, 0, 0, paint);
+        }
+
+        var feathered = new SKBitmap(
+            maskBitmap.Width, maskBitmap.Height,
+            SKColorType.Rgba8888, SKAlphaType.Premul);
+        using (var canvas = new SKCanvas(feathered))
+        {
+            canvas.Clear(SKColors.Transparent);
+            using var paint = new SKPaint();
+            paint.ImageFilter = SKImageFilter.CreateBlur(blurSigma, blurSigma);
+            canvas.DrawBitmap(dilated, 0, 0, paint);
+        }
+
+        dilated.Dispose();
+        return feathered;
+    }
+
     #endregion Inpainting
 
     #region Save with Layers

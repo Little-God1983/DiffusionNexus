@@ -35,6 +35,18 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Gets the editor services for use by the View layer.</summary>
     public EditorServices Services => _services;
 
+    /// <summary>
+    /// Callback provided by the View to save the current editor image to a file path.
+    /// Returns true if the save succeeded.
+    /// </summary>
+    public Func<string, bool>? SaveImageFunc { get; set; }
+
+    /// <summary>
+    /// Callback provided by the View to show a save-file dialog.
+    /// Parameters: title, suggestedFileName, filter. Returns the chosen path, or null if cancelled.
+    /// </summary>
+    public Func<string, string, string, Task<string?>>? ShowSaveFileDialogFunc { get; set; }
+
     /// <summary>Sub-ViewModel for the layer panel (layer list, selection, commands).</summary>
     public LayerPanelViewModel LayerPanel { get; }
 
@@ -268,9 +280,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<(float W, float H)>? SetCropAspectRatioRequested;
     public event EventHandler? SwitchCropAspectRatioRequested;
     public event Func<Task<SaveAsResult>>? SaveAsDialogRequested;
-    public event EventHandler<SaveAsResult>? SaveAsRequested;
     public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
-    public event EventHandler? SaveOverwriteRequested;
     public event EventHandler? ZoomInRequested;
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
@@ -287,7 +297,6 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<BrightnessContrastSettings>? BrightnessContrastPreviewRequested;
     public event EventHandler? CancelBrightnessContrastPreviewRequested;
     public event EventHandler<string>? ImageSaved;
-    public event EventHandler<ExportEventArgs>? ExportRequested;
     public event EventHandler<bool>? DrawingToolActivated;
     public event EventHandler<ImageEditor.DrawingSettings>? DrawingSettingsChanged;
     public event EventHandler? ShapeSettingsChanged;
@@ -732,56 +741,149 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private async Task ExecuteSaveAsNewAsync()
     {
-        FileLogger.LogEntry();
-        if (SaveAsDialogRequested is null) { FileLogger.LogWarning("SaveAsDialogRequested is null"); return; }
+        if (SaveAsDialogRequested is null || SaveImageFunc is null) return;
 
-        FileLogger.Log("Invoking SaveAsDialogRequested...");
         var result = await SaveAsDialogRequested.Invoke();
-        FileLogger.Log($"Dialog result: IsCancelled={result.IsCancelled}, FileName={result.FileName ?? "(null)"}");
+        if (result.IsCancelled || string.IsNullOrWhiteSpace(result.FileName) || CurrentImagePath is null)
+            return;
 
-        if (!result.IsCancelled)
+        var newPath = ResolveSavePath(result);
+        if (newPath is null) return;
+
+        if (File.Exists(newPath))
         {
-            FileLogger.Log("Invoking SaveAsRequested event...");
-            SaveAsRequested?.Invoke(this, result);
-            FileLogger.Log("SaveAsRequested event completed");
+            var extension = Path.GetExtension(CurrentImagePath);
+            StatusMessage = $"File '{result.FileName}{extension}' already exists.";
+            return;
         }
-        FileLogger.LogExit();
+
+        try
+        {
+            if (SaveImageFunc(newPath))
+            {
+                SaveRatingToFile(newPath, result.Rating);
+                OnSaveAsNewCompleted(newPath, result.Rating);
+            }
+            else
+            {
+                StatusMessage = "Failed to save image.";
+            }
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception during save", ex);
+            StatusMessage = $"Error saving image: {ex.Message}";
+        }
     }
 
     private async Task ExecuteSaveOverwriteAsync()
     {
-        FileLogger.LogEntry();
-        if (SaveOverwriteConfirmRequested is null)
+        if (SaveImageFunc is null) return;
+
+        if (SaveOverwriteConfirmRequested is not null)
         {
-            FileLogger.Log("No confirmation requested, invoking SaveOverwriteRequested directly");
-            SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
-            FileLogger.LogExit();
-            return;
+            var confirmed = await SaveOverwriteConfirmRequested.Invoke();
+            if (!confirmed) return;
         }
 
-        FileLogger.Log("Requesting confirmation...");
-        var confirmed = await SaveOverwriteConfirmRequested.Invoke();
-        FileLogger.Log($"Confirmation result: {confirmed}");
-        if (confirmed)
+        try
         {
-            FileLogger.Log("Invoking SaveOverwriteRequested...");
-            SaveOverwriteRequested?.Invoke(this, EventArgs.Empty);
-            FileLogger.Log("SaveOverwriteRequested completed");
+            if (SaveImageFunc(CurrentImagePath!))
+                OnSaveOverwriteCompleted();
+            else
+                StatusMessage = "Failed to save image.";
         }
-        FileLogger.LogExit();
+        catch (Exception ex)
+        {
+            FileLogger.LogError("Exception during save overwrite", ex);
+            StatusMessage = $"Error saving image: {ex.Message}";
+        }
     }
 
-    private Task ExecuteExportAsync()
+    private async Task ExecuteExportAsync()
     {
-        if (CurrentImagePath is null) return Task.CompletedTask;
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
+
         var extension = Path.GetExtension(CurrentImagePath);
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
-        ExportRequested?.Invoke(this, new ExportEventArgs
+        var suggestedName = $"{fileName}_export{extension}";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
         {
-            SuggestedFileName = $"{fileName}_export{extension}",
-            FileExtension = extension
-        });
-        return Task.CompletedTask;
+            if (SaveImageFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export image.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting image: {ex.Message}";
+        }
+    }
+
+    /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>
+    private string? ResolveSavePath(SaveAsResult result)
+    {
+        var extension = Path.GetExtension(CurrentImagePath);
+
+        if (result.Destination == SaveAsDestination.OriginFolder)
+        {
+            var directory = Path.GetDirectoryName(CurrentImagePath);
+            if (string.IsNullOrEmpty(directory))
+            {
+                StatusMessage = "Cannot determine save location.";
+                return null;
+            }
+            return Path.Combine(directory, result.FileName + extension);
+        }
+
+        var dataset = result.SelectedDataset;
+        if (dataset is null)
+        {
+            StatusMessage = "No dataset selected.";
+            return null;
+        }
+
+        var version = result.SelectedVersion ?? 1;
+        var datasetFolderPath = dataset.GetVersionFolderPath(version);
+
+        try
+        {
+            if (!Directory.Exists(datasetFolderPath))
+                Directory.CreateDirectory(datasetFolderPath);
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError($"Failed to create dataset directory: {datasetFolderPath}", ex);
+            StatusMessage = "Failed to create dataset directory.";
+            return null;
+        }
+
+        return Path.Combine(datasetFolderPath, result.FileName + extension);
+    }
+
+    /// <summary>Saves the rating to a .rating file next to the image.</summary>
+    private static void SaveRatingToFile(string imagePath, ImageRatingStatus rating)
+    {
+        try
+        {
+            var ratingFilePath = Path.ChangeExtension(imagePath, ".rating");
+
+            if (rating == ImageRatingStatus.Unrated)
+            {
+                if (File.Exists(ratingFilePath))
+                    File.Delete(ratingFilePath);
+            }
+            else
+            {
+                File.WriteAllText(ratingFilePath, rating.ToString());
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void ExecuteZoomIn() { _services.Viewport.ZoomIn(); ZoomInRequested?.Invoke(this, EventArgs.Empty); }
@@ -795,16 +897,6 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteFlipVertical() => FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
 
     #endregion
-}
-
-/// <summary>Event arguments for the export request.</summary>
-public class ExportEventArgs : EventArgs
-{
-    /// <summary>Suggested filename for the export (with extension).</summary>
-    public string SuggestedFileName { get; init; } = string.Empty;
-
-    /// <summary>The file extension (e.g., ".png").</summary>
-    public string FileExtension { get; init; } = ".png";
 }
 
 /// <summary>Event arguments for the "Generate and Compare" inpainting result.</summary>
