@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
+using DiffusionNexus.UI.ImageEditor.Services;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.Controls;
@@ -235,6 +236,15 @@ public class ImageEditorControl : Control
     /// Gets the underlying editor core for advanced operations.
     /// </summary>
     public ImageEditor.ImageEditorCore EditorCore => _editorCore;
+
+    /// <summary>
+    /// Wires the shared EditorServices into the underlying editor core.
+    /// Must be called once after the ViewModel is available.
+    /// </summary>
+    public void SetEditorServices(EditorServices services)
+    {
+        _editorCore.SetServices(services);
+    }
 
     /// <summary>
     /// Gets whether an image is currently loaded.

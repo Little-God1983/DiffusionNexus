@@ -175,7 +175,11 @@ public partial class ImageEditView : UserControl
         var imageEditor = vm.ImageEditor;
         _wiredImageEditor = imageEditor;
         
+        // Wire the shared EditorServices into the control's core
+        _imageEditorCanvas.SetEditorServices(imageEditor.Services);
+        
         FileLogger.Log($"[Instance #{_instanceId}] Wiring events for CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
+
 
         WireCanvasEvents(imageEditor);
         WireCropEvents(imageEditor);
