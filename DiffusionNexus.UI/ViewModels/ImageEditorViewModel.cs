@@ -1004,6 +1004,36 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public event EventHandler<ImageEditor.DrawingSettings>? DrawingSettingsChanged;
 
+    /// <summary>
+    /// Event raised when shape settings change.
+    /// </summary>
+    public event EventHandler? ShapeSettingsChanged;
+
+    /// <summary>
+    /// Event raised when the ViewModel requests committing the placed shape.
+    /// </summary>
+    public event EventHandler? CommitPlacedShapeRequested;
+
+    /// <summary>
+    /// Event raised when the ViewModel requests cancelling the placed shape.
+    /// </summary>
+    public event EventHandler? CancelPlacedShapeRequested;
+
+    /// <summary>
+    /// Event raised when layer selection changes.
+    /// </summary>
+    public event EventHandler<Layer?>? LayerSelectionChanged;
+
+    /// <summary>
+    /// Event raised when layers need to be synchronized.
+    /// </summary>
+    public event EventHandler? SyncLayersRequested;
+
+    /// <summary>
+    /// Event raised when a layered TIFF save is requested.
+    /// </summary>
+    public event Func<string, Task<bool>>? SaveLayeredTiffRequested;
+
     #endregion
 
     /// <summary>
@@ -1020,21 +1050,9 @@ public partial class ImageEditorViewModel : ObservableObject
             CropToolDeactivated?.Invoke(this, EventArgs.Empty);
         }
 
-        if (exceptTool != nameof(IsColorBalancePanelOpen) && _isColorBalancePanelOpen)
-        {
-            _isColorBalancePanelOpen = false;
-            ResetColorBalanceSliders();
-            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
-        }
-
-        if (exceptTool != nameof(IsBrightnessContrastPanelOpen) && _isBrightnessContrastPanelOpen)
-        {
-            _isBrightnessContrastPanelOpen = false;
-            ResetBrightnessContrastSliders();
-            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
-        }
+        // Delegate to sub-ViewModels
+        ColorTools.CloseAllPanels();
+        DrawingTools.CloseAll();
 
         if (exceptTool != nameof(IsBackgroundRemovalPanelOpen) && _isBackgroundRemovalPanelOpen)
         {
@@ -1053,13 +1071,6 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             _isUpscalingPanelOpen = false;
             OnPropertyChanged(nameof(IsUpscalingPanelOpen));
-        }
-
-        if (exceptTool != nameof(IsDrawingToolActive) && _isDrawingToolActive)
-        {
-            _isDrawingToolActive = false;
-            OnPropertyChanged(nameof(IsDrawingToolActive));
-            DrawingToolActivated?.Invoke(this, false);
         }
 
         if (exceptTool != nameof(IsInpaintingPanelOpen) && _isInpaintingPanelOpen)
@@ -1082,18 +1093,12 @@ public partial class ImageEditorViewModel : ObservableObject
         FillCropCommand.NotifyCanExecuteChanged();
         SetCropAspectRatioCommand.NotifyCanExecuteChanged();
         SwitchCropAspectRatioCommand.NotifyCanExecuteChanged();
-        ToggleColorBalanceCommand.NotifyCanExecuteChanged();
-        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
-        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
-        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
-        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
         ToggleBackgroundFillCommand.NotifyCanExecuteChanged();
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
-        ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         ClearInpaintMaskCommand.NotifyCanExecuteChanged();
         GenerateInpaintCommand.NotifyCanExecuteChanged();
         GenerateAndCompareInpaintCommand.NotifyCanExecuteChanged();
@@ -1213,12 +1218,6 @@ public partial class ImageEditorViewModel : ObservableObject
         Rotate180Command.NotifyCanExecuteChanged();
         FlipHorizontalCommand.NotifyCanExecuteChanged();
         FlipVerticalCommand.NotifyCanExecuteChanged();
-        ToggleColorBalanceCommand.NotifyCanExecuteChanged();
-        ApplyColorBalanceCommand.NotifyCanExecuteChanged();
-        ResetColorBalanceRangeCommand.NotifyCanExecuteChanged();
-        ToggleBrightnessContrastCommand.NotifyCanExecuteChanged();
-        ApplyBrightnessContrastCommand.NotifyCanExecuteChanged();
-        ResetBrightnessContrastCommand.NotifyCanExecuteChanged();
         RemoveBackgroundCommand.NotifyCanExecuteChanged();
         RemoveBackgroundToLayerCommand.NotifyCanExecuteChanged();
         DownloadBackgroundRemovalModelCommand.NotifyCanExecuteChanged();
@@ -1226,9 +1225,12 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillCommand.NotifyCanExecuteChanged();
         UpscaleImageCommand.NotifyCanExecuteChanged();
         DownloadUpscalingModelCommand.NotifyCanExecuteChanged();
-        ToggleDrawingToolCommand.NotifyCanExecuteChanged();
         NotifyRatingCommandsCanExecuteChanged();
-        NotifyLayerCommandsCanExecuteChanged();
+
+        // Notify sub-ViewModels
+        ColorTools.RefreshCommandStates();
+        DrawingTools.RefreshCommandStates();
+        LayerPanel.NotifyCommandsCanExecuteChanged();
     }
 
     private void NotifyRatingCommandsCanExecuteChanged()
@@ -1293,7 +1295,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
-        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !IsColorBalancePanelOpen);
+        ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !ColorTools.IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
         CancelCropCommand = new RelayCommand(ExecuteCancelCrop, () => IsCropToolActive);
         FitCropCommand = new RelayCommand(ExecuteFitCrop, () => HasImage && IsCropToolActive);
@@ -1319,16 +1321,6 @@ public partial class ImageEditorViewModel : ObservableObject
         FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
         FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
 
-        // Color Balance commands
-        ToggleColorBalanceCommand = new RelayCommand(ExecuteToggleColorBalance, () => HasImage && !IsCropToolActive);
-        ApplyColorBalanceCommand = new RelayCommand(ExecuteApplyColorBalance, () => HasImage && IsColorBalancePanelOpen && HasColorBalanceAdjustments);
-        ResetColorBalanceRangeCommand = new RelayCommand(ExecuteResetColorBalanceRange, () => IsColorBalancePanelOpen && HasColorBalanceAdjustments);
-
-        // Brightness/Contrast commands
-        ToggleBrightnessContrastCommand = new RelayCommand(ExecuteToggleBrightnessContrast, () => HasImage && !IsColorBalancePanelOpen);
-        ApplyBrightnessContrastCommand = new RelayCommand(ExecuteApplyBrightnessContrast, () => HasImage && IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
-        ResetBrightnessContrastCommand = new RelayCommand(ExecuteResetBrightnessContrast, () => IsBrightnessContrastPanelOpen && HasBrightnessContrastAdjustments);
-
         // Background Removal commands
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
         RemoveBackgroundToLayerCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundToLayerAsync, CanExecuteRemoveBackground);
@@ -1339,24 +1331,9 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillCommand = new RelayCommand(ExecuteApplyBackgroundFill, () => HasImage && IsBackgroundFillPanelOpen);
         SetBackgroundFillPresetCommand = new RelayCommand<string>(SetBackgroundFillPreset);
 
-
         // AI Upscaling commands
         UpscaleImageCommand = new AsyncRelayCommand(ExecuteUpscaleImageAsync, CanExecuteUpscaleImage);
         DownloadUpscalingModelCommand = new AsyncRelayCommand(ExecuteDownloadUpscalingModelAsync, CanExecuteDownloadUpscalingModel);
-
-        // Drawing tool commands
-        ToggleDrawingToolCommand = new RelayCommand(ExecuteToggleDrawingTool, () => HasImage);
-        SetDrawingColorPresetCommand = new RelayCommand<string>(SetDrawingColorPreset);
-
-        // Shape tool commands
-        SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
-        SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
-        CommitPlacedShapeCommand = new RelayCommand(
-            () => CommitPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
-            () => HasPlacedShape);
-        CancelPlacedShapeCommand = new RelayCommand(
-            () => CancelPlacedShapeRequested?.Invoke(this, EventArgs.Empty),
-            () => HasPlacedShape);
 
         // Inpainting commands
         ClearInpaintMaskCommand = new RelayCommand(
@@ -1371,18 +1348,6 @@ public partial class ImageEditorViewModel : ObservableObject
         UseCurrentAsInpaintBaseCommand = new RelayCommand(
             () => SetInpaintBaseRequested?.Invoke(this, EventArgs.Empty),
             () => HasImage && IsInpaintingPanelOpen);
-
-        // Layer commands (layers are always enabled when an image is loaded)
-        ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => HasImage);
-        AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => HasImage);
-        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => HasImage && SelectedLayer != null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask);
-        DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => HasImage && SelectedLayer != null && !SelectedLayer.Layer.IsInpaintMask);
-        MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => HasImage && SelectedLayer != null && CanMoveLayerUp);
-        MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => HasImage && SelectedLayer != null && CanMoveLayerDown);
-        MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => HasImage && SelectedLayer != null && CanMergeDown);
-        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => HasImage && Layers.Count > 1);
-        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => HasImage && Layers.Count > 1);
-        SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => HasImage);
     }
 
     /// <summary>
@@ -1496,7 +1461,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public void OnColorBalanceApplied()
     {
-        IsColorBalancePanelOpen = false;
+        ColorTools.IsColorBalancePanelOpen = false;
         StatusMessage = "Color balance applied";
     }
 
@@ -1505,7 +1470,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// </summary>
     public void OnBrightnessContrastApplied()
     {
-        IsBrightnessContrastPanelOpen = false;
+        ColorTools.IsBrightnessContrastPanelOpen = false;
         StatusMessage = "Brightness/Contrast applied";
     }
 
@@ -2097,15 +2062,6 @@ public partial class ImageEditorViewModel : ObservableObject
         ApplyBackgroundFillRequested?.Invoke(this, CurrentBackgroundFillSettings);
     }
 
-    private void ExecuteToggleDrawingTool()
-    {
-        IsDrawingToolActive = !IsDrawingToolActive;
-        if (IsDrawingToolActive)
-            _services.Tools.Activate(ToolIds.Drawing);
-        else
-            _services.Tools.Deactivate(ToolIds.Drawing);
-    }
-
     private bool CanExecuteUpscaleImage() => 
         HasImage && !IsUpscalingBusy && IsUpscalingModelReady;
 
@@ -2212,24 +2168,6 @@ public partial class ImageEditorViewModel : ObservableObject
         ColorTools.CloseAllPanels();
         DrawingTools.CloseAll();
 
-        // Close color balance panel and cancel any preview
-        if (_isColorBalancePanelOpen)
-        {
-            _isColorBalancePanelOpen = false;
-            ResetColorBalanceSliders();
-            CancelColorBalancePreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsColorBalancePanelOpen));
-        }
-
-        // Close brightness/contrast panel and cancel any preview
-        if (_isBrightnessContrastPanelOpen)
-        {
-            _isBrightnessContrastPanelOpen = false;
-            ResetBrightnessContrastSliders();
-            CancelBrightnessContrastPreviewRequested?.Invoke(this, EventArgs.Empty);
-            OnPropertyChanged(nameof(IsBrightnessContrastPanelOpen));
-        }
-
         // Close background removal panel
         if (_isBackgroundRemovalPanelOpen)
         {
@@ -2251,16 +2189,6 @@ public partial class ImageEditorViewModel : ObservableObject
             _isUpscalingPanelOpen = false;
             OnPropertyChanged(nameof(IsUpscalingPanelOpen));
         }
-
-        // Close drawing tool
-        if (_isDrawingToolActive)
-        {
-            _isDrawingToolActive = false;
-            OnPropertyChanged(nameof(IsDrawingToolActive));
-            DrawingToolActivated?.Invoke(this, false);
-        }
-
-        // Add more tools here as they are added in the future
     }
 
     private async Task ExecuteGenerateInpaintAsync()
@@ -2455,75 +2383,6 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
-    #region Layer Command Implementations
-
-    private void ExecuteToggleLayerMode()
-    {
-        IsLayerMode = !IsLayerMode;
-        EnableLayerModeRequested?.Invoke(this, IsLayerMode);
-    }
-
-    private void ExecuteAddLayer()
-    {
-        AddLayerRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-
-    private void ExecuteDeleteLayer()
-    {
-        if (SelectedLayer == null) return;
-        DeleteLayerRequested?.Invoke(this, SelectedLayer.Layer);
-    }
-
-    private void ExecuteDuplicateLayer()
-    {
-        if (SelectedLayer == null) return;
-        DuplicateLayerRequested?.Invoke(this, SelectedLayer.Layer);
-    }
-
-    private void ExecuteMoveLayerUp()
-    {
-        if (SelectedLayer == null) return;
-        MoveLayerUpRequested?.Invoke(this, SelectedLayer.Layer);
-    }
-
-    private void ExecuteMoveLayerDown()
-    {
-        if (SelectedLayer == null) return;
-        MoveLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
-    }
-
-    private void ExecuteMergeLayerDown()
-    {
-        if (SelectedLayer == null) return;
-        MergeLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
-    }
-
-    private void ExecuteMergeVisibleLayers()
-    {
-        MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void ExecuteFlattenLayers()
-    {
-        FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private async Task ExecuteSaveLayeredTiffAsync()
-    {
-        if (CurrentImagePath == null) return;
-
-        var directory = Path.GetDirectoryName(CurrentImagePath);
-        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
-        var suggestedPath = Path.Combine(directory ?? "", $"{fileName}_layered.tif");
-
-        if (SaveLayeredTiffRequested != null)
-        {
-            var success = await SaveLayeredTiffRequested.Invoke(suggestedPath);
-            StatusMessage = success ? "Layered TIFF saved successfully" : "Failed to save layered TIFF";
-        }
-    }
-
     // Layer events for View wiring
     public event EventHandler<bool>? EnableLayerModeRequested;
     public event EventHandler? AddLayerRequested;
@@ -2534,8 +2393,6 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler<Layer>? MergeLayerDownRequested;
     public event EventHandler? MergeVisibleLayersRequested;
     public event EventHandler? FlattenLayersRequested;
-
-    #endregion
 }
 
 /// <summary>
