@@ -166,7 +166,7 @@ public partial class ImageEditView : UserControl
             if (coreVersion != lastSyncedInpaintBaseVersion)
             {
                 lastSyncedInpaintBaseVersion = coreVersion;
-                imageEditor.UpdateInpaintBaseThumbnail(
+                imageEditor.Inpainting.UpdateBaseThumbnail(
                     _imageEditorCanvas.EditorCore.HasInpaintBase
                         ? CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore)
                         : null);
@@ -361,7 +361,7 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle background removal requests
-        imageEditor.RemoveBackgroundRequested += async (_, _) =>
+        imageEditor.BackgroundRemoval.RemoveBackgroundRequested += async (_, _) =>
         {
             var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
             if (imageData is null)
@@ -370,21 +370,21 @@ public partial class ImageEditView : UserControl
                 return;
             }
 
-            await imageEditor.ProcessBackgroundRemovalAsync(
+            await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalAsync(
                 imageData.Value.Data,
                 imageData.Value.Width,
                 imageData.Value.Height);
         };
 
         // Handle background removal completed
-        imageEditor.BackgroundRemovalCompleted += (_, result) =>
+        imageEditor.BackgroundRemoval.BackgroundRemovalCompleted += (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
                 // Apply the mask directly to the working bitmap
                 if (_imageEditorCanvas.EditorCore.ApplyBackgroundMask(result.MaskData, result.Width, result.Height))
                 {
-                    imageEditor.OnBackgroundRemovalApplied();
+                    imageEditor.BackgroundRemoval.OnBackgroundRemovalApplied();
                 }
                 else
                 {
@@ -394,7 +394,7 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle layer-based background removal requests
-        imageEditor.RemoveBackgroundToLayerRequested += async (_, _) =>
+        imageEditor.BackgroundRemoval.RemoveBackgroundToLayerRequested += async (_, _) =>
         {
             var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
             if (imageData is null)
@@ -403,21 +403,22 @@ public partial class ImageEditView : UserControl
                 return;
             }
 
-            await imageEditor.ProcessBackgroundRemovalToLayerAsync(
+            await imageEditor.BackgroundRemoval.ProcessBackgroundRemovalToLayerAsync(
                 imageData.Value.Data,
                 imageData.Value.Width,
                 imageData.Value.Height);
         };
 
         // Handle layer-based background removal completed
-        imageEditor.BackgroundRemovalToLayerCompleted += (_, result) =>
+        imageEditor.BackgroundRemoval.BackgroundRemovalToLayerCompleted += (_, result) =>
         {
             if (result.Success && result.MaskData is not null)
             {
                 // Apply the mask as layers (creates foreground + background layers)
                 if (_imageEditorCanvas.EditorCore.ApplyBackgroundMaskWithLayers(result.MaskData, result.Width, result.Height))
                 {
-                    imageEditor.OnBackgroundRemovalToLayerApplied();
+                    imageEditor.BackgroundRemoval.OnBackgroundRemovalToLayerApplied();
+                    imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
                 }
                 else
                 {
@@ -427,25 +428,25 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle background fill preview requests (live preview)
-        imageEditor.BackgroundFillPreviewRequested += (_, settings) =>
+        imageEditor.BackgroundFill.PreviewRequested += (_, settings) =>
         {
             _imageEditorCanvas.EditorCore.SetBackgroundFillPreview(settings);
         };
 
         // Handle background fill preview cancel
-        imageEditor.CancelBackgroundFillPreviewRequested += (_, _) =>
+        imageEditor.BackgroundFill.CancelPreviewRequested += (_, _) =>
         {
             _imageEditorCanvas.EditorCore.ClearPreview();
         };
 
         // Handle apply background fill
-        imageEditor.ApplyBackgroundFillRequested += (_, settings) =>
+        imageEditor.BackgroundFill.ApplyRequested += (_, settings) =>
         {
             // Clear preview first, then apply to working bitmap
             _imageEditorCanvas.EditorCore.ClearPreview();
             if (_imageEditorCanvas.EditorCore.ApplyBackgroundFill(settings))
             {
-                imageEditor.OnBackgroundFillApplied();
+                imageEditor.BackgroundFill.OnFillApplied();
             }
             else
             {
@@ -454,7 +455,7 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle upscaling requests
-        imageEditor.UpscaleImageRequested += async (_, _) =>
+        imageEditor.Upscaling.UpscaleRequested += async (_, _) =>
         {
             var imageData = _imageEditorCanvas.EditorCore.GetWorkingBitmapData();
             if (imageData is null)
@@ -463,21 +464,21 @@ public partial class ImageEditView : UserControl
                 return;
             }
 
-            await imageEditor.ProcessUpscalingAsync(
+            await imageEditor.Upscaling.ProcessUpscalingAsync(
                 imageData.Value.Data,
                 imageData.Value.Width,
                 imageData.Value.Height);
         };
 
         // Handle upscaling completed
-        imageEditor.UpscalingCompleted += (_, result) =>
+        imageEditor.Upscaling.UpscalingCompleted += (_, result) =>
         {
             if (result.Success && result.ImageData is not null)
             {
                 // Load the upscaled image (PNG bytes) into the editor
                 if (_imageEditorCanvas.EditorCore.LoadImage(result.ImageData))
                 {
-                    imageEditor.OnUpscalingApplied();
+                    imageEditor.Upscaling.OnUpscalingApplied();
                     // Update dimensions in ViewModel
                     imageEditor.UpdateDimensions(
                         _imageEditorCanvas.ImageWidth,
@@ -533,38 +534,38 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle capture of the current flattened state as inpaint base
-        imageEditor.SetInpaintBaseRequested += (_, _) =>
+        imageEditor.Inpainting.SetBaseRequested += (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
             _imageEditorCanvas.EditorCore.SetInpaintBaseBitmap();
             lastSyncedInpaintBaseVersion = _imageEditorCanvas.EditorCore.InpaintBaseVersion;
-            imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
+            imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(_imageEditorCanvas.EditorCore));
         };
 
         // Handle inpaint tool activation/deactivation
-        imageEditor.InpaintToolActivated += (_, isActive) =>
+        imageEditor.Inpainting.ToolActivated += (_, isActive) =>
         {
             _imageEditorCanvas.IsInpaintingToolActive = isActive;
         };
 
         // Handle inpaint brush settings changes
-        imageEditor.InpaintSettingsChanged += (_, _) =>
+        imageEditor.Inpainting.SettingsChanged += (_, _) =>
         {
-            _imageEditorCanvas.InpaintBrushSize = imageEditor.InpaintBrushSize;
+            _imageEditorCanvas.InpaintBrushSize = imageEditor.Inpainting.BrushSize;
         };
 
         // Sync brush size back to ViewModel when changed via Shift+wheel on the canvas
         _imageEditorCanvas.InpaintBrushSizeChanged += (_, newSize) =>
         {
-            imageEditor.InpaintBrushSize = newSize;
+            imageEditor.Inpainting.BrushSize = newSize;
         };
 
         // Ctrl+Enter on the canvas triggers inpainting generation
         _imageEditorCanvas.InpaintGenerateRequested += (_, _) =>
         {
-            if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+            if (imageEditor.Inpainting.GenerateCommand.CanExecute(null))
             {
-                imageEditor.GenerateInpaintCommand.Execute(null);
+                imageEditor.Inpainting.GenerateCommand.Execute(null);
             }
         };
 
@@ -576,9 +577,9 @@ public partial class ImageEditView : UserControl
             {
                 if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
                 {
-                    if (imageEditor.GenerateInpaintCommand.CanExecute(null))
+                    if (imageEditor.Inpainting.GenerateCommand.CanExecute(null))
                     {
-                        imageEditor.GenerateInpaintCommand.Execute(null);
+                        imageEditor.Inpainting.GenerateCommand.Execute(null);
                     }
                     e.Handled = true;
                 }
@@ -586,7 +587,7 @@ public partial class ImageEditView : UserControl
         }
 
         // Handle clear inpaint mask
-        imageEditor.ClearInpaintMaskRequested += (_, _) =>
+        imageEditor.Inpainting.ClearMaskRequested += (_, _) =>
         {
             _imageEditorCanvas.EditorCore.ClearInpaintMask();
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
@@ -594,7 +595,7 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle generate inpaint request — prepare masked image and call ComfyUI
-        imageEditor.GenerateInpaintRequested += async (_, _) =>
+        imageEditor.Inpainting.GenerateRequested += async (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
 
@@ -612,7 +613,7 @@ public partial class ImageEditView : UserControl
                     editorCore.SetInpaintBaseBitmap();
                     baseBitmap = editorCore.GetInpaintBaseBitmap();
                     lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
-                    imageEditor.UpdateInpaintBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
+                    imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
                 }
 
                 if (baseBitmap is null)
@@ -634,7 +635,7 @@ public partial class ImageEditView : UserControl
                 // Our brush produces hard binary edges, but the workflow's ImageBlur
                 // (sigma=1.0) is too weak to smooth them. Pre-feathering here gives
                 // the inpainting model room to blend at boundaries.
-                var featheredMask = FeatherInpaintMask(maskBitmap, imageEditor.InpaintMaskFeather);
+                var featheredMask = FeatherInpaintMask(maskBitmap, imageEditor.Inpainting.MaskFeather);
                 maskBitmap.Dispose();
 
                 // Composite: set alpha channel based on mask (white pixels ? alpha 0 = masked)
@@ -680,7 +681,7 @@ public partial class ImageEditView : UserControl
                 maskedBitmap.Dispose();
 
                 // If compare mode is pending, save the base as the "before" image for the comparer
-                if (imageEditor.IsCompareModePending)
+                if (imageEditor.Inpainting.IsCompareModePending)
                 {
                     var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
                     var beforeBitmap = editorCore.GetInpaintBaseBitmap();
@@ -691,12 +692,12 @@ public partial class ImageEditView : UserControl
                         using var beforeStream = File.Create(beforePath);
                         beforeData.SaveTo(beforeStream);
                         beforeBitmap.Dispose();
-                        imageEditor.SetCompareBeforeImagePath(beforePath);
+                        imageEditor.Inpainting.SetCompareBeforeImagePath(beforePath);
                     }
                 }
 
                 // Call the ViewModel to process via ComfyUI
-                await imageEditor.ProcessInpaintAsync(tempPath);
+                await imageEditor.Inpainting.ProcessInpaintAsync(tempPath);
             }
             catch (Exception ex)
             {
@@ -710,7 +711,7 @@ public partial class ImageEditView : UserControl
         };
 
         // Handle inpaint result — load the result image as a new layer
-        imageEditor.InpaintResultReady += (_, imageBytes) =>
+        imageEditor.Inpainting.ResultReady += (_, imageBytes) =>
         {
             if (_imageEditorCanvas is null) return;
 
