@@ -7,7 +7,7 @@ This is an Avalonia Project Written in C# / .net 10
 * First general instruction
 * Second general instruction
 * When a bug is found, always check if a unit test can be created to cover/reproduce it before fixing. Ensure that the unit test effectively captures the bug scenario.
-* When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication.
+* When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication/dead code.
 
 ## Code Style
 

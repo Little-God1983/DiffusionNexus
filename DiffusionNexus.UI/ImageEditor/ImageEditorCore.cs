@@ -350,16 +350,6 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Flattens all layers to a single bitmap.
-    /// </summary>
-    /// <returns>The flattened bitmap, or null if not in layer mode.</returns>
-    public SKBitmap? FlattenLayers()
-    {
-        if (!_isLayerMode || _layers == null) return null;
-        return _layers.Flatten();
-    }
-
-    /// <summary>
     /// Gets or sets the active layer for editing.
     /// </summary>
     public Layer? ActiveLayer
@@ -503,62 +493,6 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Renders the current image to an SKCanvas at the specified position and scale.
-    /// </summary>
-    /// <param name="canvas">The canvas to render to.</param>
-    /// <param name="destRect">Destination rectangle for rendering.</param>
-    public void Render(SKCanvas canvas, SKRect destRect)
-    {
-        if (canvas is null)
-            return;
-            
-        SKBitmap? bitmap;
-        lock (_bitmapLock)
-        {
-            bitmap = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-            if (bitmap is null)
-                return;
-            
-            canvas.DrawBitmap(bitmap, destRect);
-        }
-    }
-
-    /// <summary>
-    /// Renders the current image centered within the given bounds, maintaining aspect ratio.
-    /// </summary>
-    /// <param name="canvas">The canvas to render to.</param>
-    /// <param name="canvasWidth">Available canvas width.</param>
-    /// <param name="canvasHeight">Available canvas height.</param>
-    /// <param name="backgroundColor">Background color to clear with.</param>
-    /// <returns>The actual rectangle where the image was rendered.</returns>
-    public SKRect RenderCentered(SKCanvas canvas, float canvasWidth, float canvasHeight, SKColor backgroundColor)
-    {
-        canvas.Clear(backgroundColor);
-
-        lock (_bitmapLock)
-        {
-            var bitmapToRender = _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-            if (bitmapToRender is null)
-                return SKRect.Empty;
-
-            var imageRect = CalculateFitRectInternal(bitmapToRender, canvasWidth, canvasHeight);
-            canvas.DrawBitmap(bitmapToRender, imageRect);
-
-            // Update crop tool with current image bounds and render overlay
-            CropTool.SetImageBounds(imageRect);
-            CropTool.ImagePixelWidth = bitmapToRender.Width;
-            CropTool.ImagePixelHeight = bitmapToRender.Height;
-            CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
-
-            // Update drawing tool with current image bounds and render overlay
-            DrawingTool.SetImageBounds(imageRect);
-            DrawingTool.Render(canvas);
-
-            return imageRect;
-        }
-    }
-
-    /// <summary>
     /// Calculates the rectangle to fit the image within the given bounds while maintaining aspect ratio.
     /// </summary>
     public SKRect CalculateFitRect(float containerWidth, float containerHeight)
@@ -651,35 +585,12 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Gets the working bitmap for external rendering.
-    /// Returns preview bitmap if preview is active.
-    /// </summary>
-    public SKBitmap? GetWorkingBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            return _isPreviewActive && _previewBitmap is not null ? _previewBitmap : _workingBitmap;
-        }
-    }
-
-    /// <summary>
-    /// Gets the actual working bitmap without preview.
-    /// </summary>
-    public SKBitmap? GetActualWorkingBitmap()
-    {
-        lock (_bitmapLock)
-        {
-            return _workingBitmap;
-        }
-    }
-
-    /// <summary>
     /// Crops the image to the specified rectangle in image coordinates.
     /// When in layer mode, crops all layers.
     /// </summary>
     /// <param name="cropRect">The crop rectangle in image pixel coordinates.</param>
     /// <returns>True if the crop was successful.</returns>
-    public bool Crop(SKRectI cropRect)
+    private bool Crop(SKRectI cropRect)
     {
         // Get the current image dimensions
         int currentWidth, currentHeight;
@@ -877,86 +788,6 @@ public class ImageEditorCore : IDisposable
             FileLogger.LogExit("false");
             return false;
         }
-    }
-
-    /// <summary>
-    /// Saves the current working image, overwriting the original file.
-    /// </summary>
-    /// <returns>True if saved successfully.</returns>
-    public bool SaveOverwrite()
-    {
-        FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
-        
-        if (string.IsNullOrWhiteSpace(CurrentImagePath))
-        {
-            FileLogger.LogWarning("CurrentImagePath is null or whitespace");
-            FileLogger.LogExit("false");
-            return false;
-        }
-
-        var format = GetFormatFromExtension(CurrentImagePath);
-        FileLogger.Log($"Detected format: {format}");
-        var result = SaveImage(CurrentImagePath, format);
-        FileLogger.LogExit(result.ToString());
-        return result;
-    }
-
-    /// <summary>
-    /// Saves the current working image as a new file with auto-generated name.
-    /// </summary>
-    /// <returns>The new file path if saved successfully, null otherwise.</returns>
-    public string? SaveAsNew()
-    {
-        if (_workingBitmap is null || string.IsNullOrWhiteSpace(CurrentImagePath))
-            return null;
-
-        var directory = Path.GetDirectoryName(CurrentImagePath);
-        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
-        var extension = Path.GetExtension(CurrentImagePath);
-
-        if (string.IsNullOrEmpty(directory))
-            return null;
-
-        // Generate unique filename with suffix
-        var newPath = GenerateUniqueFilePath(directory, fileName, extension);
-        var format = GetFormatFromExtension(newPath);
-
-        if (SaveImage(newPath, format))
-        {
-            return newPath;
-        }
-
-        return null;
-    }
-
-    private static string GenerateUniqueFilePath(string directory, string baseName, string extension)
-    {
-        var counter = 1;
-        string newPath;
-
-        do
-        {
-            var suffix = $"_edited_{counter:D3}";
-            newPath = Path.Combine(directory, $"{baseName}{suffix}{extension}");
-            counter++;
-        }
-        while (File.Exists(newPath) && counter < 1000);
-
-        return newPath;
-    }
-
-    private static SKEncodedImageFormat GetFormatFromExtension(string filePath)
-    {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
-        {
-            ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
-            ".png" => SKEncodedImageFormat.Png,
-            ".webp" => SKEncodedImageFormat.Webp,
-            ".bmp" => SKEncodedImageFormat.Bmp,
-            ".gif" => SKEncodedImageFormat.Gif,
-            _ => SKEncodedImageFormat.Png
-        };
     }
 
     /// <summary>
@@ -1621,29 +1452,6 @@ public class ImageEditorCore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Applies the current preview to the working bitmap.
-    /// </summary>
-    public bool ApplyPreview()
-    {
-        SKBitmap? oldWorking;
-        
-        lock (_bitmapLock)
-        {
-            if (!_isPreviewActive || _previewBitmap is null)
-                return false;
-
-            oldWorking = _workingBitmap;
-            _workingBitmap = _previewBitmap;
-            _previewBitmap = null;
-            _isPreviewActive = false;
-        }
-        
-        oldWorking?.Dispose();
-        OnImageChanged();
-        return true;
-    }
-
     #endregion Preview Management
 
     #region Brightness and Contrast
@@ -1921,66 +1729,6 @@ public class ImageEditorCore : IDisposable
     }
 
     /// <summary>
-    /// Sets a preview with background removed using the provided mask.
-    /// Does not modify the working bitmap until ApplyPreview is called.
-    /// </summary>
-    /// <param name="maskData">Grayscale mask data where 255 = foreground, 0 = background.</param>
-    /// <param name="width">Width of the mask in pixels.</param>
-    /// <param name="height">Height of the mask in pixels.</param>
-    /// <returns>True if the preview was set successfully.</returns>
-    public bool SetBackgroundRemovalPreview(byte[] maskData, int width, int height)
-    {
-        if (maskData is null)
-            return false;
-
-        lock (_bitmapLock)
-        {
-            var targetBitmap = GetOperationTargetBitmap();
-            if (targetBitmap is null)
-                return false;
-
-            if (width != targetBitmap.Width || height != targetBitmap.Height)
-                return false;
-
-            if (maskData.Length != width * height)
-                return false;
-
-            // Dispose old preview
-            var oldPreview = _previewBitmap;
-            _previewBitmap = null;
-
-            try
-            {
-                // Create new preview with alpha applied
-                var newPreview = new SKBitmap(targetBitmap.Width, targetBitmap.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                var pixels = targetBitmap.Pixels;
-                var newPixels = new SKColor[pixels.Length];
-
-                for (var i = 0; i < pixels.Length; i++)
-                {
-                    var pixel = pixels[i];
-                    var maskValue = maskData[i];
-                    newPixels[i] = new SKColor(pixel.Red, pixel.Green, pixel.Blue, maskValue);
-                }
-
-                newPreview.Pixels = newPixels;
-
-                _previewBitmap = newPreview;
-                _isPreviewActive = true;
-                oldPreview?.Dispose();
-            }
-            catch
-            {
-                oldPreview?.Dispose();
-                return false;
-            }
-        }
-
-        OnImageChanged();
-        return true;
-    }
-
-    /// <summary>
     /// Gets the raw RGBA pixel data from the current target bitmap (active layer or working bitmap).
     /// Used for passing to background removal service.
     /// </summary>
@@ -2136,28 +1884,6 @@ public class ImageEditorCore : IDisposable
         catch
         {
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Checks if the current working image has any transparency.
-    /// </summary>
-    /// <returns>True if the image contains transparent pixels.</returns>
-    public bool HasTransparency()
-    {
-        lock (_bitmapLock)
-        {
-            if (_workingBitmap is null)
-                return false;
-
-            var pixels = _workingBitmap.Pixels;
-            for (var i = 0; i < pixels.Length; i++)
-            {
-                if (pixels[i].Alpha < 255)
-                    return true;
-            }
-
-            return false;
         }
     }
 
@@ -2720,63 +2446,6 @@ public class ImageEditorCore : IDisposable
     #endregion Inpainting
 
     #region Save with Layers
-
-    /// <summary>
-    /// Saves the image, flattening layers if in layer mode.
-    /// </summary>
-    /// <param name="filePath">Output file path.</param>
-    /// <param name="format">Image format.</param>
-    /// <param name="quality">Quality for lossy formats.</param>
-    /// <returns>True if saved successfully.</returns>
-    public bool SaveImageFlattened(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
-    {
-        SKBitmap? bitmapToSave;
-
-        lock (_bitmapLock)
-        {
-            if (_isLayerMode && _layers != null)
-            {
-                bitmapToSave = _layers.Flatten();
-            }
-            else
-            {
-                bitmapToSave = _workingBitmap?.Copy();
-            }
-        }
-
-        if (bitmapToSave == null)
-            return false;
-
-        try
-        {
-            var directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            using var image = SKImage.FromBitmap(bitmapToSave);
-            if (image is null)
-                return false;
-
-            using var data = image.Encode(format, quality);
-            if (data is null)
-                return false;
-
-            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            data.SaveTo(stream);
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            bitmapToSave.Dispose();
-        }
-    }
 
     /// <summary>
     /// Saves layers to a multi-page TIFF file.
