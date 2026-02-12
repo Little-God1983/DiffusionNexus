@@ -520,6 +520,7 @@ public partial class ImageEditorCore : IDisposable
             return;
 
         ClearPreview();
+        ClearInpaintBase();
 
         var wasLayerMode = _isLayerMode;
 
@@ -552,6 +553,7 @@ public partial class ImageEditorCore : IDisposable
     public void Clear()
     {
         ClearPreview();
+        ClearInpaintBase();
 
         // Disable layer mode if active
         if (_isLayerMode && _services is not null)
