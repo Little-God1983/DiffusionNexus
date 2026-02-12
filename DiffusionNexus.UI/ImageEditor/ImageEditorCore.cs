@@ -22,10 +22,6 @@ public partial class ImageEditorCore : IDisposable
     private readonly object _bitmapLock = new();
     private SKRect _lastImageRect;
 
-    private const float MinZoom = 0.1f;
-    private const float MaxZoom = 10f;
-    private const float ZoomStep = 0.1f;
-
     // Layer state — delegated to LayerManager when services are wired
     private LayerStack? _layers => _services?.Layers.Stack;
     private bool _isLayerMode => _services?.Layers.IsLayerMode ?? false;
@@ -140,9 +136,7 @@ public partial class ImageEditorCore : IDisposable
         get => _zoomLevel;
         set
         {
-            var clamped = Math.Clamp(value, MinZoom, MaxZoom);
-            _zoomLevel = clamped;
-            if (_services is not null) _services.Viewport.IsFitMode = false;
+            _zoomLevel = value;
             OnZoomChanged();
         }
     }
@@ -150,7 +144,7 @@ public partial class ImageEditorCore : IDisposable
     /// <summary>
     /// Gets the zoom level as a percentage (0-1000).
     /// </summary>
-    public int ZoomPercentage => (int)Math.Round(_zoomLevel * 100);
+    public int ZoomPercentage => _services?.Viewport.ZoomPercentage ?? (int)Math.Round(_zoomLevel * 100);
 
     /// <summary>
     /// Gets or sets the horizontal pan offset.
@@ -179,11 +173,6 @@ public partial class ImageEditorCore : IDisposable
         set
         {
             _isFitMode = value;
-            if (value)
-            {
-                _panX = 0;
-                _panY = 0;
-            }
             OnZoomChanged();
         }
     }
@@ -724,16 +713,7 @@ public partial class ImageEditorCore : IDisposable
 
         try
         {
-            bool result;
-            if (_services is not null)
-            {
-                result = _services.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
-            }
-            else
-            {
-                // Fallback if services not wired (shouldn't happen in normal use)
-                result = FallbackSave(bitmapToSave, filePath, resolvedFormat, quality);
-            }
+            var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
             if (needsDispose) bitmapToSave.Dispose();
             FileLogger.Log(result ? "Save completed successfully" : "Save failed");
@@ -747,24 +727,6 @@ public partial class ImageEditorCore : IDisposable
             FileLogger.LogExit("false");
             return false;
         }
-    }
-
-    /// <summary>
-    /// Fallback save when services are not wired.
-    /// </summary>
-    private static bool FallbackSave(SKBitmap bitmap, string filePath, SKEncodedImageFormat format, int quality)
-    {
-        var directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            Directory.CreateDirectory(directory);
-
-        using var image = SKImage.FromBitmap(bitmap);
-        if (image is null) return false;
-        using var data = image.Encode(format, quality);
-        if (data is null) return false;
-        using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-        data.SaveTo(stream);
-        return true;
     }
 
     /// <summary>
