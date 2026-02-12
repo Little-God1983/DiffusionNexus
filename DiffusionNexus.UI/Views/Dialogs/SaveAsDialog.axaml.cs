@@ -169,7 +169,7 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Gets whether the filename already exists in the directory.
+    /// Gets whether the filename already exists in the target directory.
     /// </summary>
     public bool IsFilenameExists
     {
@@ -180,8 +180,9 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             
             var trimmedName = FileName.Trim();
             
-            // Don't flag as "exists" if it's the original file
-            if (string.Equals(trimmedName, OriginalFileName, StringComparison.OrdinalIgnoreCase))
+            // When saving to the origin folder, don't flag the original file as "exists"
+            if (IsOriginSelected &&
+                string.Equals(trimmedName, OriginalFileName, StringComparison.OrdinalIgnoreCase))
                 return false;
             
             return _existingFileNames.Contains(trimmedName);
@@ -193,7 +194,7 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// </summary>
     public bool HasValidationError => 
         (IsOriginSelected && (IsFilenameUnchanged || IsFilenameExists || HasInvalidCharacters || string.IsNullOrWhiteSpace(FileName))) ||
-        (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters));
+        (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters || IsFilenameExists));
 
     /// <summary>
     /// Gets the validation message to display.
@@ -222,6 +223,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                     return "Please select a destination dataset.";
                 if (SelectedVersion == null)
                     return "Please select a version.";
+                if (IsFilenameExists)
+                    return $"A file named '{FileName.Trim()}{FileExtension}' already exists in the selected dataset.";
             }
             
             return string.Empty;
@@ -234,7 +237,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     public bool CanSave =>
         !string.IsNullOrWhiteSpace(FileName) &&
         !HasInvalidCharacters &&
-        (IsOriginSelected ? (!IsFilenameUnchanged && !IsFilenameExists) : (SelectedDataset != null && SelectedVersion != null));
+        !IsFilenameExists &&
+        (IsOriginSelected ? !IsFilenameUnchanged : (SelectedDataset != null && SelectedVersion != null));
 
 
     /// <summary>
@@ -368,6 +372,25 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Reloads the existing file name set from the currently targeted directory
+    /// (origin folder or selected dataset version folder).
+    /// </summary>
+    private void ReloadExistingFileNames()
+    {
+        if (IsDatasetSelected && _selectedDataset is not null && _selectedVersion is not null)
+        {
+            var targetDir = _selectedDataset.IsVersionedStructure
+                ? _selectedDataset.GetVersionFolderPath(_selectedVersion.Value)
+                : _selectedDataset.FolderPath;
+            LoadExistingFileNames(targetDir, _fileExtension);
+        }
+        else
+        {
+            LoadExistingFileNames(_directoryPath, _fileExtension);
+        }
+    }
+
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
         if (IsOriginSelected)
@@ -407,10 +430,12 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             if (_destination != value)
             {
                 _destination = value;
+                ReloadExistingFileNames();
                 OnPropertyChanged(nameof(Destination));
                 OnPropertyChanged(nameof(IsOriginSelected));
                 OnPropertyChanged(nameof(IsDatasetSelected));
                 OnPropertyChanged(nameof(CanSave));
+                OnPropertyChanged(nameof(IsFilenameExists));
                 OnPropertyChanged(nameof(ValidationMessage));
                 OnPropertyChanged(nameof(HasValidationError));
             }
@@ -439,7 +464,11 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 _selectedDataset = value;
                 OnPropertyChanged(nameof(SelectedDataset));
                 UpdateAvailableVersions();
+                ReloadExistingFileNames();
                 OnPropertyChanged(nameof(CanSave));
+                OnPropertyChanged(nameof(IsFilenameExists));
+                OnPropertyChanged(nameof(ValidationMessage));
+                OnPropertyChanged(nameof(HasValidationError));
             }
         }
     }
@@ -453,7 +482,11 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             {
                 _selectedVersion = value;
                 OnPropertyChanged(nameof(SelectedVersion));
+                ReloadExistingFileNames();
                 OnPropertyChanged(nameof(CanSave));
+                OnPropertyChanged(nameof(IsFilenameExists));
+                OnPropertyChanged(nameof(ValidationMessage));
+                OnPropertyChanged(nameof(HasValidationError));
             }
         }
     }
