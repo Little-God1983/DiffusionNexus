@@ -12,6 +12,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public partial class GenerationGalleryMediaItemViewModel : ObservableObject
 {
+    private static readonly ThumbnailOwnerToken _defaultOwnerToken = new("GalleryItem");
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly ThumbnailOwnerToken? _ownerToken;
     private Bitmap? _thumbnail;
@@ -109,48 +110,26 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
         if (_isThumbnailLoading) return;
         _isThumbnailLoading = true;
 
-        // Sync cache check — prefer orchestrator, fall back to legacy
-        Bitmap? cached = null;
-        var cacheHit = false;
-
-        if (_thumbnailOrchestrator is not null)
+        var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+        if (orchestrator is null)
         {
-            cacheHit = _thumbnailOrchestrator.TryGetCached(FilePath, out cached);
+            _isThumbnailLoading = false;
+            return;
         }
 
-        if (!cacheHit)
-        {
-            cacheHit = PathToBitmapConverter.ThumbnailService?.TryGetCached(FilePath, out cached) == true;
-        }
-
-        if (cacheHit && cached is not null)
+        if (orchestrator.TryGetCached(FilePath, out var cached) && cached is not null)
         {
             Thumbnail = cached;
             _isThumbnailLoading = false;
             return;
         }
 
+        var owner = _ownerToken ?? _defaultOwnerToken;
+
         try
         {
-            Bitmap? bitmap;
-
-            if (_thumbnailOrchestrator is not null && _ownerToken is not null)
-            {
-                bitmap = await _thumbnailOrchestrator.RequestThumbnailAsync(
-                    FilePath, _ownerToken, ThumbnailPriority.Normal).ConfigureAwait(false);
-            }
-            else
-            {
-                // Legacy fallback
-                var thumbnailService = PathToBitmapConverter.ThumbnailService;
-                if (thumbnailService is null)
-                {
-                    _isThumbnailLoading = false;
-                    return;
-                }
-
-                bitmap = await thumbnailService.LoadThumbnailAsync(FilePath).ConfigureAwait(false);
-            }
+            var bitmap = await orchestrator.RequestThumbnailAsync(
+                FilePath, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
 
             if (bitmap is not null)
             {

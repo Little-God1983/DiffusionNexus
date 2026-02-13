@@ -103,15 +103,15 @@ public class ThumbnailOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task SetActiveOwner_CancelsPreviousOwnerRequests()
+    public async Task SetActiveOwner_DoesNotCancelPreviousOwnerInFlightWork()
     {
-        // Arrange: set up a slow-loading service to keep requests in flight
+        // Arrange: set up a quick-loading service
         Bitmap? nullBitmap = null;
         _mockService.Setup(s => s.TryGetCached(It.IsAny<string>(), out nullBitmap)).Returns(false);
         _mockService.Setup(s => s.LoadThumbnailAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Returns<string, int, CancellationToken>(async (_, _, ct) =>
             {
-                await Task.Delay(10000, ct);
+                await Task.Delay(50, ct);
                 return null;
             });
 
@@ -119,13 +119,14 @@ public class ThumbnailOrchestratorTests : IDisposable
         _orchestrator.SetActiveOwner(_ownerA);
         var requestTask = _orchestrator.RequestThumbnailAsync("slow.png", _ownerA);
 
-        // Switch active owner — this should cancel ownerA's requests
+        // Switch active owner — this should NOT cancel ownerA's in-flight work
         _orchestrator.SetActiveOwner(_ownerB);
 
-        var result = await requestTask;
+        // The request should complete (not be cancelled)
+        await requestTask;
 
-        // Assert: request should have been cancelled, returning null
-        result.Should().BeNull();
+        // Assert: the load was actually attempted (not cancelled)
+        _mockService.Verify(s => s.LoadThumbnailAsync("slow.png", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

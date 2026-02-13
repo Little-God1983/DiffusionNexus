@@ -110,14 +110,10 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     /// <inheritdoc />
     public void SetActiveOwner(ThumbnailOwnerToken owner)
     {
-        var previousOwner = _activeOwner;
+        // Simply update the active owner. New requests from this owner will be boosted
+        // to Critical priority. We do NOT cancel the previous owner's in-flight work —
+        // completed loads populate the cache which benefits the user when switching back.
         _activeOwner = owner;
-
-        if (previousOwner is not null && previousOwner != owner)
-        {
-            // Cancel the previous owner's pending requests so the new owner gets priority
-            CancelOwnerCts(previousOwner);
-        }
     }
 
     /// <inheritdoc />
@@ -145,7 +141,9 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     }
 
     /// <summary>
-    /// Background loop that dequeues requests in priority order and processes them.
+    /// Background loop that dequeues requests in priority order and dispatches them.
+    /// The semaphore is acquired inside each task, so the loop can keep dequeueing
+    /// without blocking on concurrent load limits.
     /// </summary>
     private async Task ProcessQueueAsync()
     {
@@ -169,7 +167,7 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
                     continue;
             }
 
-            // Skip cancelled requests without consuming a semaphore slot
+            // Skip cancelled requests immediately
             if (request.CancellationToken.IsCancellationRequested)
             {
                 request.Completion.TrySetResult(null);
@@ -183,27 +181,27 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
                 continue;
             }
 
-            // Throttle concurrent loads
-            try
-            {
-                await _loadSemaphore.WaitAsync(request.CancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                request.Completion.TrySetResult(null);
-                continue;
-            }
-
-            // Process in the background to not block the dequeue loop
+            // Dispatch to background — semaphore is acquired inside ProcessRequestAsync
             _ = ProcessRequestAsync(request);
         }
     }
 
     /// <summary>
-    /// Processes a single thumbnail request: loads via the underlying service and completes the TCS.
+    /// Acquires a concurrency slot, then loads the thumbnail and completes the TCS.
     /// </summary>
     private async Task ProcessRequestAsync(ThumbnailRequest request)
     {
+        try
+        {
+            // Acquire concurrency slot (this is where throttling happens)
+            await _loadSemaphore.WaitAsync(request.CancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            request.Completion.TrySetResult(null);
+            return;
+        }
+
         try
         {
             var bitmap = await _thumbnailService.LoadThumbnailAsync(

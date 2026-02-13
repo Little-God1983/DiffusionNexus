@@ -30,6 +30,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public class DatasetImageViewModel : ObservableObject
 {
+    private static readonly ThumbnailOwnerToken _defaultOwnerToken = new("DatasetImage");
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly ThumbnailOwnerToken? _ownerToken;
@@ -96,7 +97,7 @@ public class DatasetImageViewModel : ObservableObject
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
     /// Bind to this property for efficient async thumbnail display.
-    /// Routes through <see cref="IThumbnailOrchestrator"/> when available for priority-based loading.
+    /// Routes through <see cref="IThumbnailOrchestrator"/> for priority-based loading.
     /// </summary>
     public Bitmap? Thumbnail
     {
@@ -105,32 +106,17 @@ public class DatasetImageViewModel : ObservableObject
             if (_thumbnail is not null)
                 return _thumbnail;
 
-            // Try to get from cache synchronously
             var path = ThumbnailPath;
             if (string.IsNullOrEmpty(path))
                 return null;
 
-            // Prefer orchestrator for cache check, fall back to legacy static service
-            Bitmap? cached = null;
-            var cacheHit = false;
-
-            if (_thumbnailOrchestrator is not null)
-            {
-                cacheHit = _thumbnailOrchestrator.TryGetCached(path, out cached);
-            }
-
-            if (!cacheHit)
-            {
-                cacheHit = PathToBitmapConverter.ThumbnailService?.TryGetCached(path, out cached) == true;
-            }
-
-            if (cacheHit && cached is not null)
+            var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+            if (orchestrator?.TryGetCached(path, out var cached) == true && cached is not null)
             {
                 _thumbnail = cached;
                 return _thumbnail;
             }
 
-            // Start async load if not already loading
             if (!_isThumbnailLoading)
             {
                 _isThumbnailLoading = true;
@@ -142,31 +128,24 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Loads the thumbnail asynchronously via the orchestrator (priority-based) or legacy service.
+    /// Loads the thumbnail asynchronously via the orchestrator.
     /// </summary>
     private async Task LoadThumbnailAsync(string path)
     {
+        var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+        if (orchestrator is null)
+        {
+            _isThumbnailLoading = false;
+            return;
+        }
+
+        // Resolve owner: prefer injected token, then a default for unowned items
+        var owner = _ownerToken ?? _defaultOwnerToken;
+
         try
         {
-            Bitmap? bitmap = null;
-
-            if (_thumbnailOrchestrator is not null && _ownerToken is not null)
-            {
-                bitmap = await _thumbnailOrchestrator.RequestThumbnailAsync(
-                    path, _ownerToken, ThumbnailPriority.Normal).ConfigureAwait(false);
-            }
-            else
-            {
-                // Legacy fallback: direct service call
-                var thumbnailService = PathToBitmapConverter.ThumbnailService;
-                if (thumbnailService is null)
-                {
-                    _isThumbnailLoading = false;
-                    return;
-                }
-
-                bitmap = await thumbnailService.LoadThumbnailAsync(path).ConfigureAwait(false);
-            }
+            var bitmap = await orchestrator.RequestThumbnailAsync(
+                path, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
 
             if (bitmap is not null)
             {
@@ -212,15 +191,8 @@ public class DatasetImageViewModel : ObservableObject
     {
         if (!string.IsNullOrEmpty(ThumbnailPath))
         {
-            if (_thumbnailOrchestrator is not null)
-            {
-                _thumbnailOrchestrator.Invalidate(ThumbnailPath);
-            }
-            else
-            {
-                // Legacy fallback
-                PathToBitmapConverter.ThumbnailService?.Invalidate(ThumbnailPath);
-            }
+            var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+            orchestrator?.Invalidate(ThumbnailPath);
         }
         
         // Clear local cache

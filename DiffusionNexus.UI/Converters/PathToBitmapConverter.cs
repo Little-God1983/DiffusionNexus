@@ -7,12 +7,18 @@ namespace DiffusionNexus.UI.Converters;
 
 /// <summary>
 /// Converts a file path string to a Bitmap for display in Image controls.
-/// Uses async loading with caching via ThumbnailService when available.
-/// Falls back to synchronous DecodeToWidth if ThumbnailService is not configured.
-/// 
-/// ConverterParameter options:
-/// - "full" or "fullres": Load full resolution image (bypasses ThumbnailService)
-/// - null or "thumbnail": Use ThumbnailService for 340px thumbnails
+/// <para>
+/// <b>Sync-only:</b> This converter only returns cache hits or performs synchronous fallback loading.
+/// It does NOT fire async loads — ViewModels with a <c>Thumbnail</c> property should be bound
+/// directly instead of using this converter for thumbnail-mode images.
+/// </para>
+/// <para>
+/// <b>ConverterParameter options:</b>
+/// <list type="bullet">
+/// <item>"full" or "fullres": Load full resolution image synchronously (for viewers/editors)</item>
+/// <item>null or "thumbnail": Return cached thumbnail if available, otherwise sync fallback</item>
+/// </list>
+/// </para>
 /// </summary>
 public class PathToBitmapConverter : IValueConverter
 {
@@ -20,12 +26,6 @@ public class PathToBitmapConverter : IValueConverter
     /// Singleton instance for use in XAML.
     /// </summary>
     public static readonly PathToBitmapConverter Instance = new();
-
-    /// <summary>
-    /// Thumbnail service for async loading with caching. Set during app initialization.
-    /// </summary>
-    [Obsolete("Use ThumbnailOrchestrator for priority-based loading. This property is kept for legacy fallback only.")]
-    public static IThumbnailService? ThumbnailService { get; set; }
 
     /// <summary>
     /// Thumbnail orchestrator for priority-based loading across views. Set during app initialization.
@@ -49,42 +49,19 @@ public class PathToBitmapConverter : IValueConverter
 
         if (isFullRes)
         {
-            // Load full resolution image synchronously (for image viewer, editor, etc.)
             return LoadFullResolution(path);
         }
 
-        // If ThumbnailService is available, use it for cached async loading
-        if (ThumbnailService is not null)
+        // Thumbnail mode: return from cache only — ViewModels handle async loading via their Thumbnail property
+        if (ThumbnailOrchestrator is not null &&
+            ThumbnailOrchestrator.TryGetCached(path, out var cached) &&
+            cached is not null)
         {
-            // Check cache first (synchronous, fast path)
-            if (ThumbnailService.TryGetCached(path, out var cached))
-                return cached;
-
-            // Trigger async load - the binding will be refreshed when complete
-            _ = LoadThumbnailAsync(path);
-            
-            // Return null while loading - shows placeholder or empty
-            return null;
+            return cached;
         }
 
-        // Fallback: synchronous loading with DecodeToWidth for smaller memory
+        // Sync fallback when orchestrator is not available or cache miss
         return LoadSynchronous(path);
-    }
-
-    private async Task LoadThumbnailAsync(string path)
-    {
-        if (ThumbnailService is null)
-            return;
-
-        try
-        {
-            await ThumbnailService.LoadThumbnailAsync(path, DefaultThumbnailWidth);
-            // Note: The ViewModel's Thumbnail property will trigger binding refresh
-        }
-        catch
-        {
-            // Ignore loading errors
-        }
     }
 
     /// <summary>
@@ -126,7 +103,10 @@ public class PathToBitmapConverter : IValueConverter
 /// <summary>
 /// Multi-value converter that uses ThumbnailPath and ThumbnailVersion for cache-busting.
 /// Values[0] = ThumbnailPath (string)
-/// Values[1] = ThumbnailVersion (int) - used to trigger re-evaluation when thumbnail is loaded
+/// Values[1] = ThumbnailVersion (int) - having it in the binding triggers re-evaluation
+/// <para>
+/// Sync-only: returns cache hit or sync fallback. See <see cref="PathToBitmapConverter"/>.
+/// </para>
 /// </summary>
 public class ThumbnailMultiConverter : IMultiValueConverter
 {
@@ -138,25 +118,20 @@ public class ThumbnailMultiConverter : IMultiValueConverter
             return null;
 
         var path = values[0] as string;
-        // values[1] is ThumbnailVersion - just having it in the binding triggers re-evaluation
 
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
             return null;
 
-        var thumbnailService = PathToBitmapConverter.ThumbnailService;
-        
-        if (thumbnailService is not null)
-        {
-            // Check cache first
-            if (thumbnailService.TryGetCached(path, out var cached))
-                return cached;
+        var orchestrator = PathToBitmapConverter.ThumbnailOrchestrator;
 
-            // Trigger async load
-            _ = LoadAsync(path, thumbnailService);
-            return null;
+        if (orchestrator is not null &&
+            orchestrator.TryGetCached(path, out var cached) &&
+            cached is not null)
+        {
+            return cached;
         }
 
-        // Fallback to sync load
+        // Sync fallback
         try
         {
             using var stream = File.OpenRead(path);
@@ -165,18 +140,6 @@ public class ThumbnailMultiConverter : IMultiValueConverter
         catch
         {
             return null;
-        }
-    }
-
-    private static async Task LoadAsync(string path, IThumbnailService service)
-    {
-        try
-        {
-            await service.LoadThumbnailAsync(path, PathToBitmapConverter.DefaultThumbnailWidth);
-        }
-        catch
-        {
-            // Ignore
         }
     }
 }

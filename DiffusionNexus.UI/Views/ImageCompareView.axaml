@@ -157,7 +157,7 @@
                       <Border CornerRadius="4" BorderBrush="#2F2F2F" BorderThickness="1" Margin="0,0,8,0">
                         <Grid>
                           <Border Background="#222" Width="90" Height="60" CornerRadius="4" ClipToBounds="True">
-                            <Image Source="{Binding ImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}" Stretch="UniformToFill"/>
+                            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
                           </Border>
                           <Border Background="#AA3C78D8" CornerRadius="4" Padding="4,2"
                                   HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4"

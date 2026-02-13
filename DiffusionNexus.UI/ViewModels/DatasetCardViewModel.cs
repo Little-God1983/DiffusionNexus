@@ -44,6 +44,7 @@ public class DatasetCardViewModel : ObservableObject
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isTemporary;
+    private static readonly ThumbnailOwnerToken _defaultCardOwnerToken = new("DatasetCard");
 
     /// <summary>
     /// Optional orchestrator for priority-based thumbnail loading.
@@ -313,7 +314,7 @@ public class DatasetCardViewModel : ObservableObject
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
-    /// Routes through <see cref="IThumbnailOrchestrator"/> when available.
+    /// Routes through <see cref="IThumbnailOrchestrator"/>.
     /// </summary>
     public Bitmap? Thumbnail
     {
@@ -322,32 +323,17 @@ public class DatasetCardViewModel : ObservableObject
             if (_thumbnail is not null)
                 return _thumbnail;
 
-            // Try to get from cache synchronously
             var path = ThumbnailPath;
             if (string.IsNullOrEmpty(path))
                 return null;
 
-            // Prefer orchestrator, fall back to legacy static service
-            Bitmap? cached = null;
-            var cacheHit = false;
-
-            if (ThumbnailOrchestrator is not null)
-            {
-                cacheHit = ThumbnailOrchestrator.TryGetCached(path, out cached);
-            }
-
-            if (!cacheHit)
-            {
-                cacheHit = PathToBitmapConverter.ThumbnailService?.TryGetCached(path, out cached) == true;
-            }
-
-            if (cacheHit && cached is not null)
+            var orchestrator = ThumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+            if (orchestrator?.TryGetCached(path, out var cached) == true && cached is not null)
             {
                 _thumbnail = cached;
                 return _thumbnail;
             }
 
-            // Start async load if not already loading
             if (!_isThumbnailLoading)
             {
                 _isThumbnailLoading = true;
@@ -359,31 +345,23 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Loads the thumbnail asynchronously via the orchestrator or legacy service.
+    /// Loads the thumbnail asynchronously via the orchestrator.
     /// </summary>
     private async Task LoadThumbnailAsync(string path)
     {
+        var orchestrator = ThumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+        if (orchestrator is null)
+        {
+            _isThumbnailLoading = false;
+            return;
+        }
+
+        var owner = ThumbnailOwnerToken ?? _defaultCardOwnerToken;
+
         try
         {
-            Bitmap? bitmap;
-
-            if (ThumbnailOrchestrator is not null && ThumbnailOwnerToken is not null)
-            {
-                bitmap = await ThumbnailOrchestrator.RequestThumbnailAsync(
-                    path, ThumbnailOwnerToken, ThumbnailPriority.Normal).ConfigureAwait(false);
-            }
-            else
-            {
-                // Legacy fallback
-                var thumbnailService = PathToBitmapConverter.ThumbnailService;
-                if (thumbnailService is null)
-                {
-                    _isThumbnailLoading = false;
-                    return;
-                }
-
-                bitmap = await thumbnailService.LoadThumbnailAsync(path).ConfigureAwait(false);
-            }
+            var bitmap = await orchestrator.RequestThumbnailAsync(
+                path, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
 
             if (bitmap is not null)
             {

@@ -170,7 +170,7 @@
                       <!-- Image Preview -->
                       <Border Grid.Row="0" Background="#1A1A1A" CornerRadius="6,6,0,0" ClipToBounds="True">
                         <Grid>
-                          <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}" 
+                          <Image Source="{Binding Thumbnail}" 
                                  Stretch="UniformToFill"/>
                           
                           <!-- Video Badge -->

@@ -161,7 +161,7 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Center">
           <!-- Video thumbnail -->
-          <Image Source="{Binding CurrentImage.ThumbnailPath, Converter={StaticResource PathToBitmapConverter}}"
+          <Image Source="{Binding CurrentImage.Thumbnail}"
                  Stretch="Uniform"
                  Margin="80,20"
                  Opacity="0.5"/>

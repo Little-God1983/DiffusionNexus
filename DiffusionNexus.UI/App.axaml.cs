@@ -129,13 +129,10 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Initializes the ThumbnailService and ThumbnailOrchestrator, and wires them to the converters.
+    /// Initializes the ThumbnailOrchestrator and wires it to the converters.
     /// </summary>
     private static void InitializeThumbnailService()
     {
-        var thumbnailService = Services!.GetRequiredService<IThumbnailService>();
-        PathToBitmapConverter.ThumbnailService = thumbnailService;
-
         var orchestrator = Services!.GetRequiredService<IThumbnailOrchestrator>();
         PathToBitmapConverter.ThumbnailOrchestrator = orchestrator;
     }

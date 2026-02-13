@@ -710,11 +710,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     /// <summary>
     /// Requests thumbnails for items in the specified index range via the orchestrator.
+    /// All requests are fired concurrently; the orchestrator handles priority and concurrency.
     /// </summary>
     private async Task LoadVisibleRangeAsync(int startIndex, int endIndex, CancellationToken cancellationToken)
     {
         if (_thumbnailOrchestrator is null)
             return;
+
+        var tasks = new List<Task>();
 
         for (var i = startIndex; i < endIndex; i++)
         {
@@ -730,28 +733,36 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             if (item.Thumbnail is not null)
                 continue;
 
-            // Request through orchestrator — these get queued with appropriate priority
-            try
-            {
-                var bitmap = await _thumbnailOrchestrator.RequestThumbnailAsync(
-                    item.FilePath, OwnerToken, ThumbnailPriority.Critical, cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
+            // Fire all requests concurrently — the orchestrator's queue and semaphore handle ordering
+            var capturedItem = item;
+            tasks.Add(LoadSingleVisibleItemAsync(capturedItem, cancellationToken));
+        }
 
-                if (bitmap is not null && !cancellationToken.IsCancellationRequested)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        if (i < MediaItems.Count && MediaItems[i] == item)
-                        {
-                            item.NotifyThumbnailAvailable();
-                        }
-                    });
-                }
-            }
-            catch (OperationCanceledException)
+        if (tasks.Count > 0)
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Loads a single visible item's thumbnail and notifies the UI when ready.
+    /// </summary>
+    private async Task LoadSingleVisibleItemAsync(GenerationGalleryMediaItemViewModel item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bitmap = await _thumbnailOrchestrator!.RequestThumbnailAsync(
+                item.FilePath, OwnerToken, ThumbnailPriority.Critical, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            if (bitmap is not null && !cancellationToken.IsCancellationRequested)
             {
-                break;
+                await Dispatcher.UIThread.InvokeAsync(() => item.NotifyThumbnailAvailable());
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when scrolling or switching views
         }
     }
 
