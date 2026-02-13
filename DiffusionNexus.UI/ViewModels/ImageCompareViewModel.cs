@@ -13,9 +13,10 @@ namespace DiffusionNexus.UI.ViewModels;
 /// ViewModel for the left/right image comparer experience.
 /// Integrates with IDatasetState to load real datasets and their versions.
 /// </summary>
-public partial class ImageCompareViewModel : ViewModelBase
+public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
 {
     private readonly IDatasetState? _datasetState;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private ImageCompareItem? _selectedLeftImage;
     private ImageCompareItem? _selectedRightImage;
 
@@ -31,9 +32,10 @@ public partial class ImageCompareViewModel : ViewModelBase
     /// Runtime constructor with dataset state service.
     /// </summary>
     /// <param name="datasetState">The dataset state service for loading real datasets.</param>
-    public ImageCompareViewModel(IDatasetState? datasetState)
+    public ImageCompareViewModel(IDatasetState? datasetState, IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _datasetState = datasetState;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
 
         DatasetOptions = [];
         LeftVersionOptions = [];
@@ -155,6 +157,25 @@ public partial class ImageCompareViewModel : ViewModelBase
     public double TrayHandleHeight => 48d;
 
     public double TrayVisibleHeight => IsTrayOpen ? TrayHeight : TrayHandleHeight;
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("ImageComparer");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        _thumbnailOrchestrator?.SetActiveOwner(OwnerToken);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        _thumbnailOrchestrator?.CancelRequests(OwnerToken);
+    }
+
+    #endregion
 
     /// <summary>
     /// Gets the effective Right dataset (same as Left when in single dataset mode).

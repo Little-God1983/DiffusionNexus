@@ -15,16 +15,24 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel for the Generation Gallery mosaic gallery.
 /// </summary>
-public partial class GenerationGalleryViewModel : BusyViewModelBase
+public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailAware
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IDatasetState? _datasetState;
     private readonly IVideoThumbnailService? _videoThumbnailService;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
     private bool _isUpdatingGroupingOptions;
+    private CancellationTokenSource? _visibleRangeCts;
+
+    /// <summary>
+    /// Maximum number of thumbnails to eagerly pre-load when the gallery is first populated.
+    /// Items beyond this limit will load lazily when scrolled into view.
+    /// </summary>
+    private const int InitialThumbnailLoadLimit = 250;
 
     public GenerationGalleryViewModel()
     {
@@ -40,12 +48,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         IAppSettingsService settingsService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState datasetState,
-        IVideoThumbnailService? videoThumbnailService)
+        IVideoThumbnailService? videoThumbnailService,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
         _videoThumbnailService = videoThumbnailService;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
         UpdateGroupingOptions();
@@ -117,6 +127,52 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     public bool HasNoMedia => !HasMedia;
 
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("GenerationGallery");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        _thumbnailOrchestrator?.SetActiveOwner(OwnerToken);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        _thumbnailOrchestrator?.CancelRequests(OwnerToken);
+        CancelVisibleRangeLoading();
+    }
+
+    /// <summary>
+    /// Notifies the ViewModel that the user has scrolled and a new range of items is visible.
+    /// Cancels the previous range request and starts loading thumbnails for the new range.
+    /// Call this from the view's scroll event handler.
+    /// </summary>
+    /// <param name="startIndex">First visible item index in <see cref="MediaItems"/>.</param>
+    /// <param name="visibleCount">Number of items currently visible in the viewport.</param>
+    public void NotifyVisibleRange(int startIndex, int visibleCount)
+    {
+        if (_thumbnailOrchestrator is null || MediaItems.Count == 0)
+            return;
+
+        // Cancel any previous range loading
+        CancelVisibleRangeLoading();
+
+        var cts = new CancellationTokenSource();
+        _visibleRangeCts = cts;
+
+        // Clamp range
+        var endIndex = Math.Min(startIndex + visibleCount, MediaItems.Count);
+        startIndex = Math.Max(0, startIndex);
+
+        // Fire-and-forget: request thumbnails for visible items with Critical priority
+        _ = LoadVisibleRangeAsync(startIndex, endIndex, cts.Token);
+    }
+
+    #endregion
 
     [RelayCommand]
     private async Task LoadMediaAsync()
@@ -445,7 +501,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             .ToList();
     }
 
-    private static List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
+    private List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
     {
         var items = new List<GenerationGalleryMediaItemViewModel>();
         foreach (var root in paths)
@@ -460,7 +516,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
                 var isVideo = SupportedMediaTypes.IsVideoFile(file);
                 var createdAt = File.GetCreationTimeUtc(file);
                 var folderGroupName = GetFolderGroupName(root, file);
-                items.Add(new GenerationGalleryMediaItemViewModel(file, isVideo, createdAt, folderGroupName));
+                items.Add(new GenerationGalleryMediaItemViewModel(
+                    file, isVideo, createdAt, folderGroupName,
+                    _thumbnailOrchestrator, OwnerToken));
             }
         }
 
@@ -627,6 +685,87 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
         UpdateSelectionState();
+
+        // Eagerly pre-load thumbnails for the first batch of items
+        PreloadInitialThumbnails();
+    }
+
+    /// <summary>
+    /// Eagerly requests thumbnails for the first <see cref="InitialThumbnailLoadLimit"/> items
+    /// so the user sees content immediately without scrolling.
+    /// Items beyond this limit will load lazily when scrolled into view.
+    /// </summary>
+    private void PreloadInitialThumbnails()
+    {
+        if (_thumbnailOrchestrator is null || MediaItems.Count == 0)
+            return;
+
+        CancelVisibleRangeLoading();
+        var cts = new CancellationTokenSource();
+        _visibleRangeCts = cts;
+
+        var count = Math.Min(InitialThumbnailLoadLimit, MediaItems.Count);
+        _ = LoadVisibleRangeAsync(0, count, cts.Token);
+    }
+
+    /// <summary>
+    /// Requests thumbnails for items in the specified index range via the orchestrator.
+    /// </summary>
+    private async Task LoadVisibleRangeAsync(int startIndex, int endIndex, CancellationToken cancellationToken)
+    {
+        if (_thumbnailOrchestrator is null)
+            return;
+
+        for (var i = startIndex; i < endIndex; i++)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                break;
+
+            if (i >= MediaItems.Count)
+                break;
+
+            var item = MediaItems[i];
+
+            // Skip items that already have thumbnails loaded
+            if (item.Thumbnail is not null)
+                continue;
+
+            // Request through orchestrator — these get queued with appropriate priority
+            try
+            {
+                var bitmap = await _thumbnailOrchestrator.RequestThumbnailAsync(
+                    item.FilePath, OwnerToken, ThumbnailPriority.Critical, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (bitmap is not null && !cancellationToken.IsCancellationRequested)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (i < MediaItems.Count && MediaItems[i] == item)
+                        {
+                            item.NotifyThumbnailAvailable();
+                        }
+                    });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cancels any in-progress visible range thumbnail loading.
+    /// </summary>
+    private void CancelVisibleRangeLoading()
+    {
+        if (_visibleRangeCts is not null)
+        {
+            _visibleRangeCts.Cancel();
+            _visibleRangeCts.Dispose();
+            _visibleRangeCts = null;
+        }
     }
 
     private void LoadDesignData()

@@ -24,7 +24,13 @@ public class PathToBitmapConverter : IValueConverter
     /// <summary>
     /// Thumbnail service for async loading with caching. Set during app initialization.
     /// </summary>
+    [Obsolete("Use ThumbnailOrchestrator for priority-based loading. This property is kept for legacy fallback only.")]
     public static IThumbnailService? ThumbnailService { get; set; }
+
+    /// <summary>
+    /// Thumbnail orchestrator for priority-based loading across views. Set during app initialization.
+    /// </summary>
+    public static IThumbnailOrchestrator? ThumbnailOrchestrator { get; set; }
 
     /// <summary>
     /// Default width to decode thumbnails to. Matches the card width.

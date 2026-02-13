@@ -43,7 +43,7 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
 /// </para>
 /// </summary>
-public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IDisposable
+public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IDisposable
 {
     private readonly IAppSettingsService _settingsService;
     private readonly IDatasetStorageService _datasetStorageService;
@@ -53,6 +53,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IActivityLogService? _activityLog;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private bool _disposed;
 
     private DatasetCategoryViewModel? _selectedCategory;
@@ -74,6 +75,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     // Sub-tab fields
     private VersionSubTab _selectedSubTab = VersionSubTab.Training;
     private IDialogService? _dialogService;
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("DatasetManagement");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        _thumbnailOrchestrator?.SetActiveOwner(OwnerToken);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        _thumbnailOrchestrator?.CancelRequests(OwnerToken);
+    }
+
+    #endregion
 
     /// <summary>
     /// Gets or sets the currently selected sub-tab within the version detail view.
@@ -555,7 +575,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         ICaptioningService? captioningService = null, // Added as optional
         IVideoThumbnailService? videoThumbnailService = null,
         IDatasetBackupService? backupService = null,
-        IActivityLogService? activityLog = null)
+        IActivityLogService? activityLog = null,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -565,6 +586,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _videoThumbnailService = videoThumbnailService;
         _backupService = backupService;
         _activityLog = activityLog;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
 
         // Initialize sub-tab ViewModels
         EpochsTab = new EpochsTabViewModel(_eventAggregator);
@@ -619,7 +641,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null)
     {
     }
 

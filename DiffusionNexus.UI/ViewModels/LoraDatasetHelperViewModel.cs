@@ -32,11 +32,12 @@ namespace DiffusionNexus.UI.ViewModels;
 /// The view should dispose this ViewModel when unloaded.
 /// </para>
 /// </summary>
-public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware, IDisposable
+public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceAware, IThumbnailAware, IDisposable
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IActivityLogService? _activityLog;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private bool _disposed;
 
     private int _selectedTabIndex;
@@ -45,6 +46,28 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("LoraDatasetHelper");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        // Delegate to the currently active sub-tab
+        NotifyActiveTab(_selectedTabIndex);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        // Deactivate all sub-tabs
+        DatasetManagement.OnThumbnailDeactivated();
+        ImageEdit.OnThumbnailDeactivated();
+    }
+
+    #endregion
 
     #region Tab ViewModels
 
@@ -83,6 +106,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             if (SetProperty(ref _selectedTabIndex, value))
             {
                 _state.SelectedTabIndex = value;
+                NotifyActiveTab(value);
             }
         }
     }
@@ -93,6 +117,23 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     public string? StatusMessage => _state.StatusMessage;
 
     #endregion
+
+    /// <summary>
+    /// Notifies the active sub-tab ViewModel that it is now visible,
+    /// and deactivates the others so their thumbnail requests are cancelled.
+    /// </summary>
+    private void NotifyActiveTab(int tabIndex)
+    {
+        IThumbnailAware[] tabs = [DatasetManagement, ImageEdit];
+
+        for (var i = 0; i < tabs.Length; i++)
+        {
+            if (i == tabIndex)
+                tabs[i].OnThumbnailActivated();
+            else
+                tabs[i].OnThumbnailDeactivated();
+        }
+    }
 
     #region Constructors
 
@@ -122,11 +163,13 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IImageUpscalingService? upscalingService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
-        IComfyUIWrapperService? comfyUiService = null)
+        IComfyUIWrapperService? comfyUiService = null,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _activityLog = activityLog;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
 
         // Log application module loaded
         _activityLog?.LogInfo("App", "LoRA Dataset Helper module loaded - CLR V2");
@@ -140,8 +183,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             captioningService,
             videoThumbnailService,
             backupService,
-            activityLog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService);
+            activityLog,
+            thumbnailOrchestrator);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
 
@@ -156,7 +200,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null)
     {
     }
 

@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Converters;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -43,6 +44,17 @@ public class DatasetCardViewModel : ObservableObject
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isTemporary;
+
+    /// <summary>
+    /// Optional orchestrator for priority-based thumbnail loading.
+    /// Set by the parent ViewModel when creating DatasetCardViewModels.
+    /// </summary>
+    public IThumbnailOrchestrator? ThumbnailOrchestrator { get; set; }
+
+    /// <summary>
+    /// Owner token for thumbnail priority. Inherited from the parent view.
+    /// </summary>
+    public ThumbnailOwnerToken? ThumbnailOwnerToken { get; set; }
 
     /// <summary>
     /// Name of the dataset (folder name).
@@ -301,7 +313,7 @@ public class DatasetCardViewModel : ObservableObject
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
-    /// Bind to this property for efficient async thumbnail display.
+    /// Routes through <see cref="IThumbnailOrchestrator"/> when available.
     /// </summary>
     public Bitmap? Thumbnail
     {
@@ -315,8 +327,21 @@ public class DatasetCardViewModel : ObservableObject
             if (string.IsNullOrEmpty(path))
                 return null;
 
-            var thumbnailService = PathToBitmapConverter.ThumbnailService;
-            if (thumbnailService?.TryGetCached(path, out var cached) == true)
+            // Prefer orchestrator, fall back to legacy static service
+            Bitmap? cached = null;
+            var cacheHit = false;
+
+            if (ThumbnailOrchestrator is not null)
+            {
+                cacheHit = ThumbnailOrchestrator.TryGetCached(path, out cached);
+            }
+
+            if (!cacheHit)
+            {
+                cacheHit = PathToBitmapConverter.ThumbnailService?.TryGetCached(path, out cached) == true;
+            }
+
+            if (cacheHit && cached is not null)
             {
                 _thumbnail = cached;
                 return _thumbnail;
@@ -334,34 +359,42 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Loads the thumbnail asynchronously and notifies when ready.
+    /// Loads the thumbnail asynchronously via the orchestrator or legacy service.
     /// </summary>
     private async Task LoadThumbnailAsync(string path)
     {
-        var thumbnailService = PathToBitmapConverter.ThumbnailService;
-        if (thumbnailService is null)
-        {
-            _isThumbnailLoading = false;
-            return;
-        }
-
         try
         {
-            var bitmap = await thumbnailService.LoadThumbnailAsync(path);
-            
+            Bitmap? bitmap;
+
+            if (ThumbnailOrchestrator is not null && ThumbnailOwnerToken is not null)
+            {
+                bitmap = await ThumbnailOrchestrator.RequestThumbnailAsync(
+                    path, ThumbnailOwnerToken, ThumbnailPriority.Normal).ConfigureAwait(false);
+            }
+            else
+            {
+                // Legacy fallback
+                var thumbnailService = PathToBitmapConverter.ThumbnailService;
+                if (thumbnailService is null)
+                {
+                    _isThumbnailLoading = false;
+                    return;
+                }
+
+                bitmap = await thumbnailService.LoadThumbnailAsync(path).ConfigureAwait(false);
+            }
+
             if (bitmap is not null)
             {
-                // Update on UI thread - check if dispatcher is available
                 if (Dispatcher.UIThread.CheckAccess())
                 {
-                    // Already on UI thread
                     _thumbnail = bitmap;
                     _isThumbnailLoading = false;
                     OnPropertyChanged(nameof(Thumbnail));
                 }
                 else
                 {
-                    // Post to UI thread, don't wait
                     Dispatcher.UIThread.Post(() =>
                     {
                         try
@@ -372,7 +405,6 @@ public class DatasetCardViewModel : ObservableObject
                         }
                         catch (InvalidOperationException)
                         {
-                            // Control might be disposed, ignore
                             _isThumbnailLoading = false;
                         }
                     });

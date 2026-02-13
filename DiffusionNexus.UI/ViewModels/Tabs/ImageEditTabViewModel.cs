@@ -38,13 +38,14 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
 /// </para>
 /// </summary>
-public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware, IDisposable
+public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IDisposable
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IImageUpscalingService? _upscalingService;
     private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private bool _disposed;
 
     private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
@@ -124,6 +125,25 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 return $"{total} Images";
             return $"{filtered} of {total} Images";
         }
+    }
+
+    #endregion
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("ImageEdit");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        _thumbnailOrchestrator?.SetActiveOwner(OwnerToken);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        _thumbnailOrchestrator?.CancelRequests(OwnerToken);
     }
 
     #endregion
@@ -245,13 +265,15 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IDatasetState state,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IImageUpscalingService? upscalingService = null,
-        IComfyUIWrapperService? comfyUiService = null)
+        IComfyUIWrapperService? comfyUiService = null,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _backgroundRemovalService = backgroundRemovalService;
         _upscalingService = upscalingService;
         _comfyUiService = comfyUiService;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
 
         // Create the image editor with background removal and upscaling services
         ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _upscalingService, _comfyUiService);
