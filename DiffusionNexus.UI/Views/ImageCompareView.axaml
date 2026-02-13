@@ -142,13 +142,29 @@
             <TextBox Width="240" Watermark="Search" Text="{Binding SearchText}" />
           </StackPanel>
 
-          <Border x:Name="FilmstripBorder" Background="#101010" CornerRadius="6" Padding="6">
+          <Border Background="#101010" CornerRadius="6" ClipToBounds="True">
+          <Grid x:Name="FilmstripBorder" ColumnDefinitions="Auto,*,Auto">
+            <!-- Scroll Left Button -->
+            <Button x:Name="ScrollLeftButton"
+                    Grid.Column="0"
+                    Content="◀"
+                    FontSize="14"
+                    Background="#333"
+                    Foreground="#CCC"
+                    Padding="6,0"
+                    VerticalAlignment="Stretch"
+                    CornerRadius="6,0,0,6"
+                    ToolTip.Tip="Scroll left (or use mouse wheel)"
+                    Click="OnScrollLeftClick"/>
+
+            <!-- Filmstrip -->
+            <Border Grid.Column="1" Padding="6" ClipToBounds="True">
               <ListBox x:Name="FilmstripListBox"
                        ItemsSource="{Binding FilmstripItems}"
                        Background="Transparent"
                        BorderThickness="0"
                        SelectionMode="Single"
-                       ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                       ScrollViewer.HorizontalScrollBarVisibility="Hidden"
                        ScrollViewer.VerticalScrollBarVisibility="Disabled">
 
                 <ListBox.ItemsPanel>
@@ -180,6 +196,21 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
+            </Border>
+
+            <!-- Scroll Right Button -->
+            <Button x:Name="ScrollRightButton"
+                    Grid.Column="2"
+                    Content="▶"
+                    FontSize="14"
+                    Background="#333"
+                    Foreground="#CCC"
+                    Padding="6,0"
+                    VerticalAlignment="Stretch"
+                    CornerRadius="0,6,6,0"
+                    ToolTip.Tip="Scroll right (or use mouse wheel)"
+                    Click="OnScrollRightClick"/>
+          </Grid>
           </Border>
         </StackPanel>
 

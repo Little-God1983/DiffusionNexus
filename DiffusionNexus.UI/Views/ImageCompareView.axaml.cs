@@ -12,6 +12,11 @@ namespace DiffusionNexus.UI.Views;
 
 public partial class ImageCompareView : UserControl
 {
+    /// <summary>
+    /// Horizontal scroll distance in pixels per click or wheel tick (~3 thumbnails at 98px each).
+    /// </summary>
+    private const double ScrollStep = 294;
+
     private readonly DispatcherTimer _collapseTimer;
     private readonly DispatcherTimer _mouseHintTimer;
     private Border? _trayRoot;
@@ -50,8 +55,8 @@ public partial class ImageCompareView : UserControl
 
         _mouseHintOverlay = this.FindControl<Border>("MouseHintOverlay");
 
-        // Forward mouse wheel on the filmstrip border to horizontal scroll
-        var filmstripBorder = this.FindControl<Border>("FilmstripBorder");
+        // Forward mouse wheel on the filmstrip area to horizontal scroll
+        var filmstripBorder = this.FindControl<Grid>("FilmstripBorder");
         if (filmstripBorder is not null)
         {
             filmstripBorder.AddHandler(PointerWheelChangedEvent, OnFilmstripPointerWheel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
@@ -138,10 +143,41 @@ public partial class ImageCompareView : UserControl
         if (_filmstripScrollViewer is null) return;
 
         // Convert vertical wheel delta to horizontal scroll
-        var scrollAmount = -e.Delta.Y * 120;
+        var scrollAmount = -e.Delta.Y * ScrollStep;
         _filmstripScrollViewer.Offset = _filmstripScrollViewer.Offset.WithX(
             Math.Max(0, _filmstripScrollViewer.Offset.X + scrollAmount));
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Scrolls the filmstrip left by one page of thumbnails.
+    /// </summary>
+    private void OnScrollLeftClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ScrollFilmstrip(-ScrollStep);
+    }
+
+    /// <summary>
+    /// Scrolls the filmstrip right by one page of thumbnails.
+    /// </summary>
+    private void OnScrollRightClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ScrollFilmstrip(ScrollStep);
+    }
+
+    private void ScrollFilmstrip(double delta)
+    {
+        if (_filmstripScrollViewer is null && _filmstripListBox is not null)
+        {
+            _filmstripScrollViewer = _filmstripListBox.Scroll as ScrollViewer;
+        }
+        if (_filmstripScrollViewer is null) return;
+
+        var newX = Math.Clamp(
+            _filmstripScrollViewer.Offset.X + delta,
+            0,
+            _filmstripScrollViewer.Extent.Width - _filmstripScrollViewer.Viewport.Width);
+        _filmstripScrollViewer.Offset = _filmstripScrollViewer.Offset.WithX(newX);
     }
 
     private void OnTrayPointerEntered(object? sender, PointerEventArgs e)
