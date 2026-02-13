@@ -405,4 +405,14 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? AddToDatasetResult.Cancelled();
     }
+
+    public async Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(
+        string imagePath, string currentCaption, string newCaption)
+    {
+        var dialog = new CaptionCompareDialog()
+            .WithData(imagePath, currentCaption, newCaption);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? CaptionCompareResult.Cancelled();
+    }
 }

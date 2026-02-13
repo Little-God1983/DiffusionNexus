@@ -62,6 +62,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private int? _selectedDatasetVersion;
     private string? _singleImagePath;
     private bool _isSingleImageMode;
+    private bool _isCompareMode;
 
     // Processing
     private bool _isProcessing;
@@ -582,6 +583,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 GenerateCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(SingleImageName));
                 OnPropertyChanged(nameof(HasSingleImage));
+                OnPropertyChanged(nameof(SingleImageHasExistingCaption));
+
+                // Auto-enable compare mode when the image already has a caption
+                IsCompareMode = HasExistingCaption(value);
             }
         }
     }
@@ -595,6 +600,21 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Whether a single image is currently loaded.
     /// </summary>
     public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
+
+    /// <summary>
+    /// Whether to open a compare dialog when a single image already has a caption.
+    /// Automatically enabled when the selected single image has an existing .txt caption file.
+    /// </summary>
+    public bool IsCompareMode
+    {
+        get => _isCompareMode;
+        set => SetProperty(ref _isCompareMode, value);
+    }
+
+    /// <summary>
+    /// Whether the selected single image already has a caption file on disk.
+    /// </summary>
+    public bool SingleImageHasExistingCaption => HasExistingCaption(SingleImagePath);
 
     /// <summary>
     /// Whether to caption a single image instead of a dataset.
@@ -959,6 +979,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         if (!CanGenerate()) return;
 
+        // In compare mode for single image, capture the existing caption before generation
+        var compareModeActive = IsSingleImageMode && IsCompareMode && !string.IsNullOrEmpty(SingleImagePath);
+        var existingCaption = compareModeActive ? ReadExistingCaption(SingleImagePath!) : string.Empty;
+
         IsProcessing = true;
         TotalProgress = 0;
         CurrentProcessingStatus = "Initializing...";
@@ -978,6 +1002,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 .Select(w => w.Trim())
                 .ToList();
 
+            // Force OverrideExisting when in compare mode so the backend does not skip the image
+            var effectiveOverride = compareModeActive || OverrideExisting;
+
             var config = new CaptioningJobConfig(
                 ImagePaths: GetImagePaths(),
                 SelectedModel: SelectedModelType,
@@ -985,7 +1012,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 TriggerWord: TriggerWord,
                 BlacklistedWords: blackList,
                 DatasetPath: SelectedDataset?.CurrentVersionFolderPath,
-                OverrideExisting: OverrideExisting,
+                OverrideExisting: effectiveOverride,
                 Temperature: Temperature
             );
 
@@ -1037,6 +1064,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             var successCount = results.Count(r => r.Success);
             StatusMessage = $"Completed! {successCount}/{results.Count} images captioned.";
             CurrentProcessingStatus = "Done";
+
+            // Show compare dialog when in compare mode and we got a new caption
+            if (compareModeActive && DialogService is not null)
+            {
+                var firstSuccess = results.FirstOrDefault(r => r is { Success: true, WasSkipped: false, Caption: not null });
+                if (firstSuccess?.Caption is not null)
+                {
+                    await ShowCaptionCompareAsync(SingleImagePath!, existingCaption, firstSuccess.Caption);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1054,6 +1091,28 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             _captioningCts = null;
             IsProcessing = false;
             RefreshDatasetStats();
+        }
+    }
+
+    /// <summary>
+    /// Shows the caption compare dialog and saves the user's chosen caption.
+    /// </summary>
+    private async Task ShowCaptionCompareAsync(string imagePath, string existingCaption, string newCaption)
+    {
+        if (DialogService is null) return;
+
+        var result = await DialogService.ShowCaptionCompareDialogAsync(imagePath, existingCaption, newCaption);
+
+        if (result.Confirmed && result.ChosenCaption is not null)
+        {
+            var dir = Path.GetDirectoryName(imagePath) ?? ".";
+            var captionPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(imagePath) + ".txt");
+            await File.WriteAllTextAsync(captionPath, result.ChosenCaption);
+            StatusMessage = "Caption saved from compare dialog.";
+        }
+        else
+        {
+            StatusMessage = "Compare cancelled — the newly generated caption remains on disk.";
         }
     }
 
@@ -1076,6 +1135,32 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
 
         return [];
+    }
+
+    /// <summary>
+    /// Checks if a caption (.txt) file already exists for the given image path.
+    /// </summary>
+    private static bool HasExistingCaption(string? imagePath)
+    {
+        if (string.IsNullOrEmpty(imagePath))
+            return false;
+
+        var dir = Path.GetDirectoryName(imagePath);
+        if (string.IsNullOrEmpty(dir))
+            return false;
+
+        var captionPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(imagePath) + ".txt");
+        return File.Exists(captionPath);
+    }
+
+    /// <summary>
+    /// Reads the existing caption text for a given image path.
+    /// </summary>
+    private static string ReadExistingCaption(string imagePath)
+    {
+        var dir = Path.GetDirectoryName(imagePath) ?? ".";
+        var captionPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(imagePath) + ".txt");
+        return File.Exists(captionPath) ? File.ReadAllText(captionPath).Trim() : string.Empty;
     }
 
     private void OnRefreshDatasetsRequested(object? sender, RefreshDatasetsRequestedEventArgs e)

@@ -19,6 +19,7 @@ public class ImageEditorControl : Control
     private Point _lastPanPoint;
     private bool _isPanning;
     private bool _suppressImagePathLoad;
+    private bool _isDetachedFromTree;
 
     // Inpaint brush state
     private bool _isInpaintingToolActive;
@@ -326,14 +327,25 @@ public class ImageEditorControl : Control
         if (change.Property == ImagePathProperty)
         {
             if (_suppressImagePathLoad) return;
-            
+
             var newPath = change.NewValue as string;
             if (!string.IsNullOrEmpty(newPath))
             {
+                // Skip redundant reload when binding restores the same path
+                // after a tab-switch reattach — the bitmap is still in memory.
+                if (_editorCore.HasImage &&
+                    string.Equals(newPath, _editorCore.CurrentImagePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
                 _editorCore.LoadImage(newPath);
             }
-            else
+            else if (!_isDetachedFromTree)
             {
+                // Only clear when the control is in the visual tree.
+                // During tab switches the binding deactivates and pushes null;
+                // clearing here would destroy the loaded image.
                 _editorCore.Clear();
             }
         }
@@ -1031,6 +1043,7 @@ public class ImageEditorControl : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        _isDetachedFromTree = false;
         _editorCore.ImageChanged += OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged += OnCropRegionChanged;
         _editorCore.DrawingTool.DrawingChanged += OnDrawingChanged;
@@ -1044,6 +1057,7 @@ public class ImageEditorControl : Control
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        _isDetachedFromTree = true;
         base.OnDetachedFromVisualTree(e);
         _editorCore.ImageChanged -= OnEditorCoreImageChanged;
         _editorCore.CropTool.CropRegionChanged -= OnCropRegionChanged;

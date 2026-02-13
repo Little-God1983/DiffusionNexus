@@ -1,0 +1,111 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.CaptionCompareDialog"
+        x:DataType="vm:CaptionCompareDialogViewModel"
+        Width="900"
+        Height="650"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True"
+        MinWidth="700"
+        MinHeight="500"
+        Background="#252526"
+        Title="Compare Captions">
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="24">
+
+    <!-- Header -->
+    <StackPanel Grid.Row="0" Margin="0,0,0,16">
+      <TextBlock Text="Compare Captions"
+                 FontSize="20" FontWeight="SemiBold" Foreground="#D4A574"/>
+      <TextBlock Text="Select which caption to keep for this image."
+                 FontSize="12" Opacity="0.7" Margin="0,4,0,0"/>
+    </StackPanel>
+
+    <!-- Image Preview -->
+    <Border Grid.Row="1" Background="#111" CornerRadius="8" ClipToBounds="True"
+            Height="200" Margin="0,0,0,16" HorizontalAlignment="Center" MaxWidth="400">
+      <Image Source="{Binding ImagePreview}" Stretch="Uniform"/>
+    </Border>
+
+    <!-- Side-by-side Captions -->
+    <Grid Grid.Row="2" ColumnDefinitions="*,16,*" Margin="0,0,0,16">
+
+      <!-- Left: Current Caption (clickable) -->
+      <Button Grid.Column="0" Command="{Binding SelectCurrentCommand}"
+              Padding="0" Background="Transparent" BorderThickness="0"
+              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+              HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+              Cursor="Hand">
+        <Border CornerRadius="8" Padding="3"
+                BorderBrush="{Binding IsCurrentSelected, Converter={x:Static vm:CaptionCompareConverters.BoolToHighlightBrush}}"
+                BorderThickness="3">
+          <Border Background="#333333" CornerRadius="6" Padding="12">
+            <Grid RowDefinitions="Auto,8,*">
+              <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Current Caption" FontWeight="SemiBold" FontSize="14"
+                           VerticalAlignment="Center"/>
+                <Border Background="#555" CornerRadius="4" Padding="6,2"
+                        IsVisible="{Binding IsCurrentSelected}">
+                  <TextBlock Text="Selected" FontSize="10" Foreground="#4CAF50" FontWeight="Bold"/>
+                </Border>
+              </StackPanel>
+              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                <TextBox Text="{Binding CurrentCaption, Mode=OneWay}" IsReadOnly="True"
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         FontSize="13" LineHeight="20"
+                         Background="Transparent" BorderThickness="0"
+                         MinHeight="100"
+                         GotFocus="OnCurrentCaptionFocused"/>
+              </ScrollViewer>
+            </Grid>
+          </Border>
+        </Border>
+      </Button>
+
+      <!-- Right: New Caption (clickable) -->
+      <Button Grid.Column="2" Command="{Binding SelectNewCommand}"
+              Padding="0" Background="Transparent" BorderThickness="0"
+              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+              HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+              Cursor="Hand">
+        <Border CornerRadius="8" Padding="3"
+                BorderBrush="{Binding IsNewSelected, Converter={x:Static vm:CaptionCompareConverters.BoolToHighlightBrush}}"
+                BorderThickness="3">
+          <Border Background="#333333" CornerRadius="6" Padding="12">
+            <Grid RowDefinitions="Auto,8,*">
+              <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="New Caption" FontWeight="SemiBold" FontSize="14"
+                           VerticalAlignment="Center"/>
+                <Border Background="#555" CornerRadius="4" Padding="6,2"
+                        IsVisible="{Binding IsNewSelected}">
+                  <TextBlock Text="Selected" FontSize="10" Foreground="#4CAF50" FontWeight="Bold"/>
+                </Border>
+              </StackPanel>
+              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                <TextBox Text="{Binding NewCaption, Mode=OneWay}" IsReadOnly="True"
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         FontSize="13" LineHeight="20"
+                         Background="Transparent" BorderThickness="0"
+                         MinHeight="100"
+                         GotFocus="OnNewCaptionFocused"/>
+              </ScrollViewer>
+            </Grid>
+          </Border>
+        </Border>
+      </Button>
+    </Grid>
+
+    <!-- Footer Buttons -->
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Content="Cancel"
+              Command="{Binding CancelCommand}"
+              Padding="16,8"/>
+      <Button Content="Save Selection"
+              Command="{Binding ConfirmCommand}"
+              Background="#2D7D46" Foreground="White" FontWeight="Bold"
+              Padding="16,8"
+              ToolTip.Tip="Save the selected caption"/>
+    </StackPanel>
+  </Grid>
+</Window>

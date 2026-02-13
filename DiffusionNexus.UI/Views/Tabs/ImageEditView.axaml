@@ -165,18 +165,18 @@
           </StackPanel>
           <Border Grid.Column="8"/>
           <!-- Save buttons - hidden until image is loaded -->
-          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage}">
+          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
             <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
             <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
             <Button Content="Export" Command="{Binding ImageEditor.ExportCommand}" Padding="12,6" ToolTip.Tip="Export image to external location"/>
           </StackPanel>
           <!-- Separator before Reset/Clear - only visible when image is loaded -->
-          <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage}"/>
+          <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
           <!-- Reset and Clear buttons - hidden until image is loaded -->
           <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"
-                  IsVisible="{Binding ImageEditor.HasImage}"/>
+                  IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
           <Button Grid.Column="12" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"
-                  IsVisible="{Binding ImageEditor.HasImage}"/>
+                  IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
         </Grid>
       </Border>
       
@@ -207,13 +207,13 @@
                                        ShapeStrokeColor="{Binding ImageEditor.DrawingTools.ShapeStrokeColor}"
                                        ShapeFillColor="{Binding ImageEditor.DrawingTools.ShapeFillColor}"
                                        ShapeStrokeWidth="{Binding ImageEditor.DrawingTools.ShapeStrokeWidth}"
-                                       IsVisible="{Binding ImageEditor.HasImage}"/>
+                                       IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
         </Grid>
       </Border>
       
       <!-- Bottom Status Bar - Information & Zoom -->
       <Border Grid.Row="2" Background="#1E1E1E" Padding="8,0" BorderBrush="#333" BorderThickness="0,1,0,0"
-              IsVisible="{Binding ImageEditor.HasImage}">
+              IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Height="22">
           <TextBlock Text="{Binding ImageEditor.ImageDimensions}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
           <TextBlock Text="|" FontSize="10" Opacity="0.4" VerticalAlignment="Center"/>
@@ -233,7 +233,7 @@
     
     <!-- Right Side Panel - Info -->
     <Border Grid.Column="2" Width="200" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1,0,0,0"
-            IsVisible="{Binding ImageEditor.HasImage}">
+            IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
       <ScrollViewer>
         <StackPanel Margin="12" Spacing="16">
           <!-- Layers Panel - At top -->
@@ -324,7 +324,7 @@
           </StackPanel>
           
           <!-- Crop Tool Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsCropToolActive}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.IsCropToolActive, FallbackValue=False}">
             <TextBlock Text="Crop Tool" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
@@ -380,7 +380,7 @@
           </StackPanel>
           
           <!-- Color Balance Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen, FallbackValue=False}">
             <TextBlock Text="Color Balance" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -433,7 +433,7 @@
           </StackPanel>
           
           <!-- Brightness/Contrast Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsBrightnessContrastPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsBrightnessContrastPanelOpen, FallbackValue=False}">
             <TextBlock Text="Brightness/Contrast" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -467,7 +467,7 @@
           </StackPanel>
           
           <!-- Background Removal Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundRemoval.IsPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundRemoval.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="Background Removal" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
@@ -527,7 +527,7 @@
           </StackPanel>
           
           <!-- Background Fill Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundFill.IsPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.BackgroundFill.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="Background Fill" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -607,7 +607,7 @@
           </StackPanel>
           
           <!-- AI Upscaling Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Upscaling.IsPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Upscaling.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="AI Upscaling" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="8">
@@ -686,7 +686,7 @@
           </StackPanel>
           
           <!-- Drawing Tool Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.DrawingTools.IsDrawingToolActive}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.DrawingTools.IsDrawingToolActive, FallbackValue=False}">
             <TextBlock Text="Drawing Tool" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
@@ -1002,7 +1002,7 @@
           </StackPanel>
           
           <!-- Inpainting Panel -->
-          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Inpainting.IsPanelOpen}">
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Inpainting.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="Inpainting" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
