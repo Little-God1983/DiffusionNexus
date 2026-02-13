@@ -250,6 +250,15 @@ public interface IDialogService
     Task<AddToDatasetResult> ShowAddToDatasetDialogAsync(
         int selectedFileCount,
         IEnumerable<DatasetCardViewModel> availableDatasets);
+
+    /// <summary>
+    /// Shows the caption compare dialog for choosing between existing and newly generated captions.
+    /// </summary>
+    /// <param name="imagePath">Path to the image being captioned.</param>
+    /// <param name="currentCaption">The existing caption text.</param>
+    /// <param name="newCaption">The newly generated caption text.</param>
+    /// <returns>Result indicating which caption the user chose, or cancelled.</returns>
+    Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(string imagePath, string currentCaption, string newCaption);
 }
 
 /// <summary>
