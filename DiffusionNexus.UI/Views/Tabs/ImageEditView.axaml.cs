@@ -642,18 +642,22 @@ public partial class ImageEditView : UserControl
                     return;
                 }
 
+                // Capture the before PNG synchronously (before any await) so the
+                // inpaint base bitmap cannot be modified by another event during a yield.
+                byte[]? beforePng = null;
+                if (imageEditor.Inpainting.IsCompareModePending)
+                {
+                    beforePng = editorCore.GetInpaintBaseAsPng();
+                }
+
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
                 await File.WriteAllBytesAsync(tempPath, prepareResult.MaskedImagePng!);
 
-                if (imageEditor.Inpainting.IsCompareModePending)
+                if (beforePng is not null)
                 {
-                    var beforePng = editorCore.GetInpaintBaseAsPng();
-                    if (beforePng is not null)
-                    {
-                        var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
-                        await File.WriteAllBytesAsync(beforePath, beforePng);
-                        imageEditor.Inpainting.SetCompareBeforeImagePath(beforePath);
-                    }
+                    var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
+                    await File.WriteAllBytesAsync(beforePath, beforePng);
+                    imageEditor.Inpainting.SetCompareBeforeImagePath(beforePath);
                 }
 
                 await imageEditor.Inpainting.ProcessInpaintAsync(tempPath);

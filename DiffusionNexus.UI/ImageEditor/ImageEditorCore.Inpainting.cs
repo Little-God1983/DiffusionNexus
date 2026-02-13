@@ -263,7 +263,16 @@ public partial class ImageEditorCore
 
         try
         {
-            using var image = SKImage.FromBitmap(copy);
+            // Convert to unpremultiplied alpha so RGB values are stored straight in the PNG.
+            // The inpaint base comes from Flatten() which produces premultiplied bitmaps;
+            // encoding premul data directly can result in blank/transparent output.
+            using var unpremul = new SKBitmap(
+                copy.Width, copy.Height,
+                SKColorType.Rgba8888, SKAlphaType.Unpremul);
+            using (var canvas = new SKCanvas(unpremul))
+                canvas.DrawBitmap(copy, 0, 0);
+
+            using var image = SKImage.FromBitmap(unpremul);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
             return data.ToArray();
         }
