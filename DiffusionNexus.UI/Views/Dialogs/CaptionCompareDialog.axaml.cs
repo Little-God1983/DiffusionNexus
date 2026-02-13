@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.UI.ViewModels;
 
@@ -37,6 +38,16 @@ public partial class CaptionCompareDialog : Window
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
+    }
+
+    private void OnCurrentCaptionFocused(object? sender, GotFocusEventArgs e)
+    {
+        _viewModel?.SelectCurrentCommand.Execute(null);
+    }
+
+    private void OnNewCaptionFocused(object? sender, GotFocusEventArgs e)
+    {
+        _viewModel?.SelectNewCommand.Execute(null);
     }
 
     protected override void OnClosed(EventArgs e)

@@ -55,7 +55,8 @@
                          TextWrapping="Wrap" AcceptsReturn="True"
                          FontSize="13" LineHeight="20"
                          Background="Transparent" BorderThickness="0"
-                         MinHeight="100"/>
+                         MinHeight="100"
+                         GotFocus="OnCurrentCaptionFocused"/>
               </ScrollViewer>
             </Grid>
           </Border>
@@ -86,7 +87,8 @@
                          TextWrapping="Wrap" AcceptsReturn="True"
                          FontSize="13" LineHeight="20"
                          Background="Transparent" BorderThickness="0"
-                         MinHeight="100"/>
+                         MinHeight="100"
+                         GotFocus="OnNewCaptionFocused"/>
               </ScrollViewer>
             </Grid>
           </Border>
