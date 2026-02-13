@@ -149,13 +149,4 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
             _isThumbnailLoading = false;
         }
     }
-
-    /// <summary>
-    /// Notifies the UI that the thumbnail may have been loaded externally (e.g., by the orchestrator's
-    /// visible-range preload). Re-evaluates the Thumbnail property getter.
-    /// </summary>
-    public void NotifyThumbnailAvailable()
-    {
-        OnPropertyChanged(nameof(Thumbnail));
-    }
 }

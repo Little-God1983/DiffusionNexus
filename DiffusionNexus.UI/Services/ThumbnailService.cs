@@ -72,9 +72,9 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
     /// <summary>
     /// Creates a new ThumbnailService.
     /// </summary>
-    /// <param name="maxCacheSize">Maximum number of thumbnails to cache (default 200).</param>
-    /// <param name="maxConcurrentLoads">Maximum concurrent image load operations (default 4).</param>
-    public ThumbnailService(int maxCacheSize = 200, int maxConcurrentLoads = 4)
+    /// <param name="maxCacheSize">Maximum number of thumbnails to cache (default 1000).</param>
+    /// <param name="maxConcurrentLoads">Maximum concurrent image load operations (default 8).</param>
+    public ThumbnailService(int maxCacheSize = 1000, int maxConcurrentLoads = 8)
     {
         _maxCacheSize = maxCacheSize;
         _loadSemaphore = new SemaphoreSlim(maxConcurrentLoads, maxConcurrentLoads);

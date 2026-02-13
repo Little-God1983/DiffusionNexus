@@ -177,7 +177,7 @@
         </StackPanel>
       </Border>
 
-      <ScrollViewer IsVisible="{Binding HasMedia}" Padding="16">
+      <ScrollViewer x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}" Padding="16">
         <Grid>
           <ItemsControl ItemsSource="{Binding GroupedMediaItems}" IsVisible="{Binding IsGroupingEnabled}">
             <ItemsControl.ItemsPanel>
@@ -206,7 +206,7 @@
           </ItemsControl>
 
           <ItemsControl x:Name="GalleryItems"
-                        ItemsSource="{Binding MediaItems}"
+                        ItemsSource="{Binding VisibleMediaItems}"
                         ItemTemplate="{StaticResource MediaItemTemplate}"
                         IsVisible="{Binding !IsGroupingEnabled}">
             <ItemsControl.ItemsPanel>

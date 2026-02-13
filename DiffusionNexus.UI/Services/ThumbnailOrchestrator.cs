@@ -39,8 +39,8 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     private readonly IThumbnailService _thumbnailService;
     private readonly PriorityQueue<ThumbnailRequest, int> _requestQueue = new();
     private readonly object _queueLock = new();
-    private readonly SemaphoreSlim _loadSemaphore;
     private readonly ConcurrentDictionary<ThumbnailOwnerToken, CancellationTokenSource> _ownerCancellations = new();
+    private readonly ConcurrentDictionary<string, Task<Bitmap?>> _inFlightRequests = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _queueSignal = new(0);
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _processingLoop;
@@ -50,13 +50,12 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     /// <summary>
     /// Creates a new ThumbnailOrchestrator.
     /// </summary>
-    /// <param name="thumbnailService">The underlying thumbnail service for loading and caching.</param>
-    /// <param name="maxConcurrentLoads">Maximum concurrent image decode operations (default 4).</param>
-    public ThumbnailOrchestrator(IThumbnailService thumbnailService, int maxConcurrentLoads = 4)
+    /// <param name="thumbnailService">The underlying thumbnail service for loading and caching.
+    /// The service owns concurrency throttling — the orchestrator does not add another semaphore.</param>
+    public ThumbnailOrchestrator(IThumbnailService thumbnailService)
     {
         ArgumentNullException.ThrowIfNull(thumbnailService);
         _thumbnailService = thumbnailService;
-        _loadSemaphore = new SemaphoreSlim(maxConcurrentLoads, maxConcurrentLoads);
 
         // Start the background processing loop
         _processingLoop = Task.Run(ProcessQueueAsync);
@@ -80,6 +79,12 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
         if (_thumbnailService.TryGetCached(imagePath, out var cached))
             return cached;
 
+        // Deduplicate: if another request for the same path is already in-flight, piggyback on it
+        if (_inFlightRequests.TryGetValue(imagePath, out var existingTask))
+        {
+            return await existingTask.ConfigureAwait(false);
+        }
+
         // Boost priority if this owner is the active owner
         var effectivePriority = (owner == _activeOwner) ? ThumbnailPriority.Critical : priority;
 
@@ -92,6 +97,14 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
 
         // Register cancellation to complete the TCS
         linkedCts.Token.Register(() => tcs.TrySetResult(null), useSynchronizationContext: false);
+
+        // Track the in-flight request for deduplication
+        _inFlightRequests.TryAdd(imagePath, tcs.Task);
+
+        // Remove from in-flight tracking once complete
+        _ = tcs.Task.ContinueWith(
+            _ => _inFlightRequests.TryRemove(imagePath, out _),
+            TaskContinuationOptions.ExecuteSynchronously);
 
         var request = new ThumbnailRequest(
             imagePath, targetWidth, owner, effectivePriority, tcs, linkedCts.Token);
@@ -187,21 +200,11 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     }
 
     /// <summary>
-    /// Acquires a concurrency slot, then loads the thumbnail and completes the TCS.
+    /// Loads the thumbnail via the underlying service and completes the TCS.
+    /// Concurrency is managed by the service's own semaphore.
     /// </summary>
     private async Task ProcessRequestAsync(ThumbnailRequest request)
     {
-        try
-        {
-            // Acquire concurrency slot (this is where throttling happens)
-            await _loadSemaphore.WaitAsync(request.CancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            request.Completion.TrySetResult(null);
-            return;
-        }
-
         try
         {
             var bitmap = await _thumbnailService.LoadThumbnailAsync(
@@ -215,10 +218,6 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
         catch
         {
             request.Completion.TrySetResult(null);
-        }
-        finally
-        {
-            _loadSemaphore.Release();
         }
     }
 
@@ -310,6 +309,5 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
 
         _disposeCts.Dispose();
         _queueSignal.Dispose();
-        _loadSemaphore.Dispose();
     }
 }

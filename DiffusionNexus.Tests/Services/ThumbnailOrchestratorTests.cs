@@ -20,7 +20,7 @@ public class ThumbnailOrchestratorTests : IDisposable
     public ThumbnailOrchestratorTests()
     {
         _mockService = new Mock<IThumbnailService>();
-        _orchestrator = new ThumbnailOrchestrator(_mockService.Object, maxConcurrentLoads: 2);
+        _orchestrator = new ThumbnailOrchestrator(_mockService.Object);
     }
 
     public void Dispose()
@@ -193,43 +193,6 @@ public class ThumbnailOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RequestThumbnailAsync_RespectsMaxConcurrentLoads()
-    {
-        // Arrange: use a limited orchestrator (max 1 concurrent) and track concurrent invocations
-        using var limitedOrchestrator = new ThumbnailOrchestrator(_mockService.Object, maxConcurrentLoads: 1);
-
-        var concurrentCount = 0;
-        var maxConcurrent = 0;
-        var loadStarted = new TaskCompletionSource();
-
-        Bitmap? nullBitmap = null;
-        _mockService.Setup(s => s.TryGetCached(It.IsAny<string>(), out nullBitmap)).Returns(false);
-        _mockService.Setup(s => s.LoadThumbnailAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Returns<string, int, CancellationToken>(async (_, _, ct) =>
-            {
-                var current = Interlocked.Increment(ref concurrentCount);
-                var snapshot = current;
-                if (snapshot > Volatile.Read(ref maxConcurrent))
-                    Interlocked.Exchange(ref maxConcurrent, snapshot);
-
-                loadStarted.TrySetResult();
-                await Task.Delay(50, ct);
-                Interlocked.Decrement(ref concurrentCount);
-                return null;
-            });
-
-        // Act
-        var task1 = limitedOrchestrator.RequestThumbnailAsync("a.png", _ownerA);
-        var task2 = limitedOrchestrator.RequestThumbnailAsync("b.png", _ownerA);
-
-        await loadStarted.Task;
-        await Task.WhenAll(task1, task2);
-
-        // Assert: with maxConcurrentLoads=1, only 1 should have been in-flight at a time
-        maxConcurrent.Should().Be(1);
-    }
-
-    [Fact]
     public async Task RequestThumbnailAsync_WhenActiveOwner_BoostsPriority()
     {
         // Arrange: track which paths get loaded and in what order
@@ -248,8 +211,8 @@ public class ThumbnailOrchestratorTests : IDisposable
                 return null;
             });
 
-        // Use a single-thread orchestrator to guarantee ordering
-        using var singleOrchestrator = new ThumbnailOrchestrator(_mockService.Object, maxConcurrentLoads: 1);
+        // Use a separate orchestrator to guarantee clean state
+        using var singleOrchestrator = new ThumbnailOrchestrator(_mockService.Object);
         singleOrchestrator.SetActiveOwner(_ownerA);
 
         // Act: submit low priority (ownerB) first, then critical (ownerA)

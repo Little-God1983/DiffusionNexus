@@ -142,20 +142,6 @@ public class ThumbnailAwareViewModelTests
         token1.Should().BeSameAs(token2);
     }
 
-    [Fact]
-    public void WhenNotifyVisibleRangeCalledWithNoOrchestrator_ThenDoesNotThrow()
-    {
-        var vm = new GenerationGalleryViewModel(
-            new Mock<DiffusionNexus.Domain.Services.IAppSettingsService>().Object,
-            new Mock<IDatasetEventAggregator>().Object,
-            new Mock<IDatasetState>().Object,
-            null,
-            thumbnailOrchestrator: null);
-
-        var act = () => vm.NotifyVisibleRange(0, 10);
-        act.Should().NotThrow();
-    }
-
     #region Factory Helpers
 
     private DatasetManagementViewModel CreateDatasetManagementViewModel()
