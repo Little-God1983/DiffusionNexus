@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -32,6 +33,12 @@ public partial class ModuleItem : ObservableObject
 
     [ObservableProperty]
     private bool _isSelected;
+
+    /// <summary>
+    /// The ViewModel associated with this module's view.
+    /// Used for <see cref="IThumbnailAware"/> activation when navigating.
+    /// </summary>
+    public object? ViewModel { get; init; }
 
     public ModuleItem(string name, string iconPath, object? view = null, bool isVisible = true)
     {
@@ -181,6 +188,12 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     {
         if (module is null) return;
         
+        // Deactivate thumbnails for the previous module
+        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
+        {
+            previousAware.OnThumbnailDeactivated();
+        }
+
         // Clear previous selection
         foreach (var m in Modules)
         {
@@ -191,6 +204,12 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         SelectedModule = module;
         CurrentModuleView = module.View;
         
+        // Activate thumbnails for the new module
+        if (module.ViewModel is IThumbnailAware newAware)
+        {
+            newAware.OnThumbnailActivated();
+        }
+
         // Collapse the menu after selection
         IsMenuOpen = false;
     }

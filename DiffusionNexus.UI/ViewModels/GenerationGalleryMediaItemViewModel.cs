@@ -8,19 +8,31 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel representing a single media item in the Generation Gallery.
+/// Routes thumbnail loading through <see cref="IThumbnailOrchestrator"/> when available.
 /// </summary>
 public partial class GenerationGalleryMediaItemViewModel : ObservableObject
 {
+    private static readonly ThumbnailOwnerToken _defaultOwnerToken = new("GalleryItem");
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly ThumbnailOwnerToken? _ownerToken;
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isSelected;
 
-    public GenerationGalleryMediaItemViewModel(string filePath, bool isVideo, DateTime createdAtUtc, string folderGroupName)
+    public GenerationGalleryMediaItemViewModel(
+        string filePath,
+        bool isVideo,
+        DateTime createdAtUtc,
+        string folderGroupName,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        ThumbnailOwnerToken? ownerToken = null)
     {
         FilePath = filePath;
         IsVideo = isVideo;
         CreatedAtUtc = createdAtUtc;
         FolderGroupName = folderGroupName;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
+        _ownerToken = ownerToken;
     }
 
     /// <summary>
@@ -74,6 +86,7 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
+    /// Uses the orchestrator for priority-based loading when available.
     /// </summary>
     public Bitmap? Thumbnail
     {
@@ -97,26 +110,26 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
         if (_isThumbnailLoading) return;
         _isThumbnailLoading = true;
 
-        var thumbnailService = PathToBitmapConverter.ThumbnailService;
-        if (thumbnailService is null)
+        var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+        if (orchestrator is null)
         {
             _isThumbnailLoading = false;
             return;
         }
 
-        // Try direct cache access first
-        if (thumbnailService.TryGetCached(FilePath, out var cached) && cached is not null)
+        if (orchestrator.TryGetCached(FilePath, out var cached) && cached is not null)
         {
-             Thumbnail = cached;
-             _isThumbnailLoading = false;
-             return;
+            Thumbnail = cached;
+            _isThumbnailLoading = false;
+            return;
         }
+
+        var owner = _ownerToken ?? _defaultOwnerToken;
 
         try
         {
-            // Load async (using default target width from service which is usually matched to card size)
-            // Note: Viewer tile width is adjustable, but we use the standard thumbnail size for consistency/caching
-            var bitmap = await thumbnailService.LoadThumbnailAsync(FilePath).ConfigureAwait(false);
+            var bitmap = await orchestrator.RequestThumbnailAsync(
+                FilePath, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
 
             if (bitmap is not null)
             {

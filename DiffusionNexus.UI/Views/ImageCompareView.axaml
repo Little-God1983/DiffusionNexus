@@ -142,9 +142,30 @@
             <TextBox Width="240" Watermark="Search" Text="{Binding SearchText}" />
           </StackPanel>
 
-          <Border Background="#101010" CornerRadius="6" Padding="6">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-              <ListBox x:Name="FilmstripListBox" ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="Single">
+          <Border Background="#101010" CornerRadius="6" ClipToBounds="True">
+          <Grid x:Name="FilmstripBorder" ColumnDefinitions="Auto,*,Auto">
+            <!-- Scroll Left Button -->
+            <Button x:Name="ScrollLeftButton"
+                    Grid.Column="0"
+                    Content="◀"
+                    FontSize="14"
+                    Background="#333"
+                    Foreground="#CCC"
+                    Padding="6,0"
+                    VerticalAlignment="Stretch"
+                    CornerRadius="6,0,0,6"
+                    ToolTip.Tip="Scroll left (or use mouse wheel)"
+                    Click="OnScrollLeftClick"/>
+
+            <!-- Filmstrip -->
+            <Border Grid.Column="1" Padding="6" ClipToBounds="True">
+              <ListBox x:Name="FilmstripListBox"
+                       ItemsSource="{Binding FilmstripItems}"
+                       Background="Transparent"
+                       BorderThickness="0"
+                       SelectionMode="Single"
+                       ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                       ScrollViewer.VerticalScrollBarVisibility="Disabled">
 
                 <ListBox.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -157,7 +178,7 @@
                       <Border CornerRadius="4" BorderBrush="#2F2F2F" BorderThickness="1" Margin="0,0,8,0">
                         <Grid>
                           <Border Background="#222" Width="90" Height="60" CornerRadius="4" ClipToBounds="True">
-                            <Image Source="{Binding ImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}" Stretch="UniformToFill"/>
+                            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
                           </Border>
                           <Border Background="#AA3C78D8" CornerRadius="4" Padding="4,2"
                                   HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4"
@@ -175,19 +196,34 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
-            </ScrollViewer>
+            </Border>
+
+            <!-- Scroll Right Button -->
+            <Button x:Name="ScrollRightButton"
+                    Grid.Column="2"
+                    Content="▶"
+                    FontSize="14"
+                    Background="#333"
+                    Foreground="#CCC"
+                    Padding="6,0"
+                    VerticalAlignment="Stretch"
+                    CornerRadius="0,6,6,0"
+                    ToolTip.Tip="Scroll right (or use mouse wheel)"
+                    Click="OnScrollRightClick"/>
+          </Grid>
           </Border>
         </StackPanel>
 
-        <!-- Mouse Navigation Hint -->
-        <Border Grid.Row="1" Grid.RowSpan="2"
+        <!-- Mouse Navigation Hint (auto-hides after 3 seconds) -->
+        <Border x:Name="MouseHintOverlay"
+                Grid.Row="1" Grid.RowSpan="2"
                 Background="#99000000"
                 CornerRadius="8"
                 Padding="12,8"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Margin="0,16,16,0"
-                Opacity="0.8"
+                Opacity="0.9"
                 IsHitTestVisible="False">
           <StackPanel Orientation="Vertical" Spacing="4">
             <Image Source="avares://DiffusionNexus.UI/Assets/mouse.png"

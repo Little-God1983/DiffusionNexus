@@ -129,12 +129,12 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Initializes the ThumbnailService and wires it to the converters.
+    /// Initializes the ThumbnailOrchestrator and wires it to the converters.
     /// </summary>
     private static void InitializeThumbnailService()
     {
-        var thumbnailService = Services!.GetRequiredService<IThumbnailService>();
-        PathToBitmapConverter.ThumbnailService = thumbnailService;
+        var orchestrator = Services!.GetRequiredService<IThumbnailOrchestrator>();
+        PathToBitmapConverter.ThumbnailOrchestrator = orchestrator;
     }
 
     private static void InitializeDatabase()
@@ -428,6 +428,10 @@ public partial class App : Application
         // Thumbnail service for async image loading with LRU cache (singleton)
         services.AddSingleton<IThumbnailService, ThumbnailService>();
 
+        // Thumbnail orchestrator for priority-based loading across views (singleton)
+        services.AddSingleton<IThumbnailOrchestrator>(sp =>
+            new ThumbnailOrchestrator(sp.GetRequiredService<IThumbnailService>()));
+
         // Application services - Scoped works within our app scope
         services.AddScoped<IAppSettingsService, AppSettingsService>();
         services.AddScoped<IModelSyncService, ModelFileSyncService>();
@@ -491,7 +495,8 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IDatasetState>(),
-            sp.GetService<IVideoThumbnailService>()));
+            sp.GetService<IVideoThumbnailService>(),
+            sp.GetService<IThumbnailOrchestrator>()));
         
         // LoraDatasetHelperViewModel - use factory to inject all required services
         services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(
@@ -506,7 +511,8 @@ public partial class App : Application
             sp.GetService<IImageUpscalingService>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<IComfyUIWrapperService>()));
+            sp.GetService<IComfyUIWrapperService>(),
+            sp.GetService<IThumbnailOrchestrator>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
@@ -517,7 +523,10 @@ public partial class App : Application
         var loraDatasetHelperModule = new ModuleItem(
             "LoRA Dataset Helper",
             "avares://DiffusionNexus.UI/Assets/LoraTrain.png",
-            loraDatasetHelperView);
+            loraDatasetHelperView)
+        {
+            ViewModel = loraDatasetHelperVm
+        };
 
         mainViewModel.RegisterModule(loraDatasetHelperModule);
 
@@ -538,17 +547,24 @@ public partial class App : Application
         mainViewModel.RegisterModule(new ModuleItem(
             "Generation Gallery",
             "avares://DiffusionNexus.UI/Assets/GalleryView.png",
-            generationGalleryView));
+            generationGalleryView)
+        {
+            ViewModel = generationGalleryVm
+        });
 
         // Image Comparer module
         var datasetState = Services!.GetRequiredService<IDatasetState>();
-        var imageCompareVm = new ImageCompareViewModel(datasetState);
+        var thumbnailOrchestrator = Services!.GetService<IThumbnailOrchestrator>();
+        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
         var imageComparerModule = new ModuleItem(
             "Image Comparer",
             "avares://DiffusionNexus.UI/Assets/ImageComparer.png",
-            imageCompareView);
+            imageCompareView)
+        {
+            ViewModel = imageCompareVm
+        };
 
         mainViewModel.RegisterModule(imageComparerModule);
 

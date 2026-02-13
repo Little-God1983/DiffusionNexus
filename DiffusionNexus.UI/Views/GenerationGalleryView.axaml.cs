@@ -14,6 +14,7 @@ namespace DiffusionNexus.UI.Views;
 public partial class GenerationGalleryView : UserControl
 {
     private bool _isInitialized;
+    private ScrollViewer? _galleryScrollViewer;
 
     public GenerationGalleryView()
     {
@@ -23,16 +24,43 @@ public partial class GenerationGalleryView : UserControl
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
-        if (_isInitialized) return;
-        _isInitialized = true;
-
-        if (DataContext is GenerationGalleryViewModel vm)
+        if (!_isInitialized)
         {
-            var window = this.VisualRoot as Window ?? TopLevel.GetTopLevel(this) as Window;
-            if (window is not null)
+            _isInitialized = true;
+
+            if (DataContext is GenerationGalleryViewModel vm)
             {
-                vm.DialogService = new DialogService(window);
+                var window = this.VisualRoot as Window ?? TopLevel.GetTopLevel(this) as Window;
+                if (window is not null)
+                {
+                    vm.DialogService = new DialogService(window);
+                }
             }
+
+            _galleryScrollViewer = this.FindControl<ScrollViewer>("GalleryScrollViewer");
+            if (_galleryScrollViewer is not null)
+            {
+                _galleryScrollViewer.ScrollChanged += OnGalleryScrollChanged;
+            }
+        }
+    }
+
+    private void OnGalleryScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (_galleryScrollViewer is null || DataContext is not GenerationGalleryViewModel vm)
+            return;
+
+        if (!vm.HasMoreItems)
+            return;
+
+        // Load more when within 200px of the bottom
+        var distanceToBottom = _galleryScrollViewer.Extent.Height
+                             - _galleryScrollViewer.Viewport.Height
+                             - _galleryScrollViewer.Offset.Y;
+
+        if (distanceToBottom < 200)
+        {
+            vm.LoadMoreItems();
         }
     }
 

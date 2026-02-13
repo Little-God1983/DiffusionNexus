@@ -15,16 +15,30 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel for the Generation Gallery mosaic gallery.
 /// </summary>
-public partial class GenerationGalleryViewModel : BusyViewModelBase
+public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailAware
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IDatasetState? _datasetState;
     private readonly IVideoThumbnailService? _videoThumbnailService;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
     private bool _isUpdatingGroupingOptions;
+    private Task _lastSortTask = Task.CompletedTask;
+    private bool _isLoadingMore;
+
+    /// <summary>
+    /// Number of items to render in the first batch when the gallery opens.
+    /// Keeps the initial UI layout fast (&lt;100ms) regardless of total item count.
+    /// </summary>
+    private const int InitialPageSize = 50;
+
+    /// <summary>
+    /// Number of additional items to add when the user scrolls near the bottom.
+    /// </summary>
+    private const int PageIncrement = 50;
 
     public GenerationGalleryViewModel()
     {
@@ -40,12 +54,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         IAppSettingsService settingsService,
         IDatasetEventAggregator eventAggregator,
         IDatasetState datasetState,
-        IVideoThumbnailService? videoThumbnailService)
+        IVideoThumbnailService? videoThumbnailService,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
         _videoThumbnailService = videoThumbnailService;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
         
         _eventAggregator.SettingsSaved += OnSettingsSaved;
         UpdateGroupingOptions();
@@ -57,9 +73,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         LoadMediaCommand.Execute(null);
     }
 
-    public ObservableCollection<GenerationGalleryMediaItemViewModel> MediaItems { get; } = [];
+    public BatchObservableCollection<GenerationGalleryMediaItemViewModel> MediaItems { get; } = [];
 
-    public ObservableCollection<GenerationGalleryGroupViewModel> GroupedMediaItems { get; } = [];
+    /// <summary>
+    /// The subset of <see cref="MediaItems"/> currently materialised in the UI.
+    /// Starts with <see cref="InitialPageSize"/> items and grows as the user scrolls.
+    /// Binds to the non-grouped <c>ItemsControl</c>.
+    /// </summary>
+    public BatchObservableCollection<GenerationGalleryMediaItemViewModel> VisibleMediaItems { get; } = [];
+
+    public BatchObservableCollection<GenerationGalleryGroupViewModel> GroupedMediaItems { get; } = [];
 
     public IReadOnlyList<string> SortOptions { get; } = ["Name", "Creation date"];
 
@@ -117,6 +140,25 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
     public bool HasNoMedia => !HasMedia;
 
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
+
+    #region IThumbnailAware
+
+    /// <inheritdoc />
+    public ThumbnailOwnerToken OwnerToken { get; } = new("GenerationGallery");
+
+    /// <inheritdoc />
+    public void OnThumbnailActivated()
+    {
+        _thumbnailOrchestrator?.SetActiveOwner(OwnerToken);
+    }
+
+    /// <inheritdoc />
+    public void OnThumbnailDeactivated()
+    {
+        _thumbnailOrchestrator?.CancelRequests(OwnerToken);
+    }
+
+    #endregion
 
     [RelayCommand]
     private async Task LoadMediaAsync()
@@ -445,7 +487,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
             .ToList();
     }
 
-    private static List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
+    private List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
     {
         var items = new List<GenerationGalleryMediaItemViewModel>();
         foreach (var root in paths)
@@ -460,7 +502,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
                 var isVideo = SupportedMediaTypes.IsVideoFile(file);
                 var createdAt = File.GetCreationTimeUtc(file);
                 var folderGroupName = GetFolderGroupName(root, file);
-                items.Add(new GenerationGalleryMediaItemViewModel(file, isVideo, createdAt, folderGroupName));
+                items.Add(new GenerationGalleryMediaItemViewModel(
+                    file, isVideo, createdAt, folderGroupName,
+                    _thumbnailOrchestrator, OwnerToken));
             }
         }
 
@@ -563,10 +607,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         if (Dispatcher.UIThread.CheckAccess())
         {
             ApplyMediaItems(items, enabledSourceCount);
-            return;
+        }
+        else
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => ApplyMediaItems(items, enabledSourceCount));
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() => ApplyMediaItems(items, enabledSourceCount));
+        // Wait for the sort/filter/group to finish before returning to the caller
+        await _lastSortTask;
     }
 
     private void ApplyMediaItems(List<GenerationGalleryMediaItemViewModel> items, int enabledSourceCount)
@@ -586,47 +634,139 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
         UpdateSelectionState();
     }
 
+    /// <summary>
+    /// Waits for any in-progress sort/filter/group operation to complete.
+    /// Intended for test support.
+    /// </summary>
+    public Task WaitForSortingAsync() => _lastSortTask;
+
     private void ApplySortingAndGrouping()
     {
-        IEnumerable<GenerationGalleryMediaItemViewModel> filtered = _allMediaItems;
+        _lastSortTask = ApplySortingAndGroupingAsync();
+    }
 
-        var cutoff = GetDateFilterCutoff(SelectedDateFilter);
-        if (cutoff.HasValue)
+    /// <summary>
+    /// Performs sorting, filtering and grouping asynchronously.
+    /// The heavy LINQ work runs on a thread-pool thread via <see cref="Task.Run"/>.
+    /// The final <see cref="BatchObservableCollection{T}.ReplaceAll"/> runs back on
+    /// the calling context (UI thread) so no <c>Dispatcher.InvokeAsync</c> is needed,
+    /// avoiding deadlocks during startup or from synchronous property-change handlers.
+    /// </summary>
+    private async Task ApplySortingAndGroupingAsync()
+    {
+        // Capture current filter/sort state for the background thread
+        var allItems = _allMediaItems;
+        var dateFilter = SelectedDateFilter;
+        var searchText = SearchText;
+        var sortOption = SelectedSortOption;
+        var groupingOption = SelectedGroupingOption;
+        var isGroupingEnabled = IsGroupingEnabled;
+
+        // Run sorting, filtering, and group creation on a background thread
+        var (sortedList, groups) = await Task.Run(() =>
         {
-            filtered = filtered.Where(item => item.CreatedAtUtc >= cutoff.Value);
-        }
+            IEnumerable<GenerationGalleryMediaItemViewModel> filtered = allItems;
 
-        if (!string.IsNullOrWhiteSpace(SearchText))
+            var cutoff = GetDateFilterCutoff(dateFilter);
+            if (cutoff.HasValue)
+            {
+                filtered = filtered.Where(item => item.CreatedAtUtc >= cutoff.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(searchText))
+            {
+                filtered = filtered.Where(item =>
+                    item.FileName.Contains(searchText, StringComparison.OrdinalIgnoreCase));
+            }
+
+            IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
+
+            if (string.Equals(sortOption, "Creation date", StringComparison.OrdinalIgnoreCase))
+            {
+                sorted = sorted.OrderByDescending(item => item.CreatedAtUtc)
+                    .ThenBy(item => item.FileName, StringComparer.OrdinalIgnoreCase);
+            }
+            else
+            {
+                sorted = sorted.OrderBy(item => item.FileName, StringComparer.OrdinalIgnoreCase);
+            }
+
+            var resultList = sorted.ToList();
+
+            // Build groups on background thread too
+            List<GenerationGalleryGroupViewModel>? resultGroups = null;
+            if (isGroupingEnabled)
+            {
+                resultGroups = (groupingOption switch
+                {
+                    "Day" => CreateDateGroups(resultList),
+                    "Week" => CreateWeekGroups(resultList),
+                    "Month" => CreateMonthGroups(resultList),
+                    "Year" => CreateYearGroups(resultList),
+                    "Folder" => CreateFolderGroups(resultList),
+                    _ => Enumerable.Empty<GenerationGalleryGroupViewModel>()
+                }).ToList();
+            }
+
+            return (resultList, resultGroups);
+        });
+
+        // Back on the original context (UI thread) — apply results directly
+        ApplySortedResults(sortedList, groups);
+    }
+
+    private void ApplySortedResults(
+        List<GenerationGalleryMediaItemViewModel> sortedList,
+        List<GenerationGalleryGroupViewModel>? groups)
+    {
+        MediaItems.ReplaceAll(sortedList);
+
+        // Only materialise the first page in the UI — the rest loads on scroll
+        var initialPage = sortedList.Count <= InitialPageSize
+            ? sortedList
+            : sortedList.GetRange(0, InitialPageSize);
+        VisibleMediaItems.ReplaceAll(initialPage);
+
+        if (groups is not null)
         {
-            filtered = filtered.Where(item =>
-                item.FileName.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+            GroupedMediaItems.ReplaceAll(groups);
         }
-
-        IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
-
-        if (string.Equals(SelectedSortOption, "Creation date", StringComparison.OrdinalIgnoreCase))
+        else if (GroupedMediaItems.Count > 0)
         {
-            sorted = sorted.OrderByDescending(item => item.CreatedAtUtc)
-                .ThenBy(item => item.FileName, StringComparer.OrdinalIgnoreCase);
+            GroupedMediaItems.ReplaceAll([]);
         }
-        else
-        {
-            sorted = sorted.OrderBy(item => item.FileName, StringComparer.OrdinalIgnoreCase);
-        }
-
-        var sortedList = sorted.ToList();
-
-        MediaItems.Clear();
-        foreach (var item in sortedList)
-        {
-            MediaItems.Add(item);
-        }
-
-        UpdateGroupedMediaItems(sortedList);
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
+        OnPropertyChanged(nameof(HasMoreItems));
         UpdateSelectionState();
+    }
+
+    /// <summary>
+    /// True when <see cref="VisibleMediaItems"/> does not yet contain all <see cref="MediaItems"/>.
+    /// Used by the view to decide whether to request more items on scroll.
+    /// </summary>
+    public bool HasMoreItems => VisibleMediaItems.Count < MediaItems.Count;
+
+    /// <summary>
+    /// Appends the next page of items to <see cref="VisibleMediaItems"/>.
+    /// Called by the view when the user scrolls near the bottom.
+    /// </summary>
+    public void LoadMoreItems()
+    {
+        if (_isLoadingMore || !HasMoreItems) return;
+        _isLoadingMore = true;
+
+        var currentCount = VisibleMediaItems.Count;
+        var nextBatchEnd = Math.Min(currentCount + PageIncrement, MediaItems.Count);
+
+        for (var i = currentCount; i < nextBatchEnd; i++)
+        {
+            VisibleMediaItems.Add(MediaItems[i]);
+        }
+
+        OnPropertyChanged(nameof(HasMoreItems));
+        _isLoadingMore = false;
     }
 
     private void LoadDesignData()
@@ -825,27 +965,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase
 
     private void UpdateGroupedMediaItems(IReadOnlyList<GenerationGalleryMediaItemViewModel> sortedItems)
     {
-        GroupedMediaItems.Clear();
-
         if (!IsGroupingEnabled)
         {
+            if (GroupedMediaItems.Count > 0)
+            {
+                GroupedMediaItems.ReplaceAll([]);
+            }
             return;
         }
 
-        IEnumerable<GenerationGalleryGroupViewModel> groups = SelectedGroupingOption switch
+        var groups = (SelectedGroupingOption switch
         {
             "Day" => CreateDateGroups(sortedItems),
             "Week" => CreateWeekGroups(sortedItems),
             "Month" => CreateMonthGroups(sortedItems),
             "Year" => CreateYearGroups(sortedItems),
             "Folder" => CreateFolderGroups(sortedItems),
-            _ => []
-        };
+            _ => Enumerable.Empty<GenerationGalleryGroupViewModel>()
+        }).ToList();
 
-        foreach (var group in groups)
-        {
-            GroupedMediaItems.Add(group);
-        }
+        GroupedMediaItems.ReplaceAll(groups);
     }
 
     private static IEnumerable<GenerationGalleryGroupViewModel> CreateDateGroups(IEnumerable<GenerationGalleryMediaItemViewModel> items)

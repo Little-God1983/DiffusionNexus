@@ -111,9 +111,11 @@ public class GenerationGalleryViewModelTests : IDisposable
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
         viewModel.SelectedSortOption = "Name";
+        await viewModel.WaitForSortingAsync();
         viewModel.MediaItems.First().FilePath.Should().Be(olderFile);
 
         viewModel.SelectedSortOption = "Creation date";
+        await viewModel.WaitForSortingAsync();
         viewModel.MediaItems.First().FilePath.Should().Be(newerFile);
     }
 

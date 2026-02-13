@@ -30,7 +30,10 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public class DatasetImageViewModel : ObservableObject
 {
+    private static readonly ThumbnailOwnerToken _defaultOwnerToken = new("DatasetImage");
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly ThumbnailOwnerToken? _ownerToken;
     private readonly Stack<string> _undoStack = new();
     private readonly Stack<string> _redoStack = new();
     private bool _isUndoingOrRedoing;
@@ -94,6 +97,7 @@ public class DatasetImageViewModel : ObservableObject
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
     /// Bind to this property for efficient async thumbnail display.
+    /// Routes through <see cref="IThumbnailOrchestrator"/> for priority-based loading.
     /// </summary>
     public Bitmap? Thumbnail
     {
@@ -102,19 +106,17 @@ public class DatasetImageViewModel : ObservableObject
             if (_thumbnail is not null)
                 return _thumbnail;
 
-            // Try to get from cache synchronously
             var path = ThumbnailPath;
             if (string.IsNullOrEmpty(path))
                 return null;
 
-            var thumbnailService = PathToBitmapConverter.ThumbnailService;
-            if (thumbnailService?.TryGetCached(path, out var cached) == true)
+            var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+            if (orchestrator?.TryGetCached(path, out var cached) == true && cached is not null)
             {
                 _thumbnail = cached;
                 return _thumbnail;
             }
 
-            // Start async load if not already loading
             if (!_isThumbnailLoading)
             {
                 _isThumbnailLoading = true;
@@ -126,34 +128,35 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Loads the thumbnail asynchronously and notifies when ready.
+    /// Loads the thumbnail asynchronously via the orchestrator.
     /// </summary>
     private async Task LoadThumbnailAsync(string path)
     {
-        var thumbnailService = PathToBitmapConverter.ThumbnailService;
-        if (thumbnailService is null)
+        var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+        if (orchestrator is null)
         {
             _isThumbnailLoading = false;
             return;
         }
 
+        // Resolve owner: prefer injected token, then a default for unowned items
+        var owner = _ownerToken ?? _defaultOwnerToken;
+
         try
         {
-            var bitmap = await thumbnailService.LoadThumbnailAsync(path);
-            
+            var bitmap = await orchestrator.RequestThumbnailAsync(
+                path, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
+
             if (bitmap is not null)
             {
-                // Update on UI thread - check if dispatcher is available
                 if (Dispatcher.UIThread.CheckAccess())
                 {
-                    // Already on UI thread
                     _thumbnail = bitmap;
                     _isThumbnailLoading = false;
                     OnPropertyChanged(nameof(Thumbnail));
                 }
                 else
                 {
-                    // Post to UI thread, don't wait
                     Dispatcher.UIThread.Post(() =>
                     {
                         try
@@ -164,7 +167,6 @@ public class DatasetImageViewModel : ObservableObject
                         }
                         catch (InvalidOperationException)
                         {
-                            // Control might be disposed, ignore
                             _isThumbnailLoading = false;
                         }
                     });
@@ -187,14 +189,15 @@ public class DatasetImageViewModel : ObservableObject
     /// </summary>
     public void RefreshThumbnail()
     {
-        // Invalidate global cache 
         if (!string.IsNullOrEmpty(ThumbnailPath))
         {
-            PathToBitmapConverter.ThumbnailService?.Invalidate(ThumbnailPath);
+            var orchestrator = _thumbnailOrchestrator ?? PathToBitmapConverter.ThumbnailOrchestrator;
+            orchestrator?.Invalidate(ThumbnailPath);
         }
         
         // Clear local cache
         _thumbnail = null;
+        _isThumbnailLoading = false;
         OnPropertyChanged(nameof(Thumbnail));
     }
 
@@ -312,12 +315,19 @@ public class DatasetImageViewModel : ObservableObject
     #endregion
 
     /// <summary>
-    /// Creates a new DatasetImageViewModel with optional event aggregator integration.
+    /// Creates a new DatasetImageViewModel with optional event aggregator and orchestrator integration.
     /// </summary>
     /// <param name="eventAggregator">Optional event aggregator for publishing events.</param>
-    public DatasetImageViewModel(IDatasetEventAggregator? eventAggregator = null)
+    /// <param name="thumbnailOrchestrator">Optional orchestrator for priority-based thumbnail loading.</param>
+    /// <param name="ownerToken">Owner token identifying the parent view (required when orchestrator is provided).</param>
+    public DatasetImageViewModel(
+        IDatasetEventAggregator? eventAggregator = null,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        ThumbnailOwnerToken? ownerToken = null)
     {
         _eventAggregator = eventAggregator;
+        _thumbnailOrchestrator = thumbnailOrchestrator;
+        _ownerToken = ownerToken;
         
         SaveCaptionCommand = new RelayCommand(SaveCaption);
         RevertCaptionCommand = new RelayCommand(RevertCaption);
@@ -330,13 +340,19 @@ public class DatasetImageViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Creates a DatasetImageViewModel from a media file path with event aggregator support.
+    /// Creates a DatasetImageViewModel from a media file path.
     /// </summary>
     /// <param name="mediaPath">Path to the media file.</param>
     /// <param name="eventAggregator">Optional event aggregator for publishing events.</param>
-    public static DatasetImageViewModel FromFile(string mediaPath, IDatasetEventAggregator? eventAggregator = null)
+    /// <param name="thumbnailOrchestrator">Optional orchestrator for priority-based thumbnail loading.</param>
+    /// <param name="ownerToken">Owner token identifying the parent view.</param>
+    public static DatasetImageViewModel FromFile(
+        string mediaPath,
+        IDatasetEventAggregator? eventAggregator = null,
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        ThumbnailOwnerToken? ownerToken = null)
     {
-        var vm = new DatasetImageViewModel(eventAggregator)
+        var vm = new DatasetImageViewModel(eventAggregator, thumbnailOrchestrator, ownerToken)
         {
             ImagePath = mediaPath,
             _isVideo = IsVideoFile(mediaPath)
