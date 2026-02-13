@@ -142,9 +142,14 @@
             <TextBox Width="240" Watermark="Search" Text="{Binding SearchText}" />
           </StackPanel>
 
-          <Border Background="#101010" CornerRadius="6" Padding="6">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-              <ListBox x:Name="FilmstripListBox" ItemsSource="{Binding FilmstripItems}" Background="Transparent" BorderThickness="0" SelectionMode="Single">
+          <Border x:Name="FilmstripBorder" Background="#101010" CornerRadius="6" Padding="6">
+              <ListBox x:Name="FilmstripListBox"
+                       ItemsSource="{Binding FilmstripItems}"
+                       Background="Transparent"
+                       BorderThickness="0"
+                       SelectionMode="Single"
+                       ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                       ScrollViewer.VerticalScrollBarVisibility="Disabled">
 
                 <ListBox.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -175,19 +180,19 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
-            </ScrollViewer>
           </Border>
         </StackPanel>
 
-        <!-- Mouse Navigation Hint -->
-        <Border Grid.Row="1" Grid.RowSpan="2"
+        <!-- Mouse Navigation Hint (auto-hides after 3 seconds) -->
+        <Border x:Name="MouseHintOverlay"
+                Grid.Row="1" Grid.RowSpan="2"
                 Background="#99000000"
                 CornerRadius="8"
                 Padding="12,8"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Margin="0,16,16,0"
-                Opacity="0.8"
+                Opacity="0.9"
                 IsHitTestVisible="False">
           <StackPanel Orientation="Vertical" Spacing="4">
             <Image Source="avares://DiffusionNexus.UI/Assets/mouse.png"
