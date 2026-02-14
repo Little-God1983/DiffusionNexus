@@ -72,11 +72,22 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Validation error for the Output Folder field.
+    /// </summary>
+    private string? _outputFolderError;
+    public string? OutputFolderError
+    {
+        get => _outputFolderError;
+        private set => SetProperty(ref _outputFolderError, value);
+    }
+
+    /// <summary>
     /// Whether all required fields are filled and the dialog can be confirmed.
     /// </summary>
     public bool CanConfirm =>
         !string.IsNullOrWhiteSpace(Name)
-        && !string.IsNullOrWhiteSpace(SelectedExecutable);
+        && !string.IsNullOrWhiteSpace(SelectedExecutable)
+        && !string.IsNullOrWhiteSpace(OutputFolderPath);
 
     public ObservableCollection<InstallerType> AvailableTypes { get; } = new(Enum.GetValues<InstallerType>());
 
@@ -136,10 +147,19 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
     partial void OnSelectedExecutableChanged(string value) => Validate();
 
+    partial void OnSelectedTypeChanged(InstallerType value)
+    {
+        DetectOutputFolder();
+        Validate();
+    }
+
+    partial void OnOutputFolderPathChanged(string value) => Validate();
+
     private void Validate()
     {
         NameError = string.IsNullOrWhiteSpace(Name) ? "Name is required." : null;
         ExecutableError = string.IsNullOrWhiteSpace(SelectedExecutable) ? "An executable or startup script is required." : null;
+        OutputFolderError = string.IsNullOrWhiteSpace(OutputFolderPath) ? "Image output folder is required." : null;
         OnPropertyChanged(nameof(CanConfirm));
     }
 
@@ -486,16 +506,12 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         }
 
         // 3. Use the conventional default subfolder per type
-        var defaultSubfolder = SelectedType switch
+        var defaultSubfolder = GetDefaultOutputSubfolder(SelectedType);
+        if (defaultSubfolder is null)
         {
-            InstallerType.ComfyUI => "output",
-            InstallerType.Automatic1111 => "outputs",
-            InstallerType.Forge => "outputs",
-            InstallerType.Fooocus => "outputs",
-            InstallerType.InvokeAI => Path.Combine("invokeai", "outputs"),
-            InstallerType.SwarmUI => "Output",
-            _ => "outputs"
-        };
+            OutputFolderPath = string.Empty;
+            return;
+        }
 
         // ComfyUI standalone: output is inside ComfyUI/ subfolder
         if (SelectedType == InstallerType.ComfyUI
@@ -508,14 +524,30 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         // For InvokeAI official installer, outputs/ may be at root level
         if (SelectedType == InstallerType.InvokeAI
             && !Directory.Exists(Path.Combine(_initialPath, "invokeai"))
-            && Directory.Exists(Path.Combine(_initialPath, "outputs")))
+            && Directory.Exists(Path.Combine(_initialPath, "outputs", "images")))
         {
-            defaultSubfolder = "outputs";
+            defaultSubfolder = Path.Combine("outputs", "images");
         }
 
         var defaultPath = Path.Combine(_initialPath, defaultSubfolder);
         OutputFolderPath = defaultPath;
     }
+
+    /// <summary>
+    /// Returns the conventional output subfolder for each installer type,
+    /// or null if no default can be determined (e.g. Unknown).
+    /// </summary>
+    private static string? GetDefaultOutputSubfolder(InstallerType type) => type switch
+    {
+        InstallerType.ComfyUI => "output",
+        InstallerType.Automatic1111 => "outputs",
+        InstallerType.Forge => "outputs",
+        InstallerType.Fooocus => "outputs",
+        InstallerType.InvokeAI => Path.Combine("outputs", "images"),
+        InstallerType.SwarmUI => "Output",
+        InstallerType.FluxGym => "outputs",
+        _ => null // Unknown — leave blank
+    };
 
     /// <summary>
     /// Parses the selected startup bat file for a --output-directory argument.

@@ -79,15 +79,23 @@
                      IsVisible="{Binding ExecutableError, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
         </StackPanel>
 
-        <!-- Image Output Folder -->
+        <!-- Image Output Folder (required) -->
         <StackPanel Spacing="5">
-          <TextBlock Text="Image Output Folder"/>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Image Output Folder (Generation Gallery)"/>
+            <TextBlock Text=" *" Foreground="#F44336"/>
+          </StackPanel>
           <Grid ColumnDefinitions="*, Auto">
-            <TextBox Grid.Column="0" Text="{Binding OutputFolderPath}" Margin="0,0,10,0"/>
+            <TextBox Grid.Column="0" Text="{Binding OutputFolderPath}" Margin="0,0,10,0"
+                     Classes.error="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
             <Button Grid.Column="1" Content="..." Command="{Binding BrowseOutputFolderCommand}"/>
           </Grid>
-          <TextBlock Text="The folder where generated images are saved. Auto-detected from startup script."
-                     FontSize="12" Foreground="#888888"/>
+          <TextBlock Text="{Binding OutputFolderError}"
+                     Foreground="#F44336" FontSize="12" Margin="0,2,0,0"
+                     IsVisible="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <TextBlock Text="This path will be added to the Generation Gallery. Auto-detected from type or startup script."
+                     FontSize="12" Foreground="#888888"
+                     IsVisible="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
         </StackPanel>
 
       </StackPanel>
