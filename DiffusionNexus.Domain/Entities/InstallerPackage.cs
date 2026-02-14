@@ -52,6 +52,11 @@ namespace DiffusionNexus.Domain.Entities
         /// Indicates if an update is available (cached state).
         /// </summary>
         public bool IsUpdateAvailable { get; set; } = false;
-        
+
+        /// <summary>
+        /// The output folder (Image Gallery) linked to this installation.
+        /// Every installer has one output gallery. The FK lives on ImageGallery.
+        /// </summary>
+        public ImageGallery? ImageGallery { get; set; }
     }
 }
