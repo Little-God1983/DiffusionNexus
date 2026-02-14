@@ -616,14 +616,17 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             var file = await _dialogService.ShowOpenFileDialogAsync("Select Executable", _initialPath, "*.bat");
             if (file != null)
             {
-                 if (file.StartsWith(_initialPath, StringComparison.OrdinalIgnoreCase))
+                 var displayValue = file.StartsWith(_initialPath, StringComparison.OrdinalIgnoreCase)
+                     ? Path.GetFileName(file)
+                     : file;
+
+                 // Ensure the value exists in FoundExecutables so the ComboBox can display it
+                 if (!FoundExecutables.Contains(displayValue))
                  {
-                     SelectedExecutable = Path.GetFileName(file);
+                     FoundExecutables.Add(displayValue);
                  }
-                 else
-                 {
-                     SelectedExecutable = file;
-                 }
+
+                 SelectedExecutable = displayValue;
             }
         }
         else if (BrowseExecutableRequest != null)
