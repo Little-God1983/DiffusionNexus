@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -184,6 +185,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.StopRequested += OnStopRequestedAsync;
         card.RestartRequested += OnRestartRequestedAsync;
         card.RemoveRequested += OnRemoveRequestedAsync;
+        card.DeleteFromDiskRequested += OnDeleteFromDiskRequestedAsync;
+        card.OpenFolderRequested += OnOpenFolderRequested;
         card.SettingsRequested += OnSettingsRequestedAsync;
         card.ConsoleRequested += OnConsoleRequestedAsync;
 
@@ -321,8 +324,121 @@ public partial class InstallerManagerViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    private Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)
+    private async Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)
     {
-        return _dialogService.ShowMessageAsync("Coming Soon", "Installation settings editor is under development.");
+        var result = await _dialogService.ShowEditInstallationDialogAsync(
+            card.Name,
+            card.InstallationPath,
+            card.Type,
+            card.ExecutablePath ?? string.Empty,
+            string.Empty); // TODO: load OutputFolderPath from linked ImageGallery
+
+        if (result.IsCancelled) return;
+
+        try
+        {
+            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            if (entity is null) return;
+
+            entity.Name = result.Name;
+            entity.InstallationPath = result.InstallationPath;
+            entity.Type = result.Type;
+            entity.ExecutablePath = result.ExecutablePath;
+
+            await _unitOfWork.SaveChangesAsync();
+
+            // Update the card VM to reflect changes
+            card.Name = result.Name;
+            card.InstallationPath = result.InstallationPath;
+            card.Type = result.Type;
+            card.ExecutablePath = result.ExecutablePath;
+
+            // Update the output folder link if changed
+            if (!string.IsNullOrWhiteSpace(result.OutputFolderPath))
+            {
+                await LinkOutputFolderAsync(entity, result.OutputFolderPath);
+                await _unitOfWork.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to update installation {Name}", card.Name);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to update installation: {ex.Message}");
+        }
+    }
+
+    private async Task OnDeleteFromDiskRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        if (_processManager.IsRunning(card.Id))
+        {
+            await _dialogService.ShowMessageAsync("Cannot Delete", "Please stop the running process before deleting.");
+            return;
+        }
+
+        var confirmed = await _dialogService.ShowConfirmAsync(
+            "Delete from Disk",
+            $"Are you sure you want to permanently delete \"{card.Name}\" and ALL its files?\n\n" +
+            $"Path: {card.InstallationPath}\n\n" +
+            "⚠ This action CANNOT be undone.");
+
+        if (!confirmed) return;
+
+        // Second confirmation for safety
+        var doubleConfirmed = await _dialogService.ShowConfirmAsync(
+            "Final Confirmation",
+            $"This will permanently delete the entire folder:\n{card.InstallationPath}\n\nType-related models and outputs may also be lost. Proceed?");
+
+        if (!doubleConfirmed) return;
+
+        try
+        {
+            // Remove from database first
+            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            if (entity is not null)
+            {
+                _installerPackageRepository.Remove(entity);
+                await _unitOfWork.SaveChangesAsync();
+            }
+
+            InstallerCards.Remove(card);
+
+            // Delete from disk
+            // TODO: Linux Implementation - verify Directory.Delete works cross-platform
+            if (Directory.Exists(card.InstallationPath))
+            {
+                Directory.Delete(card.InstallationPath, recursive: true);
+                Serilog.Log.Information("Deleted installation folder: {Path}", card.InstallationPath);
+            }
+
+            await _dialogService.ShowMessageAsync("Deleted", $"{card.Name} has been deleted from disk.");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to delete installation {Name} from disk", card.Name);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to delete: {ex.Message}\n\nSome files may have been partially removed.");
+        }
+    }
+
+    private void OnOpenFolderRequested(InstallerPackageCardViewModel card)
+    {
+        if (!Directory.Exists(card.InstallationPath))
+        {
+            Serilog.Log.Warning("Installation folder not found: {Path}", card.InstallationPath);
+            return;
+        }
+
+        try
+        {
+            // TODO: Linux Implementation - use xdg-open on Linux
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = card.InstallationPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open folder {Path}", card.InstallationPath);
+        }
     }
 }

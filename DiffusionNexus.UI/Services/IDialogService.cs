@@ -266,6 +266,16 @@ public interface IDialogService
     /// <param name="initialPath">The folder path selected by the user.</param>
     /// <returns>The result containing installation details, or cancelled.</returns>
     Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath);
+
+    /// <summary>
+    /// Shows the installation dialog in edit mode with pre-filled values.
+    /// </summary>
+    Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(
+        string name,
+        string installationPath,
+        DiffusionNexus.Domain.Enums.InstallerType type,
+        string executablePath,
+        string outputFolderPath);
 }
 
 /// <summary>

@@ -435,4 +435,30 @@ public class DialogService : IDialogService
             vm.OutputFolderPath
         );
     }
+
+    public async Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(
+        string name,
+        string installationPath,
+        Domain.Enums.InstallerType type,
+        string executablePath,
+        string outputFolderPath)
+    {
+        var dialog = new AddExistingInstallationDialog();
+        var vm = new AddExistingInstallationDialogViewModel(
+            name, installationPath, type, executablePath, outputFolderPath, this);
+
+        dialog.DataContext = vm;
+
+        await dialog.ShowDialog(_window);
+
+        if (dialog.IsCancelled) return AddExistingInstallationResult.Cancelled();
+
+        return new AddExistingInstallationResult(
+            vm.Name,
+            vm.InstallationPath,
+            vm.SelectedType,
+            vm.SelectedExecutable,
+            vm.OutputFolderPath
+        );
+    }
 }

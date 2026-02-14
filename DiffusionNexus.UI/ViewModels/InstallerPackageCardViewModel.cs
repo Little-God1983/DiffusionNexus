@@ -93,6 +93,16 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public event Func<InstallerPackageCardViewModel, Task>? RemoveRequested;
 
     /// <summary>
+    /// Raised when the user requests to delete this installation from disk.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? DeleteFromDiskRequested;
+
+    /// <summary>
+    /// Raised when the user requests to open the installation folder.
+    /// </summary>
+    public event Action<InstallerPackageCardViewModel>? OpenFolderRequested;
+
+    /// <summary>
     /// Raised when the user requests to open settings for this installation.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? SettingsRequested;
@@ -185,5 +195,18 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     {
         if (RemoveRequested is not null)
             await RemoveRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task DeleteFromDiskAsync()
+    {
+        if (DeleteFromDiskRequested is not null)
+            await DeleteFromDiskRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private void OpenFolder()
+    {
+        OpenFolderRequested?.Invoke(this);
     }
 }

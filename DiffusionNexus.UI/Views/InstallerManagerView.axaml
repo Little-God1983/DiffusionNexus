@@ -210,8 +210,14 @@
                                                     <MenuFlyout Placement="BottomEdgeAlignedRight">
                                                         <MenuItem Header="Settings"
                                                                   Command="{Binding OpenSettingsCommand}"/>
+                                                        <MenuItem Header="Open Folder"
+                                                                  Command="{Binding OpenFolderCommand}"/>
+                                                        <Separator/>
                                                         <MenuItem Header="Remove"
                                                                   Command="{Binding RemoveCommand}"/>
+                                                        <MenuItem Header="Delete from Disk"
+                                                                  Command="{Binding DeleteFromDiskCommand}"
+                                                                  Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>
                                             </Button>

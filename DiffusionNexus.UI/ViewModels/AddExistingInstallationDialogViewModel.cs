@@ -27,6 +27,12 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     private bool _isCustomExecutable;
 
     /// <summary>
+    /// True when editing an existing installation (changes dialog title/button text).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEditMode;
+
+    /// <summary>
     /// The image output folder path for this installation.
     /// Linked to an ImageGallery record via FK.
     /// </summary>
@@ -46,11 +52,42 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         _initialPath = initialPath;
         _dialogService = dialogService;
         InstallationPath = initialPath;
-        
+
         ScanForExecutables();
         InferType();
         InferName();
         DetectOutputFolder();
+    }
+
+    /// <summary>
+    /// Edit-mode constructor: pre-fills all fields from existing values.
+    /// Skips auto-detection so user values are preserved.
+    /// </summary>
+    public AddExistingInstallationDialogViewModel(
+        string name,
+        string installationPath,
+        InstallerType type,
+        string executablePath,
+        string outputFolderPath,
+        IDialogService? dialogService = null)
+    {
+        _initialPath = installationPath;
+        _dialogService = dialogService;
+        InstallationPath = installationPath;
+        Name = name;
+        SelectedType = type;
+        IsEditMode = true;
+
+        ScanForExecutables();
+
+        // Use the provided executable, falling back to the scanned list
+        SelectedExecutable = !string.IsNullOrWhiteSpace(executablePath)
+            ? executablePath
+            : FoundExecutables.FirstOrDefault() ?? string.Empty;
+
+        OutputFolderPath = !string.IsNullOrWhiteSpace(outputFolderPath)
+            ? outputFolderPath
+            : string.Empty;
     }
 
     private void ScanForExecutables()
