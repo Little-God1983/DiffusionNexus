@@ -60,6 +60,9 @@ public class DiffusionNexusCoreDbContext : DbContext
     public DbSet<DisclaimerAcceptance> DisclaimerAcceptances => Set<DisclaimerAcceptance>();
     public DbSet<ImageGallery> ImageGalleries => Set<ImageGallery>();
 
+    /// <summary>Installed packages (ComfyUI, A1111, etc.).</summary>
+    public DbSet<InstallerPackage> InstallerPackages => Set<InstallerPackage>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

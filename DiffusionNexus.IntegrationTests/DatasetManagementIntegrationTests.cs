@@ -184,5 +184,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(string imagePath, string currentCaption, string newCaption) =>
             Task.FromResult(CaptionCompareResult.Cancelled());
+
+        public Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath) =>
+            Task.FromResult(AddExistingInstallationResult.Cancelled());
     }
 }

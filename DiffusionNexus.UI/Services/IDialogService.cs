@@ -259,6 +259,13 @@ public interface IDialogService
     /// <param name="newCaption">The newly generated caption text.</param>
     /// <returns>Result indicating which caption the user chose, or cancelled.</returns>
     Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(string imagePath, string currentCaption, string newCaption);
+
+    /// <summary>
+    /// Shows a dialog to add an existing installation.
+    /// </summary>
+    /// <param name="initialPath">The folder path selected by the user.</param>
+    /// <returns>The result containing installation details, or cancelled.</returns>
+    Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath);
 }
 
 /// <summary>

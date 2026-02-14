@@ -415,4 +415,35 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CaptionCompareResult.Cancelled();
     }
+
+    public async Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath)
+    {
+        var dialog = new AddExistingInstallationDialog();
+        // Since the VM needs dependencies or complex logic, we might need to set it up here or let the dialog create it.
+        // Assuming simple VM for now. We can inject IDialogService into VM if needed by passing 'this' if circular dependency is handled, or just pass a callback.
+        // For browsing executable, we can handle it in View code-behind to call StorageProvider directly or inject this DialogService into VM.
+        // Let's pass 'this' (IDialogService) to the VM manually.
+        
+        var vm = new AddExistingInstallationDialogViewModel(initialPath);
+        vm.BrowseExecutableRequest += async () => 
+        {
+            var file = await ShowOpenFileDialogAsync("Select Executable", initialPath, "*.bat");
+            if (file != null) vm.SelectedExecutable = System.IO.Path.GetFileName(file); // Or full path? The VM stores just name if scanned, but let's see.
+            // The prompt says "finding the executable path... if multiple bat... select correct one. Show a selection list. If no bat... File selector".
+            // So VM should probably handle full path if custom.
+        };
+
+        dialog.DataContext = vm;
+        
+        await dialog.ShowDialog(_window);
+        
+        if (dialog.IsCancelled) return AddExistingInstallationResult.Cancelled();
+        
+        return new AddExistingInstallationResult(
+            vm.Name,
+            vm.InstallationPath,
+            vm.SelectedType,
+            vm.SelectedExecutable 
+        );
+    }
 }

@@ -86,18 +86,13 @@ public partial class App : Application
                 // Create main window with modules
                 Serilog.Log.Information("Creating main window view model...");
                 var mainViewModel = new DiffusionNexusMainWindowViewModel();
-                
+
                 // Initialize status bar with activity log service
                 Serilog.Log.Information("Initializing status bar...");
                 mainViewModel.InitializeStatusBar();
-                
-                Serilog.Log.Information("Registering modules...");
-                RegisterModules(mainViewModel);
 
-                // Check disclaimer status after services are ready
-                Serilog.Log.Information("Checking disclaimer status...");
-                _ = mainViewModel.CheckDisclaimerStatusAsync();
-
+                // Create and assign the main window before registering modules,
+                // because module resolution requires IDialogService which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
                 var mainWindow = new DiffusionNexusMainWindow
                 {
@@ -105,7 +100,14 @@ public partial class App : Application
                 };
                 desktop.MainWindow = mainWindow;
                 Serilog.Log.Information("Main window assigned to desktop.MainWindow");
-                
+
+                Serilog.Log.Information("Registering modules...");
+                RegisterModules(mainViewModel);
+
+                // Check disclaimer status after services are ready
+                Serilog.Log.Information("Checking disclaimer status...");
+                _ = mainViewModel.CheckDisclaimerStatusAsync();
+
                 // Force show the window explicitly
                 mainWindow.Show();
                 Serilog.Log.Information("Main window Show() called");
@@ -479,6 +481,15 @@ public partial class App : Application
 
         // Settings export/import
         services.AddScoped<ISettingsExportService, SettingsExportService>();
+
+        // Dialog service - resolves the main window lazily from the application lifetime
+        services.AddScoped<IDialogService>(sp =>
+        {
+            var lifetime = Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var mainWindow = lifetime?.MainWindow
+                ?? throw new InvalidOperationException("MainWindow is not available yet.");
+            return new DialogService(mainWindow);
+        });
 
         // ViewModels (scoped to app lifetime)
         // SettingsViewModel - use factory to inject all required services including IActivityLogService
