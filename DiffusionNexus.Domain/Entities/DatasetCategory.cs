@@ -5,13 +5,8 @@ namespace DiffusionNexus.Domain.Entities;
 /// Default categories: Character, Style, Concept.
 /// Users can add custom categories via Settings.
 /// </summary>
-public class DatasetCategory
+public class DatasetCategory : BaseEntity
 {
-    /// <summary>
-    /// Unique identifier for the category.
-    /// </summary>
-    public int Id { get; set; }
-
     /// <summary>
     /// Category name (e.g., "Character", "Style", "Concept").
     /// </summary>

@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
-using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.Views.Tabs;

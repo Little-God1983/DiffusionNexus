@@ -1,11 +1,8 @@
 ﻿
 namespace DiffusionNexus.Domain.Entities
 {
-    public class ImageGallery
+    public class ImageGallery : BaseEntity
     {
-        /// <summary>Local database ID.</summary>
-        public int Id { get; set; }
-
         /// <summary>Parent settings ID.</summary>
         public int AppSettingsId { get; set; }
 

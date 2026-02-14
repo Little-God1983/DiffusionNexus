@@ -4,13 +4,8 @@ namespace DiffusionNexus.Domain.Entities;
 /// Records a user's acceptance of the software disclaimer.
 /// Each acceptance is stored with the Windows username and timestamp.
 /// </summary>
-public class DisclaimerAcceptance
+public class DisclaimerAcceptance : BaseEntity
 {
-    /// <summary>
-    /// Primary key.
-    /// </summary>
-    public int Id { get; set; }
-
     /// <summary>
     /// Windows username of the user who accepted the disclaimer.
     /// </summary>

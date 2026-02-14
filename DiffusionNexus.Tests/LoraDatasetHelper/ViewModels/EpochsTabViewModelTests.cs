@@ -1,4 +1,4 @@
-using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
 using FluentAssertions;
