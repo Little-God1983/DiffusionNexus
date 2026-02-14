@@ -539,7 +539,7 @@ public partial class App : Application
         var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
         var installerManagerModule = new ModuleItem(
             "Installer Manager",
-            "avares://DiffusionNexus.UI/Assets/GalleryView.png", // TODO: add dedicated Installer Manager icon
+            "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
             installerManagerView)
         {
             ViewModel = installerManagerVm

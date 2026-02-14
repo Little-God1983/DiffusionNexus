@@ -21,6 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AvaloniaResource Remove="Assets\Workflows\**" />
+    <AvaloniaXaml Remove="Assets\Workflows\**" />
+    <Compile Remove="Assets\Workflows\**" />
+    <EmbeddedResource Remove="Assets\Workflows\**" />
+    <None Remove="Assets\Workflows\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.11" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.11" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.11" />
@@ -53,7 +61,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Assets\Workflows\" />
     <Folder Include="ImageEditor\Events\" />
   </ItemGroup>
 
