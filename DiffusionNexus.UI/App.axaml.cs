@@ -115,6 +115,8 @@ public partial class App : Application
                 // Cleanup on shutdown
                 desktop.ShutdownRequested += (_, _) =>
                 {
+                    // Kill all managed child processes before scope disposal
+                    Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
                 };
             }
@@ -453,6 +455,9 @@ public partial class App : Application
 
         // Image upscaling service (singleton - maintains ONNX session)
         services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
+
+        // Package process manager (singleton - owns child process lifecycles)
+        services.AddSingleton<PackageProcessManager>();
 
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>

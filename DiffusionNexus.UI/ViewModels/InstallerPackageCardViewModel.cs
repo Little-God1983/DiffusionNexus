@@ -1,7 +1,11 @@
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -36,10 +40,53 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isUpdateAvailable;
 
+    // ── Process state ──
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
+    [NotifyPropertyChangedFor(nameof(ShowRunningControls))]
+    private bool _isRunning;
+
+    [ObservableProperty]
+    private bool _isConsoleOpen;
+
+    [ObservableProperty]
+    private bool _autoScrollToEnd = true;
+
+    [ObservableProperty]
+    private string? _detectedWebUrl;
+
+    /// <summary>
+    /// True when not running — show the Launch button.
+    /// </summary>
+    public bool ShowLaunchButton => !IsRunning;
+
+    /// <summary>
+    /// True when running — show Stop/Restart/Console buttons.
+    /// </summary>
+    public bool ShowRunningControls => IsRunning;
+
+    /// <summary>
+    /// Console output lines captured from the process.
+    /// </summary>
+    public ObservableCollection<ConsoleOutputLine> ConsoleLines { get; } = [];
+
+    // ── Events ──
+
     /// <summary>
     /// Raised when the user requests to launch this installation.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? LaunchRequested;
+
+    /// <summary>
+    /// Raised when the user requests to stop this installation.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? StopRequested;
+
+    /// <summary>
+    /// Raised when the user requests to restart this installation.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? RestartRequested;
 
     /// <summary>
     /// Raised when the user requests to remove this installation.
@@ -75,11 +122,55 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         };
     }
 
+    /// <summary>
+    /// Appends a console line on the UI thread.
+    /// </summary>
+    public void AppendConsoleLine(ConsoleOutputLine line)
+    {
+        Dispatcher.UIThread.Post(() => ConsoleLines.Add(line));
+    }
+
     [RelayCommand]
     private async Task LaunchAsync()
     {
         if (LaunchRequested is not null)
             await LaunchRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task StopAsync()
+    {
+        if (StopRequested is not null)
+            await StopRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task RestartAsync()
+    {
+        if (RestartRequested is not null)
+            await RestartRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private void ToggleConsole()
+    {
+        IsConsoleOpen = !IsConsoleOpen;
+    }
+
+    [RelayCommand]
+    private void OpenWebUi()
+    {
+        if (string.IsNullOrWhiteSpace(DetectedWebUrl)) return;
+
+        try
+        {
+            // TODO: Linux Implementation - use xdg-open on Linux
+            Process.Start(new ProcessStartInfo(DetectedWebUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open Web UI at {Url}", DetectedWebUrl);
+        }
     }
 
     [RelayCommand]

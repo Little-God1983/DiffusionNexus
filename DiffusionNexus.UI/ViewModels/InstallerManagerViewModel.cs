@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
@@ -19,6 +19,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IDialogService _dialogService;
     private readonly IInstallerPackageRepository _installerPackageRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly PackageProcessManager _processManager;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -39,13 +40,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
     public InstallerManagerViewModel(
         IDialogService dialogService,
         IInstallerPackageRepository installerPackageRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        PackageProcessManager processManager)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
         _unitOfWork = unitOfWork;
+        _processManager = processManager;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
+
+        // Wire process manager events
+        _processManager.OutputReceived += OnProcessOutput;
+        _processManager.RunningStateChanged += OnRunningStateChanged;
+        _processManager.WebUrlDetected += OnWebUrlDetected;
     }
 
     /// <summary>
@@ -80,16 +88,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     [RelayCommand]
     private async Task AddExistingInstallationAsync()
     {
-        // 1. Pick Folder
         var path = await _dialogService.ShowOpenFolderDialogAsync("Select Installation Folder");
         if (string.IsNullOrEmpty(path)) return;
 
-        // 2. Show Dialog for details
         var result = await _dialogService.ShowAddExistingInstallationDialogAsync(path);
-
         if (result.IsCancelled) return;
 
-        // 3. Save to Database
         var package = new InstallerPackage
         {
             Name = result.Name,
@@ -105,7 +109,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
             await _installerPackageRepository.AddAsync(package);
             await _unitOfWork.SaveChangesAsync();
 
-            // Add card to the UI
             InstallerCards.Add(CreateCard(package));
 
             await _dialogService.ShowMessageAsync("Success", $"Successfully added {package.Name}");
@@ -127,10 +130,62 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         var card = new InstallerPackageCardViewModel(package);
         card.LaunchRequested += OnLaunchRequestedAsync;
+        card.StopRequested += OnStopRequestedAsync;
+        card.RestartRequested += OnRestartRequestedAsync;
         card.RemoveRequested += OnRemoveRequestedAsync;
         card.SettingsRequested += OnSettingsRequestedAsync;
+
+        // Restore running state if the process is still alive
+        if (_processManager.IsRunning(card.Id))
+        {
+            card.IsRunning = true;
+            card.DetectedWebUrl = _processManager.GetDetectedUrl(card.Id);
+            foreach (var line in _processManager.GetOutput(card.Id))
+                card.ConsoleLines.Add(line);
+        }
+
         return card;
     }
+
+    // ── Process event handlers ──
+
+    private void OnProcessOutput(int packageId, ConsoleOutputLine line)
+    {
+        var card = FindCard(packageId);
+        card?.AppendConsoleLine(line);
+    }
+
+    private void OnRunningStateChanged(int packageId, bool running)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var card = FindCard(packageId);
+            if (card is not null)
+                card.IsRunning = running;
+        });
+    }
+
+    private void OnWebUrlDetected(int packageId, string url)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var card = FindCard(packageId);
+            if (card is not null)
+                card.DetectedWebUrl = url;
+        });
+    }
+
+    private InstallerPackageCardViewModel? FindCard(int packageId)
+    {
+        foreach (var card in InstallerCards)
+        {
+            if (card.Id == packageId)
+                return card;
+        }
+        return null;
+    }
+
+    // ── Card action handlers ──
 
     private async Task OnLaunchRequestedAsync(InstallerPackageCardViewModel card)
     {
@@ -140,34 +195,37 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
-        try
+        var fullPath = Path.Combine(card.InstallationPath, card.ExecutablePath);
+        if (!File.Exists(fullPath))
         {
-            // TODO: Linux Implementation - use platform-appropriate process start
-            var fullPath = Path.Combine(card.InstallationPath, card.ExecutablePath);
-            if (!File.Exists(fullPath))
-            {
-                await _dialogService.ShowMessageAsync("Not Found", $"Executable not found: {fullPath}");
-                return;
-            }
+            await _dialogService.ShowMessageAsync("Not Found", $"Executable not found: {fullPath}");
+            return;
+        }
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = fullPath,
-                WorkingDirectory = card.InstallationPath,
-                Arguments = card.Arguments,
-                UseShellExecute = true
-            };
-            Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "Failed to launch {Name}", card.Name);
-            await _dialogService.ShowMessageAsync("Launch Failed", $"Failed to launch: {ex.Message}");
-        }
+        card.ConsoleLines.Clear();
+        _processManager.Launch(card.Id, fullPath, card.InstallationPath, card.Arguments);
+    }
+
+    private async Task OnStopRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        await _processManager.StopAsync(card.Id);
+    }
+
+    private async Task OnRestartRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        card.ConsoleLines.Clear();
+        card.DetectedWebUrl = null;
+        await _processManager.RestartAsync(card.Id);
     }
 
     private async Task OnRemoveRequestedAsync(InstallerPackageCardViewModel card)
     {
+        if (_processManager.IsRunning(card.Id))
+        {
+            await _dialogService.ShowMessageAsync("Cannot Remove", "Please stop the running process before removing.");
+            return;
+        }
+
         var confirmed = await _dialogService.ShowConfirmAsync(
             "Remove Installation",
             $"Remove \"{card.Name}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.");
@@ -194,7 +252,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)
     {
-        // TODO: Implement settings dialog for editing installation details
         return _dialogService.ShowMessageAsync("Coming Soon", "Installation settings editor is under development.");
     }
 }
