@@ -51,6 +51,33 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     [ObservableProperty]
     private string _outputFolderPath = string.Empty;
 
+    /// <summary>
+    /// Validation error for the Name field.
+    /// </summary>
+    private string? _nameError;
+    public string? NameError
+    {
+        get => _nameError;
+        private set => SetProperty(ref _nameError, value);
+    }
+
+    /// <summary>
+    /// Validation error for the Executable field.
+    /// </summary>
+    private string? _executableError;
+    public string? ExecutableError
+    {
+        get => _executableError;
+        private set => SetProperty(ref _executableError, value);
+    }
+
+    /// <summary>
+    /// Whether all required fields are filled and the dialog can be confirmed.
+    /// </summary>
+    public bool CanConfirm =>
+        !string.IsNullOrWhiteSpace(Name)
+        && !string.IsNullOrWhiteSpace(SelectedExecutable);
+
     public ObservableCollection<InstallerType> AvailableTypes { get; } = new(Enum.GetValues<InstallerType>());
 
     public ObservableCollection<string> FoundExecutables { get; } = new();
@@ -70,6 +97,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         InferName();
         DetectVersionInfo();
         DetectOutputFolder();
+        Validate();
     }
 
     /// <summary>
@@ -101,6 +129,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         OutputFolderPath = !string.IsNullOrWhiteSpace(outputFolderPath)
             ? outputFolderPath
             : string.Empty;
+        Validate();
+    }
+
+    partial void OnNameChanged(string value) => Validate();
+
+    partial void OnSelectedExecutableChanged(string value) => Validate();
+
+    private void Validate()
+    {
+        NameError = string.IsNullOrWhiteSpace(Name) ? "Name is required." : null;
+        ExecutableError = string.IsNullOrWhiteSpace(SelectedExecutable) ? "An executable or startup script is required." : null;
+        OnPropertyChanged(nameof(CanConfirm));
     }
 
     private void ScanForExecutables()
