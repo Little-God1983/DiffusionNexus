@@ -8,20 +8,18 @@ namespace DiffusionNexus.Domain.Entities
         /// <summary>
         /// Display name for the installation (e.g. "Stable Diffusion WebUI Forge").
         /// </summary>
-        [Required]
-        public string Name { get; set; }
+        public required string Name { get; set; }
 
         /// <summary>
         /// The root directory of the installation. 
         /// Used to infer model/output folders and startup scripts.
         /// </summary>
-        [Required]
-        public string InstallationPath { get; set; }
+
+        public required string InstallationPath { get; set; }
 
         /// <summary>
         /// The specific software type (A1111, Forge, ComfyUI, etc.) used for behavior logic.
         /// </summary>
-        [Required]
         public InstallerType Type { get; set; } = InstallerType.Unknown;
 
         /// <summary>
@@ -33,8 +31,7 @@ namespace DiffusionNexus.Domain.Entities
         /// Optional: Override for the executable/script path if non-standard.
         /// TODO: Linux Implementation - Consider separate path or platform-agnostic handling.
         /// </summary>
-        [Required]
-        public string? ExecutablePath { get; set; }
+        public required string? ExecutablePath { get; set; }
 
         /// <summary>
         /// The currently installed version or commit hash (e.g. "v1.10.1", "0b26121").

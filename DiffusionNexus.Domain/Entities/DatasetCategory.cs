@@ -36,9 +36,4 @@ public class DatasetCategory : BaseEntity
     /// Navigation property to AppSettings.
     /// </summary>
     public AppSettings? AppSettings { get; set; }
-
-    /// <summary>
-    /// When the category was created.
-    /// </summary>
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
