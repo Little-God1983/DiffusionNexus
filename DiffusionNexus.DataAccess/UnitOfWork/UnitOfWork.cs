@@ -20,6 +20,7 @@ internal sealed class UnitOfWork : IUnitOfWork
     private IModelFileRepository? _modelFiles;
     private IAppSettingsRepository? _appSettings;
     private IDisclaimerAcceptanceRepository? _disclaimerAcceptances;
+    private IInstallerPackageRepository? _installerPackages;
 
     public UnitOfWork(DiffusionNexusCoreDbContext context)
     {
@@ -42,6 +43,11 @@ internal sealed class UnitOfWork : IUnitOfWork
     /// <inheritdoc />
     public IDisclaimerAcceptanceRepository DisclaimerAcceptances =>
         _disclaimerAcceptances ??= new DisclaimerAcceptanceRepository(_context);
+
+
+    /// <inheritdoc />
+    public IInstallerPackageRepository InstallerPackages =>
+        _installerPackages ??= new InstallerPackageRepository(_context);
 
     /// <inheritdoc />
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
