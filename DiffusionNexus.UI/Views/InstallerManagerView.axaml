@@ -1,35 +1,213 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.InstallerManagerView"
              x:DataType="vm:InstallerManagerViewModel">
-    <Grid RowDefinitions="Auto, Auto, *" Margin="20">
-        <TextBlock Grid.Row="0"
-                   Text="Installer Manager"
-                   FontSize="24"
-                   FontWeight="Bold"
-                   Margin="0,0,0,20"/>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="20" Margin="0,0,0,20">
-            <Button Content="Add Existing Installation"
+    <UserControl.Styles>
+        <Style Selector="Button.launch-btn">
+            <Setter Property="Background" Value="#0088CC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="0,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.launch-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#009AE0"/>
+        </Style>
+        <Style Selector="Border.update-badge">
+            <Setter Property="Background" Value="#2E7D32"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.icon-btn">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#AAAAAA"/>
+        </Style>
+        <Style Selector="Button.icon-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#3D3D3D"/>
+        </Style>
+        <Style Selector="Button.add-btn">
+            <Setter Property="Background" Value="#333333"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="16,10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.add-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#444444"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,*" Margin="20">
+
+        <!-- Header -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,16">
+            <TextBlock Grid.Column="0"
+                       Text="Installer Manager"
+                       FontSize="24"
+                       FontWeight="Bold"
+                       VerticalAlignment="Center"/>
+            <Button Grid.Column="1"
+                    Classes="add-btn"
                     Command="{Binding AddExistingInstallationCommand}"
-                    Padding="15, 10"
-                    FontSize="16"/>
-            <Button Content="New Installation"
-                    Command="{Binding StartNewInstallationCommand}"
-                    Padding="15, 10"
-                    FontSize="16"/>
+                    Margin="0,0,8,0">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="+" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock Text="Add Existing" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="2"
+                    Classes="add-btn"
+                    Command="{Binding StartNewInstallationCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="+" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock Text="New Installation" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Loading indicator -->
+        <StackPanel Grid.Row="1"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    IsVisible="{Binding IsLoading}">
+            <ProgressBar IsIndeterminate="True" Width="200"/>
+            <TextBlock Text="Loading installations..."
+                       HorizontalAlignment="Center"
+                       Margin="0,8,0,0"
+                       Opacity="0.6"/>
         </StackPanel>
 
-        <Border Grid.Row="2" Background="#2D2D30" CornerRadius="8" Padding="20">
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20">
-                <TextBlock Text="{Binding WelcomeMessage}"
-                           FontSize="18"
-                           HorizontalAlignment="Center"/>
+        <!-- Empty state -->
+        <Border Grid.Row="1"
+                Background="#2D2D30"
+                CornerRadius="8"
+                Padding="40"
+                IsVisible="{Binding IsEmpty}">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+                <TextBlock Text="No Installations"
+                           FontSize="20"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           Opacity="0.6"/>
+                <TextBlock Text="Add an existing installation or set up a new one to get started."
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           Opacity="0.4"/>
             </StackPanel>
         </Border>
+
+        <!-- Installer Cards Grid -->
+        <ScrollViewer Grid.Row="1"
+                      IsVisible="{Binding !IsEmpty}"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding InstallerCards}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:InstallerPackageCardViewModel">
+                        <!-- Single Installer Card -->
+                        <Border Background="#2D2D2D"
+                                CornerRadius="10"
+                                BorderBrush="#3D3D3D"
+                                BorderThickness="1"
+                                Width="340"
+                                Margin="0,0,16,16"
+                                ClipToBounds="True">
+                            <Grid RowDefinitions="Auto,Auto">
+                                <!-- Top: image + info -->
+                                <Grid Grid.Row="0" ColumnDefinitions="120,*" Margin="12,12,12,8">
+                                    <!-- Placeholder thumbnail -->
+                                    <Border Grid.Column="0"
+                                            Width="108" Height="108"
+                                            Background="#1A1A1A"
+                                            CornerRadius="6"
+                                            ClipToBounds="True">
+                                        <TextBlock Text="No Image"
+                                                   FontSize="11" Opacity="0.3"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                    </Border>
+
+                                    <!-- Info panel -->
+                                    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*" Margin="12,0,0,0">
+                                        <!-- Name + kebab menu -->
+                                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Name}"
+                                                       FontSize="15" FontWeight="Bold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"/>
+                                            <Button Grid.Column="1"
+                                                    Classes="icon-btn"
+                                                    VerticalAlignment="Top">
+                                                <TextBlock Text="&#x22EE;" FontSize="16"/>
+                                                <Button.Flyout>
+                                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                        <MenuItem Header="Settings"
+                                                                  Command="{Binding OpenSettingsCommand}"/>
+                                                        <MenuItem Header="Remove"
+                                                                  Command="{Binding RemoveCommand}"/>
+                                                    </MenuFlyout>
+                                                </Button.Flyout>
+                                            </Button>
+                                        </Grid>
+
+                                        <!-- Version -->
+                                        <TextBlock Grid.Row="1"
+                                                   Text="{Binding VersionDisplay}"
+                                                   FontSize="12" Opacity="0.5"
+                                                   Margin="0,2,0,8"
+                                                   IsVisible="{Binding VersionDisplay, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                                        <!-- Update + Settings buttons -->
+                                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                                            <Border Classes="update-badge"
+                                                    IsVisible="{Binding IsUpdateAvailable}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <TextBlock Text="&#x2601;" FontSize="12" Foreground="White"/>
+                                                    <TextBlock Text="Update" FontSize="12" Foreground="White" FontWeight="SemiBold"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Button Classes="icon-btn"
+                                                    Command="{Binding OpenSettingsCommand}"
+                                                    ToolTip.Tip="Settings">
+                                                <TextBlock Text="&#x2699;" FontSize="16"/>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+
+                                <!-- Launch button -->
+                                <Button Grid.Row="1"
+                                        Classes="launch-btn"
+                                        Command="{Binding LaunchCommand}"
+                                        Margin="12,4,12,12">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                        <TextBlock Text="&#x1F680;" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Launch" FontSize="14" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
     </Grid>
 </UserControl>

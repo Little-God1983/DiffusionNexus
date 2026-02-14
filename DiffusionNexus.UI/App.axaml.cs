@@ -636,6 +636,9 @@ public partial class App : Application
 
         // Load Generation Gallery on startup
         generationGalleryVm.LoadMediaCommand.Execute(null);
+
+        // Load saved installations on startup
+        installerManagerVm.LoadInstallationsCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()
