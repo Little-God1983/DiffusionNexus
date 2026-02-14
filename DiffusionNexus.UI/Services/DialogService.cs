@@ -432,7 +432,9 @@ public class DialogService : IDialogService
             vm.InstallationPath,
             vm.SelectedType,
             vm.SelectedExecutable,
-            vm.OutputFolderPath
+            vm.OutputFolderPath,
+            vm.Version,
+            vm.Branch
         );
     }
 
@@ -458,7 +460,9 @@ public class DialogService : IDialogService
             vm.InstallationPath,
             vm.SelectedType,
             vm.SelectedExecutable,
-            vm.OutputFolderPath
+            vm.OutputFolderPath,
+            vm.Version,
+            vm.Branch
         );
     }
 }

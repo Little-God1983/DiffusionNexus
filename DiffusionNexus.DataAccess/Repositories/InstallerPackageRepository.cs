@@ -18,8 +18,18 @@ internal sealed class InstallerPackageRepository : RepositoryBase<InstallerPacka
     public async Task<IReadOnlyList<InstallerPackage>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return await DbSet
+            .Include(p => p.ImageGallery)
             .OrderBy(p => p.Name)
             .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<InstallerPackage?> GetByIdWithGalleryAsync(int id, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .Include(p => p.ImageGallery)
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             .ConfigureAwait(false);
     }
 }

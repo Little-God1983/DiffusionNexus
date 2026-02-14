@@ -33,6 +33,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     private bool _isEditMode;
 
     /// <summary>
+    /// Detected git version or commit hash (e.g. "v1.10.1", "0b26121").
+    /// </summary>
+    [ObservableProperty]
+    private string _version = string.Empty;
+
+    /// <summary>
+    /// Detected git branch (e.g. "main", "master").
+    /// </summary>
+    [ObservableProperty]
+    private string _branch = string.Empty;
+
+    /// <summary>
     /// The image output folder path for this installation.
     /// Linked to an ImageGallery record via FK.
     /// </summary>
@@ -56,6 +68,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         ScanForExecutables();
         InferType();
         InferName();
+        DetectVersionInfo();
         DetectOutputFolder();
     }
 
@@ -100,6 +113,24 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
                 foreach (var file in files)
                 {
                     FoundExecutables.Add(Path.GetFileName(file));
+                }
+
+                // ComfyUI standalone inner folder: bat files are in the parent
+                // Detect by checking if this looks like the inner ComfyUI folder
+                // (has comfy/ but no bat files) with a parent that has python_embedded/
+                if (FoundExecutables.Count == 0)
+                {
+                    var parent = Directory.GetParent(_initialPath)?.FullName;
+                    if (parent is not null
+                        && Directory.Exists(Path.Combine(parent, "python_embedded")))
+                    {
+                        // TODO: Linux Implementation - also scan for .sh files
+                        var parentBats = Directory.GetFiles(parent, "*.bat");
+                        foreach (var file in parentBats)
+                        {
+                            FoundExecutables.Add(Path.GetFileName(file));
+                        }
+                    }
                 }
             }
         }
@@ -159,12 +190,13 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
     /// <summary>
     /// Reads .git/config to extract the remote origin URL and matches it against known repositories.
+    /// Also checks known subfolders (e.g. ComfyUI/) for standalone distributions.
     /// </summary>
     private static InstallerType DetectTypeFromGitRemote(string path)
     {
         // TODO: Linux Implementation - path separators work on both, but verify
-        var gitConfigPath = Path.Combine(path, ".git", "config");
-        if (!File.Exists(gitConfigPath))
+        var gitConfigPath = FindGitConfig(path);
+        if (gitConfigPath is null)
             return InstallerType.Unknown;
 
         try
@@ -201,6 +233,87 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             Serilog.Log.Debug(ex, "Failed to read git config at {Path}", gitConfigPath);
             return InstallerType.Unknown;
         }
+    }
+
+    /// <summary>
+    /// Finds the .git/config file, checking the root first,
+    /// then known subfolders for standalone distributions (e.g. ComfyUI/).
+    /// </summary>
+    private static string? FindGitConfig(string path)
+    {
+        // Direct .git at root
+        var rootConfig = Path.Combine(path, ".git", "config");
+        if (File.Exists(rootConfig))
+            return rootConfig;
+
+        // Standalone ComfyUI: .git is inside ComfyUI/ subfolder
+        var comfySubConfig = Path.Combine(path, "ComfyUI", ".git", "config");
+        if (File.Exists(comfySubConfig))
+            return comfySubConfig;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Detects git branch and commit hash for version display.
+    /// Checks root .git first, then known subfolders for standalone distributions.
+    /// </summary>
+    private void DetectVersionInfo()
+    {
+        // Find the .git directory — root or known subfolder
+        var gitDir = FindGitDir(_initialPath);
+        if (gitDir is null)
+            return;
+
+        try
+        {
+            // Read HEAD to get the branch
+            var headPath = Path.Combine(gitDir, "HEAD");
+            if (File.Exists(headPath))
+            {
+                var headContent = File.ReadAllText(headPath).Trim();
+
+                // "ref: refs/heads/main" → branch = "main"
+                if (headContent.StartsWith("ref: refs/heads/", StringComparison.Ordinal))
+                {
+                    Branch = headContent["ref: refs/heads/".Length..];
+
+                    // Resolve the commit hash from the ref
+                    var refPath = Path.Combine(gitDir, "refs", "heads", Branch);
+                    if (File.Exists(refPath))
+                    {
+                        var hash = File.ReadAllText(refPath).Trim();
+                        Version = hash.Length >= 7 ? hash[..7] : hash;
+                    }
+                }
+                else if (headContent.Length >= 7)
+                {
+                    // Detached HEAD — content is the full hash
+                    Version = headContent[..7];
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Failed to detect git version from {GitDir}", gitDir);
+        }
+    }
+
+    /// <summary>
+    /// Finds the .git directory, checking root first then known subfolders.
+    /// </summary>
+    private static string? FindGitDir(string path)
+    {
+        var rootGit = Path.Combine(path, ".git");
+        if (Directory.Exists(rootGit))
+            return rootGit;
+
+        // Standalone ComfyUI: .git is inside ComfyUI/ subfolder
+        var comfyGit = Path.Combine(path, "ComfyUI", ".git");
+        if (Directory.Exists(comfyGit))
+            return comfyGit;
+
+        return null;
     }
 
     /// <summary>
@@ -248,9 +361,12 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             && File.Exists(Path.Combine(path, "webui.py")))
             return InstallerType.Automatic1111;
 
-        // ComfyUI has comfy/ and main.py
+        // ComfyUI (git clone): comfy/ or comfy_extras/ at root
+        // ComfyUI (standalone zip): ComfyUI/ subfolder + python_embedded/
         if (Directory.Exists(Path.Combine(path, "comfy"))
-            || Directory.Exists(Path.Combine(path, "comfy_extras")))
+            || Directory.Exists(Path.Combine(path, "comfy_extras"))
+            || (Directory.Exists(Path.Combine(path, "ComfyUI"))
+                && Directory.Exists(Path.Combine(path, "python_embedded"))))
             return InstallerType.ComfyUI;
 
         // Fooocus
@@ -340,6 +456,14 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             InstallerType.SwarmUI => "Output",
             _ => "outputs"
         };
+
+        // ComfyUI standalone: output is inside ComfyUI/ subfolder
+        if (SelectedType == InstallerType.ComfyUI
+            && Directory.Exists(Path.Combine(_initialPath, "ComfyUI", "output"))
+            && !Directory.Exists(Path.Combine(_initialPath, "output")))
+        {
+            defaultSubfolder = Path.Combine("ComfyUI", "output");
+        }
 
         // For InvokeAI official installer, outputs/ may be at root level
         if (SelectedType == InstallerType.InvokeAI

@@ -109,6 +109,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
             InstallationPath = result.InstallationPath,
             Type = result.Type,
             ExecutablePath = result.ExecutablePath,
+            Version = result.Version,
+            Branch = result.Branch,
             Arguments = string.Empty,
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -126,8 +128,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             InstallerCards.Add(CreateCard(package));
-
-            await _dialogService.ShowMessageAsync("Success", $"Successfully added {package.Name}");
         }
         catch (Exception ex)
         {
@@ -326,20 +326,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private async Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)
     {
+        // Load the package with its linked gallery to get the output folder path
+        var entity = await _installerPackageRepository.GetByIdWithGalleryAsync(card.Id);
+        if (entity is null) return;
+
+        var currentOutputFolder = entity.ImageGallery?.FolderPath ?? string.Empty;
+
         var result = await _dialogService.ShowEditInstallationDialogAsync(
             card.Name,
             card.InstallationPath,
             card.Type,
             card.ExecutablePath ?? string.Empty,
-            string.Empty); // TODO: load OutputFolderPath from linked ImageGallery
+            currentOutputFolder);
 
         if (result.IsCancelled) return;
 
         try
         {
-            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
-            if (entity is null) return;
-
             entity.Name = result.Name;
             entity.InstallationPath = result.InstallationPath;
             entity.Type = result.Type;
