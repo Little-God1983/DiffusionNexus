@@ -47,11 +47,9 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         _dialogService = dialogService;
         InstallationPath = initialPath;
         
-        // Default name to folder name
-        Name = Path.GetFileName(initialPath) ?? "New Installation";
-
         ScanForExecutables();
         InferType();
+        InferName();
         DetectOutputFolder();
     }
 
@@ -101,6 +99,25 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
         // 3. Last resort: executable name heuristics
         SelectBestExecutable();
+    }
+
+    /// <summary>
+    /// Sets the display name based on the detected type.
+    /// Falls back to the folder name if the type is unknown.
+    /// </summary>
+    private void InferName()
+    {
+        Name = SelectedType switch
+        {
+            InstallerType.Automatic1111 => "Stable Diffusion WebUI",
+            InstallerType.Forge => "Stable Diffusion WebUI Forge",
+            InstallerType.ComfyUI => "ComfyUI",
+            InstallerType.Fooocus => "Fooocus",
+            InstallerType.InvokeAI => "InvokeAI",
+            InstallerType.FluxGym => "FluxGym",
+            InstallerType.SwarmUI => "SwarmUI",
+            _ => Path.GetFileName(_initialPath) ?? "New Installation"
+        };
     }
 
     /// <summary>
@@ -203,8 +220,11 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         if (File.Exists(Path.Combine(path, "fooocus_version.py")))
             return InstallerType.Fooocus;
 
-        // InvokeAI
-        if (Directory.Exists(Path.Combine(path, "invokeai")))
+        // InvokeAI (git clone has invokeai/ subfolder; official installer has invokeai.yaml config)
+        if (Directory.Exists(Path.Combine(path, "invokeai"))
+            || File.Exists(Path.Combine(path, "invokeai.yaml"))
+            || File.Exists(Path.Combine(path, "invoke.bat"))
+            || File.Exists(Path.Combine(path, "invoke.sh")))
             return InstallerType.InvokeAI;
 
         // SwarmUI
@@ -245,6 +265,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     /// <summary>
     /// Detects the default image output folder based on the detected installer type.
     /// For ComfyUI, parses the startup bat for --output-directory.
+    /// For InvokeAI, parses invokeai.yaml for outdir.
     /// For others, uses the conventional subfolder.
     /// </summary>
     private void DetectOutputFolder()
@@ -260,17 +281,36 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             }
         }
 
-        // 2. Use the conventional default subfolder per type
+        // 2. For InvokeAI, try parsing invokeai.yaml for outdir
+        if (SelectedType == InstallerType.InvokeAI)
+        {
+            var yamlPath = ParseInvokeAiOutputDir();
+            if (!string.IsNullOrWhiteSpace(yamlPath))
+            {
+                OutputFolderPath = yamlPath;
+                return;
+            }
+        }
+
+        // 3. Use the conventional default subfolder per type
         var defaultSubfolder = SelectedType switch
         {
             InstallerType.ComfyUI => "output",
             InstallerType.Automatic1111 => "outputs",
             InstallerType.Forge => "outputs",
             InstallerType.Fooocus => "outputs",
-            InstallerType.InvokeAI => "outputs",
+            InstallerType.InvokeAI => Path.Combine("invokeai", "outputs"),
             InstallerType.SwarmUI => "Output",
             _ => "outputs"
         };
+
+        // For InvokeAI official installer, outputs/ may be at root level
+        if (SelectedType == InstallerType.InvokeAI
+            && !Directory.Exists(Path.Combine(_initialPath, "invokeai"))
+            && Directory.Exists(Path.Combine(_initialPath, "outputs")))
+        {
+            defaultSubfolder = "outputs";
+        }
 
         var defaultPath = Path.Combine(_initialPath, defaultSubfolder);
         OutputFolderPath = defaultPath;
@@ -333,6 +373,63 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Debug(ex, "Failed to parse bat file for --output-directory: {Path}", batPath);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parses invokeai.yaml for the output directory.
+    /// The YAML structure is: paths: outdir: "path/to/outputs"
+    /// Uses simple line parsing to avoid adding a YAML library dependency.
+    /// </summary>
+    private string? ParseInvokeAiOutputDir()
+    {
+        var yamlPath = Path.Combine(_initialPath, "invokeai.yaml");
+        if (!File.Exists(yamlPath))
+            return null;
+
+        try
+        {
+            var inPaths = false;
+            foreach (var rawLine in File.ReadLines(yamlPath))
+            {
+                var line = rawLine.TrimEnd();
+
+                // Detect "paths:" section (no leading whitespace or top-level)
+                if (line.TrimStart().StartsWith("paths:", StringComparison.OrdinalIgnoreCase)
+                    && !line.StartsWith(' ') && !line.StartsWith('\t'))
+                {
+                    inPaths = true;
+                    continue;
+                }
+
+                // New top-level section — stop
+                if (inPaths && line.Length > 0 && !line.StartsWith(' ') && !line.StartsWith('\t'))
+                    break;
+
+                // Look for "outdir:" or "outputs_dir:" under paths
+                if (inPaths)
+                {
+                    var trimmed = line.Trim();
+                    string? value = null;
+
+                    if (trimmed.StartsWith("outdir:", StringComparison.OrdinalIgnoreCase))
+                        value = trimmed["outdir:".Length..].Trim().Trim('"', '\'');
+                    else if (trimmed.StartsWith("outputs_dir:", StringComparison.OrdinalIgnoreCase))
+                        value = trimmed["outputs_dir:".Length..].Trim().Trim('"', '\'');
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        // Resolve relative paths against the installation directory
+                        return Path.IsPathRooted(value) ? value : Path.Combine(_initialPath, value);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Failed to parse invokeai.yaml for outdir: {Path}", yamlPath);
         }
 
         return null;
