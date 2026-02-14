@@ -652,6 +652,10 @@ public partial class App : Application
 
         // Load saved installations on startup
         installerManagerVm.LoadInstallationsCommand.Execute(null);
+
+        // Load datasets on startup so they are available for Image Comparer
+        // even when navigating directly without visiting Dataset Management first
+        loraDatasetHelperVm.DatasetManagement.CheckStorageConfigurationCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()
