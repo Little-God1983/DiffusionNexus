@@ -26,12 +26,19 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isCustomExecutable;
 
+    /// <summary>
+    /// The image output folder path for this installation.
+    /// Linked to an ImageGallery record via FK.
+    /// </summary>
+    [ObservableProperty]
+    private string _outputFolderPath = string.Empty;
+
     public ObservableCollection<InstallerType> AvailableTypes { get; } = new(Enum.GetValues<InstallerType>());
-    
+
     public ObservableCollection<string> FoundExecutables { get; } = new();
 
     private readonly IDialogService? _dialogService;
-    
+
     public event Func<Task>? BrowseExecutableRequest;
 
     public AddExistingInstallationDialogViewModel(string initialPath, IDialogService? dialogService = null)
@@ -45,6 +52,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
         ScanForExecutables();
         InferType();
+        DetectOutputFolder();
     }
 
     private void ScanForExecutables()
@@ -234,6 +242,114 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     private static bool ContainsIgnoreCase(string source, string value) =>
         source.Contains(value, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Detects the default image output folder based on the detected installer type.
+    /// For ComfyUI, parses the startup bat for --output-directory.
+    /// For others, uses the conventional subfolder.
+    /// </summary>
+    private void DetectOutputFolder()
+    {
+        // 1. For ComfyUI, try parsing the bat file for --output-directory
+        if (SelectedType == InstallerType.ComfyUI)
+        {
+            var batPath = ParseOutputDirectoryFromBat();
+            if (!string.IsNullOrWhiteSpace(batPath))
+            {
+                OutputFolderPath = batPath;
+                return;
+            }
+        }
+
+        // 2. Use the conventional default subfolder per type
+        var defaultSubfolder = SelectedType switch
+        {
+            InstallerType.ComfyUI => "output",
+            InstallerType.Automatic1111 => "outputs",
+            InstallerType.Forge => "outputs",
+            InstallerType.Fooocus => "outputs",
+            InstallerType.InvokeAI => "outputs",
+            InstallerType.SwarmUI => "Output",
+            _ => "outputs"
+        };
+
+        var defaultPath = Path.Combine(_initialPath, defaultSubfolder);
+        OutputFolderPath = defaultPath;
+    }
+
+    /// <summary>
+    /// Parses the selected startup bat file for a --output-directory argument.
+    /// Supports both --output-directory=PATH and --output-directory PATH forms.
+    /// </summary>
+    private string? ParseOutputDirectoryFromBat()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedExecutable))
+            return null;
+
+        var batPath = Path.Combine(_initialPath, SelectedExecutable);
+        if (!File.Exists(batPath))
+            return null;
+
+        try
+        {
+            foreach (var rawLine in File.ReadLines(batPath))
+            {
+                var line = rawLine.Trim();
+
+                // Match --output-directory=PATH or --output-directory PATH
+                var argIndex = line.IndexOf("--output-directory", StringComparison.OrdinalIgnoreCase);
+                if (argIndex < 0)
+                    continue;
+
+                var afterArg = line[(argIndex + "--output-directory".Length)..];
+
+                string rawPath;
+                if (afterArg.StartsWith('='))
+                {
+                    // --output-directory=PATH
+                    rawPath = afterArg[1..].Trim();
+                }
+                else if (afterArg.StartsWith(' '))
+                {
+                    // --output-directory PATH
+                    rawPath = afterArg.Trim();
+                }
+                else
+                {
+                    continue;
+                }
+
+                // Handle quoted paths and trim trailing arguments
+                rawPath = rawPath.Trim('"', '\'');
+
+                // Take only up to the next space-dash (next argument)
+                var nextArgIndex = rawPath.IndexOf(" --", StringComparison.Ordinal);
+                if (nextArgIndex >= 0)
+                    rawPath = rawPath[..nextArgIndex].TrimEnd();
+
+                if (!string.IsNullOrWhiteSpace(rawPath))
+                    return rawPath;
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Failed to parse bat file for --output-directory: {Path}", batPath);
+        }
+
+        return null;
+    }
+
+    [RelayCommand]
+    private async Task BrowseOutputFolderAsync()
+    {
+        if (_dialogService is null) return;
+
+        var folder = await _dialogService.ShowOpenFolderDialogAsync("Select Image Output Folder");
+        if (!string.IsNullOrEmpty(folder))
+        {
+            OutputFolderPath = folder;
+        }
+    }
+
     [RelayCommand]
     private async Task BrowseExecutable()
     {
@@ -242,9 +358,6 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             var file = await _dialogService.ShowOpenFileDialogAsync("Select Executable", _initialPath, "*.bat");
             if (file != null)
             {
-                 // Should we check if it's inside the folder?
-                 // If outside, maybe warn? For now assume user knows best or we store full path.
-                 // If inside, store relative.
                  if (file.StartsWith(_initialPath, StringComparison.OrdinalIgnoreCase))
                  {
                      SelectedExecutable = Path.GetFileName(file);

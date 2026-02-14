@@ -8,7 +8,8 @@ public record AddExistingInstallationResult(
     string InstallationPath,
     InstallerType Type,
     string ExecutablePath,
+    string OutputFolderPath,
     bool IsCancelled = false)
 {
-    public static AddExistingInstallationResult Cancelled() => new(string.Empty, string.Empty, InstallerType.Unknown, string.Empty, true);
+    public static AddExistingInstallationResult Cancelled() => new(string.Empty, string.Empty, InstallerType.Unknown, string.Empty, string.Empty, true);
 }

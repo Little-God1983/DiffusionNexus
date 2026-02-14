@@ -18,6 +18,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 {
     private readonly IDialogService _dialogService;
     private readonly IInstallerPackageRepository _installerPackageRepository;
+    private readonly IAppSettingsRepository _appSettingsRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly PackageProcessManager _processManager;
 
@@ -45,11 +46,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
     public InstallerManagerViewModel(
         IDialogService dialogService,
         IInstallerPackageRepository installerPackageRepository,
+        IAppSettingsRepository appSettingsRepository,
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
+        _appSettingsRepository = appSettingsRepository;
         _unitOfWork = unitOfWork;
         _processManager = processManager;
 
@@ -114,6 +117,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             await _installerPackageRepository.AddAsync(package);
             await _unitOfWork.SaveChangesAsync();
 
+            // Link or create an ImageGallery for the output folder
+            if (!string.IsNullOrWhiteSpace(result.OutputFolderPath))
+            {
+                await LinkOutputFolderAsync(package, result.OutputFolderPath);
+                await _unitOfWork.SaveChangesAsync();
+            }
+
             InstallerCards.Add(CreateCard(package));
 
             await _dialogService.ShowMessageAsync("Success", $"Successfully added {package.Name}");
@@ -122,6 +132,42 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to save installation {Name}", package.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to save installation: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Links an existing ImageGallery (by FolderPath) to the package,
+    /// or creates a new one if none exists.
+    /// If the matching gallery is already linked to another installer, the FK is updated
+    /// to point to this package (an ImageGallery can only belong to one installer).
+    /// </summary>
+    private async Task LinkOutputFolderAsync(InstallerPackage package, string outputFolderPath)
+    {
+        var settings = await _appSettingsRepository.GetSettingsAsync();
+        var appSettingsId = settings?.Id ?? 1;
+
+        // Check if a gallery with this path already exists
+        var allSettings = await _appSettingsRepository.GetSettingsWithIncludesAsync();
+        var existing = allSettings.ImageGalleries
+            .FirstOrDefault(g => string.Equals(g.FolderPath, outputFolderPath, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            // Re-link the existing gallery to this package
+            existing.InstallerPackageId = package.Id;
+        }
+        else
+        {
+            // Create a new gallery
+            var gallery = new ImageGallery
+            {
+                AppSettingsId = appSettingsId,
+                FolderPath = outputFolderPath,
+                IsEnabled = true,
+                Order = allSettings.ImageGalleries.Count,
+                InstallerPackageId = package.Id
+            };
+            await _appSettingsRepository.AddImageGalleryAsync(gallery);
         }
     }
 
