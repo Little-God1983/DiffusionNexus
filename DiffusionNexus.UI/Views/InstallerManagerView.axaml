@@ -98,7 +98,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,*,Auto" Margin="20,20,20,0">
+    <Grid RowDefinitions="Auto,6*,4*" Margin="20,20,20,0">
 
         <!-- Header -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,16">
@@ -306,14 +306,8 @@
                 BorderThickness="1,1,1,0"
                 CornerRadius="10,10,0,0"
                 ClipToBounds="True"
-                Height="{Binding ConsoleTray.TrayVisibleHeight}"
-                IsVisible="{Binding ConsoleTray.HasTabs}"
+                IsVisible="{Binding ConsoleTray.IsTrayOpen}"
                 Margin="0,8,0,0">
-            <Border.Transitions>
-                <Transitions>
-                    <DoubleTransition Property="Height" Duration="0:0:0.25"/>
-                </Transitions>
-            </Border.Transitions>
 
             <Grid RowDefinitions="Auto,*">
                 <!-- Tray Handle -->
@@ -391,6 +385,7 @@
 
                     <!-- Console output for selected tab -->
                     <ListBox Grid.Row="2"
+                             x:Name="ConsoleListBox"
                              ItemsSource="{Binding ConsoleTray.SelectedTab.ConsoleLines}"
                              Background="#1E1E1E"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"

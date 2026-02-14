@@ -20,26 +20,15 @@ public partial class ProcessConsoleTrayViewModel : ViewModelBase
     [ObservableProperty]
     private InstallerPackageCardViewModel? _selectedTab;
 
+    /// <summary>
+    /// When pinned the tray stays open; when unpinned it collapses.
+    /// Defaults to true when the first process starts.
+    /// </summary>
     [ObservableProperty]
     private bool _isPinned;
 
     [ObservableProperty]
     private bool _isTrayOpen;
-
-    /// <summary>
-    /// Fixed height constants matching the Image Comparer tray pattern.
-    /// </summary>
-    public double TrayHeight => 300d;
-
-    /// <summary>
-    /// Height of the handle bar when collapsed.
-    /// </summary>
-    public double TrayHandleHeight => 40d;
-
-    /// <summary>
-    /// The current visible height — full when open, handle-only when collapsed.
-    /// </summary>
-    public double TrayVisibleHeight => IsTrayOpen ? TrayHeight : TrayHandleHeight;
 
     /// <summary>
     /// True when at least one tab exists.
@@ -63,6 +52,7 @@ public partial class ProcessConsoleTrayViewModel : ViewModelBase
 
     /// <summary>
     /// Adds a tab for the given card if not already present, and selects it.
+    /// Pins the tray open by default so the user sees the console immediately.
     /// </summary>
     public void OpenTab(InstallerPackageCardViewModel card)
     {
@@ -71,6 +61,7 @@ public partial class ProcessConsoleTrayViewModel : ViewModelBase
 
         SelectedTab = card;
         IsTrayOpen = true;
+        IsPinned = true;
     }
 
     /// <summary>
@@ -94,14 +85,12 @@ public partial class ProcessConsoleTrayViewModel : ViewModelBase
             CloseTab(SelectedTab);
     }
 
-    partial void OnIsTrayOpenChanged(bool value)
-    {
-        OnPropertyChanged(nameof(TrayVisibleHeight));
-    }
-
     partial void OnIsPinnedChanged(bool value)
     {
-        if (value)
+        // When the user unpins, collapse the tray
+        if (!value)
+            IsTrayOpen = false;
+        else
             IsTrayOpen = true;
     }
 }
