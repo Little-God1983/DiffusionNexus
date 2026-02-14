@@ -7,6 +7,7 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.Domain.Services;
 
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -22,6 +23,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IAppSettingsRepository _appSettingsRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly PackageProcessManager _processManager;
+    private readonly IDatasetEventAggregator _eventAggregator;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -49,13 +51,15 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IInstallerPackageRepository installerPackageRepository,
         IAppSettingsRepository appSettingsRepository,
         IUnitOfWork unitOfWork,
-        PackageProcessManager processManager)
+        PackageProcessManager processManager,
+        IDatasetEventAggregator eventAggregator)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
         _appSettingsRepository = appSettingsRepository;
         _unitOfWork = unitOfWork;
         _processManager = processManager;
+        _eventAggregator = eventAggregator;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -125,6 +129,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 await LinkOutputFolderAsync(package, result.OutputFolderPath);
                 await _unitOfWork.SaveChangesAsync();
+
+                // Notify other components (Settings dialog, Generation Gallery) about the new gallery
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
             }
 
             InstallerCards.Add(CreateCard(package));
@@ -361,6 +368,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 await LinkOutputFolderAsync(entity, result.OutputFolderPath);
                 await _unitOfWork.SaveChangesAsync();
+
+                // Notify other components (Settings dialog, Generation Gallery) about the updated gallery
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
             }
         }
         catch (Exception ex)

@@ -5,6 +5,8 @@ using Avalonia.Markup.Xaml;
 using DiffusionNexus.Captioning;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
@@ -507,7 +509,13 @@ public partial class App : Application
             sp.GetService<ISettingsExportService>()));
         
         services.AddScoped<LoraViewerViewModel>();
-        services.AddScoped<InstallerManagerViewModel>();
+        services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
+            sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<IInstallerPackageRepository>(),
+            sp.GetRequiredService<IAppSettingsRepository>(),
+            sp.GetRequiredService<IUnitOfWork>(),
+            sp.GetRequiredService<PackageProcessManager>(),
+            sp.GetRequiredService<IDatasetEventAggregator>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
