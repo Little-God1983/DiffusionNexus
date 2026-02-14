@@ -73,23 +73,166 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
     private void InferType()
     {
-        // Simple heuristic
-        if (File.Exists(Path.Combine(_initialPath, "webui-user.bat")))
+        // 1. Try git remote URL first (most reliable)
+        var gitType = DetectTypeFromGitRemote(_initialPath);
+        if (gitType != InstallerType.Unknown)
         {
-            SelectedType = InstallerType.Automatic1111;
-            SelectedExecutable = "webui-user.bat";
+            SelectedType = gitType;
+            SelectBestExecutable();
+            return;
         }
-        else if (File.Exists(Path.Combine(_initialPath, "run_nvidia_gpu.bat")))
+
+        // 2. Fall back to signature files/folders
+        var signatureType = DetectTypeFromSignatureFiles(_initialPath);
+        if (signatureType != InstallerType.Unknown)
         {
-            SelectedType = InstallerType.ComfyUI;
-            SelectedExecutable = "run_nvidia_gpu.bat";
+            SelectedType = signatureType;
+            SelectBestExecutable();
+            return;
         }
-        else if (File.Exists(Path.Combine(_initialPath, "run_cpu.bat")))
+
+        // 3. Last resort: executable name heuristics
+        SelectBestExecutable();
+    }
+
+    /// <summary>
+    /// Reads .git/config to extract the remote origin URL and matches it against known repositories.
+    /// </summary>
+    private static InstallerType DetectTypeFromGitRemote(string path)
+    {
+        // TODO: Linux Implementation - path separators work on both, but verify
+        var gitConfigPath = Path.Combine(path, ".git", "config");
+        if (!File.Exists(gitConfigPath))
+            return InstallerType.Unknown;
+
+        try
         {
-            SelectedType = InstallerType.ComfyUI;
-             // Don't override if nvidia was found (handled by order or logic, but here simple)
+            var content = File.ReadAllText(gitConfigPath);
+            var remoteUrl = ExtractGitRemoteUrl(content);
+            if (string.IsNullOrWhiteSpace(remoteUrl))
+                return InstallerType.Unknown;
+
+            // Order matters — Forge check must come before A1111 since Forge is a fork
+            return remoteUrl switch
+            {
+                _ when ContainsIgnoreCase(remoteUrl, "stable-diffusion-webui-forge")
+                    => InstallerType.Forge,
+                _ when ContainsIgnoreCase(remoteUrl, "stable-diffusion-webui-reforge")
+                    => InstallerType.Forge,
+                _ when ContainsIgnoreCase(remoteUrl, "stable-diffusion-webui")
+                    => InstallerType.Automatic1111,
+                _ when ContainsIgnoreCase(remoteUrl, "ComfyUI")
+                    => InstallerType.ComfyUI,
+                _ when ContainsIgnoreCase(remoteUrl, "Fooocus")
+                    => InstallerType.Fooocus,
+                _ when ContainsIgnoreCase(remoteUrl, "InvokeAI")
+                    => InstallerType.InvokeAI,
+                _ when ContainsIgnoreCase(remoteUrl, "FluxGym")
+                    => InstallerType.FluxGym,
+                _ when ContainsIgnoreCase(remoteUrl, "SwarmUI")
+                    => InstallerType.SwarmUI,
+                _ => InstallerType.Unknown
+            };
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Failed to read git config at {Path}", gitConfigPath);
+            return InstallerType.Unknown;
         }
     }
+
+    /// <summary>
+    /// Extracts the first remote origin URL from a .git/config file content.
+    /// Looks for: url = https://github.com/user/repo.git
+    /// </summary>
+    private static string? ExtractGitRemoteUrl(string gitConfig)
+    {
+        var inRemoteOrigin = false;
+        foreach (var rawLine in gitConfig.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Equals("[remote \"origin\"]", StringComparison.OrdinalIgnoreCase))
+            {
+                inRemoteOrigin = true;
+                continue;
+            }
+
+            // New section starts — stop looking
+            if (inRemoteOrigin && line.StartsWith('['))
+                break;
+
+            if (inRemoteOrigin && line.StartsWith("url", StringComparison.OrdinalIgnoreCase))
+            {
+                var eqIndex = line.IndexOf('=');
+                if (eqIndex >= 0)
+                    return line[(eqIndex + 1)..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Detects the installer type by looking for files/folders unique to each project.
+    /// </summary>
+    private static InstallerType DetectTypeFromSignatureFiles(string path)
+    {
+        // Forge has modules_forge/ — check before A1111 since both have webui.py
+        if (Directory.Exists(Path.Combine(path, "modules_forge")))
+            return InstallerType.Forge;
+
+        // A1111 has modules/ and webui.py but no modules_forge/
+        if (Directory.Exists(Path.Combine(path, "modules"))
+            && File.Exists(Path.Combine(path, "webui.py")))
+            return InstallerType.Automatic1111;
+
+        // ComfyUI has comfy/ and main.py
+        if (Directory.Exists(Path.Combine(path, "comfy"))
+            || Directory.Exists(Path.Combine(path, "comfy_extras")))
+            return InstallerType.ComfyUI;
+
+        // Fooocus
+        if (File.Exists(Path.Combine(path, "fooocus_version.py")))
+            return InstallerType.Fooocus;
+
+        // InvokeAI
+        if (Directory.Exists(Path.Combine(path, "invokeai")))
+            return InstallerType.InvokeAI;
+
+        // SwarmUI
+        if (Directory.Exists(Path.Combine(path, "launchtools"))
+            && Directory.Exists(Path.Combine(path, "src")))
+            return InstallerType.SwarmUI;
+
+        return InstallerType.Unknown;
+    }
+
+    /// <summary>
+    /// Selects the best executable from the found list based on the detected type.
+    /// </summary>
+    private void SelectBestExecutable()
+    {
+        // Preferred executable per type
+        var preferred = SelectedType switch
+        {
+            InstallerType.Automatic1111 => "webui-user.bat",
+            InstallerType.Forge => "webui-user.bat",
+            InstallerType.ComfyUI => "run_nvidia_gpu.bat",
+            InstallerType.Fooocus => "run.bat",
+            InstallerType.InvokeAI => "invoke.bat",
+            InstallerType.FluxGym => "run.bat",
+            InstallerType.SwarmUI => "launch-windows.bat",
+            _ => null
+        };
+
+        if (preferred is not null && FoundExecutables.Contains(preferred))
+        {
+            SelectedExecutable = preferred;
+        }
+    }
+
+    private static bool ContainsIgnoreCase(string source, string value) =>
+        source.Contains(value, StringComparison.OrdinalIgnoreCase);
 
     [RelayCommand]
     private async Task BrowseExecutable()
