@@ -6,15 +6,17 @@
         Width="420"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
-        CanResize="False">
-  
+        CanResize="False"
+        Background="#2D2D30">
+
   <Grid Margin="20" RowDefinitions="Auto,Auto">
-    
+
     <!-- Message -->
     <TextBlock Grid.Row="0" 
                Text="{Binding Message}"
                TextWrapping="Wrap"
                FontSize="14"
+               Foreground="White"
                Margin="0,0,0,20"/>
     
     <!-- Buttons -->

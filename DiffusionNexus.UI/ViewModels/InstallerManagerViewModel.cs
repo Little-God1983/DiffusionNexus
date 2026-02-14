@@ -390,8 +390,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
         var confirmed = await _dialogService.ShowConfirmAsync(
             "Delete from Disk",
-            $"Are you sure you want to permanently delete \"{card.Name}\" and ALL its files?\n\n" +
+            $"Are you sure you want to permanently delete \"{card.Name}\"?\n\n" +
             $"Path: {card.InstallationPath}\n\n" +
+            "This will delete the folder on your hard drive including models and generated images.\n\n" +
             "⚠ This action CANNOT be undone.");
 
         if (!confirmed) return;
