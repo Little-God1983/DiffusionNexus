@@ -33,6 +33,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
     public ObservableCollection<InstallerPackageCardViewModel> InstallerCards { get; } = [];
 
     /// <summary>
+    /// Bottom tray with one tab per running process console.
+    /// </summary>
+    public ProcessConsoleTrayViewModel ConsoleTray { get; } = new();
+
+    /// <summary>
     /// True when there are no installations to show.
     /// </summary>
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
@@ -134,6 +139,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.RestartRequested += OnRestartRequestedAsync;
         card.RemoveRequested += OnRemoveRequestedAsync;
         card.SettingsRequested += OnSettingsRequestedAsync;
+        card.ConsoleRequested += OnConsoleRequestedAsync;
 
         // Restore running state if the process is still alive
         if (_processManager.IsRunning(card.Id))
@@ -160,8 +166,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             var card = FindCard(packageId);
-            if (card is not null)
-                card.IsRunning = running;
+            if (card is null) return;
+
+            card.IsRunning = running;
+
+            if (running)
+            {
+                // Auto-open a console tab when a process starts
+                ConsoleTray.OpenTab(card);
+            }
+            else
+            {
+                // Remove the tab when the process exits
+                ConsoleTray.CloseTab(card);
+            }
         });
     }
 
@@ -248,6 +266,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             Serilog.Log.Error(ex, "Failed to remove installation {Name}", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to remove installation: {ex.Message}");
         }
+    }
+
+    private Task OnConsoleRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        ConsoleTray.OpenTab(card);
+        ConsoleTray.IsPinned = true;
+        return Task.CompletedTask;
     }
 
     private Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)

@@ -48,12 +48,6 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private bool _isRunning;
 
     [ObservableProperty]
-    private bool _isConsoleOpen;
-
-    [ObservableProperty]
-    private bool _autoScrollToEnd = true;
-
-    [ObservableProperty]
     private string? _detectedWebUrl;
 
     /// <summary>
@@ -87,6 +81,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// Raised when the user requests to restart this installation.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? RestartRequested;
+
+    /// <summary>
+    /// Raised when the user requests to open the console for this installation.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? ConsoleRequested;
 
     /// <summary>
     /// Raised when the user requests to remove this installation.
@@ -152,9 +151,10 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void ToggleConsole()
+    private async Task ShowConsoleAsync()
     {
-        IsConsoleOpen = !IsConsoleOpen;
+        if (ConsoleRequested is not null)
+            await ConsoleRequested.Invoke(this);
     }
 
     [RelayCommand]

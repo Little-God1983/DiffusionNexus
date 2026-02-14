@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 
 namespace DiffusionNexus.UI.Services;
@@ -20,6 +21,26 @@ public sealed record ConsoleOutputLine(int LineNumber, string Text, bool IsError
 public sealed class PackageProcessManager : IDisposable
 {
     private readonly ConcurrentDictionary<int, ManagedProcess> _processes = new();
+    private readonly ChildProcessJobObject? _jobObject;
+
+    public PackageProcessManager()
+    {
+        // Create a Windows Job Object so the OS kernel kills all child processes
+        // when this process exits — even on crash or Task Manager kill.
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                _jobObject = new ChildProcessJobObject();
+                Serilog.Log.Information("PackageProcessManager: Job Object created for child process tracking");
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "PackageProcessManager: Failed to create Job Object; orphan protection disabled");
+            }
+        }
+        // TODO: Linux Implementation - use prctl(PR_SET_PDEATHSIG) for equivalent behavior
+    }
 
     /// <summary>
     /// Raised on the thread pool when a new console line is received.
@@ -76,7 +97,7 @@ public sealed class PackageProcessManager : IDisposable
         if (_processes.TryGetValue(packageId, out var existing) && existing.IsRunning)
             return;
 
-        var mp = new ManagedProcess(packageId, executablePath, workingDirectory, arguments);
+        var mp = new ManagedProcess(packageId, executablePath, workingDirectory, arguments, _jobObject);
         mp.OutputReceived += (line) => OutputReceived?.Invoke(packageId, line);
         mp.RunningStateChanged += (running) => RunningStateChanged?.Invoke(packageId, running);
         mp.WebUrlDetected += (url) => WebUrlDetected?.Invoke(packageId, url);
@@ -121,6 +142,10 @@ public sealed class PackageProcessManager : IDisposable
             mp.Dispose();
         }
         _processes.Clear();
+
+        // Disposing the job handle will kill any remaining child processes
+        if (OperatingSystem.IsWindows())
+            _jobObject?.Dispose();
     }
 
     /// <summary>
@@ -134,6 +159,7 @@ public sealed class PackageProcessManager : IDisposable
             RegexOptions.Compiled);
 
         private readonly int _packageId;
+        private readonly ChildProcessJobObject? _jobObject;
         private readonly List<ConsoleOutputLine> _outputLines = [];
         private readonly object _lock = new();
         private Process? _process;
@@ -153,9 +179,10 @@ public sealed class PackageProcessManager : IDisposable
         public event Action<bool>? RunningStateChanged;
         public event Action<string>? WebUrlDetected;
 
-        public ManagedProcess(int packageId, string executablePath, string workingDirectory, string arguments)
+        public ManagedProcess(int packageId, string executablePath, string workingDirectory, string arguments, ChildProcessJobObject? jobObject)
         {
             _packageId = packageId;
+            _jobObject = jobObject;
             ExecutablePath = executablePath;
             WorkingDirectory = workingDirectory;
             Arguments = arguments;
@@ -193,6 +220,15 @@ public sealed class PackageProcessManager : IDisposable
                 _process.Start();
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
+
+                // Assign to Job Object so the OS kills this process if our app crashes
+                if (_jobObject is not null && OperatingSystem.IsWindows())
+                {
+                    if (_jobObject.AssignProcess(_process))
+                    {
+                        Serilog.Log.Debug("PackageProcessManager: Process {Pid} assigned to Job Object", _process.Id);
+                    }
+                }
 
                 Serilog.Log.Information("PackageProcessManager: Started process {Pid} for package {PackageId}",
                     _process.Id, _packageId);
