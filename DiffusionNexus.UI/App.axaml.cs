@@ -502,7 +502,7 @@ public partial class App : Application
             sp.GetService<ISettingsExportService>()));
         
         services.AddScoped<LoraViewerViewModel>();
-        services.AddScoped<NewModuleViewModel>();
+        services.AddScoped<InstallerManagerViewModel>();
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -529,18 +529,18 @@ public partial class App : Application
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
     {
-        // New Module - placeholder
-        var newModuleVm = Services!.GetRequiredService<NewModuleViewModel>();
-        var newModuleView = new NewModulePlaceholderView { DataContext = newModuleVm };
-        var newModule = new ModuleItem(
-            "New Feature",
-            "avares://DiffusionNexus.UI/Assets/GalleryView.png", // Reusing GalleryView icon
-            newModuleView)
+        // Installer Manager module
+        var installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
+        var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
+        var installerManagerModule = new ModuleItem(
+            "Installer Manager",
+            "avares://DiffusionNexus.UI/Assets/GalleryView.png", // TODO: add dedicated Installer Manager icon
+            installerManagerView)
         {
-            ViewModel = newModuleVm
+            ViewModel = installerManagerVm
         };
 
-        mainViewModel.RegisterModule(newModule);
+        mainViewModel.RegisterModule(installerManagerModule);
 
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();

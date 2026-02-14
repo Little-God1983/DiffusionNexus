@@ -9,15 +9,15 @@ using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.UI.ViewModels;
 
-public partial class NewModuleViewModel : ViewModelBase
+public partial class InstallerManagerViewModel : ViewModelBase
 {
     private readonly IDialogService _dialogService;
     private readonly IInstallerPackageRepository _installerPackageRepository;
 
     [ObservableProperty]
-    private string _welcomeMessage = "Welcome to the New Module!";
+    private string _welcomeMessage = "Welcome to the Installer Manager!";
 
-    public NewModuleViewModel(
+    public InstallerManagerViewModel(
         IDialogService dialogService,
         IInstallerPackageRepository installerPackageRepository)
     {
@@ -26,7 +26,7 @@ public partial class NewModuleViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task AddExistingInstallation()
+    private async Task AddExistingInstallationAsync()
     {
         // 1. Pick Folder
         var path = await _dialogService.ShowOpenFolderDialogAsync("Select Installation Folder");
@@ -60,7 +60,7 @@ public partial class NewModuleViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task StartNewInstallation()
+    private async Task StartNewInstallationAsync()
     {
         await _dialogService.ShowMessageAsync("Coming Soon", "New installation feature is under development.");
     }

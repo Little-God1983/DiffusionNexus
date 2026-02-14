@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="DiffusionNexus.UI.Views.InstallerManagerView"
+             x:DataType="vm:InstallerManagerViewModel">
+    <Grid RowDefinitions="Auto, Auto, *" Margin="20">
+        <TextBlock Grid.Row="0"
+                   Text="Installer Manager"
+                   FontSize="24"
+                   FontWeight="Bold"
+                   Margin="0,0,0,20"/>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="20" Margin="0,0,0,20">
+            <Button Content="Add Existing Installation"
+                    Command="{Binding AddExistingInstallationCommand}"
+                    Padding="15, 10"
+                    FontSize="16"/>
+            <Button Content="New Installation"
+                    Command="{Binding StartNewInstallationCommand}"
+                    Padding="15, 10"
+                    FontSize="16"/>
+        </StackPanel>
+
+        <Border Grid.Row="2" Background="#2D2D30" CornerRadius="8" Padding="20">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20">
+                <TextBlock Text="{Binding WelcomeMessage}"
+                           FontSize="18"
+                           HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>
