@@ -175,22 +175,21 @@
                                 CornerRadius="10"
                                 BorderBrush="#3D3D3D"
                                 BorderThickness="1"
-                                Width="340"
+                                Width="400"
                                 Margin="0,0,16,16"
                                 ClipToBounds="True">
                             <Grid RowDefinitions="Auto,Auto">
                                 <!-- Top: image + info -->
-                                <Grid Grid.Row="0" ColumnDefinitions="120,*" Margin="12,12,12,8">
-                                    <!-- Placeholder thumbnail -->
+                                <Grid Grid.Row="0" ColumnDefinitions="140,*" Margin="12,12,12,8">
+                                    <!-- Installer logo -->
                                     <Border Grid.Column="0"
-                                            Width="108" Height="108"
-                                            Background="#1A1A1A"
-                                            CornerRadius="6"
+                                            Width="128" Height="128"
+                                            Background="#22FFFFFF"
+                                            CornerRadius="8"
                                             ClipToBounds="True">
-                                        <TextBlock Text="No Image"
-                                                   FontSize="11" Opacity="0.3"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
+                                        <Image Source="{Binding LogoImage}"
+                                               Stretch="Uniform"
+                                               Margin="4"/>
                                     </Border>
 
                                     <!-- Info panel -->
