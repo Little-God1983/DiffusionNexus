@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -107,6 +109,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? SettingsRequested;
 
+    /// <summary>
+    /// Logo image resolved from the installer type.
+    /// </summary>
+    public Bitmap? LogoImage { get; }
+
     public InstallerPackageCardViewModel(InstallerPackage package)
     {
         ArgumentNullException.ThrowIfNull(package);
@@ -129,6 +136,37 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             (null, not null) => version,
             _ => string.Empty
         };
+
+        LogoImage = LoadLogo(package.Type);
+    }
+
+    /// <summary>
+    /// Loads the logo bitmap for the given installer type from embedded assets.
+    /// Falls back to the default Installer.png when no specific logo exists.
+    /// </summary>
+    private static Bitmap? LoadLogo(InstallerType type)
+    {
+        var assetPath = type switch
+        {
+            InstallerType.Automatic1111 => "avares://DiffusionNexus.UI/Assets/InstallerManager/Automatic-Logo.png",
+            InstallerType.Forge => "avares://DiffusionNexus.UI/Assets/InstallerManager/ForgeUI-Logo.png",
+            InstallerType.ComfyUI => "avares://DiffusionNexus.UI/Assets/InstallerManager/ComfyUI-logo.png",
+            _ => "avares://DiffusionNexus.UI/Assets/Installer.png"
+        };
+
+        try
+        {
+            using var assetStream = AssetLoader.Open(new Uri(assetPath));
+            var ms = new MemoryStream();
+            assetStream.CopyTo(ms);
+            ms.Position = 0;
+            return new Bitmap(ms);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to load installer logo from {AssetPath}", assetPath);
+            return null;
+        }
     }
 
     /// <summary>

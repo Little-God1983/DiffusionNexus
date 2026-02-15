@@ -181,16 +181,15 @@
                             <Grid RowDefinitions="Auto,Auto">
                                 <!-- Top: image + info -->
                                 <Grid Grid.Row="0" ColumnDefinitions="120,*" Margin="12,12,12,8">
-                                    <!-- Placeholder thumbnail -->
+                                    <!-- Installer logo -->
                                     <Border Grid.Column="0"
                                             Width="108" Height="108"
                                             Background="#1A1A1A"
                                             CornerRadius="6"
                                             ClipToBounds="True">
-                                        <TextBlock Text="No Image"
-                                                   FontSize="11" Opacity="0.3"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
+                                        <Image Source="{Binding LogoImage}"
+                                               Stretch="Uniform"
+                                               Margin="8"/>
                                     </Border>
 
                                     <!-- Info panel -->
