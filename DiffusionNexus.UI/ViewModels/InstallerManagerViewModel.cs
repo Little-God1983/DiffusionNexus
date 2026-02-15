@@ -397,13 +397,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
         if (!confirmed) return;
 
-        // Second confirmation for safety
-        var doubleConfirmed = await _dialogService.ShowConfirmAsync(
-            "Final Confirmation",
-            $"This will permanently delete the entire folder:\n{card.InstallationPath}\n\nType-related models and outputs may also be lost. Proceed?");
-
-        if (!doubleConfirmed) return;
-
         try
         {
             // Remove from database first
@@ -416,15 +409,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             InstallerCards.Remove(card);
 
-            // Delete from disk
-            // TODO: Linux Implementation - verify Directory.Delete works cross-platform
+            // Delete from disk – clear read-only attributes first (e.g. .git pack files)
+            // TODO: Linux Implementation - verify ForceDeleteDirectory works cross-platform
             if (Directory.Exists(card.InstallationPath))
             {
-                Directory.Delete(card.InstallationPath, recursive: true);
+                await Task.Run(() => ForceDeleteDirectory(card.InstallationPath));
                 Serilog.Log.Information("Deleted installation folder: {Path}", card.InstallationPath);
             }
-
-            await _dialogService.ShowMessageAsync("Deleted", $"{card.Name} has been deleted from disk.");
         }
         catch (Exception ex)
         {
@@ -454,5 +445,21 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to open folder {Path}", card.InstallationPath);
         }
+    }
+
+    /// <summary>
+    /// Recursively deletes a directory, clearing read-only attributes on files first
+    /// so that Git pack/index files (and similar) don't cause <see cref="UnauthorizedAccessException"/>.
+    /// </summary>
+    private static void ForceDeleteDirectory(string path)
+    {
+        var dirInfo = new DirectoryInfo(path);
+
+        foreach (var file in dirInfo.EnumerateFiles("*", SearchOption.AllDirectories))
+        {
+            file.Attributes = FileAttributes.Normal;
+        }
+
+        dirInfo.Delete(recursive: true);
     }
 }
