@@ -84,6 +84,7 @@ x:Name="MainWin">
                                         <Button Width="196" 
                                                 Height="48"
                                                 Margin="2,2"
+                                                Padding="4,0"
                                                 IsVisible="{Binding IsVisible}"
                                                 Command="{Binding $parent[Window].DataContext.NavigateToModuleCommand}"
                                                 CommandParameter="{Binding}"
@@ -101,7 +102,7 @@ x:Name="MainWin">
                                                 </Button.Tag>
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                                     <!-- Icon placeholder when no image -->
-                                                    <Border Width="32" Height="32"
+                                                    <Border Width="40" Height="40"
                                                             Background="#3C3C3C"
                                                             CornerRadius="4"
                                                             IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNull}}">
@@ -112,7 +113,7 @@ x:Name="MainWin">
                                                     </Border>
                                                     <!-- Actual icon when provided -->
                                                     <Image Source="{Binding Icon}" 
-                                                           Width="32" Height="32"
+                                                           Width="40" Height="40"
                                                            IsVisible="{Binding Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                                                     <TextBlock Text="{Binding Name}"
                                                                VerticalAlignment="Center"
