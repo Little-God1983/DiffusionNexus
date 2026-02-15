@@ -72,7 +72,7 @@ public partial class CaptioningTabView : UserControl
             border.BorderThickness = new Avalonia.Thickness(2);
         }
 
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null) return;
 
         foreach (var item in files)
@@ -91,7 +91,7 @@ public partial class CaptioningTabView : UserControl
 
     private bool HasImageFiles(DragEventArgs e)
     {
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null) return false;
 
         foreach (var item in files)

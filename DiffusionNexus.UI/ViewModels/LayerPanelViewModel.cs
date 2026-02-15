@@ -128,9 +128,6 @@ public partial class LayerPanelViewModel : ObservableObject
     /// <summary>Event raised when layer selection changes.</summary>
     public event EventHandler<Layer?>? LayerSelectionChanged;
 
-    /// <summary>Event raised when layers need to be synchronized.</summary>
-    public event EventHandler? SyncLayersRequested;
-
     /// <summary>Event raised when a layered TIFF save is requested.</summary>
     public event Func<string, Task<bool>>? SaveLayeredTiffRequested;
 

@@ -103,7 +103,7 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
 
         // Remove from in-flight tracking once complete
         _ = tcs.Task.ContinueWith(
-            _ => _inFlightRequests.TryRemove(imagePath, out _),
+            task => _inFlightRequests.TryRemove(imagePath, out var removed),
             TaskContinuationOptions.ExecuteSynchronously);
 
         var request = new ThumbnailRequest(

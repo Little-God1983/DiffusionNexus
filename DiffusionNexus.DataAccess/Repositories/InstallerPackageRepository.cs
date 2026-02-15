@@ -15,7 +15,7 @@ internal sealed class InstallerPackageRepository : RepositoryBase<InstallerPacka
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<InstallerPackage>> GetAllAsync(CancellationToken cancellationToken = default)
+    public override async Task<IReadOnlyList<InstallerPackage>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return await DbSet
             .Include(p => p.ImageGallery)
