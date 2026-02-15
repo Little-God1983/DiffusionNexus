@@ -73,6 +73,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         LoadMediaCommand.Execute(null);
     }
 
+    /// <summary>
+    /// Gets or sets the process launcher for opening folders in Explorer.
+    /// Defaults to <see cref="DefaultProcessLauncher"/> when not explicitly set.
+    /// </summary>
+    public IProcessLauncher ProcessLauncher { get; set; } = new DefaultProcessLauncher();
+
     public BatchObservableCollection<GenerationGalleryMediaItemViewModel> MediaItems { get; } = [];
 
     /// <summary>
@@ -812,6 +818,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
         SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
+        OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
@@ -938,6 +945,54 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             ImagePaths = imagePaths
         });
+    }
+
+    /// <summary>
+    /// Opens the containing folder(s) of the selected image(s) in Windows Explorer.
+    /// If multiple origins exist, each is opened in a separate window.
+    /// Shows a confirmation dialog when more than 3 distinct folders would be opened.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task OpenFolderInExplorerAsync()
+    {
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        var distinctFolders = selectedItems
+            .Select(item => Path.GetDirectoryName(item.FilePath))
+            .Where(folder => !string.IsNullOrWhiteSpace(folder))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (distinctFolders.Count == 0) return;
+
+        if (distinctFolders.Count > 3 && DialogService is not null)
+        {
+            var confirm = await DialogService.ShowConfirmAsync(
+                "Open Multiple Folders",
+                $"This will open {distinctFolders.Count} Explorer windows. Do you want to continue?");
+
+            if (!confirm) return;
+        }
+
+        foreach (var folder in distinctFolders)
+        {
+            try
+            {
+                if (distinctFolders.Count == 1 && selectedItems.Count == 1)
+                {
+                    ProcessLauncher.OpenFolderAndSelectFile(selectedItems[0].FilePath);
+                }
+                else
+                {
+                    ProcessLauncher.OpenFolder(folder!);
+                }
+            }
+            catch
+            {
+                // Ignore errors opening Explorer - not critical
+            }
+        }
     }
 
     private void UpdateGroupingOptions()

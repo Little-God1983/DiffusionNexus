@@ -119,6 +119,155 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.MediaItems.First().FilePath.Should().Be(newerFile);
     }
 
+    [Fact]
+    public void OpenFolderInExplorerCommand_WhenNoSelection_CannotExecute()
+    {
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "test.png");
+        File.WriteAllText(image, "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null);
+
+        viewModel.OpenFolderInExplorerCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OpenFolderInExplorerCommand_WhenImageSelected_CanExecute()
+    {
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "test.png");
+        File.WriteAllText(image, "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SelectWithModifiers(viewModel.MediaItems[0], false, false);
+
+        viewModel.OpenFolderInExplorerCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OpenFolderInExplorerCommand_MoreThan3Origins_ShowsConfirmDialog()
+    {
+        // Create 4 distinct folders to trigger the warning
+        var folders = Enumerable.Range(0, 4).Select(_ => CreateTempDirectory()).ToList();
+        foreach (var folder in folders)
+        {
+            File.WriteAllText(Path.Combine(folder, "img.png"), "test");
+        }
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = folders.Select((f, i) => new ImageGallery
+            {
+                FolderPath = f, IsEnabled = true, Order = i
+            }).ToList()
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var mockDialog = new Mock<IDialogService>();
+        mockDialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(false);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null);
+        viewModel.DialogService = mockDialog.Object;
+        viewModel.ProcessLauncher = new Mock<IProcessLauncher>().Object;
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        // Select all items (one per folder = 4 distinct origins)
+        viewModel.SelectWithModifiers(viewModel.MediaItems[0], false, false);
+        for (var i = 1; i < viewModel.MediaItems.Count; i++)
+        {
+            viewModel.SelectWithModifiers(viewModel.MediaItems[i], false, true);
+        }
+
+        await viewModel.OpenFolderInExplorerCommand.ExecuteAsync(null);
+
+        mockDialog.Verify(d => d.ShowConfirmAsync(
+            "Open Multiple Folders",
+            It.Is<string>(msg => msg.Contains("4"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task OpenFolderInExplorerCommand_3OrFewerOrigins_NoConfirmDialog()
+    {
+        // Create 2 distinct folders — should not trigger the warning
+        var folders = Enumerable.Range(0, 2).Select(_ => CreateTempDirectory()).ToList();
+        foreach (var folder in folders)
+        {
+            File.WriteAllText(Path.Combine(folder, "img.png"), "test");
+        }
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = folders.Select((f, i) => new ImageGallery
+            {
+                FolderPath = f, IsEnabled = true, Order = i
+            }).ToList()
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var mockDialog = new Mock<IDialogService>();
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null);
+        viewModel.DialogService = mockDialog.Object;
+        viewModel.ProcessLauncher = new Mock<IProcessLauncher>().Object;
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SelectWithModifiers(viewModel.MediaItems[0], false, false);
+        for (var i = 1; i < viewModel.MediaItems.Count; i++)
+        {
+            viewModel.SelectWithModifiers(viewModel.MediaItems[i], false, true);
+        }
+
+        await viewModel.OpenFolderInExplorerCommand.ExecuteAsync(null);
+
+        mockDialog.Verify(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
     public void Dispose()
     {
         foreach (var path in _tempPaths)
