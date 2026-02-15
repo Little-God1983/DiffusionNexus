@@ -29,6 +29,8 @@ public partial class InpaintingViewModel : ObservableObject
     private float _denoise = 1.0f;
     private bool _isBusy;
     private string? _status;
+    private double _inpaintProgress;
+    private bool _isProgressIndeterminate;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
     private Avalonia.Media.Imaging.Bitmap? _baseThumbnail;
@@ -165,7 +167,25 @@ public partial class InpaintingViewModel : ObservableObject
     public string? Status
     {
         get => _status;
-        private set => SetProperty(ref _status, value);
+        private set
+        {
+            if (SetProperty(ref _status, value))
+                ParseProgress(value);
+        }
+    }
+
+    /// <summary>Progress percentage (0-100) for the current inpainting operation, or -1 when indeterminate.</summary>
+    public double InpaintProgress
+    {
+        get => _inpaintProgress;
+        private set => SetProperty(ref _inpaintProgress, value);
+    }
+
+    /// <summary>Whether the progress bar should show an indeterminate animation.</summary>
+    public bool IsProgressIndeterminate
+    {
+        get => _isProgressIndeterminate;
+        private set => SetProperty(ref _isProgressIndeterminate, value);
     }
 
     /// <summary>Whether an inpaint base image has been captured.</summary>
@@ -447,7 +467,37 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = null;
         IsBusy = false;
         Status = null;
+        InpaintProgress = 0;
+        IsProgressIndeterminate = false;
         NotifyGenerateCommandsCanExecuteChanged();
+    }
+
+    /// <summary>Parses ComfyUI status strings like "Progress: 5/20" into a percentage.</summary>
+    private void ParseProgress(string? status)
+    {
+        if (string.IsNullOrEmpty(status))
+        {
+            InpaintProgress = 0;
+            IsProgressIndeterminate = false;
+            return;
+        }
+
+        if (status.StartsWith("Progress:", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = status["Progress:".Length..].Trim().Split('/');
+            if (parts.Length == 2
+                && int.TryParse(parts[0], out var value)
+                && int.TryParse(parts[1], out var max)
+                && max > 0)
+            {
+                InpaintProgress = (double)value / max * 100;
+                IsProgressIndeterminate = false;
+                return;
+            }
+        }
+
+        // For non-parseable statuses, show indeterminate progress
+        IsProgressIndeterminate = true;
     }
 
     private void NotifyGenerateCommandsCanExecuteChanged()
