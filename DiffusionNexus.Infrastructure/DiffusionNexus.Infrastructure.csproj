@@ -11,7 +11,7 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     
     <!-- Logging -->
-    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
     
     <!-- DI and HTTP -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.*" />

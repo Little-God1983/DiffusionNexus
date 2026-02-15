@@ -961,7 +961,7 @@ public partial class ImageEditView : UserControl
             _imageDropZone.BorderThickness = new Thickness(3);
         }
 
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null) return;
 
         // Find the first valid image file
@@ -981,7 +981,7 @@ public partial class ImageEditView : UserControl
 
     private bool AnalyzeImageFilesInDrag(DragEventArgs e)
     {
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null) return false;
 
         foreach (var item in files)

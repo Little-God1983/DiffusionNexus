@@ -23,11 +23,6 @@ public partial class ReplaceDialog : Window, IDialogCloseable
         AvaloniaXamlLoader.Load(this);
     }
 
-    public void Close(object? result)
-    {
-        base.Close(result);
-    }
-
     private async void OnBrowseClick(object? sender, RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
@@ -52,7 +47,7 @@ public partial class ReplaceDialog : Window, IDialogCloseable
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
-        if (e.Data.Contains(DataFormats.Files))
+        if (e.DataTransfer.Contains(DataFormat.File))
         {
             e.DragEffects = DragDropEffects.Copy;
         }
@@ -65,9 +60,9 @@ public partial class ReplaceDialog : Window, IDialogCloseable
 
     private async void OnDrop(object? sender, DragEventArgs e)
     {
-        if (e.Data.Contains(DataFormats.Files))
+        if (e.DataTransfer.Contains(DataFormat.File))
         {
-            var files = e.Data.GetFiles();
+            var files = e.DataTransfer.TryGetFiles();
             var firstFile = files?.FirstOrDefault()?.Path.LocalPath;
             
             if (firstFile != null && DataContext is ReplaceImageDialogViewModel vm)

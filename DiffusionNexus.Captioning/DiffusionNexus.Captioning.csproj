@@ -9,19 +9,19 @@
 
   <ItemGroup>
     <!-- LlamaSharp for local LLM inference -->
-    <PackageReference Include="LLamaSharp" Version="0.24.0" />
+    <PackageReference Include="LLamaSharp" Version="0.25.0" />
     
     <!-- CUDA 12 backend for NVIDIA GPU acceleration (supports CUDA 12.8 for RTX 50XX) -->
-    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.24.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.25.0" />
     
     <!-- CPU backend as fallback when CUDA runtime is not available -->
-    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.24.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.25.0" />
     
     <!-- Image processing -->
-    <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    <PackageReference Include="SkiaSharp" Version="3.119.2" />
     
     <!-- Logging -->
-    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
     
     <!-- DI support -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.*" />

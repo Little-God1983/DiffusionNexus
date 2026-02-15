@@ -9,7 +9,7 @@ namespace DiffusionNexus.UI.Services;
 public static class FileLogger
 {
     private static readonly object _lock = new();
-    private static readonly string _logFilePath;
+    private static readonly string _logFilePath = string.Empty;
     private static bool _isEnabled = true;
 
     static FileLogger()

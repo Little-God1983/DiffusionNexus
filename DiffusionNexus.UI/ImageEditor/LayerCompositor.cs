@@ -42,14 +42,13 @@ public static class LayerCompositor
             else
             {
                 using var paint = new SKPaint
-                {
-                    Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
-                    BlendMode = layer.BlendMode.ToSKBlendMode(),
-                    IsAntialias = true,
-                    FilterQuality = SKFilterQuality.High
-                };
+                    {
+                        Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                        BlendMode = layer.BlendMode.ToSKBlendMode(),
+                        IsAntialias = true
+                    };
 
-                canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+                    canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
             }
         }
 
@@ -104,8 +103,7 @@ public static class LayerCompositor
 
         using var paint = new SKPaint
         {
-            IsAntialias = true,
-            FilterQuality = SKFilterQuality.High
+            IsAntialias = true
         };
 
         if (applyLayerProperties)
@@ -224,8 +222,7 @@ public static class LayerCompositor
         // Cut it using the mask bitmap as alpha (DstIn keeps checkerboard only where mask is opaque)
         using var maskBlendPaint = new SKPaint
         {
-            BlendMode = SKBlendMode.DstIn,
-            FilterQuality = SKFilterQuality.High
+            BlendMode = SKBlendMode.DstIn
         };
         canvas.DrawBitmap(layer.Bitmap, layerRect, maskBlendPaint);
 

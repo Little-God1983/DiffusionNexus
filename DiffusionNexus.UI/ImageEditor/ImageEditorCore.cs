@@ -1222,11 +1222,17 @@ public partial class ImageEditorCore : IDisposable
         // Initialize layer mode from the loaded stack via LayerManager
         // We enable with the first layer, then add the rest
         var firstLayer = loadedLayers[0];
+        if (firstLayer.Bitmap is null)
+        {
+            loadedLayers.Dispose();
+            return false;
+        }
         _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
 
         for (var i = 1; i < loadedLayers.Count; i++)
         {
             var layer = loadedLayers[i];
+            if (layer.Bitmap is null) continue;
             _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
         }
 
