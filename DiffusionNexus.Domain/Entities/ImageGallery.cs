@@ -1,11 +1,7 @@
-﻿
-namespace DiffusionNexus.Domain.Entities
+﻿namespace DiffusionNexus.Domain.Entities
 {
-    public class ImageGallery
+    public class ImageGallery : BaseEntity
     {
-        /// <summary>Local database ID.</summary>
-        public int Id { get; set; }
-
         /// <summary>Parent settings ID.</summary>
         public int AppSettingsId { get; set; }
 
@@ -20,5 +16,16 @@ namespace DiffusionNexus.Domain.Entities
 
         /// <summary>Navigation property to parent settings.</summary>
         public AppSettings? AppSettings { get; set; }
+
+        /// <summary>
+        /// Optional FK to the installer package that owns this gallery.
+        /// Null for standalone galleries not tied to an installation.
+        /// </summary>
+        public int? InstallerPackageId { get; set; }
+
+        /// <summary>
+        /// Navigation to the owning installer package (null for standalone galleries).
+        /// </summary>
+        public InstallerPackage? InstallerPackage { get; set; }
     }
 }

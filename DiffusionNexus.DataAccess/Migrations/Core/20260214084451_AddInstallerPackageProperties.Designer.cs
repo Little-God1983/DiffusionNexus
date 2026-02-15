@@ -3,6 +3,7 @@ using System;
 using DiffusionNexus.DataAccess.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DiffusionNexus.DataAccess.Migrations.Core
 {
     [DbContext(typeof(DiffusionNexusCoreDbContext))]
-    partial class DiffusionNexusCoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260214084451_AddInstallerPackageProperties")]
+    partial class AddInstallerPackageProperties
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.3");
@@ -206,9 +209,6 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("InstallerPackageId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("INTEGER");
 
@@ -224,57 +224,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.HasIndex("FolderPath");
 
-                    b.HasIndex("InstallerPackageId")
-                        .IsUnique();
-
                     b.ToTable("ImageGalleries", (string)null);
-                });
-
-            modelBuilder.Entity("DiffusionNexus.Domain.Entities.InstallerPackage", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Arguments")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Branch")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ExecutablePath")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("IconPath")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("InstallationPath")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsUpdateAvailable")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Version")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("InstallerPackages", (string)null);
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.LoraSource", b =>
@@ -776,14 +726,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("DiffusionNexus.Domain.Entities.InstallerPackage", "InstallerPackage")
-                        .WithOne("ImageGallery")
-                        .HasForeignKey("DiffusionNexus.Domain.Entities.ImageGallery", "InstallerPackageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("AppSettings");
-
-                    b.Navigation("InstallerPackage");
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.LoraSource", b =>
@@ -882,11 +825,6 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Creator", b =>
                 {
                     b.Navigation("Models");
-                });
-
-            modelBuilder.Entity("DiffusionNexus.Domain.Entities.InstallerPackage", b =>
-                {
-                    b.Navigation("ImageGallery");
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Model", b =>

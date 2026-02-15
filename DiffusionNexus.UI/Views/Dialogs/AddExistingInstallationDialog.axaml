@@ -1,0 +1,117 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="500"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.AddExistingInstallationDialog"
+        x:DataType="vm:AddExistingInstallationDialogViewModel"
+        Title="Add Existing Installation"
+        Width="600" Height="520"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        SystemDecorations="BorderOnly"
+        Background="Transparent"
+        TransparencyLevelHint="AcrylicBlur">
+
+  <Border Background="#2D2D30" CornerRadius="8" BorderBrush="#3F3F46" BorderThickness="1">
+    <Grid RowDefinitions="Auto, *, Auto" Margin="20">
+
+      <!-- Title -->
+      <TextBlock Grid.Row="0" Text="Add Existing Installation"
+                 FontSize="20" FontWeight="Bold" Margin="0,0,0,20"
+                 IsVisible="{Binding !IsEditMode}"/>
+      <TextBlock Grid.Row="0" Text="Edit Installation"
+                 FontSize="20" FontWeight="Bold" Margin="0,0,0,20"
+                 IsVisible="{Binding IsEditMode}"/>
+
+      <StackPanel Grid.Row="1" Spacing="15">
+
+        <!-- Name (required) -->
+        <StackPanel Spacing="5">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Name"/>
+            <TextBlock Text=" *" Foreground="#F44336"/>
+          </StackPanel>
+          <TextBox Text="{Binding Name}"
+                   Watermark="Enter a name for this installation..."
+                   Classes.error="{Binding NameError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <TextBlock Text="{Binding NameError}"
+                     Foreground="#F44336" FontSize="12" Margin="0,2,0,0"
+                     IsVisible="{Binding NameError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+
+        <!-- Installation Path (read-only) -->
+        <StackPanel Spacing="5">
+          <TextBlock Text="Installation Path"/>
+          <TextBox Text="{Binding InstallationPath}" IsReadOnly="True" Background="#1E1E1E"/>
+        </StackPanel>
+
+        <!-- Installation Type -->
+        <StackPanel Spacing="5">
+          <TextBlock Text="Installation Type"/>
+          <ComboBox ItemsSource="{Binding AvailableTypes}"
+                    SelectedItem="{Binding SelectedType}"
+                    HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <!-- Executable / Startup Script (required) -->
+        <StackPanel Spacing="5">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Executable / Startup Script"/>
+            <TextBlock Text=" *" Foreground="#F44336"/>
+          </StackPanel>
+          <Grid ColumnDefinitions="*, Auto">
+            <ComboBox Grid.Column="0"
+                      ItemsSource="{Binding FoundExecutables}"
+                      SelectedItem="{Binding SelectedExecutable}"
+                      IsEditable="True"
+                      HorizontalAlignment="Stretch"
+                      Margin="0,0,10,0"
+                      Classes.error="{Binding ExecutableError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            <Button Grid.Column="1" Content="..." Command="{Binding BrowseExecutableCommand}"/>
+          </Grid>
+          <TextBlock Text="{Binding ExecutableError}"
+                     Foreground="#F44336" FontSize="12" Margin="0,2,0,0"
+                     IsVisible="{Binding ExecutableError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <TextBlock Text="Select the .bat file used to launch the application."
+                     FontSize="12" Foreground="#888888"
+                     IsVisible="{Binding ExecutableError, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+        </StackPanel>
+
+        <!-- Image Output Folder (required) -->
+        <StackPanel Spacing="5">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Image Output Folder (Generation Gallery)"/>
+            <TextBlock Text=" *" Foreground="#F44336"/>
+          </StackPanel>
+          <Grid ColumnDefinitions="*, Auto">
+            <TextBox Grid.Column="0" Text="{Binding OutputFolderPath}" Margin="0,0,10,0"
+                     Classes.error="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            <Button Grid.Column="1" Content="..." Command="{Binding BrowseOutputFolderCommand}"/>
+          </Grid>
+          <TextBlock Text="{Binding OutputFolderError}"
+                     Foreground="#F44336" FontSize="12" Margin="0,2,0,0"
+                     IsVisible="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <TextBlock Text="This path will be added to the Generation Gallery. Auto-detected from type or startup script."
+                     FontSize="12" Foreground="#888888"
+                     IsVisible="{Binding OutputFolderError, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+        </StackPanel>
+
+      </StackPanel>
+
+      <!-- Buttons -->
+      <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10"
+                  HorizontalAlignment="Right" Margin="0,20,0,0">
+        <Button Content="Cancel" Click="OnCancel"/>
+        <Button Content="Save" Classes="accent" Click="OnConfirm"
+                IsVisible="{Binding IsEditMode}"
+                IsEnabled="{Binding CanConfirm}"/>
+        <Button Content="Add Installation" Classes="accent" Click="OnConfirm"
+                IsVisible="{Binding !IsEditMode}"
+                IsEnabled="{Binding CanConfirm}"/>
+      </StackPanel>
+
+    </Grid>
+  </Border>
+</Window>

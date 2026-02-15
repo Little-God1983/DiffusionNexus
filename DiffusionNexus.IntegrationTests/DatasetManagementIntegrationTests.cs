@@ -184,5 +184,13 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(string imagePath, string currentCaption, string newCaption) =>
             Task.FromResult(CaptionCompareResult.Cancelled());
+
+        public Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath) =>
+            Task.FromResult(AddExistingInstallationResult.Cancelled());
+
+        public Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(
+            string name, string installationPath, DiffusionNexus.Domain.Enums.InstallerType type,
+            string executablePath, string outputFolderPath) =>
+            Task.FromResult(AddExistingInstallationResult.Cancelled());
     }
 }

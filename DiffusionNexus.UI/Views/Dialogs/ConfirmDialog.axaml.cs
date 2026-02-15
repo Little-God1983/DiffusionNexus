@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -9,6 +10,12 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 /// </summary>
 public partial class ConfirmDialog : Window
 {
+    /// <summary>
+    /// Styled property so the binding updates when Message is set after construction.
+    /// </summary>
+    public static readonly StyledProperty<string> MessageProperty =
+        AvaloniaProperty.Register<ConfirmDialog, string>(nameof(Message), defaultValue: string.Empty);
+
     public ConfirmDialog()
     {
         InitializeComponent();
@@ -23,7 +30,11 @@ public partial class ConfirmDialog : Window
     /// <summary>
     /// Gets or sets the confirmation message.
     /// </summary>
-    public string Message { get; set; } = string.Empty;
+    public string Message
+    {
+        get => GetValue(MessageProperty);
+        set => SetValue(MessageProperty, value);
+    }
 
     /// <summary>
     /// Gets the result after the dialog closes.

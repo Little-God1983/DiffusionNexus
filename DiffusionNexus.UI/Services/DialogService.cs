@@ -19,6 +19,31 @@ public class DialogService : IDialogService
         _window = window ?? throw new ArgumentNullException(nameof(window));
     }
 
+    /// <summary>
+    /// Safely extracts a local file-system path from a storage item's Uri.
+    /// Handles root folders (e.g. C:\, E:\) where Uri.LocalPath can throw.
+    /// </summary>
+    private static string? GetSafeLocalPath(IStorageItem? item)
+    {
+        if (item is null)
+            return null;
+
+        try
+        {
+            return item.Path.LocalPath;
+        }
+        catch (Exception)
+        {
+            // Fallback: extract the path directly from the Uri string
+            // TODO: Linux Implementation for safe local path extraction
+            var uri = item.Path;
+            if (uri.IsAbsoluteUri && uri.IsFile)
+                return uri.OriginalString.Replace("file:///", "").Replace('/', Path.DirectorySeparatorChar);
+
+            return item.Name;
+        }
+    }
+
     public async Task<string?> ShowOpenFileDialogAsync(string title, string? filter = null)
     {
         var options = new FilePickerOpenOptions
@@ -33,7 +58,7 @@ public class DialogService : IDialogService
         }
 
         var result = await _window.StorageProvider.OpenFilePickerAsync(options);
-        return result.FirstOrDefault()?.Path.LocalPath;
+        return GetSafeLocalPath(result.FirstOrDefault());
     }
 
     public async Task<string?> ShowOpenFileDialogAsync(string title, string startFolder, string? filter)
@@ -56,7 +81,7 @@ public class DialogService : IDialogService
         }
 
         var result = await _window.StorageProvider.OpenFilePickerAsync(options);
-        return result.FirstOrDefault()?.Path.LocalPath;
+        return GetSafeLocalPath(result.FirstOrDefault());
     }
 
     public async Task<string?> ShowSaveFileDialogAsync(string title, string? defaultFileName = null, string? filter = null)
@@ -68,7 +93,7 @@ public class DialogService : IDialogService
         };
 
         var result = await _window.StorageProvider.SaveFilePickerAsync(options);
-        return result?.Path.LocalPath;
+        return GetSafeLocalPath(result);
     }
 
     public async Task<string?> ShowOpenFolderDialogAsync(string title)
@@ -80,7 +105,7 @@ public class DialogService : IDialogService
         };
 
         var result = await _window.StorageProvider.OpenFolderPickerAsync(options);
-        return result.FirstOrDefault()?.Path.LocalPath;
+        return GetSafeLocalPath(result.FirstOrDefault());
     }
 
     public async Task ShowMessageAsync(string title, string message)
@@ -414,5 +439,55 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CaptionCompareResult.Cancelled();
+    }
+
+    public async Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath)
+    {
+        var dialog = new AddExistingInstallationDialog();
+        var vm = new AddExistingInstallationDialogViewModel(initialPath, this);
+
+        dialog.DataContext = vm;
+
+        await dialog.ShowDialog(_window);
+
+        if (dialog.IsCancelled) return AddExistingInstallationResult.Cancelled();
+
+        return new AddExistingInstallationResult(
+            vm.Name,
+            vm.InstallationPath,
+            vm.SelectedType,
+            vm.SelectedExecutable,
+            vm.OutputFolderPath,
+            vm.Version,
+            vm.Branch
+        );
+    }
+
+    public async Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(
+        string name,
+        string installationPath,
+        Domain.Enums.InstallerType type,
+        string executablePath,
+        string outputFolderPath)
+    {
+        var dialog = new AddExistingInstallationDialog();
+        var vm = new AddExistingInstallationDialogViewModel(
+            name, installationPath, type, executablePath, outputFolderPath, this);
+
+        dialog.DataContext = vm;
+
+        await dialog.ShowDialog(_window);
+
+        if (dialog.IsCancelled) return AddExistingInstallationResult.Cancelled();
+
+        return new AddExistingInstallationResult(
+            vm.Name,
+            vm.InstallationPath,
+            vm.SelectedType,
+            vm.SelectedExecutable,
+            vm.OutputFolderPath,
+            vm.Version,
+            vm.Branch
+        );
     }
 }

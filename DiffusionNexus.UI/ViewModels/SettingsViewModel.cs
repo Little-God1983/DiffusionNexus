@@ -20,6 +20,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
+    private bool _isSaving;
 
     #region Observable Properties
 
@@ -213,6 +214,12 @@ public partial class SettingsViewModel : BusyViewModelBase
         _eventAggregator = eventAggregator;
         _activityLogService = activityLogService;
         _exportService = exportService;
+
+        // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.SettingsSaved += OnExternalSettingsSaved;
+        }
     }
 
     /// <summary>
@@ -403,6 +410,29 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Handles SettingsSaved events from other components (e.g., Installer Manager adding galleries).
+    /// Reloads the image gallery sources so the Settings dialog stays in sync.
+    /// </summary>
+    private void OnExternalSettingsSaved(object? sender, SettingsSavedEventArgs e)
+    {
+        // Avoid re-entrant reload when this ViewModel publishes the event itself
+        if (_isSaving) return;
+
+        // Reload collections on the UI thread
+        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                await ReloadCollectionsAsync();
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Failed to reload settings after external change");
+            }
+        });
+    }
+
+    /// <summary>
     /// Saves settings to the database.
     /// </summary>
     [RelayCommand]
@@ -492,7 +522,15 @@ public partial class SettingsViewModel : BusyViewModelBase
             StatusMessage = "Settings saved successfully.";
 
             // Notify other components that settings have changed
-            _eventAggregator?.PublishSettingsSaved(new SettingsSavedEventArgs());
+            _isSaving = true;
+            try
+            {
+                _eventAggregator?.PublishSettingsSaved(new SettingsSavedEventArgs());
+            }
+            finally
+            {
+                _isSaving = false;
+            }
         }, "Saving settings...");
     }
 

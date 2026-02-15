@@ -55,6 +55,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IModelFileRepository, ModelFileRepository>();
         services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
         services.AddScoped<IDisclaimerAcceptanceRepository, DisclaimerAcceptanceRepository>();
+        services.AddScoped<IInstallerPackageRepository, InstallerPackageRepository>();
 
         return services;
     }

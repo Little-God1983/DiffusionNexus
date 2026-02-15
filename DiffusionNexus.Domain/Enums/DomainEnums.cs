@@ -179,3 +179,18 @@ public enum DataSource
     CivitaiApi,
     Manual
 }
+
+/// <summary>
+/// Supported installer types for diffusion interfaces.
+/// </summary>
+public enum InstallerType
+{
+    Unknown = 0,
+    Automatic1111,
+    Forge,
+    ComfyUI,
+    Fooocus,
+    InvokeAI,
+    FluxGym,
+    SwarmUI
+}

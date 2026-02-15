@@ -5,6 +5,8 @@ using Avalonia.Markup.Xaml;
 using DiffusionNexus.Captioning;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
@@ -86,18 +88,13 @@ public partial class App : Application
                 // Create main window with modules
                 Serilog.Log.Information("Creating main window view model...");
                 var mainViewModel = new DiffusionNexusMainWindowViewModel();
-                
+
                 // Initialize status bar with activity log service
                 Serilog.Log.Information("Initializing status bar...");
                 mainViewModel.InitializeStatusBar();
-                
-                Serilog.Log.Information("Registering modules...");
-                RegisterModules(mainViewModel);
 
-                // Check disclaimer status after services are ready
-                Serilog.Log.Information("Checking disclaimer status...");
-                _ = mainViewModel.CheckDisclaimerStatusAsync();
-
+                // Create and assign the main window before registering modules,
+                // because module resolution requires IDialogService which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
                 var mainWindow = new DiffusionNexusMainWindow
                 {
@@ -105,7 +102,14 @@ public partial class App : Application
                 };
                 desktop.MainWindow = mainWindow;
                 Serilog.Log.Information("Main window assigned to desktop.MainWindow");
-                
+
+                Serilog.Log.Information("Registering modules...");
+                RegisterModules(mainViewModel);
+
+                // Check disclaimer status after services are ready
+                Serilog.Log.Information("Checking disclaimer status...");
+                _ = mainViewModel.CheckDisclaimerStatusAsync();
+
                 // Force show the window explicitly
                 mainWindow.Show();
                 Serilog.Log.Information("Main window Show() called");
@@ -113,6 +117,8 @@ public partial class App : Application
                 // Cleanup on shutdown
                 desktop.ShutdownRequested += (_, _) =>
                 {
+                    // Kill all managed child processes before scope disposal
+                    Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
                 };
             }
@@ -452,6 +458,9 @@ public partial class App : Application
         // Image upscaling service (singleton - maintains ONNX session)
         services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
 
+        // Package process manager (singleton - owns child process lifecycles)
+        services.AddSingleton<PackageProcessManager>();
+
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
@@ -480,6 +489,15 @@ public partial class App : Application
         // Settings export/import
         services.AddScoped<ISettingsExportService, SettingsExportService>();
 
+        // Dialog service - resolves the main window lazily from the application lifetime
+        services.AddScoped<IDialogService>(sp =>
+        {
+            var lifetime = Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var mainWindow = lifetime?.MainWindow
+                ?? throw new InvalidOperationException("MainWindow is not available yet.");
+            return new DialogService(mainWindow);
+        });
+
         // ViewModels (scoped to app lifetime)
         // SettingsViewModel - use factory to inject all required services including IActivityLogService
         services.AddScoped<SettingsViewModel>(sp => new SettingsViewModel(
@@ -491,6 +509,13 @@ public partial class App : Application
             sp.GetService<ISettingsExportService>()));
         
         services.AddScoped<LoraViewerViewModel>();
+        services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
+            sp.GetRequiredService<IDialogService>(),
+            sp.GetRequiredService<IInstallerPackageRepository>(),
+            sp.GetRequiredService<IAppSettingsRepository>(),
+            sp.GetRequiredService<IUnitOfWork>(),
+            sp.GetRequiredService<PackageProcessManager>(),
+            sp.GetRequiredService<IDatasetEventAggregator>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -517,6 +542,19 @@ public partial class App : Application
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
     {
+        // Installer Manager module
+        var installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
+        var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
+        var installerManagerModule = new ModuleItem(
+            "Installer Manager",
+            "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
+            installerManagerView)
+        {
+            ViewModel = installerManagerVm
+        };
+
+        mainViewModel.RegisterModule(installerManagerModule);
+
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
         var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
@@ -611,6 +649,13 @@ public partial class App : Application
 
         // Load Generation Gallery on startup
         generationGalleryVm.LoadMediaCommand.Execute(null);
+
+        // Load saved installations on startup
+        installerManagerVm.LoadInstallationsCommand.Execute(null);
+
+        // Load datasets on startup so they are available for Image Comparer
+        // even when navigating directly without visiting Dataset Management first
+        loraDatasetHelperVm.DatasetManagement.CheckStorageConfigurationCommand.Execute(null);
     }
 
     private void DisableAvaloniaDataAnnotationValidation()
