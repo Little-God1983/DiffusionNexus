@@ -29,7 +29,7 @@ public partial class InpaintingViewModel : ObservableObject
     private float _denoise = 1.0f;
     private bool _isBusy;
     private string? _status;
-    private double _inpaintProgress;
+    private int _inpaintProgress;
     private bool _isProgressIndeterminate;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
@@ -175,7 +175,7 @@ public partial class InpaintingViewModel : ObservableObject
     }
 
     /// <summary>Progress percentage (0-100) for the current inpainting operation, or -1 when indeterminate.</summary>
-    public double InpaintProgress
+    public int InpaintProgress
     {
         get => _inpaintProgress;
         private set => SetProperty(ref _inpaintProgress, value);
@@ -472,7 +472,7 @@ public partial class InpaintingViewModel : ObservableObject
         NotifyGenerateCommandsCanExecuteChanged();
     }
 
-    /// <summary>Parses ComfyUI status strings like "Progress: 5/20" into a percentage.</summary>
+    /// <summary>Maps ComfyUI status strings to progress bar values (0–100).</summary>
     private void ParseProgress(string? status)
     {
         if (string.IsNullOrEmpty(status))
@@ -482,6 +482,7 @@ public partial class InpaintingViewModel : ObservableObject
             return;
         }
 
+        // "Progress: value/max" from the KSampler — scale into 30-90% range
         if (status.StartsWith("Progress:", StringComparison.OrdinalIgnoreCase))
         {
             var parts = status["Progress:".Length..].Trim().Split('/');
@@ -490,14 +491,26 @@ public partial class InpaintingViewModel : ObservableObject
                 && int.TryParse(parts[1], out var max)
                 && max > 0)
             {
-                InpaintProgress = (double)value / max * 100;
+                InpaintProgress = (int)(30 + (double)value / max * 60);
                 IsProgressIndeterminate = false;
                 return;
             }
         }
 
-        // For non-parseable statuses, show indeterminate progress
-        IsProgressIndeterminate = true;
+        // Known phases mapped to fixed progress values
+        InpaintProgress = status switch
+        {
+            _ when status.StartsWith("Preparing", StringComparison.OrdinalIgnoreCase) => 5,
+            _ when status.StartsWith("Uploading", StringComparison.OrdinalIgnoreCase) => 10,
+            _ when status.StartsWith("Queuing", StringComparison.OrdinalIgnoreCase) => 15,
+            _ when status.StartsWith("Generating", StringComparison.OrdinalIgnoreCase) => 20,
+            _ when status.StartsWith("Executing", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Running", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Loading", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Downloading", StringComparison.OrdinalIgnoreCase) => 95,
+            _ => _inpaintProgress // keep current value for unknown messages
+        };
+        IsProgressIndeterminate = false;
     }
 
     private void NotifyGenerateCommandsCanExecuteChanged()

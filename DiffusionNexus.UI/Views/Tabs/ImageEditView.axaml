@@ -1084,15 +1084,14 @@
                         ToolTip.Tip="Generate inpainting and open before/after in Image Comparer"/>
                 
                 <!-- Progress (shown when busy) -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.Inpainting.IsBusy}">
-                  <!-- Status text -->
-                  <TextBlock Text="{Binding ImageEditor.Inpainting.Status}" 
-                             FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
-                  <!-- Progress bar -->
-                  <ProgressBar Minimum="0" Maximum="100"
-                               Value="{Binding ImageEditor.Inpainting.InpaintProgress}"
-                               IsIndeterminate="{Binding ImageEditor.Inpainting.IsProgressIndeterminate}"
-                               Height="6" Foreground="#4CAF50" Background="#333"/>
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Inpainting.IsBusy}" Margin="0,4,0,0">
+                  <!-- Debug: uncomment to show raw status text -->
+                  <!-- <TextBlock Text="{Binding ImageEditor.Inpainting.Status}" 
+                               FontSize="10" Opacity="0.5" TextWrapping="Wrap"/> -->
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="#4CAF50" CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.Inpainting.InpaintProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
                 </StackPanel>
 
                 <Border Height="1" Background="#444" Margin="0,4"/>
