@@ -272,4 +272,17 @@ public static class BoolConverters
         new FuncValueConverter<bool, string>(inverted => inverted ? "4:5" : "5:4");
 
     #endregion
+
+    #region Progress Bar Converters
+
+    private static readonly IBrush ProgressGreenBrush = new SolidColorBrush(Color.Parse("#4CAF50"));
+    private static readonly IBrush ProgressRedBrush = new SolidColorBrush(Color.Parse("#F44336"));
+
+    /// <summary>
+    /// Converts HasError to progress bar color (red if error, green otherwise).
+    /// </summary>
+    public static readonly IValueConverter BoolToProgressBrush =
+        new FuncValueConverter<bool, IBrush>(hasError => hasError ? ProgressRedBrush : ProgressGreenBrush);
+
+    #endregion
 }
