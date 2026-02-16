@@ -7,6 +7,7 @@ This is an Avalonia Project Written in C# / .net 10
 * When a bug is found, always check if a unit test can be created to cover/reproduce it before fixing. Ensure that the unit test effectively captures the bug scenario.
 * When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication/dead code.
 * When the database shall be modified execute the publish.ps1 script to make sure there is a last backup of the app with a working database.
+* When A Keyboard Shortcut is Added make sure its documented in a file called DiffusionNexus.UI\\Doc\\Shortcuts.md
 
 ## Code Style
 
