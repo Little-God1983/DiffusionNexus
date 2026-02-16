@@ -19,6 +19,7 @@ public partial class GenerationGalleryView : UserControl
     private ScrollViewer? _galleryScrollViewer;
     private Point _dragStartPoint;
     private bool _isDragPending;
+    private GenerationGalleryMediaItemViewModel? _deferredSelectItem;
 
     /// <summary>
     /// Minimum distance in pixels the pointer must travel before initiating a drag operation.
@@ -97,7 +98,18 @@ public partial class GenerationGalleryView : UserControl
         var isCtrlPressed = e.KeyModifiers.HasFlag(KeyModifiers.Control);
         var isShiftPressed = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
-        vm.SelectWithModifiers(item, isShiftPressed, isCtrlPressed);
+        // When clicking an already-selected item without modifiers, defer the
+        // "clear others and select only this" to pointer-release. This preserves
+        // the multi-selection if the user drags instead of clicking.
+        _deferredSelectItem = null;
+        if (!isCtrlPressed && !isShiftPressed && item.IsSelected && vm.SelectionCount > 1)
+        {
+            _deferredSelectItem = item;
+        }
+        else
+        {
+            vm.SelectWithModifiers(item, isShiftPressed, isCtrlPressed);
+        }
 
         // Track drag start for drag-out to other apps
         _dragStartPoint = e.GetPosition(this);
@@ -122,6 +134,7 @@ public partial class GenerationGalleryView : UserControl
             return;
 
         _isDragPending = false;
+        _deferredSelectItem = null;
         border.PointerMoved -= OnMediaCardPointerMoved;
         border.PointerReleased -= OnMediaCardPointerReleased;
 
@@ -140,12 +153,23 @@ public partial class GenerationGalleryView : UserControl
 
     private void OnMediaCardPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        var wasDragPending = _isDragPending;
         _isDragPending = false;
+
         if (sender is Border border)
         {
             border.PointerMoved -= OnMediaCardPointerMoved;
             border.PointerReleased -= OnMediaCardPointerReleased;
         }
+
+        // No drag happened — apply the deferred single-select now
+        if (wasDragPending && _deferredSelectItem is not null
+            && DataContext is GenerationGalleryViewModel vm)
+        {
+            vm.SelectWithModifiers(_deferredSelectItem, isShiftPressed: false, isCtrlPressed: false);
+        }
+
+        _deferredSelectItem = null;
     }
 
     private void OnMediaDoubleTapped(object? sender, TappedEventArgs e)
