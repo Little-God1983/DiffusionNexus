@@ -948,6 +948,18 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     /// <summary>
+    /// Returns the file paths of all currently selected media items.
+    /// Used by the View for clipboard copy and drag-and-drop operations.
+    /// </summary>
+    public IReadOnlyList<string> GetSelectedFilePaths()
+    {
+        return MediaItems
+            .Where(item => item.IsSelected)
+            .Select(item => item.FilePath)
+            .ToList();
+    }
+
+    /// <summary>
     /// Opens the containing folder(s) of the selected image(s) in Windows Explorer.
     /// If multiple origins exist, each is opened in a separate window.
     /// Shows a confirmation dialog when more than 3 distinct folders would be opened.
