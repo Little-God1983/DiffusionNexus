@@ -128,10 +128,13 @@ public partial class SelectVersionsToDeleteDialog : Window, INotifyPropertyChang
             var (imageCount, videoCount, captionCount) = GetVersionMediaCounts(versionPath);
             var isNsfw = dataset.VersionNsfwFlags.GetValueOrDefault(version, false);
             
+            var description = dataset.VersionDescriptions.GetValueOrDefault(version);
+
             var item = new VersionDeleteItem
             {
                 Version = version,
                 VersionLabel = $"V{version}",
+                VersionDescription = description,
                 ImageCount = imageCount,
                 VideoCount = videoCount,
                 CaptionCount = captionCount,
@@ -242,7 +245,15 @@ public partial class VersionDeleteItem : ObservableObject
     private int _captionCount;
 
     [ObservableProperty]
+    private string? _versionDescription;
+
+    [ObservableProperty]
     private bool _isNsfw;
+
+    /// <summary>
+    /// Whether this version has a user-provided description.
+    /// </summary>
+    public bool HasDescription => !string.IsNullOrWhiteSpace(VersionDescription);
 
     /// <summary>
     /// Gets the media count text for display.

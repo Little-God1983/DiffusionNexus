@@ -57,6 +57,12 @@
                     <TextBlock Text="{Binding VersionLabel}"
                                FontWeight="SemiBold"
                                FontSize="14"/>
+                    <TextBlock Text="{Binding VersionDescription}"
+                               FontSize="11"
+                               Opacity="0.6"
+                               FontStyle="Italic"
+                               TextTrimming="CharacterEllipsis"
+                               IsVisible="{Binding HasDescription}"/>
                     <TextBlock Text="{Binding MediaCountText}"
                                FontSize="12"
                                Opacity="0.7"/>
