@@ -26,7 +26,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     private SaveAsDestination _destination = SaveAsDestination.OriginFolder;
     private DatasetCardViewModel? _selectedDataset;
     private int? _selectedVersion;
-    private string _customFolderPath = string.Empty;
     private string _layeredTiffFolderPath = string.Empty;
     private bool _hasLayers;
 
@@ -205,7 +204,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     public bool HasValidationError => 
         (IsOriginSelected && (IsFilenameUnchanged || IsFilenameExists || HasInvalidCharacters || string.IsNullOrWhiteSpace(FileName))) ||
         (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters || IsFilenameExists)) ||
-        (IsCustomFolderSelected && (!HasCustomFolder || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters)) ||
         (IsLayeredTiffSelected && (!HasLayeredTiffFolder || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters));
 
     /// <summary>
@@ -238,11 +236,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 if (IsFilenameExists)
                     return $"A file named '{FileName.Trim()}{FileExtension}' already exists in the selected dataset.";
             }
-            else if (IsCustomFolderSelected)
-            {
-                if (!HasCustomFolder)
-                    return "Please select a destination folder.";
-            }
             else if (IsLayeredTiffSelected)
             {
                 if (!HasLayeredTiffFolder)
@@ -263,7 +256,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         {
             SaveAsDestination.OriginFolder => !IsFilenameUnchanged && !IsFilenameExists,
             SaveAsDestination.ExistingDataset => SelectedDataset != null && SelectedVersion != null && !IsFilenameExists,
-            SaveAsDestination.CustomFolder => HasCustomFolder,
             SaveAsDestination.LayeredTiff => HasLayeredTiffFolder,
             _ => false
         };
@@ -295,6 +287,7 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             FileName = fileName;
             FileExtension = extension;
             _directoryPath = directory;
+            OnPropertyChanged(nameof(OriginFolderPath));
 
             // Load all existing filenames in the directory (without extensions)
             FileLogger.Log("Loading existing file names...");
@@ -370,26 +363,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     {
         HasLayers = hasLayers;
         return this;
-    }
-
-    /// <summary>
-    /// Opens a folder picker for the custom folder destination.
-    /// </summary>
-    internal async void OnBrowseCustomFolder(object? sender, RoutedEventArgs e)
-    {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is null) return;
-
-        var result = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "Select Save Folder",
-            AllowMultiple = false
-        });
-
-        if (result.Count > 0)
-        {
-            CustomFolderPath = result[0].Path.LocalPath;
-        }
     }
 
     /// <summary>
@@ -474,7 +447,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         {
             SaveAsDestination.OriginFolder => SaveAsResult.Success(FileName.Trim(), Rating),
             SaveAsDestination.ExistingDataset => SaveAsResult.SuccessToDataset(FileName.Trim(), Rating, SelectedDataset!, SelectedVersion),
-            SaveAsDestination.CustomFolder => SaveAsResult.SuccessToFolder(FileName.Trim(), Rating, CustomFolderPath),
             SaveAsDestination.LayeredTiff => SaveAsResult.SuccessLayeredTiff(FileName.Trim(), LayeredTiffFolderPath),
             _ => SaveAsResult.Cancelled()
         };
@@ -511,7 +483,6 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(Destination));
                 OnPropertyChanged(nameof(IsOriginSelected));
                 OnPropertyChanged(nameof(IsDatasetSelected));
-                OnPropertyChanged(nameof(IsCustomFolderSelected));
                 OnPropertyChanged(nameof(IsLayeredTiffSelected));
                 OnPropertyChanged(nameof(DisplayExtension));
                 OnPropertyChanged(nameof(CanSave));
@@ -534,42 +505,11 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         set { if (value) Destination = SaveAsDestination.ExistingDataset; }
     }
 
-    public bool IsCustomFolderSelected
-    {
-        get => Destination == SaveAsDestination.CustomFolder;
-        set { if (value) Destination = SaveAsDestination.CustomFolder; }
-    }
-
     public bool IsLayeredTiffSelected
     {
         get => Destination == SaveAsDestination.LayeredTiff;
         set { if (value) Destination = SaveAsDestination.LayeredTiff; }
     }
-
-    /// <summary>
-    /// Gets or sets the custom folder path for Save to Folder.
-    /// </summary>
-    public string CustomFolderPath
-    {
-        get => _customFolderPath;
-        set
-        {
-            if (_customFolderPath != value)
-            {
-                _customFolderPath = value;
-                OnPropertyChanged(nameof(CustomFolderPath));
-                OnPropertyChanged(nameof(HasCustomFolder));
-                OnPropertyChanged(nameof(CanSave));
-                OnPropertyChanged(nameof(ValidationMessage));
-                OnPropertyChanged(nameof(HasValidationError));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Gets whether a custom folder has been selected.
-    /// </summary>
-    public bool HasCustomFolder => !string.IsNullOrWhiteSpace(_customFolderPath);
 
     /// <summary>
     /// Gets or sets the folder path for Layered TIFF export.

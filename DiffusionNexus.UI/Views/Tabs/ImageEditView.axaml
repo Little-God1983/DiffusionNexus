@@ -164,11 +164,23 @@
                     IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <Border Grid.Column="8"/>
-          <!-- Save buttons - hidden until image is loaded -->
+          <!-- Save / Export dropdown - hidden until image is loaded -->
           <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
-            <Button Content="Save As New" Command="{Binding ImageEditor.SaveAsNewCommand}" Background="#2D7D46" Padding="12,6"/>
-            <Button Content="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}" Padding="12,6"/>
-            <Button Content="Export" Command="{Binding ImageEditor.ExportCommand}" Padding="12,6" ToolTip.Tip="Export image to external location"/>
+            <Button Content="Save / Export" Background="#2D7D46" Padding="12,6" FontWeight="SemiBold">
+              <Button.Flyout>
+                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                  <MenuItem Header="Save" Command="{Binding ImageEditor.SaveOverwriteCommand}"
+                            ToolTip.Tip="Overwrite the original image"/>
+                  <MenuItem Header="Save as New" Command="{Binding ImageEditor.SaveAsNewCommand}"
+                            ToolTip.Tip="Save with a new filename or to a dataset"/>
+                  <Separator/>
+                  <MenuItem Header="Export as PNG" Command="{Binding ImageEditor.ExportAsPngCommand}"
+                            ToolTip.Tip="Export a flattened PNG to any location"/>
+                  <MenuItem Header="Export as Layered TIFF" Command="{Binding ImageEditor.ExportAsLayeredTiffCommand}"
+                            ToolTip.Tip="Export all layers as a multi-page TIFF"/>
+                </MenuFlyout>
+              </Button.Flyout>
+            </Button>
           </StackPanel>
           <!-- Separator before Reset/Clear - only visible when image is loaded -->
           <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>

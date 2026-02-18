@@ -261,6 +261,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand SaveAsNewCommand { get; }
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
+    public IAsyncRelayCommand ExportAsPngCommand { get; }
+    public IAsyncRelayCommand ExportAsLayeredTiffCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ZoomToFitCommand { get; }
@@ -346,6 +348,8 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
+        ExportAsPngCommand = new AsyncRelayCommand(ExecuteExportAsPngAsync, () => HasImage);
+        ExportAsLayeredTiffCommand = new AsyncRelayCommand(ExecuteExportAsLayeredTiffAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
         ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
@@ -488,6 +492,8 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveAsNewCommand.NotifyCanExecuteChanged();
         SaveOverwriteCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
+        ExportAsPngCommand.NotifyCanExecuteChanged();
+        ExportAsLayeredTiffCommand.NotifyCanExecuteChanged();
         ZoomInCommand.NotifyCanExecuteChanged();
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
@@ -817,6 +823,52 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    private async Task ExecuteExportAsPngAsync()
+    {
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_export.png";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as PNG", suggestedName, "*.png");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveImageFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export PNG.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting PNG: {ex.Message}";
+        }
+    }
+
+    private async Task ExecuteExportAsLayeredTiffAsync()
+    {
+        if (CurrentImagePath is null || SaveLayeredTiffFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_layered.tif";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as Layered TIFF", suggestedName, "*.tif");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveLayeredTiffFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export layered TIFF.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
+        }
+    }
+
     /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>
     private string? ResolveSavePath(SaveAsResult result)
     {
@@ -835,7 +887,7 @@ public partial class ImageEditorViewModel : ObservableObject
             return Path.Combine(directory, result.FileName + extension);
         }
 
-        if (result.Destination is SaveAsDestination.CustomFolder or SaveAsDestination.LayeredTiff)
+        if (result.Destination is SaveAsDestination.LayeredTiff)
         {
             var folderPath = result.CustomFolderPath;
             if (string.IsNullOrEmpty(folderPath))

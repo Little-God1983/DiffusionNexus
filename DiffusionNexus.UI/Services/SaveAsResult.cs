@@ -9,7 +9,6 @@ public enum SaveAsDestination
 {
     OriginFolder,
     ExistingDataset,
-    CustomFolder,
     LayeredTiff
 }
 
@@ -49,7 +48,7 @@ public sealed record SaveAsResult
     public int? SelectedVersion { get; init; }
 
     /// <summary>
-    /// Gets the custom folder path when saving to a user-selected folder.
+    /// Gets the folder path for layered TIFF export.
     /// </summary>
     public string? CustomFolderPath { get; init; }
 
@@ -80,18 +79,6 @@ public sealed record SaveAsResult
             Rating = rating,
             SelectedDataset = dataset,
             SelectedVersion = version
-        };
-
-    /// <summary>
-    /// Creates a successful result for saving to a custom folder.
-    /// </summary>
-    public static SaveAsResult SuccessToFolder(string fileName, ImageRatingStatus rating, string folderPath) =>
-        new()
-        {
-            Destination = SaveAsDestination.CustomFolder,
-            FileName = fileName,
-            Rating = rating,
-            CustomFolderPath = folderPath
         };
 
     /// <summary>

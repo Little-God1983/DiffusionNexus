@@ -31,7 +31,8 @@
                     <TextBlock Text="{Binding OriginFolderPath}"
                                FontSize="12"
                                Opacity="0.6"
-                               TextWrapping="Wrap"/>
+                               TextWrapping="Wrap"
+                               Margin="24,0,0,0"/>
                 </StackPanel>
             </Border>
 
@@ -69,34 +70,6 @@
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
                         </StackPanel>
-                    </StackPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- Save to custom folder -->
-            <Border Background="#1A1A1A"
-                    CornerRadius="6"
-                    Padding="12"
-                    BorderThickness="1"
-                    BorderBrush="{Binding IsCustomFolderSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
-                <StackPanel Spacing="6">
-                    <RadioButton Content="Save to Folder"
-                                 GroupName="DestinationOption"
-                                 IsChecked="{Binding IsCustomFolderSelected, Mode=TwoWay}"/>
-                    <StackPanel Spacing="6" IsVisible="{Binding IsCustomFolderSelected}" Margin="24,0,0,0">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0"
-                                       Text="{Binding CustomFolderPath}"
-                                       FontSize="12"
-                                       Opacity="0.6"
-                                       TextWrapping="Wrap"
-                                       VerticalAlignment="Center"/>
-                            <Button Grid.Column="1"
-                                    Content="Browse..."
-                                    Padding="8,4"
-                                    FontSize="11"
-                                    Click="OnBrowseCustomFolder"/>
-                        </Grid>
                     </StackPanel>
                 </StackPanel>
             </Border>
