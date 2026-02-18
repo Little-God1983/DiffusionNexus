@@ -8,6 +8,7 @@ This is an Avalonia Project Written in C# / .net 10
 * When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication/dead code.
 * When the database shall be modified execute the publish.ps1 script to make sure there is a last backup of the app with a working database.
 * When A Keyboard Shortcut is Added make sure its documented in a file called DiffusionNexus.UI\\Doc\\Shortcuts.md
+* When fixing a failing Unit test, check thoroughly if its the unit test that is in need of fixing or if its the code that has a bug.
 
 ## Code Style
 

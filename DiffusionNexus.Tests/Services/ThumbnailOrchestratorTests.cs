@@ -195,34 +195,59 @@ public class ThumbnailOrchestratorTests : IDisposable
     [Fact]
     public async Task RequestThumbnailAsync_WhenActiveOwner_BoostsPriority()
     {
-        // Arrange: track which paths get loaded and in what order
+        // Arrange: track which paths get loaded and in what order.
+        // The processing loop dispatches via fire-and-forget but the mock's synchronous
+        // portion (before the first await) runs inline on the loop thread, so loadOrder
+        // faithfully records the dequeue (priority) order.
         var loadOrder = new List<string>();
 
         Bitmap? nullBitmap = null;
         _mockService.Setup(s => s.TryGetCached(It.IsAny<string>(), out nullBitmap)).Returns(false);
         _mockService.Setup(s => s.LoadThumbnailAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Returns<string, int, CancellationToken>(async (path, _, ct) =>
+            .Returns<string, int, CancellationToken>((path, _, _) =>
             {
+                // Returning a completed Task means ProcessRequestAsync runs entirely
+                // synchronously within the fire-and-forget, blocking the loop thread.
+                // The 100 ms sleep guarantees the test thread finishes enqueueing all
+                // items before the loop thread can dequeue a second time.
+                Thread.Sleep(100);
                 lock (loadOrder)
                 {
                     loadOrder.Add(path);
                 }
-                await Task.Delay(10, ct);
-                return null;
+                return Task.FromResult<Bitmap?>(null);
             });
 
-        // Use a separate orchestrator to guarantee clean state
         using var singleOrchestrator = new ThumbnailOrchestrator(_mockService.Object);
         singleOrchestrator.SetActiveOwner(_ownerA);
 
-        // Act: submit low priority (ownerB) first, then critical (ownerA)
-        var lowTask = singleOrchestrator.RequestThumbnailAsync("low.png", _ownerB, ThumbnailPriority.Low);
-        var criticalTask = singleOrchestrator.RequestThumbnailAsync("critical.png", _ownerA, ThumbnailPriority.Normal);
+        // Allow the processing loop to start and block on the empty queue signal.
+        await Task.Delay(50);
 
-        await Task.WhenAll(lowTask, criticalTask);
+        // Act: submit several low-priority items (ownerB), then one active-owner
+        // request (ownerA, Normal ? boosted to Critical).
+        // All RequestThumbnailAsync calls run synchronously up to their final
+        // "await tcs.Task", so the test thread enqueues them without yielding.
+        var tasks = new List<Task<Bitmap?>>();
+        for (var i = 0; i < 5; i++)
+        {
+            tasks.Add(singleOrchestrator.RequestThumbnailAsync(
+                $"low_{i}.png", _ownerB, ThumbnailPriority.Low));
+        }
 
-        // Assert: critical should be processed before low (ownerA is active, so gets boosted to Critical)
-        loadOrder.Should().ContainInOrder("critical.png", "low.png");
+        tasks.Add(singleOrchestrator.RequestThumbnailAsync(
+            "critical.png", _ownerA, ThumbnailPriority.Normal));
+
+        await Task.WhenAll(tasks);
+
+        // Assert: the very first dequeue may grab low_0 before the remaining items
+        // are enqueued (single item in the queue ? priority is irrelevant). While
+        // the loop is blocked on that first load (Thread.Sleep), the test thread
+        // enqueues the remaining 5 items. On the second dequeue the priority queue
+        // has all of them: critical.png (Critical) beats every low item (Low).
+        var criticalIndex = loadOrder.IndexOf("critical.png");
+        criticalIndex.Should().BeLessOrEqualTo(1,
+            "Active owner's request (boosted to Critical) should jump ahead of Low-priority items in the queue");
     }
 
     [Fact]
