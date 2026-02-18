@@ -71,6 +71,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Sub-ViewModel for AI upscaling tool.</summary>
     public UpscalingViewModel Upscaling { get; }
 
+    /// <summary>Sub-ViewModel for text tool.</summary>
+    public TextToolViewModel TextTools { get; }
+
     /// <summary>Sub-ViewModel for inpainting tool.</summary>
     public InpaintingViewModel Inpainting { get; }
 
@@ -319,6 +322,7 @@ public partial class ImageEditorViewModel : ObservableObject
         LayerPanel = new LayerPanelViewModel(() => HasImage);
         ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
         DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
+        TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, upscalingService);
@@ -381,6 +385,14 @@ public partial class ImageEditorViewModel : ObservableObject
             else _services.Tools.Deactivate(args.ToolId);
         };
 
+        TextTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        TextTools.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        TextTools.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+
         BackgroundRemoval.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundRemoval.StatusMessageChanged += (_, msg) => StatusMessage = msg;
         BackgroundRemoval.ToolToggled += (_, args) =>
@@ -434,6 +446,9 @@ public partial class ImageEditorViewModel : ObservableObject
         if (exceptToolId != ToolIds.Drawing)
             DrawingTools.CloseAll();
 
+        if (exceptToolId != ToolIds.Text)
+            TextTools.CloseAll();
+
         if (exceptToolId != ToolIds.BackgroundRemoval)
             BackgroundRemoval.ClosePanel();
 
@@ -459,6 +474,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ColorTools.CloseAllPanels();
         DrawingTools.CloseAll();
+        TextTools.CloseAll();
         BackgroundRemoval.ClosePanel();
         BackgroundFill.ClosePanel();
         Upscaling.ClosePanel();
@@ -478,6 +494,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ColorTools.RefreshCommandStates();
         DrawingTools.RefreshCommandStates();
+        TextTools.RefreshCommandStates();
         LayerPanel.NotifyCommandsCanExecuteChanged();
         BackgroundRemoval.RefreshCommandStates();
         BackgroundFill.RefreshCommandStates();

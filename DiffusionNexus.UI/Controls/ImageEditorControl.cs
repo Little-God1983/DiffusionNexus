@@ -30,6 +30,9 @@ public class ImageEditorControl : Control
     private SKPoint _inpaintCursorPosition;
     private bool _hasInpaintCursorPosition;
 
+    // Text tool state
+    private bool _isTextToolActive;
+
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
     /// </summary>
@@ -196,6 +199,20 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Gets or sets whether the text tool is active.
+    /// </summary>
+    public bool IsTextToolActive
+    {
+        get => _isTextToolActive;
+        set
+        {
+            _isTextToolActive = value;
+            _editorCore.TextTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the inpainting brush size in display pixels.
     /// </summary>
     public float InpaintBrushSize
@@ -281,6 +298,11 @@ public class ImageEditorControl : Control
     /// Event raised when the placed-shape state changes (placed or cleared).
     /// </summary>
     public event EventHandler? PlacedShapeStateChanged;
+
+    /// <summary>
+    /// Event raised when the placed-text state changes (placed or cleared).
+    /// </summary>
+    public event EventHandler? PlacedTextStateChanged;
 
     /// <summary>
     /// Event raised when the inpaint mask is created or modified.
@@ -436,6 +458,18 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Text tool takes priority when active
+        if (_editorCore.TextTool.IsActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.TextTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
         // Inpaint brush takes priority when active
         if (_isInpaintingToolActive && props.IsLeftButtonPressed)
         {
@@ -509,6 +543,17 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Text tool pointer tracking
+        if (_editorCore.TextTool.IsActive)
+        {
+            if (_editorCore.TextTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         // Inpaint brush pointer tracking
         if (_isInpaintingToolActive)
         {
@@ -565,6 +610,17 @@ public class ImageEditorControl : Control
         if (_editorCore.ShapeTool.IsActive)
         {
             if (_editorCore.ShapeTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        // Text tool takes priority when active
+        if (_editorCore.TextTool.IsActive)
+        {
+            if (_editorCore.TextTool.OnPointerReleased())
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -677,6 +733,25 @@ public class ImageEditorControl : Control
             return;
         }
 
+        // Text tool: Enter commits, Escape cancels the placed text
+        if (_editorCore.TextTool.IsActive && _editorCore.TextTool.HasPlacedText)
+        {
+            if (e.Key == Key.Enter)
+            {
+                _editorCore.TextTool.CommitPlacedText();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                _editorCore.TextTool.CancelPlacedText();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Shape tool: Enter commits, Escape cancels the placed shape
         if (_editorCore.ShapeTool.IsActive && _editorCore.ShapeTool.HasPlacedShape)
         {
@@ -745,6 +820,29 @@ public class ImageEditorControl : Control
         if (_editorCore.DrawingTool.IsActive)
         {
             Cursor = new Cursor(StandardCursorType.Cross);
+            return;
+        }
+
+        // Text tool cursors
+        if (_editorCore.TextTool.IsActive)
+        {
+            if (_editorCore.TextTool.HasPlacedText)
+            {
+                var textHandle = _editorCore.TextTool.HitTestHandle(point);
+                Cursor = textHandle switch
+                {
+                    ImageEditor.TextManipulationHandle.Body => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.TextManipulationHandle.TopLeft or ImageEditor.TextManipulationHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.TextManipulationHandle.TopRight or ImageEditor.TextManipulationHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.TextManipulationHandle.Rotate => new Cursor(StandardCursorType.Hand),
+                    ImageEditor.TextManipulationHandle.Delete => new Cursor(StandardCursorType.Hand),
+                    _ => new Cursor(StandardCursorType.Cross)
+                };
+            }
+            else
+            {
+                Cursor = new Cursor(StandardCursorType.Cross);
+            }
             return;
         }
 
@@ -893,6 +991,11 @@ public class ImageEditorControl : Control
     public bool HasPlacedShape => _editorCore.ShapeTool.HasPlacedShape;
 
     /// <summary>
+    /// Gets whether there is a placed text element that can be committed or cancelled.
+    /// </summary>
+    public bool HasPlacedText => _editorCore.TextTool.HasPlacedText;
+
+    /// <summary>
     /// Resets to the original image.
     /// </summary>
     public void ResetToOriginal()
@@ -1033,6 +1136,23 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    private void OnTextChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+    }
+
+    private void OnTextCompleted(object? sender, ImageEditor.TextCompletedEventArgs e)
+    {
+        // Apply the committed text to the image as a new layer
+        _editorCore.ApplyText(e.TextElement);
+    }
+
+    private void OnPlacedTextStateChanged(object? sender, EventArgs e)
+    {
+        PlacedTextStateChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
+
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
     {
         SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
@@ -1051,6 +1171,9 @@ public class ImageEditorControl : Control
         _editorCore.ShapeTool.ShapeChanged += OnShapeChanged;
         _editorCore.ShapeTool.ShapeCompleted += OnShapeCompleted;
         _editorCore.ShapeTool.PlacedShapeStateChanged += OnPlacedShapeStateChanged;
+        _editorCore.TextTool.TextChanged += OnTextChanged;
+        _editorCore.TextTool.TextCompleted += OnTextCompleted;
+        _editorCore.TextTool.PlacedTextStateChanged += OnPlacedTextStateChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         InvalidateVisual();
     }
@@ -1066,6 +1189,9 @@ public class ImageEditorControl : Control
         _editorCore.ShapeTool.ShapeChanged -= OnShapeChanged;
         _editorCore.ShapeTool.ShapeCompleted -= OnShapeCompleted;
         _editorCore.ShapeTool.PlacedShapeStateChanged -= OnPlacedShapeStateChanged;
+        _editorCore.TextTool.TextChanged -= OnTextChanged;
+        _editorCore.TextTool.TextCompleted -= OnTextCompleted;
+        _editorCore.TextTool.PlacedTextStateChanged -= OnPlacedTextStateChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
     }
 

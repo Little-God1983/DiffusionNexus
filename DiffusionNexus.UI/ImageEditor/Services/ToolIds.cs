@@ -12,5 +12,6 @@ public static class ToolIds
     public const string BackgroundFill = "BackgroundFill";
     public const string Upscaling = "Upscaling";
     public const string Drawing = "Drawing";
+    public const string Text = "Text";
     public const string Inpainting = "Inpainting";
 }

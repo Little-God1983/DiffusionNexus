@@ -209,6 +209,7 @@ public partial class ImageEditView : UserControl
         WireBackgroundFillEvents(imageEditor);
         WireUpscalingEvents(imageEditor);
         WireDrawingEvents(imageEditor);
+        WireTextToolEvents(imageEditor);
         WireInpaintingEvents(imageEditor);
         WireSaveAndExportEvents(vm, imageEditor);
         WireLayerEvents(vm, imageEditor);
@@ -558,6 +559,58 @@ public partial class ImageEditView : UserControl
         _eventCleanup.Add(() => _imageEditorCanvas!.PlacedShapeStateChanged -= onPlacedShapeState);
     }
 
+    private void WireTextToolEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler<bool> onTextToolActivated = (_, isActive) =>
+        {
+            _imageEditorCanvas!.IsTextToolActive = isActive;
+            if (isActive)
+                ApplyTextSettingsToTool(imageEditor, _imageEditorCanvas.EditorCore.TextTool);
+        };
+        imageEditor.TextTools.TextToolActivated += onTextToolActivated;
+        _eventCleanup.Add(() => imageEditor.TextTools.TextToolActivated -= onTextToolActivated);
+
+        EventHandler onTextSettingsChanged = (_, _) =>
+        {
+            var textTool = _imageEditorCanvas!.EditorCore.TextTool;
+            ApplyTextSettingsToTool(imageEditor, textTool);
+            textTool.UpdatePlacedTextProperties();
+        };
+        imageEditor.TextTools.TextSettingsChanged += onTextSettingsChanged;
+        _eventCleanup.Add(() => imageEditor.TextTools.TextSettingsChanged -= onTextSettingsChanged);
+
+        EventHandler onPlaceText = (_, _) =>
+        {
+            var textTool = _imageEditorCanvas!.EditorCore.TextTool;
+            ApplyTextSettingsToTool(imageEditor, textTool);
+            textTool.PlaceText();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.TextTools.PlaceTextRequested += onPlaceText;
+        _eventCleanup.Add(() => imageEditor.TextTools.PlaceTextRequested -= onPlaceText);
+
+        EventHandler onCommitText = (_, _) =>
+        {
+            _imageEditorCanvas!.EditorCore.TextTool.CommitPlacedText();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.TextTools.CommitPlacedTextRequested += onCommitText;
+        _eventCleanup.Add(() => imageEditor.TextTools.CommitPlacedTextRequested -= onCommitText);
+
+        EventHandler onCancelText = (_, _) =>
+        {
+            _imageEditorCanvas!.EditorCore.TextTool.CancelPlacedText();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.TextTools.CancelPlacedTextRequested += onCancelText;
+        _eventCleanup.Add(() => imageEditor.TextTools.CancelPlacedTextRequested -= onCancelText);
+
+        EventHandler onPlacedTextState = (_, _) =>
+            imageEditor.TextTools.HasPlacedText = _imageEditorCanvas!.HasPlacedText;
+        _imageEditorCanvas!.PlacedTextStateChanged += onPlacedTextState;
+        _eventCleanup.Add(() => _imageEditorCanvas!.PlacedTextStateChanged -= onPlacedTextState);
+    }
+
     private void WireInpaintingEvents(ImageEditorViewModel imageEditor)
     {
         EventHandler onSetBase = (_, _) =>
@@ -899,6 +952,27 @@ public partial class ImageEditView : UserControl
             imageEditor.DrawingTools.DrawingBrushBlue);
         drawingTool.BrushSize = imageEditor.DrawingTools.DrawingBrushSize;
         drawingTool.BrushShape = imageEditor.DrawingTools.DrawingBrushShape;
+    }
+
+    /// <summary>
+    /// Applies the current text settings from the ViewModel to the text tool.
+    /// </summary>
+    private static void ApplyTextSettingsToTool(ImageEditorViewModel imageEditor, ImageEditor.TextTool textTool)
+    {
+        textTool.Text = imageEditor.TextTools.Text;
+        textTool.FontFamily = imageEditor.TextTools.FontFamily;
+        textTool.FontSize = imageEditor.TextTools.FontSize;
+        textTool.IsBold = imageEditor.TextTools.IsBold;
+        textTool.IsItalic = imageEditor.TextTools.IsItalic;
+        textTool.TextColor = new SkiaSharp.SKColor(
+            imageEditor.TextTools.TextColorRed,
+            imageEditor.TextTools.TextColorGreen,
+            imageEditor.TextTools.TextColorBlue);
+        textTool.OutlineColor = new SkiaSharp.SKColor(
+            imageEditor.TextTools.OutlineColorRed,
+            imageEditor.TextTools.OutlineColorGreen,
+            imageEditor.TextTools.OutlineColorBlue);
+        textTool.OutlineWidth = imageEditor.TextTools.OutlineWidth;
     }
 
     /// <summary>
