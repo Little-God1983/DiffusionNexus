@@ -179,11 +179,12 @@ public partial class GenerationGalleryView : UserControl
         var filePaths = vm.GetSelectedFilePaths();
         if (filePaths.Count == 0) return;
 
-        var dataObject = new DataObject();
+        var dataObject = new DataTransfer();
         var storageItems = await ResolveStorageItemsAsync(filePaths);
         if (storageItems.Count > 0)
         {
-            dataObject.Set(DataFormats.Files, storageItems);
+            foreach (var item in storageItems)
+                dataObject.Add(DataTransferItem.CreateFile(item));
 
             // Show a floating thumbnail preview while dragging
             var draggedItem = border.DataContext as GenerationGalleryMediaItemViewModel;
@@ -191,7 +192,7 @@ public partial class GenerationGalleryView : UserControl
             try
             {
                 // TODO: Linux Implementation for drag-out file support
-                await DragDrop.DoDragDrop(e, dataObject, DragDropEffects.Copy);
+                await DragDrop.DoDragDropAsync(e, dataObject, DragDropEffects.Copy);
             }
             finally
             {
@@ -281,13 +282,14 @@ public partial class GenerationGalleryView : UserControl
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard is null) return;
 
-        var dataObject = new DataObject();
+        var dataObject = new DataTransfer();
         var storageItems = await ResolveStorageItemsAsync(filePaths);
         if (storageItems.Count > 0)
         {
-            dataObject.Set(DataFormats.Files, storageItems);
+            foreach (var item in storageItems)
+                dataObject.Add(DataTransferItem.CreateFile(item));
             // TODO: Linux Implementation for clipboard file copy
-            await clipboard.SetDataObjectAsync(dataObject);
+            await clipboard.SetDataAsync(dataObject);
         }
     }
 

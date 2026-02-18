@@ -729,7 +729,7 @@ public partial class ImageEditView : UserControl
             if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
                 return SaveAsResult.Cancelled();
 
-            var hasLayers = _imageEditorCanvas?.EditorCore.Layers.Count > 1;
+            var hasLayers = _imageEditorCanvas?.EditorCore?.Layers?.Count > 1;
 
             return await vm.DialogService.ShowSaveAsDialogAsync(
                 imageEditor.CurrentImagePath,
