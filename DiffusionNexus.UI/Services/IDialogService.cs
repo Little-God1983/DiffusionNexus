@@ -158,9 +158,10 @@ public interface IDialogService
     /// <param name="availableDatasets">List of available datasets to offer as save destinations.</param>
     /// <param name="preselectedDatasetName">Name of the dataset to pre-select.</param>
     /// <param name="preselectedVersion">Version number to pre-select, or null for the latest.</param>
+    /// <param name="hasLayers">Whether the image has layers, enabling Layered TIFF export.</param>
     /// <returns>Save result with filename, destination, and rating, or cancelled result.</returns>
     Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
-        string? preselectedDatasetName, int? preselectedVersion);
+        string? preselectedDatasetName, int? preselectedVersion, bool hasLayers = false);
 
     /// <summary>
     /// Shows the Replace Image dialog for comparing and replacing an image.

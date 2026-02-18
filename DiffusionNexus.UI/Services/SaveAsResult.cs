@@ -8,7 +8,9 @@ using DiffusionNexus.UI.ViewModels;
 public enum SaveAsDestination
 {
     OriginFolder,
-    ExistingDataset
+    ExistingDataset,
+    CustomFolder,
+    LayeredTiff
 }
 
 /// <summary>
@@ -47,6 +49,11 @@ public sealed record SaveAsResult
     public int? SelectedVersion { get; init; }
 
     /// <summary>
+    /// Gets the custom folder path when saving to a user-selected folder.
+    /// </summary>
+    public string? CustomFolderPath { get; init; }
+
+    /// <summary>
     /// Creates a cancelled result.
     /// </summary>
     public static SaveAsResult Cancelled() => new() { IsCancelled = true };
@@ -73,5 +80,28 @@ public sealed record SaveAsResult
             Rating = rating,
             SelectedDataset = dataset,
             SelectedVersion = version
+        };
+
+    /// <summary>
+    /// Creates a successful result for saving to a custom folder.
+    /// </summary>
+    public static SaveAsResult SuccessToFolder(string fileName, ImageRatingStatus rating, string folderPath) =>
+        new()
+        {
+            Destination = SaveAsDestination.CustomFolder,
+            FileName = fileName,
+            Rating = rating,
+            CustomFolderPath = folderPath
+        };
+
+    /// <summary>
+    /// Creates a successful result for saving as a layered TIFF.
+    /// </summary>
+    public static SaveAsResult SuccessLayeredTiff(string fileName, string folderPath) =>
+        new()
+        {
+            Destination = SaveAsDestination.LayeredTiff,
+            FileName = fileName,
+            CustomFolderPath = folderPath
         };
 }

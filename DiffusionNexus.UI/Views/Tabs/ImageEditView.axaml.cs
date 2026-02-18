@@ -715,6 +715,9 @@ public partial class ImageEditView : UserControl
         imageEditor.SaveImageFunc = path =>
             _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
 
+        imageEditor.SaveLayeredTiffFunc = path =>
+            _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
+
         imageEditor.ShowSaveFileDialogFunc = async (title, suggestedFileName, filter) =>
         {
             if (vm.DialogService is null) return null;
@@ -726,11 +729,14 @@ public partial class ImageEditView : UserControl
             if (vm.DialogService is null || imageEditor.CurrentImagePath is null)
                 return SaveAsResult.Cancelled();
 
+            var hasLayers = _imageEditorCanvas?.EditorCore.Layers.Count > 1;
+
             return await vm.DialogService.ShowSaveAsDialogAsync(
                 imageEditor.CurrentImagePath,
                 vm.EditorDatasets.Where(d => !d.IsTemporary),
                 vm.SelectedEditorDataset?.Name,
-                vm.SelectedEditorVersion?.Version);
+                vm.SelectedEditorVersion?.Version,
+                hasLayers);
         };
         imageEditor.SaveAsDialogRequested += onSaveAsDialog;
         _eventCleanup.Add(() => imageEditor.SaveAsDialogRequested -= onSaveAsDialog);

@@ -42,6 +42,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public Func<string, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
+    /// Callback provided by the View to save a layered TIFF to a file path.
+    /// Returns true if the save succeeded.
+    /// </summary>
+    public Func<string, bool>? SaveLayeredTiffFunc { get; set; }
+
+    /// <summary>
     /// Callback provided by the View to show a save-file dialog.
     /// Parameters: title, suggestedFileName, filter. Returns the chosen path, or null if cancelled.
     /// </summary>
@@ -719,16 +725,36 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (File.Exists(newPath))
         {
-            var extension = Path.GetExtension(CurrentImagePath);
+            var extension = result.Destination == SaveAsDestination.LayeredTiff
+                ? ".tif"
+                : Path.GetExtension(CurrentImagePath);
             StatusMessage = $"File '{result.FileName}{extension}' already exists.";
             return;
         }
 
         try
         {
-            if (SaveImageFunc(newPath))
+            bool saved;
+            if (result.Destination == SaveAsDestination.LayeredTiff)
             {
-                SaveRatingToFile(newPath, result.Rating);
+                if (SaveLayeredTiffFunc is null)
+                {
+                    StatusMessage = "Layered TIFF export is not available.";
+                    return;
+                }
+                saved = SaveLayeredTiffFunc(newPath);
+            }
+            else
+            {
+                saved = SaveImageFunc(newPath);
+            }
+
+            if (saved)
+            {
+                if (result.Destination != SaveAsDestination.LayeredTiff)
+                {
+                    SaveRatingToFile(newPath, result.Rating);
+                }
                 OnSaveAsNewCompleted(newPath, result.Rating);
             }
             else
@@ -794,9 +820,11 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>
     private string? ResolveSavePath(SaveAsResult result)
     {
-        var extension = Path.GetExtension(CurrentImagePath);
+        var extension = result.Destination == SaveAsDestination.LayeredTiff
+            ? ".tif"
+            : Path.GetExtension(CurrentImagePath);
 
-        if (result.Destination == SaveAsDestination.OriginFolder)
+        if (result.Destination is SaveAsDestination.OriginFolder)
         {
             var directory = Path.GetDirectoryName(CurrentImagePath);
             if (string.IsNullOrEmpty(directory))
@@ -805,6 +833,30 @@ public partial class ImageEditorViewModel : ObservableObject
                 return null;
             }
             return Path.Combine(directory, result.FileName + extension);
+        }
+
+        if (result.Destination is SaveAsDestination.CustomFolder or SaveAsDestination.LayeredTiff)
+        {
+            var folderPath = result.CustomFolderPath;
+            if (string.IsNullOrEmpty(folderPath))
+            {
+                StatusMessage = "No folder selected.";
+                return null;
+            }
+
+            try
+            {
+                if (!Directory.Exists(folderPath))
+                    Directory.CreateDirectory(folderPath);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError($"Failed to create directory: {folderPath}", ex);
+                StatusMessage = "Failed to create directory.";
+                return null;
+            }
+
+            return Path.Combine(folderPath, result.FileName + extension);
         }
 
         var dataset = result.SelectedDataset;

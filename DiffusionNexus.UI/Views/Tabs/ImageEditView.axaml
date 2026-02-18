@@ -312,13 +312,6 @@
                   <Button Content="Flatten All" Command="{Binding ImageEditor.LayerPanel.FlattenLayersCommand}" 
                           HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"/>
                 </StackPanel>
-                
-                <Border Height="1" Background="#444" Margin="0,2"/>
-                
-                <!-- Save Layered TIFF -->
-                <Button Content="Save Layered TIFF" Command="{Binding ImageEditor.LayerPanel.SaveLayeredTiffCommand}" 
-                        HorizontalAlignment="Stretch" Padding="6,4" FontSize="10"
-                        Background="#5E35B1" ToolTip.Tip="Export as multi-layer TIFF file"/>
               </StackPanel>
             </Border>
           </StackPanel>
