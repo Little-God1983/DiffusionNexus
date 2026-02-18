@@ -211,11 +211,12 @@ public class DialogService : IDialogService
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested, showRatingControls);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls);
 
         await dialog.ShowDialog(_window);
     }

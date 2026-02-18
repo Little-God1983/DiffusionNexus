@@ -132,12 +132,14 @@ public interface IDialogService
     /// <param name="startIndex">Index of the image to display first.</param>
     /// <param name="eventAggregator">Event aggregator for publishing rating changes.</param>
     /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
+    /// <param name="onSendToCaptioning">Callback when user wants to send to captioning.</param>
     /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
     Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true);
 

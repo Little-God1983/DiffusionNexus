@@ -1696,6 +1696,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             index,
             eventAggregator: _eventAggregator,
             onSendToImageEditor: img => SendToImageEdit(img),
+            onSendToCaptioning: img => SendToCaptioning(img),
             onDeleteRequested: OnImageDeleteRequested);
     }
 
