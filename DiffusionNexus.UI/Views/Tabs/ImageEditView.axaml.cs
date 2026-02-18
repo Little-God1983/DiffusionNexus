@@ -766,10 +766,16 @@ public partial class ImageEditView : UserControl
     {
         // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
         imageEditor.SaveImageFunc = path =>
-            _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
+        {
+            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
+            return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
+        };
 
         imageEditor.SaveLayeredTiffFunc = path =>
-            _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
+        {
+            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
+            return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
+        };
 
         imageEditor.ShowSaveFileDialogFunc = async (title, suggestedFileName, filter) =>
         {

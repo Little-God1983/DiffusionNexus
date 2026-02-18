@@ -113,7 +113,9 @@ public class ShapeTool
             _isActive = value;
             if (!value)
             {
-                CancelPlacedShape();
+                // Commit rather than cancel so the last placed shape is preserved
+                if (HasPlacedShape)
+                    CommitPlacedShape();
                 _phase = ShapeToolPhase.Idle;
             }
         }

@@ -80,7 +80,9 @@ public class TextTool
             _isActive = value;
             if (!value)
             {
-                CancelPlacedText();
+                // Commit rather than cancel so the last placed text is preserved
+                if (HasPlacedText)
+                    CommitPlacedText();
                 _phase = TextToolPhase.Idle;
             }
         }

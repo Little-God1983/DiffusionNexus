@@ -98,6 +98,22 @@ public partial class ImageEditorCore : IDisposable
     public TextTool TextTool { get; } = new();
 
     /// <summary>
+    /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
+    /// Call before saving or exporting to ensure all pending work is captured.
+    /// </summary>
+    public void CommitPendingOperations()
+    {
+        if (TextTool.HasPlacedText)
+            TextTool.CommitPlacedText();
+
+        if (ShapeTool.HasPlacedShape)
+            ShapeTool.CommitPlacedShape();
+
+        if (DrawingTool.IsDrawing)
+            DrawingTool.OnPointerReleased();
+    }
+
+    /// <summary>
     /// Gets the layer stack for layer-based editing.
     /// </summary>
     public LayerStack? Layers => _layers;
