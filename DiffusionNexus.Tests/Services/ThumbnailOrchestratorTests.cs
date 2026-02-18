@@ -246,7 +246,7 @@ public class ThumbnailOrchestratorTests : IDisposable
         // enqueues the remaining 5 items. On the second dequeue the priority queue
         // has all of them: critical.png (Critical) beats every low item (Low).
         var criticalIndex = loadOrder.IndexOf("critical.png");
-        criticalIndex.Should().BeLessOrEqualTo(1,
+        criticalIndex.Should().BeLessThanOrEqualTo(1,
             "Active owner's request (boosted to Critical) should jump ahead of Low-priority items in the queue");
     }
 
