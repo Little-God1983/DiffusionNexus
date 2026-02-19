@@ -147,7 +147,7 @@
             <ToggleButton Content="Text" IsChecked="{Binding ImageEditor.TextTools.IsTextToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Text Tool - Add text as a new layer"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Inpaint"
+            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.Inpainting.IsPanelOpen, Mode=TwoWay}" Padding="12,6"
                           ToolTip.Tip="AI Inpainting - Paint over areas to regenerate using ComfyUI"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Outpaint" IsChecked="{Binding ImageEditor.Outpainting.IsPanelOpen, Mode=TwoWay}" Padding="12,6"
