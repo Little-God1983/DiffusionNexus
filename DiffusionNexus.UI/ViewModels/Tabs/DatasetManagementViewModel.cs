@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using Microsoft.Extensions.DependencyInjection;
 using Timer = System.Timers.Timer;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -859,8 +860,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 });
             });
 
-            // Run backup on a background thread to avoid blocking UI
-            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
+            // Run backup on a background thread with its own DI scope to avoid
+            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
+            var result = await Task.Run(async () =>
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+                return await scopedBackupService.BackupDatasetsAsync(progress);
+            });
 
             if (result.Success)
             {
@@ -919,8 +926,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 });
             });
 
-            // Run backup on a background thread to avoid blocking UI
-            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
+            // Run backup on a background thread with its own DI scope to avoid
+            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
+            var result = await Task.Run(async () =>
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+                return await scopedBackupService.BackupDatasetsAsync(progress);
+            });
 
             if (result.Success)
             {
@@ -1696,6 +1709,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             index,
             eventAggregator: _eventAggregator,
             onSendToImageEditor: img => SendToImageEdit(img),
+            onSendToCaptioning: img => SendToCaptioning(img),
             onDeleteRequested: OnImageDeleteRequested);
     }
 

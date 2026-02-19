@@ -39,6 +39,7 @@ public partial class ImageViewerDialog : Window
     /// <param name="startIndex">Index of the image to display first.</param>
     /// <param name="eventAggregator">Event aggregator for publishing rating changes.</param>
     /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
+    /// <param name="onSendToCaptioning">Callback when user wants to send to captioning.</param>
     /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
     /// <returns>The dialog instance for fluent chaining.</returns>
     public ImageViewerDialog WithImages(
@@ -46,10 +47,11 @@ public partial class ImageViewerDialog : Window
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true)
     {
-        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested, showRatingControls);
+        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls);
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
@@ -138,6 +140,14 @@ public partial class ImageViewerDialog : Window
                 if (_viewModel.IsImage)
                 {
                     _viewModel.SendToImageEditorCommand.Execute(null);
+                    e.Handled = true;
+                }
+                break;
+
+            case Key.T:
+                if (_viewModel.IsImage)
+                {
+                    _viewModel.SendToCaptioningCommand.Execute(null);
                     e.Handled = true;
                 }
                 break;

@@ -31,7 +31,8 @@
                     <TextBlock Text="{Binding OriginFolderPath}"
                                FontSize="12"
                                Opacity="0.6"
-                               TextWrapping="Wrap"/>
+                               TextWrapping="Wrap"
+                               Margin="24,0,0,0"/>
                 </StackPanel>
             </Border>
 
@@ -45,7 +46,7 @@
                     <RadioButton Content="Add Image to existing Dataset"
                                  GroupName="DestinationOption"
                                  IsChecked="{Binding IsDatasetSelected, Mode=TwoWay}"/>
-                    
+
                     <StackPanel Spacing="8" IsVisible="{Binding IsDatasetSelected}" Margin="24,0,0,0">
                         <ComboBox ItemsSource="{Binding AvailableDatasets}"
                                   SelectedItem="{Binding SelectedDataset, Mode=TwoWay}"
@@ -72,6 +73,35 @@
                     </StackPanel>
                 </StackPanel>
             </Border>
+
+            <!-- Save Layered TIFF -->
+            <Border Background="#1A1A1A"
+                    CornerRadius="6"
+                    Padding="12"
+                    BorderThickness="1"
+                    BorderBrush="{Binding IsLayeredTiffSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}"
+                    IsVisible="{Binding HasLayers}">
+                <StackPanel Spacing="6">
+                    <RadioButton Content="Save Layered TIFF"
+                                 GroupName="DestinationOption"
+                                 IsChecked="{Binding IsLayeredTiffSelected, Mode=TwoWay}"/>
+                    <StackPanel Spacing="6" IsVisible="{Binding IsLayeredTiffSelected}" Margin="24,0,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding LayeredTiffFolderPath}"
+                                       FontSize="12"
+                                       Opacity="0.6"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"/>
+                            <Button Grid.Column="1"
+                                    Content="Browse..."
+                                    Padding="8,4"
+                                    FontSize="11"
+                                    Click="OnBrowseLayeredTiffFolder"/>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
 
         <!-- Filename Input -->
@@ -83,7 +113,7 @@
                          Text="{Binding FileName, Mode=TwoWay}"
                          Watermark="Enter filename..."/>
                 <TextBlock Grid.Column="1" 
-                           Text="{Binding FileExtension}"
+                           Text="{Binding DisplayExtension}"
                            VerticalAlignment="Center"
                            Margin="8,0,0,0"
                            Opacity="0.7"/>

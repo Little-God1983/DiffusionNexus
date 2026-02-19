@@ -211,11 +211,12 @@ public class DialogService : IDialogService
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onDeleteRequested, showRatingControls);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls);
 
         await dialog.ShowDialog(_window);
     }
@@ -275,9 +276,9 @@ public class DialogService : IDialogService
     }
 
     public async Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
-        string? preselectedDatasetName, int? preselectedVersion)
+        string? preselectedDatasetName, int? preselectedVersion, bool hasLayers = false)
     {
-        FileLogger.LogEntry($"originalFilePath={originalFilePath}, preselectedDataset={preselectedDatasetName ?? "(null)"}, preselectedVersion={preselectedVersion?.ToString() ?? "(null)"}");
+        FileLogger.LogEntry($"originalFilePath={originalFilePath}, preselectedDataset={preselectedDatasetName ?? "(null)"}, preselectedVersion={preselectedVersion?.ToString() ?? "(null)"}, hasLayers={hasLayers}");
 
         try
         {
@@ -290,13 +291,14 @@ public class DialogService : IDialogService
             if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
             {
                 return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
-                    () => ShowSaveAsDialogAsync(originalFilePath, availableDatasets, preselectedDatasetName, preselectedVersion));
+                    () => ShowSaveAsDialogAsync(originalFilePath, availableDatasets, preselectedDatasetName, preselectedVersion, hasLayers));
             }
 
             var dialog = new SaveAsDialog();
             dialog.WithOriginalFile(originalFilePath)
                   .WithDatasets(availableDatasets)
-                  .WithPreselectedDataset(preselectedDatasetName, preselectedVersion);
+                  .WithPreselectedDataset(preselectedDatasetName, preselectedVersion)
+                  .WithLayers(hasLayers);
 
             FileLogger.Log($"Showing dialog on window type: {_window.GetType().Name}");
 

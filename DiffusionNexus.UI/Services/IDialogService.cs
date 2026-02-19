@@ -132,12 +132,14 @@ public interface IDialogService
     /// <param name="startIndex">Index of the image to display first.</param>
     /// <param name="eventAggregator">Event aggregator for publishing rating changes.</param>
     /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
+    /// <param name="onSendToCaptioning">Callback when user wants to send to captioning.</param>
     /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
     Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true);
 
@@ -156,9 +158,10 @@ public interface IDialogService
     /// <param name="availableDatasets">List of available datasets to offer as save destinations.</param>
     /// <param name="preselectedDatasetName">Name of the dataset to pre-select.</param>
     /// <param name="preselectedVersion">Version number to pre-select, or null for the latest.</param>
+    /// <param name="hasLayers">Whether the image has layers, enabling Layered TIFF export.</param>
     /// <returns>Save result with filename, destination, and rating, or cancelled result.</returns>
     Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
-        string? preselectedDatasetName, int? preselectedVersion);
+        string? preselectedDatasetName, int? preselectedVersion, bool hasLayers = false);
 
     /// <summary>
     /// Shows the Replace Image dialog for comparing and replacing an image.

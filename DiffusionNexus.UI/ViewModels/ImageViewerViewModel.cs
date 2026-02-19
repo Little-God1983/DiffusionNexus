@@ -21,6 +21,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private readonly ObservableCollection<DatasetImageViewModel> _allImages;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly Action<DatasetImageViewModel>? _onSendToImageEditor;
+    private readonly Action<DatasetImageViewModel>? _onSendToCaptioning;
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
     
     private DatasetImageViewModel? _currentImage;
@@ -96,6 +97,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public IRelayCommand MarkRejectedCommand { get; }
     public IRelayCommand ClearRatingCommand { get; }
     public IRelayCommand SendToImageEditorCommand { get; }
+    public IRelayCommand SendToCaptioningCommand { get; }
     public IRelayCommand DeleteCommand { get; }
 
     #endregion
@@ -107,18 +109,21 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     /// <param name="startIndex">The index of the image to display initially.</param>
     /// <param name="eventAggregator">Optional event aggregator for publishing events.</param>
     /// <param name="onSendToImageEditor">Callback when "Send to Image Editor" is requested.</param>
+    /// <param name="onSendToCaptioning">Callback when "Send to Captioning" is requested.</param>
     /// <param name="onDeleteRequested">Callback when delete is requested.</param>
     public ImageViewerViewModel(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
         IDatasetEventAggregator? eventAggregator = null,
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
+        Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true)
     {
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
         _onSendToImageEditor = onSendToImageEditor;
+        _onSendToCaptioning = onSendToCaptioning;
         _onDeleteRequested = onDeleteRequested;
         ShowRatingControls = showRatingControls;
 
@@ -132,6 +137,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         MarkRejectedCommand = new RelayCommand(MarkRejected);
         ClearRatingCommand = new RelayCommand(ClearRating);
         SendToImageEditorCommand = new RelayCommand(SendToImageEditor);
+        SendToCaptioningCommand = new RelayCommand(SendToCaptioning);
         DeleteCommand = new RelayCommand(Delete);
 
         NavigateTo(Math.Clamp(startIndex, 0, Math.Max(0, images.Count - 1)));
@@ -284,6 +290,13 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     {
         if (_currentImage is null) return;
         _onSendToImageEditor?.Invoke(_currentImage);
+        Close();
+    }
+
+    private void SendToCaptioning()
+    {
+        if (_currentImage is null) return;
+        _onSendToCaptioning?.Invoke(_currentImage);
         Close();
     }
 

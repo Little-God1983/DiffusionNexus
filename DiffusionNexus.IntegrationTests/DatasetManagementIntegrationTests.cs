@@ -113,6 +113,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             int startIndex,
             IDatasetEventAggregator? eventAggregator = null,
             Action<DatasetImageViewModel>? onSendToImageEditor = null,
+            Action<DatasetImageViewModel>? onSendToCaptioning = null,
             Action<DatasetImageViewModel>? onDeleteRequested = null,
             bool showRatingControls = true) =>
             Task.CompletedTask;
@@ -121,7 +122,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Task.FromResult(SaveAsResult.Cancelled());
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets,
-            string? preselectedDatasetName, int? preselectedVersion) =>
+            string? preselectedDatasetName, int? preselectedVersion, bool hasLayers = false) =>
             Task.FromResult(SaveAsResult.Cancelled());
 
 

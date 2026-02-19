@@ -23,12 +23,42 @@ public partial class InpaintingViewModel : ObservableObject
     private const string InpaintKSamplerNodeId = "11";
     private const string DefaultNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
 
+    private static readonly string[] FunProgressMessages =
+    [
+        "Rolling dice for seed…",
+        "Starting diffusion warp core…",
+        "Looking if no one is looking…",
+        "Consulting the pixel oracle…",
+        "Summoning latent space spirits…",
+        "Negotiating with the noise schedule…",
+        "Calibrating the creativity dial…",
+        "Warming up the denoiser…",
+        "Sprinkling magic attention dust…",
+        "Asking the VAE nicely…",
+        "Blending dimensions carefully…",
+        "Teaching neurons new tricks…",
+        "Herding stochastic butterflies…",
+        "Polishing latent embeddings…",
+        "Shaking the token bag…",
+        "Aligning cross-attention beams…",
+        "Feeding the U-Net hamsters…",
+        "Distilling creativity from chaos…",
+        "Whispering prompts to the model…",
+        "Painting with invisible brushes…"
+    ];
+    private readonly Random _random = new();
+
     private bool _isPanelOpen;
     private float _brushSize = 40f;
     private float _maskFeather = 10f;
     private float _denoise = 1.0f;
     private bool _isBusy;
     private string? _status;
+    private int _inpaintProgress;
+    private bool _isProgressIndeterminate;
+    private bool _hasError;
+    private string? _progressDisplayText;
+    private int _lastDisplayTextIndex = -1;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
     private Avalonia.Media.Imaging.Bitmap? _baseThumbnail;
@@ -158,14 +188,57 @@ public partial class InpaintingViewModel : ObservableObject
     public bool IsBusy
     {
         get => _isBusy;
-        private set => SetProperty(ref _isBusy, value);
+        private set
+        {
+            if (SetProperty(ref _isBusy, value))
+                OnPropertyChanged(nameof(IsProgressVisible));
+        }
     }
 
     /// <summary>Status message for inpainting operations.</summary>
     public string? Status
     {
         get => _status;
-        private set => SetProperty(ref _status, value);
+        private set
+        {
+            if (SetProperty(ref _status, value))
+                ParseProgress(value);
+        }
+    }
+
+    /// <summary>Progress percentage (0-100) for the current inpainting operation, or -1 when indeterminate.</summary>
+    public int InpaintProgress
+    {
+        get => _inpaintProgress;
+        private set => SetProperty(ref _inpaintProgress, value);
+    }
+
+    /// <summary>Whether the progress bar should show an indeterminate animation.</summary>
+    public bool IsProgressIndeterminate
+    {
+        get => _isProgressIndeterminate;
+        private set => SetProperty(ref _isProgressIndeterminate, value);
+    }
+
+    /// <summary>Whether the current inpainting operation encountered an error (turns progress bar red).</summary>
+    public bool HasError
+    {
+        get => _hasError;
+        private set
+        {
+            if (SetProperty(ref _hasError, value))
+                OnPropertyChanged(nameof(IsProgressVisible));
+        }
+    }
+
+    /// <summary>Whether the progress panel should be visible (busy or showing an error).</summary>
+    public bool IsProgressVisible => _isBusy || _hasError;
+
+    /// <summary>Fun random text displayed above the progress bar during generation.</summary>
+    public string? ProgressDisplayText
+    {
+        get => _progressDisplayText;
+        private set => SetProperty(ref _progressDisplayText, value);
     }
 
     /// <summary>Whether an inpaint base image has been captured.</summary>
@@ -382,6 +455,8 @@ public partial class InpaintingViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            HasError = true;
+            ProgressDisplayText = "Generation failed – is ComfyUI running?";
             StatusMessageChanged?.Invoke(this, $"Inpainting failed: {ex.Message}");
         }
         finally
@@ -409,6 +484,7 @@ public partial class InpaintingViewModel : ObservableObject
         }
 
         _pendingCompareBeforeImagePath = null;
+        ResetErrorState();
         IsBusy = true;
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
@@ -433,6 +509,7 @@ public partial class InpaintingViewModel : ObservableObject
         }
 
         _pendingCompareBeforeImagePath = string.Empty;
+        ResetErrorState();
         IsBusy = true;
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
@@ -446,8 +523,87 @@ public partial class InpaintingViewModel : ObservableObject
     {
         _pendingCompareBeforeImagePath = null;
         IsBusy = false;
-        Status = null;
+        IsProgressIndeterminate = false;
+
+        if (_hasError)
+        {
+            // Keep error state visible: full red bar + error message stay on screen
+            InpaintProgress = 100;
+        }
+        else
+        {
+            Status = null;
+            InpaintProgress = 0;
+            ProgressDisplayText = null;
+            _lastDisplayTextIndex = -1;
+        }
+
         NotifyGenerateCommandsCanExecuteChanged();
+    }
+
+    /// <summary>Clears any previous error state so the progress bar starts fresh.</summary>
+    private void ResetErrorState()
+    {
+        HasError = false;
+        ProgressDisplayText = null;
+        _lastDisplayTextIndex = -1;
+    }
+
+    /// <summary>Maps ComfyUI status strings to progress bar values (0–100).</summary>
+    private void ParseProgress(string? status)
+    {
+        if (string.IsNullOrEmpty(status))
+        {
+            InpaintProgress = 0;
+            IsProgressIndeterminate = false;
+            ProgressDisplayText = null;
+            return;
+        }
+
+        // "Progress: value/max" from the KSampler — scale into 30-90% range
+        if (status.StartsWith("Progress:", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = status["Progress:".Length..].Trim().Split('/');
+            if (parts.Length == 2
+                && int.TryParse(parts[0], out var value)
+                && int.TryParse(parts[1], out var max)
+                && max > 0)
+            {
+                InpaintProgress = (int)(30 + (double)value / max * 60);
+                IsProgressIndeterminate = false;
+                PickRandomDisplayText();
+                return;
+            }
+        }
+
+        // Known phases mapped to fixed progress values
+        InpaintProgress = status switch
+        {
+            _ when status.StartsWith("Preparing", StringComparison.OrdinalIgnoreCase) => 5,
+            _ when status.StartsWith("Uploading", StringComparison.OrdinalIgnoreCase) => 10,
+            _ when status.StartsWith("Queuing", StringComparison.OrdinalIgnoreCase) => 15,
+            _ when status.StartsWith("Generating", StringComparison.OrdinalIgnoreCase) => 20,
+            _ when status.StartsWith("Executing", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Running", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Loading", StringComparison.OrdinalIgnoreCase) => 25,
+            _ when status.StartsWith("Downloading", StringComparison.OrdinalIgnoreCase) => 95,
+            _ => _inpaintProgress // keep current value for unknown messages
+        };
+        IsProgressIndeterminate = false;
+        PickRandomDisplayText();
+    }
+
+    /// <summary>Picks a random fun message, avoiding repeating the last one.</summary>
+    private void PickRandomDisplayText()
+    {
+        int index;
+        do
+        {
+            index = _random.Next(FunProgressMessages.Length);
+        } while (index == _lastDisplayTextIndex && FunProgressMessages.Length > 1);
+
+        _lastDisplayTextIndex = index;
+        ProgressDisplayText = FunProgressMessages[index];
     }
 
     private void NotifyGenerateCommandsCanExecuteChanged()

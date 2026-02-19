@@ -93,6 +93,27 @@ public partial class ImageEditorCore : IDisposable
     public ShapeTool ShapeTool { get; } = new();
 
     /// <summary>
+    /// Gets the text tool instance.
+    /// </summary>
+    public TextTool TextTool { get; } = new();
+
+    /// <summary>
+    /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
+    /// Call before saving or exporting to ensure all pending work is captured.
+    /// </summary>
+    public void CommitPendingOperations()
+    {
+        if (TextTool.HasPlacedText)
+            TextTool.CommitPlacedText();
+
+        if (ShapeTool.HasPlacedShape)
+            ShapeTool.CommitPlacedShape();
+
+        if (DrawingTool.IsDrawing)
+            DrawingTool.OnPointerReleased();
+    }
+
+    /// <summary>
     /// Gets the layer stack for layer-based editing.
     /// </summary>
     public LayerStack? Layers => _layers;
@@ -816,6 +837,10 @@ public partial class ImageEditorCore : IDisposable
             ShapeTool.SetImageBounds(imageRect);
             ShapeTool.Render(canvas);
 
+            // Update text tool with current image bounds and render overlay
+            TextTool.SetImageBounds(imageRect);
+            TextTool.Render(canvas);
+
             _lastImageRect = imageRect;
             return imageRect;
         }
@@ -1168,6 +1193,87 @@ public partial class ImageEditorCore : IDisposable
     }
 
     #endregion Shape Drawing
+
+    #region Text Drawing
+
+    /// <summary>
+    /// Applies a text element as a new layer on the image.
+    /// Each text element creates its own layer for later editing.
+    /// </summary>
+    /// <param name="textData">The text element data to apply.</param>
+    /// <returns>True if the text was applied successfully.</returns>
+    public bool ApplyText(TextElementData textData)
+    {
+        if (textData is null || string.IsNullOrWhiteSpace(textData.Text))
+            return false;
+
+        lock (_bitmapLock)
+        {
+            if (!_isLayerMode || _layers == null || _services is null)
+                return false;
+
+            try
+            {
+                var width = _layers.Width;
+                var height = _layers.Height;
+
+                // Create a new transparent layer for the text
+                var textLayer = _services.Layers.AddLayer($"Text: {textData.Text[..Math.Min(textData.Text.Length, 20)]}");
+                if (textLayer?.Bitmap is null) return false;
+
+                // Convert normalized coordinates to image pixel coordinates
+                var topLeft = new SKPoint(
+                    textData.NormalizedTopLeft.X * width,
+                    textData.NormalizedTopLeft.Y * height);
+                var bottomRight = new SKPoint(
+                    textData.NormalizedBottomRight.X * width,
+                    textData.NormalizedBottomRight.Y * height);
+                var rect = new SKRect(
+                    Math.Min(topLeft.X, bottomRight.X),
+                    Math.Min(topLeft.Y, bottomRight.Y),
+                    Math.Max(topLeft.X, bottomRight.X),
+                    Math.Max(topLeft.Y, bottomRight.Y));
+
+                // Scale font size and outline width from normalized to image coordinates
+                var scaledFontSize = textData.FontSize * width;
+                var scaledOutlineWidth = textData.OutlineWidth * width;
+
+                using var canvas = new SKCanvas(textLayer.Bitmap);
+
+                // Apply rotation around the center of the text rect
+                if (Math.Abs(textData.RotationDegrees) > 0.01f)
+                {
+                    var centerX = (rect.Left + rect.Right) / 2f;
+                    var centerY = (rect.Top + rect.Bottom) / 2f;
+                    canvas.RotateDegrees(textData.RotationDegrees, centerX, centerY);
+                }
+
+                TextTool.RenderText(
+                    canvas,
+                    textData.Text,
+                    rect,
+                    scaledFontSize,
+                    textData.FontFamily,
+                    textData.IsBold,
+                    textData.IsItalic,
+                    textData.TextColor,
+                    textData.OutlineColor,
+                    scaledOutlineWidth);
+
+                canvas.Flush();
+                textLayer.NotifyContentChanged();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        OnImageChanged();
+        return true;
+    }
+
+    #endregion Text Drawing
 
     #region Save with Layers
 

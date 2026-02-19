@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
@@ -25,6 +26,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     private SaveAsDestination _destination = SaveAsDestination.OriginFolder;
     private DatasetCardViewModel? _selectedDataset;
     private int? _selectedVersion;
+    private string _layeredTiffFolderPath = string.Empty;
+    private bool _hasLayers;
 
     public SaveAsDialog()
     {
@@ -103,8 +106,14 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         {
             _fileExtension = value;
             OnPropertyChanged(nameof(FileExtension));
+            OnPropertyChanged(nameof(DisplayExtension));
         }
     }
+
+    /// <summary>
+    /// Gets the extension to display (shows ".tif" when Layered TIFF is selected).
+    /// </summary>
+    public string DisplayExtension => IsLayeredTiffSelected ? ".tif" : _fileExtension;
 
     /// <summary>
     /// Gets or sets the selected rating.
@@ -194,7 +203,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     /// </summary>
     public bool HasValidationError => 
         (IsOriginSelected && (IsFilenameUnchanged || IsFilenameExists || HasInvalidCharacters || string.IsNullOrWhiteSpace(FileName))) ||
-        (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters || IsFilenameExists));
+        (IsDatasetSelected && (SelectedDataset == null || SelectedVersion == null || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters || IsFilenameExists)) ||
+        (IsLayeredTiffSelected && (!HasLayeredTiffFolder || string.IsNullOrWhiteSpace(FileName) || HasInvalidCharacters));
 
     /// <summary>
     /// Gets the validation message to display.
@@ -226,7 +236,12 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 if (IsFilenameExists)
                     return $"A file named '{FileName.Trim()}{FileExtension}' already exists in the selected dataset.";
             }
-            
+            else if (IsLayeredTiffSelected)
+            {
+                if (!HasLayeredTiffFolder)
+                    return "Please select a destination folder for the layered TIFF.";
+            }
+
             return string.Empty;
         }
     }
@@ -237,8 +252,13 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     public bool CanSave =>
         !string.IsNullOrWhiteSpace(FileName) &&
         !HasInvalidCharacters &&
-        !IsFilenameExists &&
-        (IsOriginSelected ? !IsFilenameUnchanged : (SelectedDataset != null && SelectedVersion != null));
+        Destination switch
+        {
+            SaveAsDestination.OriginFolder => !IsFilenameUnchanged && !IsFilenameExists,
+            SaveAsDestination.ExistingDataset => SelectedDataset != null && SelectedVersion != null && !IsFilenameExists,
+            SaveAsDestination.LayeredTiff => HasLayeredTiffFolder,
+            _ => false
+        };
 
 
     /// <summary>
@@ -267,6 +287,7 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
             FileName = fileName;
             FileExtension = extension;
             _directoryPath = directory;
+            OnPropertyChanged(nameof(OriginFolderPath));
 
             // Load all existing filenames in the directory (without extensions)
             FileLogger.Log("Loading existing file names...");
@@ -335,6 +356,35 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
         return this;
     }
 
+    /// <summary>
+    /// Configures whether the image has layers, enabling the Layered TIFF option.
+    /// </summary>
+    public SaveAsDialog WithLayers(bool hasLayers)
+    {
+        HasLayers = hasLayers;
+        return this;
+    }
+
+    /// <summary>
+    /// Opens a folder picker for the layered TIFF destination.
+    /// </summary>
+    internal async void OnBrowseLayeredTiffFolder(object? sender, RoutedEventArgs e)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is null) return;
+
+        var result = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Layered TIFF Folder",
+            AllowMultiple = false
+        });
+
+        if (result.Count > 0)
+        {
+            LayeredTiffFolderPath = result[0].Path.LocalPath;
+        }
+    }
+
 
 
 
@@ -393,14 +443,13 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
 
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
-        if (IsOriginSelected)
+        Result = Destination switch
         {
-            Result = SaveAsResult.Success(FileName.Trim(), Rating);
-        }
-        else
-        {
-            Result = SaveAsResult.SuccessToDataset(FileName.Trim(), Rating, SelectedDataset!, SelectedVersion);
-        }
+            SaveAsDestination.OriginFolder => SaveAsResult.Success(FileName.Trim(), Rating),
+            SaveAsDestination.ExistingDataset => SaveAsResult.SuccessToDataset(FileName.Trim(), Rating, SelectedDataset!, SelectedVersion),
+            SaveAsDestination.LayeredTiff => SaveAsResult.SuccessLayeredTiff(FileName.Trim(), LayeredTiffFolderPath),
+            _ => SaveAsResult.Cancelled()
+        };
         
         FileLogger.Log($"OnSaveClick: Closing dialog with result: {Result}");
         Close(Result);
@@ -434,6 +483,8 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(Destination));
                 OnPropertyChanged(nameof(IsOriginSelected));
                 OnPropertyChanged(nameof(IsDatasetSelected));
+                OnPropertyChanged(nameof(IsLayeredTiffSelected));
+                OnPropertyChanged(nameof(DisplayExtension));
                 OnPropertyChanged(nameof(CanSave));
                 OnPropertyChanged(nameof(IsFilenameExists));
                 OnPropertyChanged(nameof(ValidationMessage));
@@ -452,6 +503,53 @@ public partial class SaveAsDialog : Window, INotifyPropertyChanged
     {
         get => Destination == SaveAsDestination.ExistingDataset;
         set { if (value) Destination = SaveAsDestination.ExistingDataset; }
+    }
+
+    public bool IsLayeredTiffSelected
+    {
+        get => Destination == SaveAsDestination.LayeredTiff;
+        set { if (value) Destination = SaveAsDestination.LayeredTiff; }
+    }
+
+    /// <summary>
+    /// Gets or sets the folder path for Layered TIFF export.
+    /// </summary>
+    public string LayeredTiffFolderPath
+    {
+        get => _layeredTiffFolderPath;
+        set
+        {
+            if (_layeredTiffFolderPath != value)
+            {
+                _layeredTiffFolderPath = value;
+                OnPropertyChanged(nameof(LayeredTiffFolderPath));
+                OnPropertyChanged(nameof(HasLayeredTiffFolder));
+                OnPropertyChanged(nameof(CanSave));
+                OnPropertyChanged(nameof(ValidationMessage));
+                OnPropertyChanged(nameof(HasValidationError));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a layered TIFF folder has been selected.
+    /// </summary>
+    public bool HasLayeredTiffFolder => !string.IsNullOrWhiteSpace(_layeredTiffFolderPath);
+
+    /// <summary>
+    /// Gets whether the image has multiple layers (enables Layered TIFF option).
+    /// </summary>
+    public bool HasLayers
+    {
+        get => _hasLayers;
+        private set
+        {
+            if (_hasLayers != value)
+            {
+                _hasLayers = value;
+                OnPropertyChanged(nameof(HasLayers));
+            }
+        }
     }
 
     public DatasetCardViewModel? SelectedDataset

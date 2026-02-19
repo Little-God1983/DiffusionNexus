@@ -42,6 +42,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public Func<string, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
+    /// Callback provided by the View to save a layered TIFF to a file path.
+    /// Returns true if the save succeeded.
+    /// </summary>
+    public Func<string, bool>? SaveLayeredTiffFunc { get; set; }
+
+    /// <summary>
     /// Callback provided by the View to show a save-file dialog.
     /// Parameters: title, suggestedFileName, filter. Returns the chosen path, or null if cancelled.
     /// </summary>
@@ -64,6 +70,9 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Sub-ViewModel for AI upscaling tool.</summary>
     public UpscalingViewModel Upscaling { get; }
+
+    /// <summary>Sub-ViewModel for text tool.</summary>
+    public TextToolViewModel TextTools { get; }
 
     /// <summary>Sub-ViewModel for inpainting tool.</summary>
     public InpaintingViewModel Inpainting { get; }
@@ -255,6 +264,8 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand SaveAsNewCommand { get; }
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
+    public IAsyncRelayCommand ExportAsPngCommand { get; }
+    public IAsyncRelayCommand ExportAsLayeredTiffCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ZoomToFitCommand { get; }
@@ -311,6 +322,7 @@ public partial class ImageEditorViewModel : ObservableObject
         LayerPanel = new LayerPanelViewModel(() => HasImage);
         ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
         DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
+        TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, upscalingService);
@@ -340,6 +352,8 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveAsNewCommand = new AsyncRelayCommand(ExecuteSaveAsNewAsync, () => HasImage);
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
+        ExportAsPngCommand = new AsyncRelayCommand(ExecuteExportAsPngAsync, () => HasImage);
+        ExportAsLayeredTiffCommand = new AsyncRelayCommand(ExecuteExportAsLayeredTiffAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
         ZoomToFitCommand = new RelayCommand(ExecuteZoomToFit, () => HasImage);
@@ -366,6 +380,14 @@ public partial class ImageEditorViewModel : ObservableObject
         DrawingTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         DrawingTools.StatusMessageChanged += (_, msg) => StatusMessage = msg;
         DrawingTools.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+
+        TextTools.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        TextTools.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        TextTools.ToolToggled += (_, args) =>
         {
             if (args.IsActive) _services.Tools.Activate(args.ToolId);
             else _services.Tools.Deactivate(args.ToolId);
@@ -424,6 +446,9 @@ public partial class ImageEditorViewModel : ObservableObject
         if (exceptToolId != ToolIds.Drawing)
             DrawingTools.CloseAll();
 
+        if (exceptToolId != ToolIds.Text)
+            TextTools.CloseAll();
+
         if (exceptToolId != ToolIds.BackgroundRemoval)
             BackgroundRemoval.ClosePanel();
 
@@ -449,6 +474,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ColorTools.CloseAllPanels();
         DrawingTools.CloseAll();
+        TextTools.CloseAll();
         BackgroundRemoval.ClosePanel();
         BackgroundFill.ClosePanel();
         Upscaling.ClosePanel();
@@ -468,6 +494,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         ColorTools.RefreshCommandStates();
         DrawingTools.RefreshCommandStates();
+        TextTools.RefreshCommandStates();
         LayerPanel.NotifyCommandsCanExecuteChanged();
         BackgroundRemoval.RefreshCommandStates();
         BackgroundFill.RefreshCommandStates();
@@ -482,6 +509,8 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveAsNewCommand.NotifyCanExecuteChanged();
         SaveOverwriteCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
+        ExportAsPngCommand.NotifyCanExecuteChanged();
+        ExportAsLayeredTiffCommand.NotifyCanExecuteChanged();
         ZoomInCommand.NotifyCanExecuteChanged();
         ZoomOutCommand.NotifyCanExecuteChanged();
         ZoomToFitCommand.NotifyCanExecuteChanged();
@@ -719,16 +748,36 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (File.Exists(newPath))
         {
-            var extension = Path.GetExtension(CurrentImagePath);
+            var extension = result.Destination == SaveAsDestination.LayeredTiff
+                ? ".tif"
+                : Path.GetExtension(CurrentImagePath);
             StatusMessage = $"File '{result.FileName}{extension}' already exists.";
             return;
         }
 
         try
         {
-            if (SaveImageFunc(newPath))
+            bool saved;
+            if (result.Destination == SaveAsDestination.LayeredTiff)
             {
-                SaveRatingToFile(newPath, result.Rating);
+                if (SaveLayeredTiffFunc is null)
+                {
+                    StatusMessage = "Layered TIFF export is not available.";
+                    return;
+                }
+                saved = SaveLayeredTiffFunc(newPath);
+            }
+            else
+            {
+                saved = SaveImageFunc(newPath);
+            }
+
+            if (saved)
+            {
+                if (result.Destination != SaveAsDestination.LayeredTiff)
+                {
+                    SaveRatingToFile(newPath, result.Rating);
+                }
                 OnSaveAsNewCompleted(newPath, result.Rating);
             }
             else
@@ -791,12 +840,60 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    private async Task ExecuteExportAsPngAsync()
+    {
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_export.png";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as PNG", suggestedName, "*.png");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveImageFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export PNG.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting PNG: {ex.Message}";
+        }
+    }
+
+    private async Task ExecuteExportAsLayeredTiffAsync()
+    {
+        if (CurrentImagePath is null || SaveLayeredTiffFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_layered.tif";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as Layered TIFF", suggestedName, "*.tif");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveLayeredTiffFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export layered TIFF.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
+        }
+    }
+
     /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>
     private string? ResolveSavePath(SaveAsResult result)
     {
-        var extension = Path.GetExtension(CurrentImagePath);
+        var extension = result.Destination == SaveAsDestination.LayeredTiff
+            ? ".tif"
+            : Path.GetExtension(CurrentImagePath);
 
-        if (result.Destination == SaveAsDestination.OriginFolder)
+        if (result.Destination is SaveAsDestination.OriginFolder)
         {
             var directory = Path.GetDirectoryName(CurrentImagePath);
             if (string.IsNullOrEmpty(directory))
@@ -805,6 +902,30 @@ public partial class ImageEditorViewModel : ObservableObject
                 return null;
             }
             return Path.Combine(directory, result.FileName + extension);
+        }
+
+        if (result.Destination is SaveAsDestination.LayeredTiff)
+        {
+            var folderPath = result.CustomFolderPath;
+            if (string.IsNullOrEmpty(folderPath))
+            {
+                StatusMessage = "No folder selected.";
+                return null;
+            }
+
+            try
+            {
+                if (!Directory.Exists(folderPath))
+                    Directory.CreateDirectory(folderPath);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError($"Failed to create directory: {folderPath}", ex);
+                StatusMessage = "Failed to create directory.";
+                return null;
+            }
+
+            return Path.Combine(folderPath, result.FileName + extension);
         }
 
         var dataset = result.SelectedDataset;

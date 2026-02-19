@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -914,8 +915,14 @@ public partial class SettingsViewModel : BusyViewModelBase
                 });
             });
 
-            // Run backup on a background thread to avoid blocking UI
-            var result = await Task.Run(async () => await _backupService.BackupDatasetsAsync(progress));
+            // Run backup on a background thread with its own DI scope to avoid
+            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
+            var result = await Task.Run(async () =>
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+                return await scopedBackupService.BackupDatasetsAsync(progress);
+            });
 
             if (result.Success)
             {

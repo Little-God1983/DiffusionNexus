@@ -394,6 +394,18 @@
                     ToolTip.Placement="Top"
                     ToolTip.VerticalOffset="-8"
                     ToolTip.Tip="E"/>
+
+            <Button Content="Send to Captioning"
+                    Command="{Binding SendToCaptioningCommand}"
+                    Padding="16,10"
+                    FontSize="14"
+                    Background="#2D6B7D"
+                    Foreground="White"
+                    CornerRadius="4"
+                    IsVisible="{Binding IsImage}"
+                    ToolTip.Placement="Top"
+                    ToolTip.VerticalOffset="-8"
+                    ToolTip.Tip="T"/>
             
             <Button Command="{Binding DeleteCommand}"
                     Padding="16,10"
