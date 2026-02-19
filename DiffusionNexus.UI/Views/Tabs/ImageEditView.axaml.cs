@@ -211,6 +211,7 @@ public partial class ImageEditView : UserControl
         WireDrawingEvents(imageEditor);
         WireTextToolEvents(imageEditor);
         WireInpaintingEvents(imageEditor);
+        WireOutpaintingEvents(imageEditor);
         WireSaveAndExportEvents(vm, imageEditor);
         WireLayerEvents(vm, imageEditor);
         WireZoomSlider();
@@ -330,6 +331,49 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged += onCropRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.EditorCore.CropTool.CropRegionChanged -= onCropRegionChanged);
+    }
+
+    private void WireOutpaintingEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onOutpaintActivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsOutpaintToolActive = true;
+        };
+        imageEditor.Outpainting.OutpaintToolActivated += onOutpaintActivated;
+        _eventCleanup.Add(() => imageEditor.Outpainting.OutpaintToolActivated -= onOutpaintActivated);
+
+        EventHandler onOutpaintDeactivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsOutpaintToolActive = false;
+            _imageEditorCanvas!.EditorCore.OutpaintTool.Reset();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.Outpainting.OutpaintToolDeactivated += onOutpaintDeactivated;
+        _eventCleanup.Add(() => imageEditor.Outpainting.OutpaintToolDeactivated -= onOutpaintDeactivated);
+
+        EventHandler onResetOutpaint = (_, _) =>
+        {
+            _imageEditorCanvas!.EditorCore.OutpaintTool.Reset();
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.Outpainting.ResetRequested += onResetOutpaint;
+        _eventCleanup.Add(() => imageEditor.Outpainting.ResetRequested -= onResetOutpaint);
+
+        EventHandler<(float W, float H)> onSetOutpaintAspect = (_, ratio) =>
+        {
+            _imageEditorCanvas!.EditorCore.OutpaintTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.Outpainting.SetAspectRatioRequested += onSetOutpaintAspect;
+        _eventCleanup.Add(() => imageEditor.Outpainting.SetAspectRatioRequested -= onSetOutpaintAspect);
+
+        EventHandler onOutpaintRegionChanged = (_, _) =>
+        {
+            var (w, h) = _imageEditorCanvas!.EditorCore.OutpaintTool.GetNewDimensions();
+            imageEditor.Outpainting.UpdateResolution(w, h);
+        };
+        _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)

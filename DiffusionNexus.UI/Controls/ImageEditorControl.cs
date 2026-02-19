@@ -33,6 +33,9 @@ public class ImageEditorControl : Control
     // Text tool state
     private bool _isTextToolActive;
 
+    // Outpaint tool state
+    private bool _isOutpaintToolActive;
+
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
     /// </summary>
@@ -208,6 +211,20 @@ public class ImageEditorControl : Control
         {
             _isTextToolActive = value;
             _editorCore.TextTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the outpaint tool is active.
+    /// </summary>
+    public bool IsOutpaintToolActive
+    {
+        get => _isOutpaintToolActive;
+        set
+        {
+            _isOutpaintToolActive = value;
+            _editorCore.OutpaintTool.IsActive = value;
             InvalidateVisual();
         }
     }
@@ -499,6 +516,18 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Outpaint tool takes priority when active
+        if (_isOutpaintToolActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.OutpaintTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerPressed(skPoint))
         {
             e.Handled = true;
@@ -585,6 +614,17 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Outpaint tool pointer tracking
+        if (_isOutpaintToolActive)
+        {
+            if (_editorCore.OutpaintTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -660,6 +700,17 @@ public class ImageEditorControl : Control
         if (_editorCore.DrawingTool.IsActive)
         {
             if (_editorCore.DrawingTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        // Outpaint tool release
+        if (_isOutpaintToolActive)
+        {
+            if (_editorCore.OutpaintTool.OnPointerReleased())
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -866,6 +917,19 @@ public class ImageEditorControl : Control
             {
                 Cursor = new Cursor(StandardCursorType.Cross);
             }
+            return;
+        }
+
+        // Outpaint tool cursors
+        if (_isOutpaintToolActive)
+        {
+            var outpaintHandle = _editorCore.OutpaintTool.GetCursorForPoint(point);
+            Cursor = outpaintHandle switch
+            {
+                ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+                ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+                _ => Cursor.Default
+            };
             return;
         }
 
@@ -1160,6 +1224,17 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Event raised when the outpaint region changes.
+    /// </summary>
+    public event EventHandler? OutpaintRegionChanged;
+
+    private void OnOutpaintRegionChanged(object? sender, EventArgs e)
+    {
+        OutpaintRegionChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -1175,6 +1250,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextCompleted += OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged += OnPlacedTextStateChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
+        _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
         InvalidateVisual();
     }
 
@@ -1193,6 +1269,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextCompleted -= OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged -= OnPlacedTextStateChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
+        _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
     }
 
     /// <summary>
