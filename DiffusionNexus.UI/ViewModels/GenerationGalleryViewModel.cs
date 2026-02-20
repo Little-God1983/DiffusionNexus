@@ -825,9 +825,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         _allMediaItems.Remove(item);
         MediaItems.Remove(item);
+        VisibleMediaItems.Remove(item);
         UpdateGroupedMediaItems(MediaItems.ToList());
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
+        OnPropertyChanged(nameof(HasMoreItems));
     }
 
     private int GetDefaultViewerIndex()
