@@ -77,6 +77,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Sub-ViewModel for inpainting tool.</summary>
     public InpaintingViewModel Inpainting { get; }
 
+    /// <summary>Sub-ViewModel for outpainting tool.</summary>
+    public OutpaintingViewModel Outpainting { get; }
+
     /// <summary>Sub-ViewModel for image rating.</summary>
     public RatingViewModel Rating { get; }
 
@@ -327,6 +330,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, upscalingService);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator);
+        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();
@@ -425,6 +429,14 @@ public partial class ImageEditorViewModel : ObservableObject
             else _services.Tools.Deactivate(args.ToolId);
         };
 
+        Outpainting.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        Outpainting.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        Outpainting.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
 
@@ -460,6 +472,9 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (exceptToolId != ToolIds.Inpainting)
             Inpainting.ClosePanel();
+
+        if (exceptToolId != ToolIds.Outpainting)
+            Outpainting.ClosePanel();
     }
 
     /// <summary>Closes all active tools and resets their state.</summary>
@@ -479,6 +494,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.ClosePanel();
         Upscaling.ClosePanel();
         Inpainting.ClosePanel();
+        Outpainting.ClosePanel();
     }
 
     private void NotifyToolCommandsCanExecuteChanged()
@@ -500,6 +516,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.RefreshCommandStates();
         Upscaling.RefreshCommandStates();
         Inpainting.RefreshCommandStates();
+        Outpainting.RefreshCommandStates();
     }
 
     private void NotifyCommandsCanExecuteChanged()

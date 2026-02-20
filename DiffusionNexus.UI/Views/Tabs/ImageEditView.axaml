@@ -147,8 +147,11 @@
             <ToggleButton Content="Text" IsChecked="{Binding ImageEditor.TextTools.IsTextToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Text Tool - Add text as a new layer"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
-            <ToggleButton Content="Inpaint"
+            <ToggleButton Content="Inpaint" IsChecked="{Binding ImageEditor.Inpainting.IsPanelOpen, Mode=TwoWay}" Padding="12,6"
                           ToolTip.Tip="AI Inpainting - Paint over areas to regenerate using ComfyUI"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <ToggleButton Content="Outpaint" IsChecked="{Binding ImageEditor.Outpainting.IsPanelOpen, Mode=TwoWay}" Padding="12,6"
+                          ToolTip.Tip="Outpainting - Extend the canvas beyond original image boundaries"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
           </StackPanel>
           <!-- Separator - always visible -->
@@ -386,7 +389,60 @@
               </StackPanel>
             </Border>
           </StackPanel>
-          
+
+          <!-- Outpaint Tool Panel -->
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Outpainting.IsPanelOpen, FallbackValue=False}">
+            <TextBlock Text="Outpaint Tool" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Drag the arrows on each edge to extend the canvas." FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+
+                <!-- Outpaint Resolution -->
+                <TextBlock Text="{Binding ImageEditor.Outpainting.OutpaintResolutionText}" FontSize="12" FontWeight="SemiBold" 
+                           Foreground="#4CAF50" HorizontalAlignment="Center"
+                           IsVisible="{Binding ImageEditor.Outpainting.OutpaintResolutionText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+
+                <!-- Aspect Ratio Presets -->
+                <TextBlock Text="Extend to Aspect Ratio" FontSize="11" Opacity="0.7"/>
+                <StackPanel Spacing="4">
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="16:9" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="16:9" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 16:9 widescreen"/>
+                    <Button Content="9:16" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="9:16" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 9:16 portrait"/>
+                    <Button Content="4:3" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="4:3" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 4:3"/>
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="3:4" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="3:4" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 3:4"/>
+                    <Button Content="1:1" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="1:1" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 1:1 square"/>
+                    <Button Content="5:4" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="5:4" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 5:4"/>
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                    <Button Content="21:9" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="21:9" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 21:9 ultrawide"/>
+                    <Button Content="3:2" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="3:2" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 3:2"/>
+                    <Button Content="2:3" Command="{Binding ImageEditor.Outpainting.SetAspectRatioCommand}" CommandParameter="2:3" 
+                            Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 2:3"/>
+                  </StackPanel>
+                </StackPanel>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+                <!-- Action Buttons -->
+                <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
+                  <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.Outpainting.CancelCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
+                  <Button Grid.Column="1" Content="Reset" Command="{Binding ImageEditor.Outpainting.ResetCommand}" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
+                </Grid>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
           <!-- Color Balance Panel -->
           <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen, FallbackValue=False}">
             <TextBlock Text="Color Balance" FontWeight="SemiBold" FontSize="14"/>
