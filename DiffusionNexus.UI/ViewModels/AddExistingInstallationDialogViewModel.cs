@@ -175,6 +175,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
                     FoundExecutables.Add(Path.GetFileName(file));
                 }
 
+                // Search immediate subfolders for bat files (e.g. AI Toolkit run.bat in subfolder)
+                // TODO: Linux Implementation - also scan for .sh files in subfolders
+                foreach (var subDir in Directory.EnumerateDirectories(_initialPath))
+                {
+                    foreach (var file in Directory.GetFiles(subDir, "*.bat"))
+                    {
+                        // Use relative path from _initialPath so the caller can resolve it
+                        var relativePath = Path.GetRelativePath(_initialPath, file);
+                        FoundExecutables.Add(relativePath);
+                    }
+                }
+
                 // ComfyUI standalone inner folder: bat files are in the parent
                 // Detect by checking if this looks like the inner ComfyUI folder
                 // (has comfy/ but no bat files) with a parent that has python_embedded/
@@ -244,6 +256,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             InstallerType.InvokeAI => "InvokeAI",
             InstallerType.FluxGym => "FluxGym",
             InstallerType.SwarmUI => "SwarmUI",
+            InstallerType.AIToolkit => "AI Toolkit",
             _ => Path.GetFileName(_initialPath) ?? "New Installation"
         };
     }
@@ -285,6 +298,8 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
                     => InstallerType.FluxGym,
                 _ when ContainsIgnoreCase(remoteUrl, "SwarmUI")
                     => InstallerType.SwarmUI,
+                _ when ContainsIgnoreCase(remoteUrl, "ai-toolkit")
+                    => InstallerType.AIToolkit,
                 _ => InstallerType.Unknown
             };
         }
@@ -297,7 +312,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
 
     /// <summary>
     /// Finds the .git/config file, checking the root first,
-    /// then known subfolders for standalone distributions (e.g. ComfyUI/).
+    /// then immediate subfolders for standalone distributions (e.g. ComfyUI/, ai-toolkit/).
     /// </summary>
     private static string? FindGitConfig(string path)
     {
@@ -306,10 +321,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         if (File.Exists(rootConfig))
             return rootConfig;
 
-        // Standalone ComfyUI: .git is inside ComfyUI/ subfolder
-        var comfySubConfig = Path.Combine(path, "ComfyUI", ".git", "config");
-        if (File.Exists(comfySubConfig))
-            return comfySubConfig;
+        // Check immediate subfolders (standalone ComfyUI, AI Toolkit, etc.)
+        try
+        {
+            foreach (var subDir in Directory.EnumerateDirectories(path))
+            {
+                var subConfig = Path.Combine(subDir, ".git", "config");
+                if (File.Exists(subConfig))
+                    return subConfig;
+            }
+        }
+        catch (IOException) { /* Directory access error */ }
+        catch (UnauthorizedAccessException) { /* Permission denied */ }
 
         return null;
     }
@@ -360,7 +383,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Finds the .git directory, checking root first then known subfolders.
+    /// Finds the .git directory, checking root first then immediate subfolders.
     /// </summary>
     private static string? FindGitDir(string path)
     {
@@ -368,10 +391,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         if (Directory.Exists(rootGit))
             return rootGit;
 
-        // Standalone ComfyUI: .git is inside ComfyUI/ subfolder
-        var comfyGit = Path.Combine(path, "ComfyUI", ".git");
-        if (Directory.Exists(comfyGit))
-            return comfyGit;
+        // Check immediate subfolders (standalone ComfyUI, AI Toolkit, etc.)
+        try
+        {
+            foreach (var subDir in Directory.EnumerateDirectories(path))
+            {
+                var subGit = Path.Combine(subDir, ".git");
+                if (Directory.Exists(subGit))
+                    return subGit;
+            }
+        }
+        catch (IOException) { /* Directory access error */ }
+        catch (UnauthorizedAccessException) { /* Permission denied */ }
 
         return null;
     }
@@ -445,7 +476,40 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             && Directory.Exists(Path.Combine(path, "src")))
             return InstallerType.SwarmUI;
 
+        // AI Toolkit (ostris/ai-toolkit): has toolkit/ dir and run.py
+        // Also check subfolders in case the user selected the parent directory
+        if (Directory.Exists(Path.Combine(path, "toolkit"))
+            && File.Exists(Path.Combine(path, "run.py")))
+            return InstallerType.AIToolkit;
+
+        // Check one level of subfolders for AI Toolkit
+        if (FindAIToolkitInSubfolders(path) is not null)
+            return InstallerType.AIToolkit;
+
         return InstallerType.Unknown;
+    }
+
+    /// <summary>
+    /// Searches immediate subfolders for an AI Toolkit installation (toolkit/ + run.py).
+    /// Returns the subfolder path if found, null otherwise.
+    /// </summary>
+    private static string? FindAIToolkitInSubfolders(string path)
+    {
+        try
+        {
+            foreach (var subDir in Directory.EnumerateDirectories(path))
+            {
+                if (Directory.Exists(Path.Combine(subDir, "toolkit"))
+                    && File.Exists(Path.Combine(subDir, "run.py")))
+                {
+                    return subDir;
+                }
+            }
+        }
+        catch (IOException) { /* Directory access error */ }
+        catch (UnauthorizedAccessException) { /* Permission denied */ }
+
+        return null;
     }
 
     /// <summary>
@@ -463,6 +527,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             InstallerType.InvokeAI => "invoke.bat",
             InstallerType.FluxGym => "run.bat",
             InstallerType.SwarmUI => "launch-windows.bat",
+            InstallerType.AIToolkit => "run.bat",
             _ => null
         };
 
@@ -529,6 +594,18 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
             defaultSubfolder = Path.Combine("outputs", "images");
         }
 
+        // AI Toolkit: output/ may be in a subfolder if the user selected the parent
+        if (SelectedType == InstallerType.AIToolkit
+            && !Directory.Exists(Path.Combine(_initialPath, "output")))
+        {
+            var aiToolkitSub = FindAIToolkitInSubfolders(_initialPath);
+            if (aiToolkitSub is not null)
+            {
+                var relativeSub = Path.GetFileName(aiToolkitSub);
+                defaultSubfolder = Path.Combine(relativeSub, "output");
+            }
+        }
+
         var defaultPath = Path.Combine(_initialPath, defaultSubfolder);
         OutputFolderPath = defaultPath;
     }
@@ -546,6 +623,7 @@ public partial class AddExistingInstallationDialogViewModel : ViewModelBase
         InstallerType.InvokeAI => Path.Combine("outputs", "images"),
         InstallerType.SwarmUI => "Output",
         InstallerType.FluxGym => "outputs",
+        InstallerType.AIToolkit => "output",
         _ => null // Unknown — leave blank
     };
 
