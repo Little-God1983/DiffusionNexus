@@ -1,4 +1,6 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Entities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -15,16 +17,34 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     private bool _exportUnrated;
     private bool _exportTrash;
     private string _datasetName = string.Empty;
+    private InstallerPackage? _selectedAIToolkitInstance;
 
     /// <summary>
     /// Creates a new ExportDatasetDialogViewModel.
     /// </summary>
     /// <param name="datasetName">Name of the dataset being exported.</param>
     /// <param name="mediaFiles">All media files in the dataset.</param>
-    public ExportDatasetDialogViewModel(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles)
+    /// <param name="aiToolkitInstances">Available AI Toolkit installations for direct export.</param>
+    public ExportDatasetDialogViewModel(
+        string datasetName,
+        IEnumerable<DatasetImageViewModel> mediaFiles,
+        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
     {
         _datasetName = datasetName;
         _allMediaFiles = mediaFiles.ToList();
+
+        if (aiToolkitInstances is not null)
+        {
+            foreach (var instance in aiToolkitInstances)
+            {
+                AIToolkitInstances.Add(instance);
+            }
+        }
+
+        if (AIToolkitInstances.Count > 0)
+        {
+            _selectedAIToolkitInstance = AIToolkitInstances[0];
+        }
     }
 
     /// <summary>
@@ -58,6 +78,7 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(IsSingleFilesExport));
                 OnPropertyChanged(nameof(IsZipExport));
+                OnPropertyChanged(nameof(IsAIToolkitExport));
             }
         }
     }
@@ -86,6 +107,38 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             if (value)
                 ExportType = ExportType.Zip;
         }
+    }
+
+    /// <summary>
+    /// Whether AI Toolkit export is selected.
+    /// </summary>
+    public bool IsAIToolkitExport
+    {
+        get => _exportType == ExportType.AIToolkit;
+        set
+        {
+            if (value)
+                ExportType = ExportType.AIToolkit;
+        }
+    }
+
+    /// <summary>
+    /// Whether any AI Toolkit instances are available for export.
+    /// </summary>
+    public bool HasAIToolkitInstances => AIToolkitInstances.Count > 0;
+
+    /// <summary>
+    /// Available AI Toolkit installations.
+    /// </summary>
+    public ObservableCollection<InstallerPackage> AIToolkitInstances { get; } = [];
+
+    /// <summary>
+    /// The selected AI Toolkit instance to export to.
+    /// </summary>
+    public InstallerPackage? SelectedAIToolkitInstance
+    {
+        get => _selectedAIToolkitInstance;
+        set => SetProperty(ref _selectedAIToolkitInstance, value);
     }
 
     /// <summary>
@@ -262,7 +315,12 @@ public enum ExportType
     /// <summary>
     /// Export as a single ZIP archive containing all files.
     /// </summary>
-    Zip
+    Zip,
+
+    /// <summary>
+    /// Export directly into an AI Toolkit installation's datasets folder.
+    /// </summary>
+    AIToolkit
 }
 
 /// <summary>
@@ -299,6 +357,16 @@ public class ExportDatasetResult
     /// List of files to export.
     /// </summary>
     public List<DatasetImageViewModel> FilesToExport { get; init; } = [];
+
+    /// <summary>
+    /// The selected AI Toolkit installation path, when exporting to AI-Toolkit.
+    /// </summary>
+    public string? AIToolkitInstallationPath { get; init; }
+
+    /// <summary>
+    /// The display name of the selected AI Toolkit instance.
+    /// </summary>
+    public string? AIToolkitInstanceName { get; init; }
 
     /// <summary>
     /// Creates a cancelled result.

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
@@ -33,10 +34,14 @@ public partial class ExportDatasetDialog : Window
     /// </summary>
     /// <param name="datasetName">Name of the dataset being exported.</param>
     /// <param name="mediaFiles">All media files in the dataset.</param>
+    /// <param name="aiToolkitInstances">Available AI Toolkit installations for direct export.</param>
     /// <returns>The dialog instance for fluent chaining.</returns>
-    public ExportDatasetDialog WithDataset(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles)
+    public ExportDatasetDialog WithDataset(
+        string datasetName,
+        IEnumerable<DatasetImageViewModel> mediaFiles,
+        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
     {
-        _viewModel = new ExportDatasetDialogViewModel(datasetName, mediaFiles);
+        _viewModel = new ExportDatasetDialogViewModel(datasetName, mediaFiles, aiToolkitInstances);
         DataContext = _viewModel;
         return this;
     }
@@ -57,7 +62,9 @@ public partial class ExportDatasetDialog : Window
             ExportProductionReady = _viewModel.ExportProductionReady,
             ExportUnrated = _viewModel.ExportUnrated,
             ExportTrash = _viewModel.ExportTrash,
-            FilesToExport = _viewModel.GetFilesToExport()
+            FilesToExport = _viewModel.GetFilesToExport(),
+            AIToolkitInstallationPath = _viewModel.SelectedAIToolkitInstance?.InstallationPath,
+            AIToolkitInstanceName = _viewModel.SelectedAIToolkitInstance?.Name
         };
         Close(true);
     }

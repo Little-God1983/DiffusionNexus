@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
@@ -188,10 +189,13 @@ public class DialogService : IDialogService
         return dialog.SelectedIndex;
     }
 
-    public async Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles)
+    public async Task<ExportDatasetResult> ShowExportDialogAsync(
+        string datasetName,
+        IEnumerable<DatasetImageViewModel> mediaFiles,
+        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
     {
         var dialog = new ExportDatasetDialog()
-            .WithDataset(datasetName, mediaFiles);
+            .WithDataset(datasetName, mediaFiles, aiToolkitInstances);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? ExportDatasetResult.Cancelled();

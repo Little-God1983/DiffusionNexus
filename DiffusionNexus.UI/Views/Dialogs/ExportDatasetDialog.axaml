@@ -33,6 +33,30 @@
                      IsChecked="{Binding IsZipExport}"
                      GroupName="ExportType"/>
       </StackPanel>
+
+      <!-- AI Toolkit export option (only visible when instances exist) -->
+      <StackPanel IsVisible="{Binding HasAIToolkitInstances}" Margin="0,8,0,0">
+        <RadioButton IsChecked="{Binding IsAIToolkitExport}"
+                     GroupName="ExportType">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Export to AI-Toolkit" VerticalAlignment="Center"/>
+          </StackPanel>
+        </RadioButton>
+
+        <!-- Instance dropdown (visible when AI Toolkit export is selected) -->
+        <ComboBox ItemsSource="{Binding AIToolkitInstances}"
+                  SelectedItem="{Binding SelectedAIToolkitInstance}"
+                  IsVisible="{Binding IsAIToolkitExport}"
+                  Margin="24,4,0,0"
+                  MinWidth="250"
+                  HorizontalAlignment="Left">
+          <ComboBox.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding Name}"/>
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+      </StackPanel>
     </StackPanel>
     
     <!-- Export Options -->
