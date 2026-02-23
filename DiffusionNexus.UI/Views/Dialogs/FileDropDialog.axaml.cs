@@ -75,6 +75,16 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// </summary>
     public List<string>? ResultFiles { get; private set; }
 
+    /// <summary>
+    /// Conflict resolution data from the conflict dialog, if conflicts were detected and resolved.
+    /// </summary>
+    public FileConflictResolutionResult? ConflictResolutionData { get; private set; }
+
+    /// <summary>
+    /// Files that had no conflicts and can be copied directly.
+    /// </summary>
+    public List<string>? NonConflictingResultFiles { get; private set; }
+
     #endregion
 
     #region Configuration
@@ -277,7 +287,9 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                     return;
                 }
 
-                // Process based on user selections - close this dialog and return
+                // Store conflict resolution data for the caller
+                ConflictResolutionData = result;
+                NonConflictingResultFiles = conflictResult.NonConflictingFiles.ToList();
                 ResultFiles = ProcessConflictResolution(result, conflictResult.NonConflictingFiles);
                 Close(true);
                 return;
@@ -549,6 +561,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private void OnDoneClick(object? sender, RoutedEventArgs e)
     {
         ResultFiles = SelectedFiles.Select(f => f.FilePath).ToList();
+        NonConflictingResultFiles = ResultFiles;
         Close(true);
     }
 

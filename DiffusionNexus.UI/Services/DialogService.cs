@@ -408,9 +408,15 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
 
-        // Implementation incomplete as FileDropDialog doesn't expose full result object easily yet
-        // Returning null to satisfy interface
-        return null;
+        if (dialog.ResultFiles is null)
+            return new FileDropWithConflictResult { Cancelled = true };
+
+        return new FileDropWithConflictResult
+        {
+            NonConflictingFiles = dialog.NonConflictingResultFiles ?? dialog.ResultFiles,
+            ConflictResolutions = dialog.ConflictResolutionData,
+            Cancelled = false
+        };
     }
 
     public async Task<SelectVersionsToDeleteResult> ShowSelectVersionsToDeleteDialogAsync(DatasetCardViewModel dataset)

@@ -77,90 +77,81 @@
 
   <Grid RowDefinitions="Auto,Auto,*" Background="#252526">
     <Border Background="#1E1E1E" Padding="16" BorderBrush="#333" BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Text="Generation Gallery" FontSize="18" FontWeight="SemiBold"/>
+      <WrapPanel Orientation="Horizontal">
+        <TextBlock Text="Generation Gallery" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,4,16,4"/>
+
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="🔍" VerticalAlignment="Center" FontSize="14"/>
+          <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                   Watermark="Search by filename..."
+                   Width="200"
+                   VerticalAlignment="Center"/>
         </StackPanel>
 
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center" VerticalAlignment="Center">
-          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="🔍" VerticalAlignment="Center" FontSize="14"/>
-            <TextBox Text="{Binding SearchText, Mode=TwoWay}"
-                     Watermark="Search by filename..."
-                     Width="200"
-                     VerticalAlignment="Center"/>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="Date" VerticalAlignment="Center"/>
-            <ComboBox ItemsSource="{Binding DateFilterOptions}"
-                      SelectedItem="{Binding SelectedDateFilter}"
-                      Width="150"/>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="Sort by" VerticalAlignment="Center"/>
-            <ComboBox ItemsSource="{Binding SortOptions}"
-                      SelectedItem="{Binding SelectedSortOption}"
-                      Width="170"/>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="Group by" VerticalAlignment="Center"/>
-            <ComboBox ItemsSource="{Binding GroupingOptions}"
-                      SelectedItem="{Binding SelectedGroupingOption}"
-                      Width="160"/>
-          </StackPanel>
-
-          <CheckBox Content="Include sub-folders"
-                    IsChecked="{Binding IncludeSubFolders}"
-                    VerticalAlignment="Center"/>
-
-          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="Tile width" VerticalAlignment="Center"/>
-            <Slider Minimum="140" Maximum="360" Value="{Binding TileWidth, Mode=TwoWay}" Width="180"/>
-            <TextBlock Text="{Binding TileWidth, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
-          </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="Date" VerticalAlignment="Center"/>
+          <ComboBox ItemsSource="{Binding DateFilterOptions}"
+                    SelectedItem="{Binding SelectedDateFilter}"
+                    Width="150"/>
         </StackPanel>
 
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-          <Button Content="Open Folder"
-                  Command="{Binding OpenFolderInExplorerCommand}"
-                  Padding="10,6"
-                  IsEnabled="{Binding HasSelection}"
-                  ToolTip.Tip="Open the selected image's folder in Explorer"/>
-          <Button Content="Refresh"
-                  Command="{Binding LoadMediaCommand}"
-                  Padding="10,6"
-                  ToolTip.Tip="Refresh gallery"/>
-          <Button Content="Open Viewer"
-                  Command="{Binding OpenViewerCommand}"
-                  Padding="10,6"
-                  IsEnabled="{Binding HasMedia}"/>
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="Sort by" VerticalAlignment="Center"/>
+          <ComboBox ItemsSource="{Binding SortOptions}"
+                    SelectedItem="{Binding SelectedSortOption}"
+                    Width="170"/>
         </StackPanel>
-      </Grid>
+
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="Group by" VerticalAlignment="Center"/>
+          <ComboBox ItemsSource="{Binding GroupingOptions}"
+                    SelectedItem="{Binding SelectedGroupingOption}"
+                    Width="160"/>
+        </StackPanel>
+
+        <CheckBox Content="Include sub-folders"
+                  IsChecked="{Binding IncludeSubFolders}"
+                  VerticalAlignment="Center" Margin="0,4,16,4"/>
+
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="Tile width" VerticalAlignment="Center"/>
+          <Slider Minimum="140" Maximum="360" Value="{Binding TileWidth, Mode=TwoWay}" Width="180"/>
+          <TextBlock Text="{Binding TileWidth, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <Button Content="Open Folder"
+                Command="{Binding OpenFolderInExplorerCommand}"
+                Padding="10,6" Margin="0,4,8,4"
+                IsEnabled="{Binding HasSelection}"
+                ToolTip.Tip="Open the selected image's folder in Explorer"/>
+        <Button Content="Refresh"
+                Command="{Binding LoadMediaCommand}"
+                Padding="10,6" Margin="0,4,8,4"
+                ToolTip.Tip="Refresh gallery"/>
+        <Button Content="Open Viewer"
+                Command="{Binding OpenViewerCommand}"
+                Padding="10,6" Margin="0,4,0,4"
+                IsEnabled="{Binding HasMedia}"/>
+      </WrapPanel>
     </Border>
 
     <Border Grid.Row="1" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1"
             IsVisible="{Binding HasSelection}">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
-        <Border Grid.Column="0" Background="#4CAF50" CornerRadius="4" Padding="8,4">
+      <WrapPanel Orientation="Horizontal">
+        <Border Background="#4CAF50" CornerRadius="4" Padding="8,4" Margin="0,4,8,4" VerticalAlignment="Center">
           <TextBlock Text="{Binding SelectionText}" FontWeight="SemiBold" Foreground="White"/>
         </Border>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="8,0,0,0">
-          <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4"/>
-          <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4"/>
-        </StackPanel>
-        <Border Grid.Column="2"/>
-        <Button Grid.Column="3" Content="Add Selected to Dataset" Command="{Binding AddSelectedToDatasetCommand}"
-                Background="#2E7D32" Padding="12,6" Margin="0,0,8,0"/>
-        <Button Grid.Column="4" Content="Send Selected to Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
-                Background="#1976D2" Padding="12,6" Margin="0,0,8,0"/>
-        <Button Grid.Column="5" Content="Send Selected to Image Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
-                Background="#7B1FA2" Padding="12,6" Margin="0,0,8,0"/>
-        <Button Grid.Column="6" Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
-                Background="#B22222" Padding="12,6"/>
-      </Grid>
+        <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4" Margin="0,4,4,4"/>
+        <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4" Margin="0,4,16,4"/>
+        <Button Content="Add Selected to Dataset" Command="{Binding AddSelectedToDatasetCommand}"
+                Background="#2E7D32" Padding="12,6" Margin="0,4,8,4"/>
+        <Button Content="Send Selected to Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
+                Background="#1976D2" Padding="12,6" Margin="0,4,8,4"/>
+        <Button Content="Send Selected to Image Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
+                Background="#7B1FA2" Padding="12,6" Margin="0,4,8,4"/>
+        <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
+                Background="#B22222" Padding="12,6" Margin="0,4,0,4"/>
+      </WrapPanel>
     </Border>
 
     <Grid Grid.Row="2">
