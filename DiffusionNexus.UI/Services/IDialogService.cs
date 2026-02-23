@@ -1,5 +1,6 @@
 namespace DiffusionNexus.UI.Services;
 
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
@@ -114,8 +115,12 @@ public interface IDialogService
     /// </summary>
     /// <param name="datasetName">Name of the dataset being exported.</param>
     /// <param name="mediaFiles">All media files in the dataset.</param>
+    /// <param name="aiToolkitInstances">Available AI Toolkit installations for direct export.</param>
     /// <returns>Export result with selected options and files, or cancelled result.</returns>
-    Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles);
+    Task<ExportDatasetResult> ShowExportDialogAsync(
+        string datasetName,
+        IEnumerable<DatasetImageViewModel> mediaFiles,
+        IEnumerable<InstallerPackage>? aiToolkitInstances = null);
 
     /// <summary>
     /// Shows the create dataset dialog with name, category, and type options.

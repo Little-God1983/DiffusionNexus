@@ -3,6 +3,7 @@ using System.IO;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
@@ -2253,11 +2254,61 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages);
+        // Query AI Toolkit instances from the database
+        IReadOnlyList<InstallerPackage>? aiToolkitInstances = null;
+        try
+        {
+            var repo = App.Services?.GetService<IInstallerPackageRepository>();
+            if (repo is not null)
+            {
+                var allPackages = await repo.GetAllAsync();
+                var toolkitList = allPackages
+                    .Where(p => p.Type == InstallerType.AIToolkit)
+                    .ToList();
+                if (toolkitList.Count > 0)
+                    aiToolkitInstances = toolkitList;
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Failed to query AI Toolkit instances for export dialog");
+        }
+
+        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages, aiToolkitInstances);
         if (!result.Confirmed || result.FilesToExport.Count == 0) return;
 
         string? destinationPath;
-        if (result.ExportType == ExportType.Zip)
+        if (result.ExportType == ExportType.AIToolkit)
+        {
+            if (string.IsNullOrWhiteSpace(result.AIToolkitInstallationPath))
+            {
+                StatusMessage = "No AI Toolkit instance selected.";
+                return;
+            }
+
+            // Use the user-specified folder name, falling back to the dataset name
+            var folderName = !string.IsNullOrWhiteSpace(result.AIToolkitFolderName)
+                ? result.AIToolkitFolderName.Trim()
+                : ActiveDataset.Name;
+
+            destinationPath = Path.Combine(result.AIToolkitInstallationPath, "datasets", folderName);
+
+            if (Directory.Exists(destinationPath))
+            {
+                var existingFiles = Directory.GetFiles(destinationPath);
+                if (existingFiles.Length > 0 && result.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
+                {
+                    Directory.Delete(destinationPath, recursive: true);
+                    Directory.CreateDirectory(destinationPath);
+                }
+                // Merge mode: just proceed — ExportAsSingleFiles uses overwrite:true
+            }
+            else
+            {
+                Directory.CreateDirectory(destinationPath);
+            }
+        }
+        else if (result.ExportType == ExportType.Zip)
         {
             var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
             var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
@@ -2287,8 +2338,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
                 : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
 
-            StatusMessage = $"Exported {exportedCount} files successfully.";
-            _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+            if (result.ExportType == ExportType.AIToolkit)
+            {
+                StatusMessage = $"Exported {exportedCount} files to AI Toolkit '{result.AIToolkitInstanceName}'.";
+                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}' to AI Toolkit '{result.AIToolkitInstanceName}'");
+            }
+            else
+            {
+                StatusMessage = $"Exported {exportedCount} files successfully.";
+                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+            }
 
             // Open the export location in Explorer
             OpenFolderInExplorer(destinationPath, result.ExportType == ExportType.Zip);

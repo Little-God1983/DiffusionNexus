@@ -192,5 +192,6 @@ public enum InstallerType
     Fooocus,
     InvokeAI,
     FluxGym,
-    SwarmUI
+    SwarmUI,
+    AIToolkit
 }

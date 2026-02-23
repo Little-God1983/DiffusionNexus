@@ -341,4 +341,85 @@ public class AddExistingInstallationDialogViewModelTests
     }
 
     #endregion
+
+    #region AI Toolkit Detection Tests
+
+    [Fact]
+    public void WhenFolderHasToolkitAndRunPyThenTypeIsAIToolkit()
+    {
+        // Arrange
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(Path.Combine(tempDir, "toolkit"));
+        File.WriteAllText(Path.Combine(tempDir, "run.py"), "# ai-toolkit");
+        File.WriteAllText(Path.Combine(tempDir, "run.bat"), "python run.py");
+
+        // Act
+        var vm = new AddExistingInstallationDialogViewModel(tempDir);
+
+        // Assert
+        vm.SelectedType.Should().Be(InstallerType.AIToolkit);
+        vm.Name.Should().Be("AI Toolkit");
+        vm.OutputFolderPath.Should().Be(Path.Combine(tempDir, "output"));
+    }
+
+    [Fact]
+    public void WhenAIToolkitIsInSubfolderThenTypeIsAIToolkit()
+    {
+        // Arrange - user selected the parent folder, ai-toolkit is in a subfolder
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+        var subDir = Path.Combine(tempDir, "ai-toolkit");
+        Directory.CreateDirectory(subDir);
+        Directory.CreateDirectory(Path.Combine(subDir, "toolkit"));
+        File.WriteAllText(Path.Combine(subDir, "run.py"), "# ai-toolkit");
+        File.WriteAllText(Path.Combine(subDir, "run.bat"), "python run.py");
+
+        // Act
+        var vm = new AddExistingInstallationDialogViewModel(tempDir);
+
+        // Assert
+        vm.SelectedType.Should().Be(InstallerType.AIToolkit);
+        vm.Name.Should().Be("AI Toolkit");
+    }
+
+    [Fact]
+    public void WhenAIToolkitIsInSubfolderThenBatFileFromSubfolderIsFound()
+    {
+        // Arrange - bat file is in a subfolder
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+        var subDir = Path.Combine(tempDir, "ai-toolkit");
+        Directory.CreateDirectory(subDir);
+        Directory.CreateDirectory(Path.Combine(subDir, "toolkit"));
+        File.WriteAllText(Path.Combine(subDir, "run.py"), "# ai-toolkit");
+        File.WriteAllText(Path.Combine(subDir, "run.bat"), "python run.py");
+
+        // Act
+        var vm = new AddExistingInstallationDialogViewModel(tempDir);
+
+        // Assert - the subfolder bat should be found
+        vm.FoundExecutables.Should().Contain(Path.Combine("ai-toolkit", "run.bat"));
+    }
+
+    [Fact]
+    public void WhenAIToolkitBatIsOneAboveThenBatFileIsFound()
+    {
+        // Arrange - run.bat is in the selected folder, toolkit/ is in a subfolder
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(Path.Combine(tempDir, "toolkit"));
+        File.WriteAllText(Path.Combine(tempDir, "run.py"), "# ai-toolkit");
+        File.WriteAllText(Path.Combine(tempDir, "run.bat"), "python run.py");
+
+        // Act
+        var vm = new AddExistingInstallationDialogViewModel(tempDir);
+
+        // Assert
+        vm.SelectedType.Should().Be(InstallerType.AIToolkit);
+        vm.FoundExecutables.Should().Contain("run.bat");
+        vm.SelectedExecutable.Should().Be("run.bat");
+    }
+
+    #endregion
 }
