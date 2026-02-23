@@ -56,6 +56,38 @@
             </DataTemplate>
           </ComboBox.ItemTemplate>
         </ComboBox>
+
+        <!-- Folder name input (visible when AI Toolkit export is selected) -->
+        <StackPanel IsVisible="{Binding IsAIToolkitExport}" Margin="24,6,0,0">
+          <TextBlock Text="Folder Name" Opacity="0.7" Margin="0,0,0,2"/>
+          <TextBox Text="{Binding AIToolkitFolderName}"
+                   Watermark="Dataset folder name"
+                   MinWidth="250"
+                   HorizontalAlignment="Left"/>
+
+          <!-- Inline folder-exists warning -->
+          <Border IsVisible="{Binding AIToolkitFolderExists}"
+                  Background="#7D5C2D"
+                  CornerRadius="6"
+                  Padding="10,8"
+                  Margin="0,6,0,0">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding AIToolkitFolderExistsText}"
+                         FontWeight="SemiBold"
+                         Foreground="#FFD180"/>
+              <StackPanel Orientation="Horizontal" Spacing="16">
+                <RadioButton IsChecked="{Binding IsMergeMode}"
+                             GroupName="ConflictMode">
+                  <TextBlock Text="Merge (add/replace files)"/>
+                </RadioButton>
+                <RadioButton IsChecked="{Binding IsOverwriteMode}"
+                             GroupName="ConflictMode">
+                  <TextBlock Text="Overwrite (clear folder first)"/>
+                </RadioButton>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
       </StackPanel>
     </StackPanel>
     

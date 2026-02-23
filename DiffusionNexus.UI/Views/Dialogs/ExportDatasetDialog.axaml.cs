@@ -64,7 +64,9 @@ public partial class ExportDatasetDialog : Window
             ExportTrash = _viewModel.ExportTrash,
             FilesToExport = _viewModel.GetFilesToExport(),
             AIToolkitInstallationPath = _viewModel.SelectedAIToolkitInstance?.InstallationPath,
-            AIToolkitInstanceName = _viewModel.SelectedAIToolkitInstance?.Name
+            AIToolkitInstanceName = _viewModel.SelectedAIToolkitInstance?.Name,
+            AIToolkitFolderName = _viewModel.AIToolkitFolderName,
+            AIToolkitConflictMode = _viewModel.AIToolkitConflictMode
         };
         Close(true);
     }

@@ -2286,9 +2286,27 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 return;
             }
 
-            // Create datasets/<DatasetName> folder inside the AI Toolkit installation
-            destinationPath = Path.Combine(result.AIToolkitInstallationPath, "datasets", ActiveDataset.Name);
-            Directory.CreateDirectory(destinationPath);
+            // Use the user-specified folder name, falling back to the dataset name
+            var folderName = !string.IsNullOrWhiteSpace(result.AIToolkitFolderName)
+                ? result.AIToolkitFolderName.Trim()
+                : ActiveDataset.Name;
+
+            destinationPath = Path.Combine(result.AIToolkitInstallationPath, "datasets", folderName);
+
+            if (Directory.Exists(destinationPath))
+            {
+                var existingFiles = Directory.GetFiles(destinationPath);
+                if (existingFiles.Length > 0 && result.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
+                {
+                    Directory.Delete(destinationPath, recursive: true);
+                    Directory.CreateDirectory(destinationPath);
+                }
+                // Merge mode: just proceed — ExportAsSingleFiles uses overwrite:true
+            }
+            else
+            {
+                Directory.CreateDirectory(destinationPath);
+            }
         }
         else if (result.ExportType == ExportType.Zip)
         {
