@@ -152,6 +152,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public bool HasNoMedia => !HasMedia;
 
+    public bool HasFavorites => MediaItems.Any(item => item.IsFavorite);
+
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
 
     #region IThumbnailAware
@@ -277,8 +279,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         if (item is null || _favoritesService is null) return;
 
-        var newState = await _favoritesService.ToggleFavoriteAsync(item.FilePath).ConfigureAwait(false);
+        var newState = await _favoritesService.ToggleFavoriteAsync(item.FilePath);
         item.IsFavorite = newState;
+
+        OnPropertyChanged(nameof(HasFavorites));
+        SelectAllFavoritesCommand.NotifyCanExecuteChanged();
 
         if (ShowFavoritesOnly && !newState)
         {
@@ -289,7 +294,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// <summary>
     /// Selects all items that are marked as favorites.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(HasFavorites))]
     private void SelectAllFavorites()
     {
         ClearSelectionSilent();
@@ -886,10 +891,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(HasMultipleImagesSelected));
         OnPropertyChanged(nameof(SelectionText));
+        OnPropertyChanged(nameof(HasFavorites));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
         SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
+        SelectAllFavoritesCommand.NotifyCanExecuteChanged();
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
