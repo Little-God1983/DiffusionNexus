@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
@@ -102,7 +103,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<int> ShowOptionsAsync(string title, string message, params string[] options) =>
             Task.FromResult(-1);
 
-        public Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles) =>
+        public Task<ExportDatasetResult> ShowExportDialogAsync(string datasetName, IEnumerable<DatasetImageViewModel> mediaFiles, IEnumerable<InstallerPackage>? aiToolkitInstances = null) =>
             Task.FromResult(new ExportDatasetResult { Confirmed = false });
 
         public Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories) =>
