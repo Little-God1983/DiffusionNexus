@@ -437,10 +437,41 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var viewerImages = new ObservableCollection<DatasetImageViewModel>(
             MediaItems.Select(item => DatasetImageViewModel.FromFile(item.FilePath)));
 
+        // Build favorite callbacks only when the service is available
+        Func<string, Task<bool>>? toggleFavorite = null;
+        Func<string, bool>? isFavoriteCheck = null;
+
+        if (_favoritesService is not null)
+        {
+            toggleFavorite = async filePath =>
+            {
+                var newState = await _favoritesService.ToggleFavoriteAsync(filePath);
+
+                // Sync the gallery item state
+                var galleryItem = MediaItems.FirstOrDefault(
+                    item => string.Equals(item.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+                if (galleryItem is not null)
+                {
+                    galleryItem.IsFavorite = newState;
+                }
+
+                OnPropertyChanged(nameof(HasFavorites));
+                SelectAllFavoritesCommand.NotifyCanExecuteChanged();
+                return newState;
+            };
+
+            isFavoriteCheck = filePath =>
+                MediaItems.FirstOrDefault(
+                    item => string.Equals(item.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+                    ?.IsFavorite ?? false;
+        }
+
         await DialogService.ShowImageViewerDialogAsync(
             viewerImages,
             index,
-            showRatingControls: false);
+            showRatingControls: false,
+            onToggleFavorite: toggleFavorite,
+            isFavoriteCheck: isFavoriteCheck);
     }
 
     private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)

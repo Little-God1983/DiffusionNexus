@@ -139,6 +139,9 @@ public interface IDialogService
     /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
     /// <param name="onSendToCaptioning">Callback when user wants to send to captioning.</param>
     /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
+    /// <param name="showRatingControls">Whether to show rating controls.</param>
+    /// <param name="onToggleFavorite">Optional callback to toggle favorite state. Returns the new state. When null, favorite controls are hidden.</param>
+    /// <param name="isFavoriteCheck">Optional callback to check if a file is currently favorited.</param>
     Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
@@ -146,7 +149,9 @@ public interface IDialogService
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
         Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
-        bool showRatingControls = true);
+        bool showRatingControls = true,
+        Func<string, Task<bool>>? onToggleFavorite = null,
+        Func<string, bool>? isFavoriteCheck = null);
 
     /// <summary>
     /// Shows the Save As dialog for saving an image with a new name and optional rating.

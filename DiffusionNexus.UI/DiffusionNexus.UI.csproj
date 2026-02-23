@@ -63,7 +63,6 @@
   <ItemGroup>
     <Folder Include="Assets\InstallerManager\" />
     <Folder Include="ImageEditor\Events\" />
-    <Folder Include="Doc\" />
   </ItemGroup>
 
   <!-- LlamaSharp.Backend.Cpu ships duplicate native DLLs under avx / avx2 / avx512 / noavx.

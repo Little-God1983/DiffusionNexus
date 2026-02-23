@@ -23,10 +23,13 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private readonly Action<DatasetImageViewModel>? _onSendToImageEditor;
     private readonly Action<DatasetImageViewModel>? _onSendToCaptioning;
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
-    
+    private readonly Func<string, Task<bool>>? _onToggleFavorite;
+    private readonly Func<string, bool>? _isFavoriteCheck;
+
     private DatasetImageViewModel? _currentImage;
     private int _currentIndex;
     private bool _disposed;
+    private bool _isFavorite;
 
     /// <summary>Event raised when the dialog should close.</summary>
     public event EventHandler? CloseRequested;
@@ -88,6 +91,16 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public bool CanGoNext => _currentIndex < _allImages.Count - 1;
     public bool ShowRatingControls { get; }
 
+    /// <summary>Whether the current image is marked as a favorite.</summary>
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        private set => SetProperty(ref _isFavorite, value);
+    }
+
+    /// <summary>Whether favorite controls should be shown (only when a toggle callback is provided).</summary>
+    public bool ShowFavoriteControls => _onToggleFavorite is not null;
+
     #region Commands
 
     public IRelayCommand PreviousCommand { get; }
@@ -99,6 +112,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public IRelayCommand SendToImageEditorCommand { get; }
     public IRelayCommand SendToCaptioningCommand { get; }
     public IRelayCommand DeleteCommand { get; }
+    public IAsyncRelayCommand ToggleFavoriteCommand { get; }
 
     #endregion
 
@@ -118,14 +132,18 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
         Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
-        bool showRatingControls = true)
+        bool showRatingControls = true,
+        Func<string, Task<bool>>? onToggleFavorite = null,
+        Func<string, bool>? isFavoriteCheck = null)
     {
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
         _onSendToImageEditor = onSendToImageEditor;
         _onSendToCaptioning = onSendToCaptioning;
         _onDeleteRequested = onDeleteRequested;
+        _onToggleFavorite = onToggleFavorite;
         ShowRatingControls = showRatingControls;
+        _isFavoriteCheck = isFavoriteCheck;
 
         // Subscribe to collection changes to handle external deletions
         _allImages.CollectionChanged += OnCollectionChanged;
@@ -139,6 +157,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         SendToImageEditorCommand = new RelayCommand(SendToImageEditor);
         SendToCaptioningCommand = new RelayCommand(SendToCaptioning);
         DeleteCommand = new RelayCommand(Delete);
+        ToggleFavoriteCommand = new AsyncRelayCommand(ToggleFavoriteAsync);
 
         NavigateTo(Math.Clamp(startIndex, 0, Math.Max(0, images.Count - 1)));
     }
@@ -198,6 +217,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         {
             CurrentImage = null;
             CurrentIndex = 0;
+            IsFavorite = false;
             return;
         }
 
@@ -205,7 +225,9 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
 
         CurrentIndex = index;
         CurrentImage = _allImages[index];
-        
+        IsFavorite = _isFavoriteCheck is not null && CurrentImage is not null
+            && _isFavoriteCheck(CurrentImage.ImagePath);
+
         ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
         ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
     }
@@ -303,10 +325,16 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private void Delete()
     {
         if (_currentImage is null) return;
-        
+
         // Simply invoke the delete callback - the collection change handler
         // will take care of navigation when the image is actually removed
         _onDeleteRequested?.Invoke(_currentImage);
+    }
+
+    private async Task ToggleFavoriteAsync()
+    {
+        if (_currentImage is null || _onToggleFavorite is null) return;
+        IsFavorite = await _onToggleFavorite(_currentImage.ImagePath);
     }
 
     /// <summary>Refreshes the display after external changes.</summary>

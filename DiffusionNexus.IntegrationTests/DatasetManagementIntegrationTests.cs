@@ -116,7 +116,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Action<DatasetImageViewModel>? onSendToImageEditor = null,
             Action<DatasetImageViewModel>? onSendToCaptioning = null,
             Action<DatasetImageViewModel>? onDeleteRequested = null,
-            bool showRatingControls = true) =>
+            bool showRatingControls = true,
+            Func<string, Task<bool>>? onToggleFavorite = null,
+            Func<string, bool>? isFavoriteCheck = null) =>
             Task.CompletedTask;
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets) =>
