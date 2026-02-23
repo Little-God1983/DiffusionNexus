@@ -327,6 +327,38 @@ public partial class ImageEditorCore
     }
 
     /// <summary>
+    /// Sets the visibility of the inpaint mask layer.
+    /// Used to hide the mask after a successful generation send and
+    /// to show it again when the user starts painting.
+    /// </summary>
+    /// <param name="visible">True to show, false to hide.</param>
+    /// <returns>True if the mask layer was found and its visibility changed.</returns>
+    public bool SetInpaintMaskVisible(bool visible)
+    {
+        if (_layers is null) return false;
+
+        var maskLayer = _layers.Layers.FirstOrDefault(l => l.IsInpaintMask);
+        if (maskLayer is null || maskLayer.IsVisible == visible) return false;
+
+        maskLayer.IsVisible = visible;
+        OnImageChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether the inpaint mask layer is currently visible.
+    /// Returns false if no mask layer exists.
+    /// </summary>
+    public bool IsInpaintMaskVisible
+    {
+        get
+        {
+            var maskLayer = _layers?.Layers.FirstOrDefault(l => l.IsInpaintMask);
+            return maskLayer?.IsVisible ?? false;
+        }
+    }
+
+    /// <summary>
     /// Feathers an inpaint mask by dilating then blurring.
     /// Softens hard binary brush edges so the inpainting model can blend at boundaries.
     /// </summary>

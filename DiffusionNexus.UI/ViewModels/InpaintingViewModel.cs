@@ -308,6 +308,9 @@ public partial class InpaintingViewModel : ObservableObject
     /// <summary>Event raised when a status message should be shown.</summary>
     public event EventHandler<string?>? StatusMessageChanged;
 
+    /// <summary>Event raised when the inpaint mask should be hidden (after successful send to ComfyUI).</summary>
+    public event EventHandler? HideMaskRequested;
+
     // TODO: Linux Implementation for Inpainting
 
     #endregion
@@ -374,6 +377,11 @@ public partial class InpaintingViewModel : ObservableObject
         {
             Status = "Uploading image to ComfyUI...";
             var uploadedFilename = await _comfyUiService.UploadImageAsync(maskedImagePath);
+
+            // Upload succeeded — hide the mask so the user sees the clean canvas
+            // while generation is in progress. If ComfyUI was down, the upload
+            // would have thrown and this line is never reached.
+            HideMaskRequested?.Invoke(this, EventArgs.Empty);
 
             Status = "Queuing inpainting workflow...";
 

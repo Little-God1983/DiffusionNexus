@@ -328,6 +328,12 @@ public class ImageEditorControl : Control
     public event EventHandler? InpaintMaskChanged;
 
     /// <summary>
+    /// Event raised when the user starts painting on the inpaint mask.
+    /// Used to auto-show the mask if it was hidden after generation.
+    /// </summary>
+    public event EventHandler? InpaintPaintingStarted;
+
+    /// <summary>
     /// Event raised when the inpaint brush size is changed via Shift+wheel.
     /// </summary>
     public event EventHandler<float>? InpaintBrushSizeChanged;
@@ -493,6 +499,10 @@ public class ImageEditorControl : Control
             var imageRect = _editorCore.GetCurrentImageRect();
             if (imageRect.Contains(skPoint))
             {
+                // Re-show the mask if it was hidden after a previous generation
+                if (!_editorCore.IsInpaintMaskVisible)
+                    InpaintPaintingStarted?.Invoke(this, EventArgs.Empty);
+
                 _isInpaintPainting = true;
                 _inpaintLastPoint = skPoint;
                 _inpaintStrokePoints.Clear();
