@@ -396,7 +396,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
             var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
 
-            var importResult = await DatasetFileImporter.ImportWithDialogAsync(
+            var importer = new DatasetFileImporter(new FileOperations());
+            var importResult = await importer.ImportWithDialogAsync(
                 selectedItems.Select(item => item.FilePath),
                 destinationFolder,
                 DialogService,
