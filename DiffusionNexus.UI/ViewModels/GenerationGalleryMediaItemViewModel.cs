@@ -18,6 +18,7 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isSelected;
+    private bool _isFavorite;
 
     public GenerationGalleryMediaItemViewModel(
         string filePath,
@@ -82,6 +83,15 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     {
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
+    }
+
+    /// <summary>
+    /// Whether this item is marked as a favorite.
+    /// </summary>
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set => SetProperty(ref _isFavorite, value);
     }
 
     /// <summary>

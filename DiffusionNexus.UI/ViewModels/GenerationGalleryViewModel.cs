@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using System.Text.Json;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -22,6 +23,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private readonly IDatasetState? _datasetState;
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly IImageFavoritesService? _favoritesService;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
@@ -55,14 +57,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         IDatasetEventAggregator eventAggregator,
         IDatasetState datasetState,
         IVideoThumbnailService? videoThumbnailService,
-        IThumbnailOrchestrator? thumbnailOrchestrator = null)
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        IImageFavoritesService? favoritesService = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
         _videoThumbnailService = videoThumbnailService;
         _thumbnailOrchestrator = thumbnailOrchestrator;
-        
+        _favoritesService = favoritesService;
+
         _eventAggregator.SettingsSaved += OnSettingsSaved;
         UpdateGroupingOptions();
     }
@@ -129,6 +133,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [ObservableProperty]
     private string _searchText = string.Empty;
 
+    [ObservableProperty]
+    private bool _showFavoritesOnly;
+
     public int SelectionCount
     {
         get => _selectionCount;
@@ -180,7 +187,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             var settings = await _settingsService.GetSettingsAsync();
             var enabledPaths = GetEnabledGalleryPaths(settings);
 
-            var mediaItems = await Task.Run(() => CollectMediaItems(enabledPaths, IncludeSubFolders));
+            var mediaItems = await CollectMediaItemsAsync(enabledPaths, IncludeSubFolders);
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
         }, "Loading gallery...");
     }
@@ -213,6 +220,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     partial void OnSearchTextChanged(string value)
+    {
+        ApplySortingAndGrouping();
+    }
+
+    partial void OnShowFavoritesOnlyChanged(bool value)
     {
         ApplySortingAndGrouping();
     }
@@ -254,6 +266,41 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private void ClearSelection()
     {
         ClearSelectionSilent();
+        UpdateSelectionState();
+    }
+
+    /// <summary>
+    /// Toggles the favorite state of the given media item and persists the change.
+    /// </summary>
+    [RelayCommand]
+    private async Task ToggleFavoriteAsync(GenerationGalleryMediaItemViewModel? item)
+    {
+        if (item is null || _favoritesService is null) return;
+
+        var newState = await _favoritesService.ToggleFavoriteAsync(item.FilePath).ConfigureAwait(false);
+        item.IsFavorite = newState;
+
+        if (ShowFavoritesOnly && !newState)
+        {
+            ApplySortingAndGrouping();
+        }
+    }
+
+    /// <summary>
+    /// Selects all items that are marked as favorites.
+    /// </summary>
+    [RelayCommand]
+    private void SelectAllFavorites()
+    {
+        ClearSelectionSilent();
+        foreach (var item in MediaItems)
+        {
+            if (item.IsFavorite)
+            {
+                item.IsSelected = true;
+            }
+        }
+
         UpdateSelectionState();
     }
 
@@ -493,9 +540,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             .ToList();
     }
 
-    private List<GenerationGalleryMediaItemViewModel> CollectMediaItems(IEnumerable<string> paths, bool includeSubFolders)
+    private async Task<List<GenerationGalleryMediaItemViewModel>> CollectMediaItemsAsync(IEnumerable<string> paths, bool includeSubFolders)
     {
         var items = new List<GenerationGalleryMediaItemViewModel>();
+
+        // Collect favorites per folder for bulk lookup
+        var favoriteSets = new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var root in paths)
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
@@ -508,9 +559,23 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 var isVideo = SupportedMediaTypes.IsVideoFile(file);
                 var createdAt = File.GetCreationTimeUtc(file);
                 var folderGroupName = GetFolderGroupName(root, file);
-                items.Add(new GenerationGalleryMediaItemViewModel(
+                var item = new GenerationGalleryMediaItemViewModel(
                     file, isVideo, createdAt, folderGroupName,
-                    _thumbnailOrchestrator, OwnerToken));
+                    _thumbnailOrchestrator, OwnerToken);
+
+                if (_favoritesService is not null)
+                {
+                    var folder = Path.GetDirectoryName(file)!;
+                    if (!favoriteSets.TryGetValue(folder, out var favSet))
+                    {
+                        favSet = await _favoritesService.GetFavoritesAsync(folder).ConfigureAwait(false);
+                        favoriteSets[folder] = favSet;
+                    }
+
+                    item.IsFavorite = favSet.Contains(Path.GetFileName(file));
+                }
+
+                items.Add(item);
             }
         }
 
@@ -667,6 +732,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var sortOption = SelectedSortOption;
         var groupingOption = SelectedGroupingOption;
         var isGroupingEnabled = IsGroupingEnabled;
+        var showFavoritesOnly = ShowFavoritesOnly;
 
         // Run sorting, filtering, and group creation on a background thread
         var (sortedList, groups) = await Task.Run(() =>
@@ -683,6 +749,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             {
                 filtered = filtered.Where(item =>
                     item.FileName.Contains(searchText, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (showFavoritesOnly)
+            {
+                filtered = filtered.Where(item => item.IsFavorite);
             }
 
             IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
