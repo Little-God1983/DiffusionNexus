@@ -268,6 +268,117 @@ public class GenerationGalleryViewModelTests : IDisposable
         mockDialog.Verify(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task WhenShowFavoritesOnlyEnabled_ThenOnlyFavoriteItemsShown()
+    {
+        var galleryPath = CreateTempDirectory();
+        var favImage = Path.Combine(galleryPath, "fav.png");
+        var normalImage = Path.Combine(galleryPath, "normal.png");
+        File.WriteAllText(favImage, "test");
+        File.WriteAllText(normalImage, "test");
+
+        var favoritesService = new ImageFavoritesService();
+        await favoritesService.SetFavoriteAsync(favImage, true);
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            favoritesService: favoritesService);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.MediaItems.Should().HaveCount(2);
+
+        viewModel.ShowFavoritesOnly = true;
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Should().ContainSingle();
+        viewModel.MediaItems[0].FilePath.Should().Be(favImage);
+    }
+
+    [Fact]
+    public async Task WhenSelectAllFavorites_ThenOnlyFavoritesAreSelected()
+    {
+        var galleryPath = CreateTempDirectory();
+        var favImage = Path.Combine(galleryPath, "fav.png");
+        var normalImage = Path.Combine(galleryPath, "normal.png");
+        File.WriteAllText(favImage, "test");
+        File.WriteAllText(normalImage, "test");
+
+        var favoritesService = new ImageFavoritesService();
+        await favoritesService.SetFavoriteAsync(favImage, true);
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            favoritesService: favoritesService);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SelectAllFavoritesCommand.Execute(null);
+
+        viewModel.SelectionCount.Should().Be(1);
+        var selectedItem = viewModel.MediaItems.Single(item => item.IsSelected);
+        selectedItem.FilePath.Should().Be(favImage);
+    }
+
+    [Fact]
+    public async Task WhenToggleFavorite_ThenItemFavoriteStateChanges()
+    {
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "test.png");
+        File.WriteAllText(image, "test");
+
+        var favoritesService = new ImageFavoritesService();
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            favoritesService: favoritesService);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        var item = viewModel.MediaItems[0];
+        item.IsFavorite.Should().BeFalse();
+
+        await viewModel.ToggleFavoriteCommand.ExecuteAsync(item);
+        item.IsFavorite.Should().BeTrue();
+
+        await viewModel.ToggleFavoriteCommand.ExecuteAsync(item);
+        item.IsFavorite.Should().BeFalse();
+    }
+
     public void Dispose()
     {
         foreach (var path in _tempPaths)

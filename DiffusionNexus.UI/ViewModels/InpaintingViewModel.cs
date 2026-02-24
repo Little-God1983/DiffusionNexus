@@ -308,6 +308,9 @@ public partial class InpaintingViewModel : ObservableObject
     /// <summary>Event raised when a status message should be shown.</summary>
     public event EventHandler<string?>? StatusMessageChanged;
 
+    /// <summary>Event raised when the inpaint mask should be hidden (after successful send to ComfyUI).</summary>
+    public event EventHandler? HideMaskRequested;
+
     // TODO: Linux Implementation for Inpainting
 
     #endregion
@@ -414,7 +417,19 @@ public partial class InpaintingViewModel : ObservableObject
                 });
 
             Status = "Generating (this may take a while)...";
-            var progress = new Progress<string>(msg => Status = msg);
+            var maskHidden = false;
+            var progress = new Progress<string>(msg =>
+            {
+                Status = msg;
+
+                // Hide the mask on the first real progress update from ComfyUI,
+                // meaning the server has picked up the job and is actively working.
+                if (!maskHidden)
+                {
+                    maskHidden = true;
+                    HideMaskRequested?.Invoke(this, EventArgs.Empty);
+                }
+            });
             await _comfyUiService.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";

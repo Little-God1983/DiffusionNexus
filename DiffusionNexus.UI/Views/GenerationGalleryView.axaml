@@ -66,6 +66,23 @@
                   FontWeight="Bold"
                   ZIndex="5"/>
 
+          <!-- Favorite Star Button (Top Right, next to delete) -->
+          <Button Command="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).ToggleFavoriteCommand}"
+                  CommandParameter="{Binding}"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Top"
+                  Margin="6,6,36,6"
+                  Padding="6,2"
+                  Background="#80000000"
+                  CornerRadius="4"
+                  FontWeight="Bold"
+                  ZIndex="5">
+            <Panel>
+              <TextBlock Text="☆" FontSize="14" IsVisible="{Binding !IsFavorite}" Foreground="#AAA"/>
+              <TextBlock Text="★" FontSize="14" IsVisible="{Binding IsFavorite}" Foreground="#FFD700"/>
+            </Panel>
+          </Button>
+
           <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
             <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.8"
                        TextTrimming="CharacterEllipsis" MaxLines="1"/>
@@ -113,6 +130,11 @@
                   IsChecked="{Binding IncludeSubFolders}"
                   VerticalAlignment="Center" Margin="0,4,16,4"/>
 
+        <CheckBox Content="★ Favorites Only"
+                  IsChecked="{Binding ShowFavoritesOnly}"
+                  Foreground="#FFD700"
+                  VerticalAlignment="Center" Margin="0,4,16,4"/>
+
         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
           <TextBlock Text="Tile width" VerticalAlignment="Center"/>
           <Slider Minimum="140" Maximum="360" Value="{Binding TileWidth, Mode=TwoWay}" Width="180"/>
@@ -142,6 +164,8 @@
           <TextBlock Text="{Binding SelectionText}" FontWeight="SemiBold" Foreground="White"/>
         </Border>
         <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4" Margin="0,4,4,4"/>
+        <Button Content="★ Select All Favorites" Command="{Binding SelectAllFavoritesCommand}"
+                Foreground="#FFD700" Padding="8,4" Margin="0,4,4,4"/>
         <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4" Margin="0,4,16,4"/>
         <Button Content="Add Selected to Dataset" Command="{Binding AddSelectedToDatasetCommand}"
                 Background="#2E7D32" Padding="12,6" Margin="0,4,8,4"/>

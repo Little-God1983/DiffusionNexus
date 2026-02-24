@@ -1503,8 +1503,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 var ignored = 0;
 
                 // Process files based on the result from the dialog
-                
-                var importResult = await DatasetFileImporter.ImportResolvedAsync(
+                var importer = new DatasetFileImporter(new FileOperations());
+                var importResult = await importer.ImportResolvedAsync(
                     result.NonConflictingFiles,
                     result.ConflictResolutions,
                     destFolderPath,

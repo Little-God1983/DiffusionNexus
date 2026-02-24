@@ -486,6 +486,9 @@ public partial class App : Application
         services.AddSingleton<IDatasetState, DatasetStateService>();
         services.AddSingleton<IDatasetStorageService, DatasetStorageService>();
 
+        // Image favorites service (singleton - per-folder .favorites.json persistence)
+        services.AddSingleton<IImageFavoritesService, ImageFavoritesService>();
+
         // Settings export/import
         services.AddScoped<ISettingsExportService, SettingsExportService>();
 
@@ -521,7 +524,8 @@ public partial class App : Application
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IDatasetState>(),
             sp.GetService<IVideoThumbnailService>(),
-            sp.GetService<IThumbnailOrchestrator>()));
+            sp.GetService<IThumbnailOrchestrator>(),
+            sp.GetService<IImageFavoritesService>()));
         
         // LoraDatasetHelperViewModel - use factory to inject all required services
         services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(

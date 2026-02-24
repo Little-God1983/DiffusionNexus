@@ -41,6 +41,9 @@ public partial class ImageViewerDialog : Window
     /// <param name="onSendToImageEditor">Callback when user wants to send to editor.</param>
     /// <param name="onSendToCaptioning">Callback when user wants to send to captioning.</param>
     /// <param name="onDeleteRequested">Callback when user wants to delete an image.</param>
+    /// <param name="showRatingControls">Whether to show rating controls.</param>
+    /// <param name="onToggleFavorite">Optional callback to toggle favorite state.</param>
+    /// <param name="isFavoriteCheck">Optional callback to check if a file is favorited.</param>
     /// <returns>The dialog instance for fluent chaining.</returns>
     public ImageViewerDialog WithImages(
         ObservableCollection<DatasetImageViewModel> images,
@@ -49,9 +52,11 @@ public partial class ImageViewerDialog : Window
         Action<DatasetImageViewModel>? onSendToImageEditor = null,
         Action<DatasetImageViewModel>? onSendToCaptioning = null,
         Action<DatasetImageViewModel>? onDeleteRequested = null,
-        bool showRatingControls = true)
+        bool showRatingControls = true,
+        Func<string, Task<bool>>? onToggleFavorite = null,
+        Func<string, bool>? isFavoriteCheck = null)
     {
-        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls);
+        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck);
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
@@ -168,6 +173,15 @@ public partial class ImageViewerDialog : Window
                 if (_viewModel.ShowRatingControls)
                 {
                     _viewModel.ClearRatingCommand.Execute(null);
+                    e.Handled = true;
+                }
+                break;
+
+            case Key.F:
+                // F key toggles favorite
+                if (_viewModel.ShowFavoriteControls)
+                {
+                    _viewModel.ToggleFavoriteCommand.Execute(null);
                     e.Handled = true;
                 }
                 break;

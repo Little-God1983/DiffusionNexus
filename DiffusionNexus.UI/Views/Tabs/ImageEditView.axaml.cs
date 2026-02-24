@@ -804,6 +804,30 @@ public partial class ImageEditView : UserControl
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
         _imageEditorCanvas.InpaintMaskChanged += onMaskChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.InpaintMaskChanged -= onMaskChanged);
+
+        EventHandler onHideMask = (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            if (_imageEditorCanvas.EditorCore.SetInpaintMaskVisible(false))
+            {
+                imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                _imageEditorCanvas.InvalidateVisual();
+            }
+        };
+        imageEditor.Inpainting.HideMaskRequested += onHideMask;
+        _eventCleanup.Add(() => imageEditor.Inpainting.HideMaskRequested -= onHideMask);
+
+        EventHandler onPaintingStarted = (_, _) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            if (_imageEditorCanvas.EditorCore.SetInpaintMaskVisible(true))
+            {
+                imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                _imageEditorCanvas.InvalidateVisual();
+            }
+        };
+        _imageEditorCanvas.InpaintPaintingStarted += onPaintingStarted;
+        _eventCleanup.Add(() => _imageEditorCanvas!.InpaintPaintingStarted -= onPaintingStarted);
     }
 
     private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
