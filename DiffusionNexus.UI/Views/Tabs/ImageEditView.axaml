@@ -817,7 +817,7 @@
                   </Grid>
                   <LayoutTransformControl>
                     <LayoutTransformControl.LayoutTransform>
-                      <ScaleTransform ScaleX="0.5" ScaleY="0.5"/>
+                      <ScaleTransform ScaleX="0.75" ScaleY="0.75"/>
                     </LayoutTransformControl.LayoutTransform>
                     <ColorView Color="{Binding ImageEditor.DrawingTools.DrawingBrushColor, Mode=TwoWay}"
                                IsAlphaVisible="False" HorizontalAlignment="Stretch"
