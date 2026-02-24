@@ -803,7 +803,18 @@
                 
                 <!-- Freehand Brush Color -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
-                  <TextBlock Text="Brush Color" FontSize="11" Opacity="0.7"/>
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Brush Color" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                    <ToggleButton Grid.Column="1" IsChecked="{Binding ImageEditor.DrawingTools.IsEyedropperActive, Mode=TwoWay}"
+                                  Padding="4" ToolTip.Tip="Eyedropper — pick a color from the image" Width="28" Height="28">
+                      <Viewbox Width="16" Height="16">
+                        <Canvas Width="24" Height="24">
+                          <Path Data="M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12-1.42-1.42-1.41 1.42 1.41 1.41-6.6 6.6a2 2 0 0 0-.57 1.2L4.59 19l-.59.59 1.41 1.41.59-.59 3.39-.66a2 2 0 0 0 1.2-.57l6.6-6.6 1.41 1.41 1.42-1.41-1.42-1.42 3.12-3.12a1 1 0 0 0 0-1.41z"
+                                Fill="{DynamicResource TextControlForeground}" Stretch="Uniform"/>
+                        </Canvas>
+                      </Viewbox>
+                    </ToggleButton>
+                  </Grid>
                   <Grid ColumnDefinitions="Auto,*">
                     <ColorPicker Grid.Column="0" Color="{Binding ImageEditor.DrawingTools.DrawingBrushColor, Mode=TwoWay}"
                                  IsAlphaEnabled="False" HorizontalAlignment="Left" Margin="0,0,8,0"/>
@@ -811,10 +822,21 @@
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
                 </StackPanel>
-                
+
                 <!-- Shape Stroke Color -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
-                  <TextBlock Text="Stroke Color" FontSize="11" Opacity="0.7"/>
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Stroke Color" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                    <ToggleButton Grid.Column="1" IsChecked="{Binding ImageEditor.DrawingTools.IsEyedropperActive, Mode=TwoWay}"
+                                  Padding="4" ToolTip.Tip="Eyedropper — pick a stroke color from the image" Width="28" Height="28">
+                      <Viewbox Width="16" Height="16">
+                        <Canvas Width="24" Height="24">
+                          <Path Data="M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12-1.42-1.42-1.41 1.42 1.41 1.41-6.6 6.6a2 2 0 0 0-.57 1.2L4.59 19l-.59.59 1.41 1.41.59-.59 3.39-.66a2 2 0 0 0 1.2-.57l6.6-6.6 1.41 1.41 1.42-1.41-1.42-1.42 3.12-3.12a1 1 0 0 0 0-1.41z"
+                                Fill="{DynamicResource TextControlForeground}" Stretch="Uniform"/>
+                        </Canvas>
+                      </Viewbox>
+                    </ToggleButton>
+                  </Grid>
                   <Grid ColumnDefinitions="Auto,*">
                     <ColorPicker Grid.Column="0" Color="{Binding ImageEditor.DrawingTools.ShapeStrokeColor, Mode=TwoWay}"
                                  IsAlphaEnabled="False" HorizontalAlignment="Left" Margin="0,0,8,0"/>

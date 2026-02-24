@@ -925,6 +925,49 @@ public partial class ImageEditorCore : IDisposable
     public SKRect GetCurrentImageRect() => _lastImageRect;
 
     /// <summary>
+    /// Samples the pixel color at a display-space point by mapping it to image coordinates.
+    /// Returns null if the point is outside the image bounds.
+    /// </summary>
+    public SKColor? PickColorAtPoint(SKPoint displayPoint)
+    {
+        var imageRect = _lastImageRect;
+        if (imageRect.IsEmpty || !imageRect.Contains(displayPoint))
+            return null;
+
+        int imageWidth, imageHeight;
+        if (_isLayerMode && _layers is not null)
+        {
+            imageWidth = _layers.Width;
+            imageHeight = _layers.Height;
+        }
+        else if (_workingBitmap is not null)
+        {
+            imageWidth = _workingBitmap.Width;
+            imageHeight = _workingBitmap.Height;
+        }
+        else
+        {
+            return null;
+        }
+
+        // Map display-space point to image-space pixel coordinates
+        var pixelX = (int)((displayPoint.X - imageRect.Left) / imageRect.Width * imageWidth);
+        var pixelY = (int)((displayPoint.Y - imageRect.Top) / imageRect.Height * imageHeight);
+
+        pixelX = Math.Clamp(pixelX, 0, imageWidth - 1);
+        pixelY = Math.Clamp(pixelY, 0, imageHeight - 1);
+
+        // Sample from flattened layers or working bitmap
+        if (_isLayerMode && _layers is not null)
+        {
+            using var flattened = LayerCompositor.CreateFlattenedBitmap(_layers);
+            return flattened.GetPixel(pixelX, pixelY);
+        }
+
+        return _workingBitmap?.GetPixel(pixelX, pixelY);
+    }
+
+    /// <summary>
     /// Pans the image by the specified delta values.
     /// </summary>
     /// <param name="deltaX">The delta value for the X axis.</param>

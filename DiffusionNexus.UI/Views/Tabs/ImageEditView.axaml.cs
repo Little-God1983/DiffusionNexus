@@ -601,6 +601,21 @@ public partial class ImageEditView : UserControl
             imageEditor.DrawingTools.HasPlacedShape = _imageEditorCanvas!.HasPlacedShape;
         _imageEditorCanvas!.PlacedShapeStateChanged += onPlacedShapeState;
         _eventCleanup.Add(() => _imageEditorCanvas!.PlacedShapeStateChanged -= onPlacedShapeState);
+
+        // Eyedropper (color pipette) wiring
+        EventHandler<bool> onEyedropperActivated = (_, isActive) =>
+        {
+            _imageEditorCanvas!.IsEyedropperActive = isActive;
+        };
+        imageEditor.DrawingTools.EyedropperActivated += onEyedropperActivated;
+        _eventCleanup.Add(() => imageEditor.DrawingTools.EyedropperActivated -= onEyedropperActivated);
+
+        EventHandler<SkiaSharp.SKColor> onEyedropperColorPicked = (_, color) =>
+        {
+            imageEditor.DrawingTools.ApplyEyedropperColor(color.Red, color.Green, color.Blue);
+        };
+        _imageEditorCanvas!.EyedropperColorPicked += onEyedropperColorPicked;
+        _eventCleanup.Add(() => _imageEditorCanvas!.EyedropperColorPicked -= onEyedropperColorPicked);
     }
 
     private void WireTextToolEvents(ImageEditorViewModel imageEditor)

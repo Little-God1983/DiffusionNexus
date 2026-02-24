@@ -36,6 +36,9 @@ public class ImageEditorControl : Control
     // Outpaint tool state
     private bool _isOutpaintToolActive;
 
+    // Eyedropper state
+    private bool _isEyedropperActive;
+
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
     /// </summary>
@@ -230,6 +233,19 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Gets or sets whether the eyedropper (color pipette) tool is active.
+    /// </summary>
+    public bool IsEyedropperActive
+    {
+        get => _isEyedropperActive;
+        set
+        {
+            _isEyedropperActive = value;
+            Cursor = value ? new Cursor(StandardCursorType.Cross) : Cursor.Default;
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the inpainting brush size in display pixels.
     /// </summary>
     public float InpaintBrushSize
@@ -342,6 +358,11 @@ public class ImageEditorControl : Control
     /// Event raised when the user presses Ctrl+Enter while the inpaint tool is active.
     /// </summary>
     public event EventHandler? InpaintGenerateRequested;
+
+    /// <summary>
+    /// Event raised when the eyedropper picks a color from the image.
+    /// </summary>
+    public event EventHandler<SKColor>? EyedropperColorPicked;
 
     public ImageEditorControl()
     {
@@ -464,6 +485,18 @@ public class ImageEditorControl : Control
             _lastPanPoint = point;
             e.Handled = true;
             return;
+        }
+
+        // Eyedropper picks color on click and takes priority over other tools
+        if (_isEyedropperActive && props.IsLeftButtonPressed)
+        {
+            var color = _editorCore.PickColorAtPoint(skPoint);
+            if (color.HasValue)
+            {
+                EyedropperColorPicked?.Invoke(this, color.Value);
+                e.Handled = true;
+                return;
+            }
         }
 
         // Shape tool takes priority when active
