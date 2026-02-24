@@ -378,11 +378,6 @@ public partial class InpaintingViewModel : ObservableObject
             Status = "Uploading image to ComfyUI...";
             var uploadedFilename = await _comfyUiService.UploadImageAsync(maskedImagePath);
 
-            // Upload succeeded — hide the mask so the user sees the clean canvas
-            // while generation is in progress. If ComfyUI was down, the upload
-            // would have thrown and this line is never reached.
-            HideMaskRequested?.Invoke(this, EventArgs.Empty);
-
             Status = "Queuing inpainting workflow...";
 
             var workflowPath = Path.Combine(
@@ -422,7 +417,19 @@ public partial class InpaintingViewModel : ObservableObject
                 });
 
             Status = "Generating (this may take a while)...";
-            var progress = new Progress<string>(msg => Status = msg);
+            var maskHidden = false;
+            var progress = new Progress<string>(msg =>
+            {
+                Status = msg;
+
+                // Hide the mask on the first real progress update from ComfyUI,
+                // meaning the server has picked up the job and is actively working.
+                if (!maskHidden)
+                {
+                    maskHidden = true;
+                    HideMaskRequested?.Invoke(this, EventArgs.Empty);
+                }
+            });
             await _comfyUiService.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
