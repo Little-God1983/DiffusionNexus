@@ -805,11 +805,8 @@
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeFreehand}">
                   <TextBlock Text="Brush Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
-                    <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
-                      <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.DrawingBrushColor}"/>
-                      </Border.Background>
-                    </Border>
+                    <ColorPicker Grid.Column="0" Color="{Binding ImageEditor.DrawingTools.DrawingBrushColor, Mode=TwoWay}"
+                                 IsAlphaEnabled="False" HorizontalAlignment="Left" Margin="0,0,8,0"/>
                     <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.DrawingBrushColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
@@ -819,11 +816,8 @@
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.DrawingTools.IsShapeMode}">
                   <TextBlock Text="Stroke Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
-                    <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
-                      <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.ShapeStrokeColor}"/>
-                      </Border.Background>
-                    </Border>
+                    <ColorPicker Grid.Column="0" Color="{Binding ImageEditor.DrawingTools.ShapeStrokeColor, Mode=TwoWay}"
+                                 IsAlphaEnabled="False" HorizontalAlignment="Left" Margin="0,0,8,0"/>
                     <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.ShapeStrokeColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
@@ -839,11 +833,8 @@
                   </StackPanel.IsVisible>
                   <TextBlock Text="Fill Color" FontSize="11" Opacity="0.7"/>
                   <Grid ColumnDefinitions="Auto,*">
-                    <Border Grid.Column="0" Width="32" Height="32" CornerRadius="4" BorderBrush="#555" BorderThickness="1" Margin="0,0,8,0">
-                      <Border.Background>
-                        <SolidColorBrush Color="{Binding ImageEditor.DrawingTools.ShapeFillColor}"/>
-                      </Border.Background>
-                    </Border>
+                    <ColorPicker Grid.Column="0" Color="{Binding ImageEditor.DrawingTools.ShapeFillColor, Mode=TwoWay}"
+                                 IsAlphaEnabled="False" HorizontalAlignment="Left" Margin="0,0,8,0"/>
                     <TextBlock Grid.Column="1" Text="{Binding ImageEditor.DrawingTools.ShapeFillColorHex}" 
                                VerticalAlignment="Center" FontSize="12" FontFamily="Consolas" Opacity="0.9"/>
                   </Grid>
