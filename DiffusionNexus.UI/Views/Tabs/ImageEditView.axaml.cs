@@ -602,6 +602,14 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas!.PlacedShapeStateChanged += onPlacedShapeState;
         _eventCleanup.Add(() => _imageEditorCanvas!.PlacedShapeStateChanged -= onPlacedShapeState);
 
+        // Shift+wheel brush size sync back to ViewModel
+        EventHandler<float> onDrawingBrushSizeChanged = (_, newSize) =>
+        {
+            imageEditor.DrawingTools.DrawingBrushSize = newSize;
+        };
+        _imageEditorCanvas!.DrawingBrushSizeChanged += onDrawingBrushSizeChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.DrawingBrushSizeChanged -= onDrawingBrushSizeChanged);
+
         // Eyedropper (color pipette) wiring
         EventHandler<bool> onEyedropperActivated = (_, isActive) =>
         {
