@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Repositories;
@@ -30,6 +31,15 @@ internal sealed class InstallerPackageRepository : RepositoryBase<InstallerPacka
         return await DbSet
             .Include(p => p.ImageGallery)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task ClearDefaultByTypeAsync(InstallerType type, CancellationToken cancellationToken = default)
+    {
+        await DbSet
+            .Where(p => p.Type == type && p.IsDefault)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), cancellationToken)
             .ConfigureAwait(false);
     }
 }

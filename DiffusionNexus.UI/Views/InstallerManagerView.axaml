@@ -211,6 +211,8 @@
                                                                   Command="{Binding OpenSettingsCommand}"/>
                                                         <MenuItem Header="Open Folder"
                                                                   Command="{Binding OpenFolderCommand}"/>
+                                                        <MenuItem Header="Make Default"
+                                                                  Command="{Binding MakeDefaultCommand}"/>
                                                         <Separator/>
                                                         <MenuItem Header="Remove"
                                                                   Command="{Binding RemoveCommand}"/>
@@ -246,6 +248,11 @@
                                                     <TextBlock Text="Update" FontSize="12" Foreground="White" FontWeight="SemiBold"/>
                                                 </StackPanel>
                                             </Border>
+                                            <TextBlock Text="&#x2B50;"
+                                                       FontSize="16"
+                                                       VerticalAlignment="Center"
+                                                       ToolTip.Tip="Default for this type"
+                                                       IsVisible="{Binding IsDefault}"/>
                                             <Button Classes="icon-btn"
                                                     Command="{Binding OpenSettingsCommand}"
                                                     ToolTip.Tip="Settings">

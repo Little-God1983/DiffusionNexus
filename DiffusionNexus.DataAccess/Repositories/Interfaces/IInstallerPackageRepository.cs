@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.DataAccess.Repositories.Interfaces;
 
@@ -11,4 +12,9 @@ public interface IInstallerPackageRepository : IRepository<InstallerPackage>
     /// Gets an installer package by ID with its linked ImageGallery loaded.
     /// </summary>
     Task<InstallerPackage?> GetByIdWithGalleryAsync(int id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Clears the <see cref="InstallerPackage.IsDefault"/> flag for all packages of the given type.
+    /// </summary>
+    Task ClearDefaultByTypeAsync(InstallerType type, CancellationToken cancellationToken = default);
 }

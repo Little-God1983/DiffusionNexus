@@ -114,4 +114,66 @@ public class InstallerManagerViewModelTests
             Times.Never,
             "SettingsSaved should not be published when no output folder is specified");
     }
+
+    [Fact]
+    public async Task MakeDefault_SetsIsDefaultOnCardAndClearsOthersOfSameType()
+    {
+        // Arrange
+        var comfyPackage1 = new InstallerPackage
+        {
+            Id = 1, Name = "ComfyUI A", Type = InstallerType.ComfyUI,
+            InstallationPath = @"C:\A", ExecutablePath = "main.py", IsDefault = true
+        };
+        var comfyPackage2 = new InstallerPackage
+        {
+            Id = 2, Name = "ComfyUI B", Type = InstallerType.ComfyUI,
+            InstallationPath = @"C:\B", ExecutablePath = "main.py", IsDefault = false
+        };
+        var forgePackage = new InstallerPackage
+        {
+            Id = 3, Name = "Forge", Type = InstallerType.Forge,
+            InstallationPath = @"C:\F", ExecutablePath = "webui.bat", IsDefault = true
+        };
+
+        var mockDialog = new Mock<IDialogService>();
+        var mockRepo = new Mock<IInstallerPackageRepository>();
+        mockRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([comfyPackage1, comfyPackage2, forgePackage]);
+        mockRepo.Setup(r => r.GetByIdAsync(2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comfyPackage2);
+        mockRepo.Setup(r => r.ClearDefaultByTypeAsync(InstallerType.ComfyUI, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var mockAppSettings = new Mock<IAppSettingsRepository>();
+        var mockUow = new Mock<IUnitOfWork>();
+        mockUow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var mockProcessManager = new PackageProcessManager();
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+
+        var vm = new InstallerManagerViewModel(
+            mockDialog.Object,
+            mockRepo.Object,
+            mockAppSettings.Object,
+            mockUow.Object,
+            mockProcessManager,
+            mockEventAggregator.Object);
+
+        // Load cards
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        vm.InstallerCards.Should().HaveCount(3);
+
+        var cardToMakeDefault = vm.InstallerCards.First(c => c.Id == 2);
+
+        // Act
+        await cardToMakeDefault.MakeDefaultCommand.ExecuteAsync(null);
+
+        // Assert
+        mockRepo.Verify(r => r.ClearDefaultByTypeAsync(InstallerType.ComfyUI, It.IsAny<CancellationToken>()), Times.Once);
+        mockUow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        vm.InstallerCards.First(c => c.Id == 1).IsDefault.Should().BeFalse("previous ComfyUI default should be cleared");
+        vm.InstallerCards.First(c => c.Id == 2).IsDefault.Should().BeTrue("selected card should be marked as default");
+        vm.InstallerCards.First(c => c.Id == 3).IsDefault.Should().BeTrue("Forge default should be unchanged");
+    }
 }
