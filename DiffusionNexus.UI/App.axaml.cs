@@ -564,7 +564,8 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsRepository>(),
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
-            sp.GetRequiredService<IDatasetEventAggregator>()));
+            sp.GetRequiredService<IDatasetEventAggregator>(),
+            sp.GetRequiredService<IConfigurationRepository>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

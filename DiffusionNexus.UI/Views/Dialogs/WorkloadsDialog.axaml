@@ -1,0 +1,131 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="500"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.WorkloadsDialog"
+        x:DataType="vm:WorkloadsViewModel"
+        Title="Workloads"
+        Width="800" Height="500"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E">
+
+    <Window.Styles>
+        <Style Selector="Button.details-btn">
+            <Setter Property="Background" Value="#3A3A3A"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="Button.details-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#4A4A4A"/>
+        </Style>
+        <Style Selector="Button.close-btn">
+            <Setter Property="Background" Value="#333333"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.close-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#444444"/>
+        </Style>
+    </Window.Styles>
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+
+        <!-- Header -->
+        <TextBlock Grid.Row="0"
+                   Text="Workloads"
+                   FontSize="22"
+                   FontWeight="Bold"
+                   Foreground="White"
+                   Margin="0,0,0,12"/>
+
+        <!-- Loading indicator -->
+        <StackPanel Grid.Row="1"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    IsVisible="{Binding IsLoading}">
+            <ProgressBar IsIndeterminate="True" Width="200"/>
+            <TextBlock Text="Loading workloads..."
+                       HorizontalAlignment="Center"
+                       Foreground="#999999"
+                       Margin="0,8,0,0"/>
+        </StackPanel>
+        <!-- Tabbed content -->
+        <TabControl Grid.Row="1"
+                    SelectedIndex="{Binding SelectedTabIndex}"
+                    IsVisible="{Binding !IsLoading}">
+
+            <!-- Diffusion Nexus tab -->
+            <TabItem Header="Diffusion Nexus">
+                <DataGrid ItemsSource="{Binding DiffusionNexusWorkloads}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          CanUserReorderColumns="False"
+                          CanUserSortColumns="True"
+                          GridLinesVisibility="Horizontal"
+                          Background="#1E1E1E"
+                          Foreground="White"
+                          BorderThickness="0"
+                          Margin="0,8,0,0">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                        <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*"/>
+                        <DataGridTextColumn Header="Version" Binding="{Binding VersionDisplay}" Width="80"/>
+                        <DataGridTemplateColumn Header="Status" Width="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:WorkloadItemViewModel">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="4,0">
+                                        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="#999999"/>
+                                        <Button Classes="details-btn" Content="Details" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+            <!-- Installer tab -->
+            <TabItem Header="Installer">
+                <DataGrid ItemsSource="{Binding InstallerWorkloads}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          CanUserReorderColumns="False"
+                          CanUserSortColumns="True"
+                          GridLinesVisibility="Horizontal"
+                          Background="#1E1E1E"
+                          Foreground="White"
+                          BorderThickness="0"
+                          Margin="0,8,0,0">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                        <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*"/>
+                        <DataGridTextColumn Header="Version" Binding="{Binding VersionDisplay}" Width="80"/>
+                        <DataGridTemplateColumn Header="Status" Width="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:WorkloadItemViewModel">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="4,0">
+                                        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="#999999"/>
+                                        <Button Classes="details-btn" Content="Details" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+        </TabControl>
+
+        <!-- Close button -->
+        <Button Grid.Row="2"
+                Classes="close-btn"
+                Content="Close"
+                HorizontalAlignment="Right"
+                Margin="0,12,0,0"
+                Click="OnClose"/>
+    </Grid>
+</Window>

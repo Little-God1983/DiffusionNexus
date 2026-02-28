@@ -41,6 +41,7 @@
     </PackageReference>
     <PackageReference Include="Avalonia.Skia" Version="11.3.12" />
     <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.12" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.3">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
