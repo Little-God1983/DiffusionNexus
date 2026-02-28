@@ -66,6 +66,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public bool ShowRunningControls => IsRunning;
 
     /// <summary>
+    /// True when this installation is a ComfyUI installation.
+    /// </summary>
+    public bool IsComfyUi => Type == InstallerType.ComfyUI;
+
+    /// <summary>
     /// Console output lines captured from the process.
     /// </summary>
     public ObservableCollection<ConsoleOutputLine> ConsoleLines { get; } = [];
