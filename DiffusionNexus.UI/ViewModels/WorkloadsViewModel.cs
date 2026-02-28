@@ -51,6 +51,8 @@ public partial class WorkloadsViewModel : ViewModelBase
 
             var configurations = await _configurationRepository.GetAllAsync();
 
+            Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from SDK database", configurations.Count);
+
             foreach (var config in configurations)
             {
                 if (config.Repository.Type != RepositoryType.ComfyUI)
@@ -72,6 +74,10 @@ public partial class WorkloadsViewModel : ViewModelBase
                     InstallerWorkloads.Add(item);
                 }
             }
+
+            Serilog.Log.Information(
+                "WorkloadsViewModel: {DnCount} DiffusionNexus workloads, {InsCount} Installer workloads",
+                DiffusionNexusWorkloads.Count, InstallerWorkloads.Count);
         }
         catch (Exception ex)
         {
