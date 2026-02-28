@@ -30,11 +30,18 @@ public class ImageEditorControl : Control
     private SKPoint _inpaintCursorPosition;
     private bool _hasInpaintCursorPosition;
 
+    // Drawing/shape brush cursor state
+    private SKPoint _drawingCursorPosition;
+    private bool _hasDrawingCursorPosition;
+
     // Text tool state
     private bool _isTextToolActive;
 
     // Outpaint tool state
     private bool _isOutpaintToolActive;
+
+    // Eyedropper state
+    private bool _isEyedropperActive;
 
     /// <summary>
     /// Defines the <see cref="ImagePath"/> property.
@@ -230,6 +237,19 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Gets or sets whether the eyedropper (color pipette) tool is active.
+    /// </summary>
+    public bool IsEyedropperActive
+    {
+        get => _isEyedropperActive;
+        set
+        {
+            _isEyedropperActive = value;
+            Cursor = value ? new Cursor(StandardCursorType.Cross) : Cursor.Default;
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the inpainting brush size in display pixels.
     /// </summary>
     public float InpaintBrushSize
@@ -343,6 +363,16 @@ public class ImageEditorControl : Control
     /// </summary>
     public event EventHandler? InpaintGenerateRequested;
 
+    /// <summary>
+    /// Event raised when the drawing brush size is changed via Shift+wheel.
+    /// </summary>
+    public event EventHandler<float>? DrawingBrushSizeChanged;
+
+    /// <summary>
+    /// Event raised when the eyedropper picks a color from the image.
+    /// </summary>
+    public event EventHandler<SKColor>? EyedropperColorPicked;
+
     public ImageEditorControl()
     {
         _editorCore = new ImageEditor.ImageEditorCore();
@@ -404,6 +434,11 @@ public class ImageEditorControl : Control
             var isActive = (bool)change.NewValue!;
             _editorCore.DrawingTool.IsActive = isActive && SelectedShapeType == ImageEditor.ShapeType.Freehand;
             _editorCore.ShapeTool.IsActive = isActive && SelectedShapeType != ImageEditor.ShapeType.Freehand;
+            if (!isActive)
+            {
+                _hasDrawingCursorPosition = false;
+                Cursor = Cursor.Default;
+            }
             InvalidateVisual();
         }
         else if (change.Property == SelectedShapeTypeProperty)
@@ -464,6 +499,18 @@ public class ImageEditorControl : Control
             _lastPanPoint = point;
             e.Handled = true;
             return;
+        }
+
+        // Eyedropper picks color on click and takes priority over other tools
+        if (_isEyedropperActive && props.IsLeftButtonPressed)
+        {
+            var color = _editorCore.PickColorAtPoint(skPoint);
+            if (color.HasValue)
+            {
+                EyedropperColorPicked?.Invoke(this, color.Value);
+                e.Handled = true;
+                return;
+            }
         }
 
         // Shape tool takes priority when active
@@ -573,13 +620,15 @@ public class ImageEditorControl : Control
         {
             // Track Ctrl key for constraining proportions (square/circle)
             _editorCore.ShapeTool.ConstrainProportions = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            
+
             if (_editorCore.ShapeTool.OnPointerMoved(skPoint))
             {
                 e.Handled = true;
                 InvalidateVisual();
                 return;
             }
+            // Still invalidate for cursor preview even if not drawing a shape
+            InvalidateVisual();
         }
 
         // Text tool pointer tracking
@@ -613,6 +662,13 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Drawing/shape tool cursor tracking
+        if (_editorCore.DrawingTool.IsActive || _editorCore.ShapeTool.IsActive)
+        {
+            _drawingCursorPosition = skPoint;
+            _hasDrawingCursorPosition = true;
+        }
+
         // Drawing tool takes priority when active
         if (_editorCore.DrawingTool.IsActive)
         {
@@ -622,6 +678,8 @@ public class ImageEditorControl : Control
                 InvalidateVisual();
                 return;
             }
+            // Still invalidate for cursor preview even if not drawing
+            InvalidateVisual();
         }
 
         // Outpaint tool pointer tracking
@@ -752,6 +810,17 @@ public class ImageEditorControl : Control
             return;
         }
 
+        // Shift+wheel adjusts drawing brush size when the freehand tool is active
+        if (_editorCore.DrawingTool.IsActive && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            var step = e.Delta.Y > 0 ? 2f : -2f;
+            _editorCore.DrawingTool.BrushSize = Math.Clamp(_editorCore.DrawingTool.BrushSize + step, 1f, 100f);
+            DrawingBrushSizeChanged?.Invoke(this, _editorCore.DrawingTool.BrushSize);
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
         // Zoom with mouse wheel
         if (e.Delta.Y > 0)
         {
@@ -877,10 +946,10 @@ public class ImageEditorControl : Control
             return;
         }
 
-        // Drawing tool cursor
+        // Drawing tool uses a custom rendered brush cursor — hide the system cursor
         if (_editorCore.DrawingTool.IsActive)
         {
-            Cursor = new Cursor(StandardCursorType.Cross);
+            Cursor = new Cursor(StandardCursorType.None);
             return;
         }
 
@@ -925,7 +994,8 @@ public class ImageEditorControl : Control
             }
             else
             {
-                Cursor = new Cursor(StandardCursorType.Cross);
+                // Hide system cursor so the custom crosshair/stroke preview is visible
+                Cursor = new Cursor(StandardCursorType.None);
             }
             return;
         }
@@ -978,11 +1048,25 @@ public class ImageEditorControl : Control
                 _isInpaintPainting ? [.. _inpaintStrokePoints] : null)
             : null;
 
+        var drawingOverlay = _hasDrawingCursorPosition && (_editorCore.DrawingTool.IsActive || _editorCore.ShapeTool.IsActive)
+            ? new DrawingOverlayState(
+                _drawingCursorPosition,
+                _editorCore.DrawingTool.IsActive,
+                _editorCore.DrawingTool.BrushSize,
+                _editorCore.DrawingTool.BrushShape,
+                _editorCore.DrawingTool.BrushColor,
+                _editorCore.ShapeTool.IsActive,
+                _editorCore.ShapeTool.StrokeWidth,
+                _editorCore.ShapeTool.StrokeColor,
+                _editorCore.ShapeTool.HasPlacedShape)
+            : null;
+
         context.Custom(new ImageEditorDrawOperation(
             new Rect(0, 0, bounds.Width, bounds.Height),
             _editorCore,
             skBgColor,
-            inpaintOverlay));
+            inpaintOverlay,
+            drawingOverlay));
     }
 
     /// <summary>
@@ -1245,6 +1329,23 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+
+        if (_hasDrawingCursorPosition)
+        {
+            _hasDrawingCursorPosition = false;
+            InvalidateVisual();
+        }
+
+        if (_hasInpaintCursorPosition)
+        {
+            _hasInpaintCursorPosition = false;
+            InvalidateVisual();
+        }
+    }
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -1292,6 +1393,20 @@ public class ImageEditorControl : Control
         List<SKPoint>? StrokePoints);
 
     /// <summary>
+    /// Holds drawing/shape tool cursor overlay state for rendering.
+    /// </summary>
+    private sealed record DrawingOverlayState(
+        SKPoint CursorPosition,
+        bool IsFreehandActive,
+        float BrushSize,
+        ImageEditor.BrushShape BrushShape,
+        SKColor BrushColor,
+        bool IsShapeActive,
+        float ShapeStrokeWidth,
+        SKColor ShapeStrokeColor,
+        bool HasPlacedShape);
+
+    /// <summary>
     /// Custom draw operation for SkiaSharp rendering.
     /// </summary>
     private sealed class ImageEditorDrawOperation : ICustomDrawOperation
@@ -1300,17 +1415,20 @@ public class ImageEditorControl : Control
         private readonly ImageEditor.ImageEditorCore _editorCore;
         private readonly SKColor _backgroundColor;
         private readonly InpaintOverlayState? _inpaintOverlay;
+        private readonly DrawingOverlayState? _drawingOverlay;
 
         public ImageEditorDrawOperation(
             Rect bounds,
             ImageEditor.ImageEditorCore editorCore,
             SKColor backgroundColor,
-            InpaintOverlayState? inpaintOverlay = null)
+            InpaintOverlayState? inpaintOverlay = null,
+            DrawingOverlayState? drawingOverlay = null)
         {
             _bounds = bounds;
             _editorCore = editorCore;
             _backgroundColor = backgroundColor;
             _inpaintOverlay = inpaintOverlay;
+            _drawingOverlay = drawingOverlay;
         }
 
         public Rect Bounds => _bounds;
@@ -1346,6 +1464,7 @@ public class ImageEditorControl : Control
                 _backgroundColor);
 
             RenderInpaintOverlay(canvas);
+            RenderDrawingOverlay(canvas);
         }
 
         private void RenderInpaintOverlay(SKCanvas canvas)
@@ -1407,6 +1526,102 @@ public class ImageEditorControl : Control
                     IsAntialias = true
                 };
                 canvas.DrawCircle(cursorPos, radius + 1f, innerPaint);
+            }
+        }
+
+        private void RenderDrawingOverlay(SKCanvas canvas)
+        {
+            if (_drawingOverlay is null) return;
+
+            var pos = _drawingOverlay.CursorPosition;
+
+            if (_drawingOverlay.IsFreehandActive)
+            {
+                var halfSize = _drawingOverlay.BrushSize / 2;
+                var previewColor = _drawingOverlay.BrushColor.WithAlpha(100);
+
+                // Semi-transparent fill showing brush footprint
+                using var fillPaint = new SKPaint
+                {
+                    Color = previewColor,
+                    Style = SKPaintStyle.Fill,
+                    IsAntialias = true
+                };
+
+                if (_drawingOverlay.BrushShape == ImageEditor.BrushShape.Round)
+                {
+                    canvas.DrawCircle(pos, halfSize, fillPaint);
+                }
+                else
+                {
+                    canvas.DrawRect(pos.X - halfSize, pos.Y - halfSize, _drawingOverlay.BrushSize, _drawingOverlay.BrushSize, fillPaint);
+                }
+
+                // Outer ring (white) for visibility
+                using var outerPaint = new SKPaint
+                {
+                    Color = new SKColor(255, 255, 255, 200),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1.5f,
+                    IsAntialias = true
+                };
+
+                if (_drawingOverlay.BrushShape == ImageEditor.BrushShape.Round)
+                {
+                    canvas.DrawCircle(pos, halfSize, outerPaint);
+                }
+                else
+                {
+                    canvas.DrawRect(pos.X - halfSize, pos.Y - halfSize, _drawingOverlay.BrushSize, _drawingOverlay.BrushSize, outerPaint);
+                }
+
+                // Inner ring (black for contrast)
+                using var innerPaint = new SKPaint
+                {
+                    Color = new SKColor(0, 0, 0, 140),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 0.75f,
+                    IsAntialias = true
+                };
+
+                if (_drawingOverlay.BrushShape == ImageEditor.BrushShape.Round)
+                {
+                    canvas.DrawCircle(pos, halfSize + 1f, innerPaint);
+                }
+                else
+                {
+                    canvas.DrawRect(pos.X - halfSize - 1f, pos.Y - halfSize - 1f, _drawingOverlay.BrushSize + 2f, _drawingOverlay.BrushSize + 2f, innerPaint);
+                }
+            }
+            else if (_drawingOverlay.IsShapeActive && !_drawingOverlay.HasPlacedShape)
+            {
+                // For shape tool, draw a crosshair with stroke width indicator
+                var strokeHalf = _drawingOverlay.ShapeStrokeWidth / 2;
+                var crossSize = Math.Max(strokeHalf + 6f, 10f);
+
+                // Crosshair lines (white)
+                using var crossPaint = new SKPaint
+                {
+                    Color = new SKColor(255, 255, 255, 180),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1f,
+                    IsAntialias = true
+                };
+                canvas.DrawLine(pos.X - crossSize, pos.Y, pos.X + crossSize, pos.Y, crossPaint);
+                canvas.DrawLine(pos.X, pos.Y - crossSize, pos.X, pos.Y + crossSize, crossPaint);
+
+                // Stroke width preview circle
+                if (_drawingOverlay.ShapeStrokeWidth > 1f)
+                {
+                    using var strokePreview = new SKPaint
+                    {
+                        Color = _drawingOverlay.ShapeStrokeColor.WithAlpha(80),
+                        Style = SKPaintStyle.Stroke,
+                        StrokeWidth = _drawingOverlay.ShapeStrokeWidth,
+                        IsAntialias = true
+                    };
+                    canvas.DrawCircle(pos, strokeHalf + 2f, strokePreview);
+                }
             }
         }
     }

@@ -42,6 +42,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isUpdateAvailable;
 
+    [ObservableProperty]
+    private bool _isDefault;
+
     // ── Process state ──
 
     [ObservableProperty]
@@ -61,6 +64,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// True when running — show Stop/Restart/Console buttons.
     /// </summary>
     public bool ShowRunningControls => IsRunning;
+
+    /// <summary>
+    /// True when this installation is a ComfyUI installation.
+    /// </summary>
+    public bool IsComfyUi => Type == InstallerType.ComfyUI;
 
     /// <summary>
     /// Console output lines captured from the process.
@@ -110,6 +118,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public event Func<InstallerPackageCardViewModel, Task>? SettingsRequested;
 
     /// <summary>
+    /// Raised when the user requests to make this installation the default for its type.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? MakeDefaultRequested;
+
+    /// <summary>
     /// Logo image resolved from the installer type.
     /// </summary>
     public Bitmap? LogoImage { get; }
@@ -125,6 +138,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         _executablePath = package.ExecutablePath;
         _arguments = package.Arguments;
         _isUpdateAvailable = package.IsUpdateAvailable;
+        _isDefault = package.IsDefault;
 
         // Build "branch@hash" display string
         var branch = string.IsNullOrWhiteSpace(package.Branch) ? null : package.Branch;
@@ -226,6 +240,13 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     {
         if (SettingsRequested is not null)
             await SettingsRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task MakeDefaultAsync()
+    {
+        if (MakeDefaultRequested is not null)
+            await MakeDefaultRequested.Invoke(this);
     }
 
     [RelayCommand]

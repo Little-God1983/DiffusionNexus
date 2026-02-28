@@ -196,6 +196,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.OpenFolderRequested += OnOpenFolderRequested;
         card.SettingsRequested += OnSettingsRequestedAsync;
         card.ConsoleRequested += OnConsoleRequestedAsync;
+        card.MakeDefaultRequested += OnMakeDefaultRequestedAsync;
 
         // Restore running state if the process is still alive
         if (_processManager.IsRunning(card.Id))
@@ -421,6 +422,34 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to delete installation {Name} from disk", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to delete: {ex.Message}\n\nSome files may have been partially removed.");
+        }
+    }
+
+    private async Task OnMakeDefaultRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        try
+        {
+            // Clear existing default for this installer type
+            await _installerPackageRepository.ClearDefaultByTypeAsync(card.Type);
+
+            // Set the selected package as default
+            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            if (entity is null) return;
+
+            entity.IsDefault = true;
+            await _unitOfWork.SaveChangesAsync();
+
+            // Update all cards of the same type
+            foreach (var c in InstallerCards)
+            {
+                if (c.Type == card.Type)
+                    c.IsDefault = c.Id == card.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to set default installation {Name}", card.Name);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to set default: {ex.Message}");
         }
     }
 

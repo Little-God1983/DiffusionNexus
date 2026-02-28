@@ -15,6 +15,7 @@ public partial class DrawingToolsViewModel : ObservableObject
 
     // Drawing tool fields
     private bool _isDrawingToolActive;
+    private bool _isEyedropperActive;
     private byte _drawingBrushRed = 255;
     private byte _drawingBrushGreen = 255;
     private byte _drawingBrushBlue = 255;
@@ -41,6 +42,7 @@ public partial class DrawingToolsViewModel : ObservableObject
         _deactivateOtherTools = deactivateOtherTools;
 
         ToggleDrawingToolCommand = new RelayCommand(ExecuteToggleDrawingTool, () => _hasImage());
+        ToggleEyedropperCommand = new RelayCommand(ExecuteToggleEyedropper, () => _hasImage() && IsDrawingToolActive);
         SetDrawingColorPresetCommand = new RelayCommand<string>(SetDrawingColorPreset);
         SetShapeFillPresetCommand = new RelayCommand<string>(SetShapeFillPreset);
         SetShapeStrokePresetCommand = new RelayCommand<string>(SetShapeStrokePreset);
@@ -67,6 +69,23 @@ public partial class DrawingToolsViewModel : ObservableObject
                 DrawingToolActivated?.Invoke(this, value);
                 ToolStateChanged?.Invoke(this, EventArgs.Empty);
                 StatusMessageChanged?.Invoke(this, value ? "Draw: Click and drag to draw. Hold Shift for straight lines." : null);
+            }
+        }
+    }
+
+    /// <summary>Whether the eyedropper (color pipette) tool is active.</summary>
+    public bool IsEyedropperActive
+    {
+        get => _isEyedropperActive;
+        set
+        {
+            if (SetProperty(ref _isEyedropperActive, value))
+            {
+                EyedropperActivated?.Invoke(this, value);
+                if (value)
+                    StatusMessageChanged?.Invoke(this, "Eyedropper: Click on the image to pick a color.");
+                else if (IsDrawingToolActive)
+                    StatusMessageChanged?.Invoke(this, "Draw: Click and drag to draw. Hold Shift for straight lines.");
             }
         }
     }
@@ -417,6 +436,7 @@ public partial class DrawingToolsViewModel : ObservableObject
     #region Commands
 
     public IRelayCommand ToggleDrawingToolCommand { get; }
+    public IRelayCommand ToggleEyedropperCommand { get; }
     public IRelayCommand<string> SetDrawingColorPresetCommand { get; }
     public IRelayCommand<string> SetShapeFillPresetCommand { get; }
     public IRelayCommand<string> SetShapeStrokePresetCommand { get; }
@@ -435,6 +455,9 @@ public partial class DrawingToolsViewModel : ObservableObject
 
     /// <summary>Raised when shape settings change.</summary>
     public event EventHandler? ShapeSettingsChanged;
+
+    /// <summary>Raised when the eyedropper tool is activated or deactivated.</summary>
+    public event EventHandler<bool>? EyedropperActivated;
 
     /// <summary>Raised when tool state changes (for parent ViewModel notification).</summary>
     public event EventHandler? ToolStateChanged;
@@ -461,6 +484,7 @@ public partial class DrawingToolsViewModel : ObservableObject
     public void RefreshCommandStates()
     {
         ToggleDrawingToolCommand.NotifyCanExecuteChanged();
+        ToggleEyedropperCommand.NotifyCanExecuteChanged();
         CommitPlacedShapeCommand.NotifyCanExecuteChanged();
         CancelPlacedShapeCommand.NotifyCanExecuteChanged();
     }
@@ -470,12 +494,41 @@ public partial class DrawingToolsViewModel : ObservableObject
     /// </summary>
     public void CloseAll()
     {
+        if (_isEyedropperActive)
+        {
+            _isEyedropperActive = false;
+            OnPropertyChanged(nameof(IsEyedropperActive));
+            EyedropperActivated?.Invoke(this, false);
+        }
+
         if (_isDrawingToolActive)
         {
             _isDrawingToolActive = false;
             OnPropertyChanged(nameof(IsDrawingToolActive));
             DrawingToolActivated?.Invoke(this, false);
         }
+    }
+
+    /// <summary>
+    /// Applies a color picked by the eyedropper to the active color target
+    /// (freehand brush, shape stroke, or shape fill) and deactivates the eyedropper.
+    /// </summary>
+    public void ApplyEyedropperColor(byte r, byte g, byte b)
+    {
+        if (_selectedShapeType == ShapeType.Freehand)
+        {
+            DrawingBrushRed = r;
+            DrawingBrushGreen = g;
+            DrawingBrushBlue = b;
+        }
+        else
+        {
+            ShapeStrokeRed = r;
+            ShapeStrokeGreen = g;
+            ShapeStrokeBlue = b;
+        }
+
+        IsEyedropperActive = false;
     }
 
     /// <summary>Sets the brush color from a preset.</summary>
@@ -568,6 +621,11 @@ public partial class DrawingToolsViewModel : ObservableObject
     {
         IsDrawingToolActive = !IsDrawingToolActive;
         ToolToggled?.Invoke(this, (ImageEditor.Services.ToolIds.Drawing, IsDrawingToolActive));
+    }
+
+    private void ExecuteToggleEyedropper()
+    {
+        IsEyedropperActive = !IsEyedropperActive;
     }
 
     private void UpdateDrawingModeStatus()

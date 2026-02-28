@@ -13,6 +13,7 @@ internal sealed class InstallerPackageConfiguration : IEntityTypeConfiguration<I
 
         entity.Property(e => e.Name).IsRequired();
         entity.Property(e => e.InstallationPath).IsRequired();
+        entity.Property(e => e.IsDefault).HasDefaultValue(false);
 
         // 1:1 optional — FK on ImageGallery side
         // Every InstallerPackage has at most one ImageGallery.
