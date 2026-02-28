@@ -2,6 +2,9 @@
 
 This is an Avalonia Project Written in C# / .net 10
 
+In this project use the Nuget packages DiffusionNexus.Installer.SDK from its original source
+but for looking up code reference use the local copy that lives here: E:\AI\DiffusionNexus.Installer.SDK
+
 ## General Guidelines
 
 * When a bug is found, always check if a unit test can be created to cover/reproduce it before fixing. Ensure that the unit test effectively captures the bug scenario.

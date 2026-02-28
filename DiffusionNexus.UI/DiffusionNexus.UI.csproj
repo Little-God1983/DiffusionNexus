@@ -51,6 +51,11 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="SkiaSharp" Version="3.119.2" />
     <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="1.2.2" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="1.2.2" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.2" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.2" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.2" />
   </ItemGroup>
 
   <ItemGroup>
