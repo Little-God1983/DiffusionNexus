@@ -498,6 +498,12 @@ public partial class App : Application
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
 
+        // Workload installer (singleton - clones custom nodes + downloads models)
+        services.AddSingleton<IWorkloadInstallService>(sp =>
+            new WorkloadInstallService(
+                sp.GetRequiredService<IGitService>(),
+                new HttpClient()));
+
         // Register SDK core services required by installation steps
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<IGitService, GitService>();
@@ -570,7 +576,8 @@ public partial class App : Application
             sp.GetRequiredService<PackageProcessManager>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IConfigurationRepository>(),
-            sp.GetRequiredService<IConfigurationCheckerService>()));
+            sp.GetRequiredService<IConfigurationCheckerService>(),
+            sp.GetRequiredService<IWorkloadInstallService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

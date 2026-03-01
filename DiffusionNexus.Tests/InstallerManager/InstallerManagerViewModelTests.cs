@@ -58,6 +58,7 @@ public class InstallerManagerViewModelTests
 
         var mockConfigRepo = new Mock<IConfigurationRepository>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
@@ -67,7 +68,8 @@ public class InstallerManagerViewModelTests
             mockProcessManager,
             mockEventAggregator.Object,
             mockConfigRepo.Object,
-            mockCheckerService.Object);
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -105,6 +107,7 @@ public class InstallerManagerViewModelTests
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
         var mockConfigRepo = new Mock<IConfigurationRepository>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
@@ -114,7 +117,8 @@ public class InstallerManagerViewModelTests
             mockProcessManager,
             mockEventAggregator.Object,
             mockConfigRepo.Object,
-            mockCheckerService.Object);
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -163,6 +167,7 @@ public class InstallerManagerViewModelTests
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
         var mockConfigRepo = new Mock<IConfigurationRepository>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
@@ -172,7 +177,8 @@ public class InstallerManagerViewModelTests
             mockProcessManager,
             mockEventAggregator.Object,
             mockConfigRepo.Object,
-            mockCheckerService.Object);
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Load cards
         await vm.LoadInstallationsCommand.ExecuteAsync(null);

@@ -33,6 +33,12 @@ public sealed record ModelCheckResult
     /// </summary>
     public bool IsPlaceholder { get; init; }
 
+    /// <summary>
+    /// True when the underlying <see cref="ModelDownload"/> has download links
+    /// with VRAM profile variants, requiring the user to choose a target profile.
+    /// </summary>
+    public bool HasVramProfiles { get; init; }
+
     /// <summary>All paths that were searched.</summary>
     public required IReadOnlyList<string> SearchedPaths { get; init; }
 

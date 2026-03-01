@@ -49,6 +49,13 @@ public partial class WorkloadItemViewModel : ViewModelBase
     public ConfigurationCheckResult? CheckResult { get; set; }
 
     /// <summary>
+    /// VRAM profile values (in GB) configured for this workload.
+    /// Parsed from <see cref="InstallationConfiguration.Vram.VramProfiles"/>.
+    /// Empty when VRAM selection is not applicable.
+    /// </summary>
+    public int[] ConfiguredVramProfiles { get; set; } = [];
+
+    /// <summary>
     /// Display string for the version column.
     /// </summary>
     public string VersionDisplay => $"{ConfigVersion}.{ConfigSubVersion}";

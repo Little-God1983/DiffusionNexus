@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 using DiffusionNexus.UI.Views.Dialogs;
@@ -20,7 +21,13 @@ public partial class WorkloadsViewModel : ViewModelBase
 {
     private readonly IConfigurationRepository _configurationRepository;
     private readonly IConfigurationCheckerService _checkerService;
+    private readonly IWorkloadInstallService _installService;
     private readonly string _comfyUIRootPath;
+
+    /// <summary>
+    /// Cached configurations so we can pass them to the install service.
+    /// </summary>
+    private List<InstallationConfiguration> _loadedConfigurations = [];
 
     [ObservableProperty]
     private bool _isLoading;
@@ -41,14 +48,17 @@ public partial class WorkloadsViewModel : ViewModelBase
     public WorkloadsViewModel(
         IConfigurationRepository configurationRepository,
         IConfigurationCheckerService checkerService,
+        IWorkloadInstallService installService,
         string comfyUIRootPath)
     {
         ArgumentNullException.ThrowIfNull(configurationRepository);
         ArgumentNullException.ThrowIfNull(checkerService);
+        ArgumentNullException.ThrowIfNull(installService);
         ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
 
         _configurationRepository = configurationRepository;
         _checkerService = checkerService;
+        _installService = installService;
         _comfyUIRootPath = comfyUIRootPath;
     }
 
@@ -73,6 +83,8 @@ public partial class WorkloadsViewModel : ViewModelBase
                 .Where(c => c.Repository.Type == RepositoryType.ComfyUI)
                 .ToList();
 
+            _loadedConfigurations = comfyConfigurations;
+
             foreach (var config in comfyConfigurations)
             {
                 var item = new WorkloadItemViewModel(
@@ -80,7 +92,10 @@ public partial class WorkloadsViewModel : ViewModelBase
                     config.Name,
                     config.Description,
                     config.ConfigurationVersion,
-                    config.ConfigurationSubVersion);
+                    config.ConfigurationSubVersion)
+                {
+                    ConfiguredVramProfiles = ParseVramProfiles(config.Vram.VramProfiles)
+                };
 
                 if (config.WorkloadTarget == WorkloadTargetType.DiffusionNexusCore)
                 {
@@ -160,7 +175,7 @@ public partial class WorkloadsViewModel : ViewModelBase
                 : $"Expected at: {node.ExpectedPath}";
 
             detailItems.Add(new WorkloadDetailItemViewModel(
-                node.Name, "Custom Node", node.IsInstalled, detail));
+                node.Id, node.Name, "Custom Node", node.IsInstalled, detail));
         }
 
         foreach (var model in item.CheckResult.ModelResults)
@@ -172,14 +187,17 @@ public partial class WorkloadsViewModel : ViewModelBase
                     : $"Searched {model.SearchedPaths.Count} location(s)";
 
             detailItems.Add(new WorkloadDetailItemViewModel(
-                model.Name, "Model", model.IsInstalled, detail, model.IsPlaceholder));
+                model.Id, model.Name, "Model", model.IsInstalled, detail,
+                model.IsPlaceholder, model.HasVramProfiles));
         }
 
         var dialog = new WorkloadDetailsDialog
         {
             Title = $"Details – {item.Name}",
             DetailItems = detailItems,
-            Summary = item.CheckResult.Summary
+            Summary = item.CheckResult.Summary,
+            ConfiguredVramProfiles = item.ConfiguredVramProfiles,
+            InstallCallback = CreateInstallCallback(item)
         };
 
         var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
@@ -189,5 +207,85 @@ public partial class WorkloadsViewModel : ViewModelBase
         {
             await dialog.ShowDialog(parentWindow);
         }
+
+        // Re-check the workload status if installation ran
+        if (dialog.DidInstall)
+        {
+            await ReCheckWorkloadAsync(item);
+        }
+    }
+
+    /// <summary>
+    /// Creates the install callback that the dialog invokes with live progress.
+    /// </summary>
+    private Func<IReadOnlyList<WorkloadDetailItemViewModel>, int, IProgress<WorkloadInstallProgress>, CancellationToken, Task<string>>
+        CreateInstallCallback(WorkloadItemViewModel item)
+    {
+        return async (selectedItems, vramGb, progress, ct) =>
+        {
+            var config = _loadedConfigurations.FirstOrDefault(c => c.Id == item.Id);
+            if (config is null)
+            {
+                throw new InvalidOperationException($"Configuration {item.Id} not found");
+            }
+
+            // Separate nodes vs models by matching IDs back to the check results
+            var nodeIds = new HashSet<Guid>(
+                selectedItems.Where(i => i.Category == "Custom Node").Select(i => i.Id));
+            var modelIds = new HashSet<Guid>(
+                selectedItems.Where(i => i.Category == "Model").Select(i => i.Id));
+
+            var selectedNodes = item.CheckResult!.CustomNodeResults
+                .Where(n => nodeIds.Contains(n.Id))
+                .ToList();
+            var selectedModels = item.CheckResult!.ModelResults
+                .Where(m => modelIds.Contains(m.Id))
+                .ToList();
+
+            return await _installService.InstallSelectedAsync(
+                config, _comfyUIRootPath,
+                selectedNodes, selectedModels,
+                vramGb, progress, ct);
+        };
+    }
+
+    /// <summary>
+    /// Re-checks the workload after installation so the status column updates.
+    /// </summary>
+    private async Task ReCheckWorkloadAsync(WorkloadItemViewModel item)
+    {
+        var config = _loadedConfigurations.FirstOrDefault(c => c.Id == item.Id);
+        if (config is null) return;
+
+        try
+        {
+            var newResult = await _checkerService.CheckConfigurationAsync(
+                config, _comfyUIRootPath);
+
+            item.CheckResult = newResult;
+            item.Status = newResult.OverallStatus.ToString();
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to re-check workload {Name}", item.Name);
+        }
+    }
+
+    /// <summary>
+    /// Parses the comma-separated VRAM profiles string (e.g. "8,16,24,24+")
+    /// into an array of integer GB values, matching the installer behaviour.
+    /// </summary>
+    private static int[] ParseVramProfiles(string? vramProfiles)
+    {
+        if (string.IsNullOrWhiteSpace(vramProfiles))
+        {
+            return [];
+        }
+
+        return vramProfiles
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => int.TryParse(p.Replace("GB", "").Replace("+", ""), out var val) ? val : 0)
+            .Where(v => v > 0)
+            .ToArray();
     }
 }

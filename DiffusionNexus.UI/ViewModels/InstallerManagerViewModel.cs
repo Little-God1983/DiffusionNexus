@@ -28,6 +28,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IConfigurationRepository _configurationRepository;
     private readonly IConfigurationCheckerService _checkerService;
+    private readonly IWorkloadInstallService _installService;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -58,7 +59,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         PackageProcessManager processManager,
         IDatasetEventAggregator eventAggregator,
         IConfigurationRepository configurationRepository,
-        IConfigurationCheckerService checkerService)
+        IConfigurationCheckerService checkerService,
+        IWorkloadInstallService installService)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
@@ -68,6 +70,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _eventAggregator = eventAggregator;
         _configurationRepository = configurationRepository;
         _checkerService = checkerService;
+        _installService = installService;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -466,7 +469,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         try
         {
-            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, card.InstallationPath);
+            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, _installService, card.InstallationPath);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog

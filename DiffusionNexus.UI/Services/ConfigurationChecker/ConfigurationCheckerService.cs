@@ -374,6 +374,8 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             }
         }
 
+        var hasVramProfiles = model.DownloadLinks?.Any(l => l.Enabled && l.VramProfile.HasValue) ?? false;
+
         return new ModelCheckResult
         {
             Id = model.Id,
@@ -382,6 +384,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             IsPlaceholder = model.IsPlaceholder,
             IsVramProfileScoped = isVramScoped,
             ScopedVramProfile = scopedProfile,
+            HasVramProfiles = hasVramProfiles,
             SearchedPaths = searchedPaths,
             FoundAtPath = foundPath
         };
