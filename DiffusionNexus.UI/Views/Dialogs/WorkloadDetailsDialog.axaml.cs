@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -17,7 +18,7 @@ public partial class WorkloadDetailsDialog : Window
     }
 
     /// <summary>
-    /// The detail items to display in the grid.
+    /// The detail items to display in the grid, grouped by <see cref="WorkloadDetailItemViewModel.Category"/>.
     /// Set before calling ShowDialog.
     /// </summary>
     public ObservableCollection<WorkloadDetailItemViewModel> DetailItems
@@ -29,7 +30,9 @@ public partial class WorkloadDetailsDialog : Window
             var grid = this.FindControl<DataGrid>("DetailsGrid");
             if (grid is not null)
             {
-                grid.ItemsSource = value;
+                var view = new DataGridCollectionView(value);
+                view.GroupDescriptions.Add(new DataGridPathGroupDescription(nameof(WorkloadDetailItemViewModel.Category)));
+                grid.ItemsSource = view;
             }
         }
     }

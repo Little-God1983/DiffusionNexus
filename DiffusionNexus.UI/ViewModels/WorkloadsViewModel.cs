@@ -165,12 +165,14 @@ public partial class WorkloadsViewModel : ViewModelBase
 
         foreach (var model in item.CheckResult.ModelResults)
         {
-            var detail = model.IsInstalled
-                ? model.FoundAtPath
-                : $"Searched {model.SearchedPaths.Count} location(s)";
+            var detail = model.IsPlaceholder
+                ? "Will be downloaded automatically when the workflow runs"
+                : model.IsInstalled
+                    ? model.FoundAtPath
+                    : $"Searched {model.SearchedPaths.Count} location(s)";
 
             detailItems.Add(new WorkloadDetailItemViewModel(
-                model.Name, "Model", model.IsInstalled, detail));
+                model.Name, "Model", model.IsInstalled, detail, model.IsPlaceholder));
         }
 
         var dialog = new WorkloadDetailsDialog

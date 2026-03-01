@@ -6,7 +6,7 @@
         mc:Ignorable="d" d:DesignWidth="700" d:DesignHeight="450"
         x:Class="DiffusionNexus.UI.Views.Dialogs.WorkloadDetailsDialog"
         Title="Workload Details"
-        Width="700" Height="450"
+        Width="850" Height="550"
         WindowStartupLocation="CenterOwner"
         Background="#1E1E1E">
 
@@ -39,7 +39,6 @@
                   BorderThickness="0">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Name" Binding="{Binding ItemName}" Width="2*"/>
-                <DataGridTextColumn Header="Type" Binding="{Binding Category}" Width="100"/>
                 <DataGridTemplateColumn Header="Status" Width="100">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:WorkloadDetailItemViewModel">

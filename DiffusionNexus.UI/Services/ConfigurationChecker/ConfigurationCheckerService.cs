@@ -378,7 +378,8 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
         {
             Id = model.Id,
             Name = model.Name,
-            IsInstalled = !string.IsNullOrEmpty(foundPath),
+            IsInstalled = model.IsPlaceholder || !string.IsNullOrEmpty(foundPath),
+            IsPlaceholder = model.IsPlaceholder,
             IsVramProfileScoped = isVramScoped,
             ScopedVramProfile = scopedProfile,
             SearchedPaths = searchedPaths,

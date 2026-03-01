@@ -27,6 +27,12 @@ public sealed record ModelCheckResult
     /// </summary>
     public VramProfile? ScopedVramProfile { get; init; }
 
+    /// <summary>
+    /// Indicates the model is a placeholder that may be downloaded at runtime by the engine.
+    /// Placeholder models count as installed for status purposes.
+    /// </summary>
+    public bool IsPlaceholder { get; init; }
+
     /// <summary>All paths that were searched.</summary>
     public required IReadOnlyList<string> SearchedPaths { get; init; }
 
