@@ -8,6 +8,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
 
 
@@ -26,6 +27,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IConfigurationRepository _configurationRepository;
+    private readonly IConfigurationCheckerService _checkerService;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -55,7 +57,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager,
         IDatasetEventAggregator eventAggregator,
-        IConfigurationRepository configurationRepository)
+        IConfigurationRepository configurationRepository,
+        IConfigurationCheckerService checkerService)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
@@ -64,6 +67,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _processManager = processManager;
         _eventAggregator = eventAggregator;
         _configurationRepository = configurationRepository;
+        _checkerService = checkerService;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -462,7 +466,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         try
         {
-            var vm = new WorkloadsViewModel(_configurationRepository);
+            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, card.InstallationPath);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog

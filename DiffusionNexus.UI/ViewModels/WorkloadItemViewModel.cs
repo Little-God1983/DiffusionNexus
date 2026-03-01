@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -25,10 +26,27 @@ public partial class WorkloadItemViewModel : ViewModelBase
     private int _configSubVersion;
 
     /// <summary>
-    /// Placeholder status text.
+    /// Status text displayed in the table (Full, Partial, None, or Checking...).
     /// </summary>
     [ObservableProperty]
-    private string _status = "Unknown";
+    [NotifyPropertyChangedFor(nameof(StatusColor))]
+    private string _status = "Checking...";
+
+    /// <summary>
+    /// Hex color string for the status text: green, yellow, or red.
+    /// </summary>
+    public string StatusColor => Status switch
+    {
+        "Full" => "#4CAF50",
+        "Partial" => "#FFC107",
+        "None" => "#F44336",
+        _ => "#999999"
+    };
+
+    /// <summary>
+    /// The full check result, populated after the checker runs.
+    /// </summary>
+    public ConfigurationCheckResult? CheckResult { get; set; }
 
     /// <summary>
     /// Display string for the version column.

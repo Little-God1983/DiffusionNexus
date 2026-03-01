@@ -15,6 +15,7 @@ using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.Data.Sqlite;
@@ -494,6 +495,9 @@ public partial class App : Application
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
 
+        // Configuration checker (singleton - accessible across the entire application)
+        services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
+
         // Register SDK core services required by installation steps
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<IGitService, GitService>();
@@ -565,7 +569,8 @@ public partial class App : Application
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
-            sp.GetRequiredService<IConfigurationRepository>()));
+            sp.GetRequiredService<IConfigurationRepository>(),
+            sp.GetRequiredService<IConfigurationCheckerService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

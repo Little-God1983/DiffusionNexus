@@ -1,4 +1,4 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -28,39 +28,17 @@
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="Padding" Value="16,8"/>
-            <Setter Property="Cursor" Value="Hand"/>
         </Style>
         <Style Selector="Button.close-btn:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="#444444"/>
         </Style>
     </Window.Styles>
-    <Grid RowDefinitions="Auto,*,Auto" Margin="16">
 
-        <!-- Header -->
-        <TextBlock Grid.Row="0"
-                   Text="Workloads"
-                   FontSize="22"
-                   FontWeight="Bold"
-                   Foreground="White"
-                   Margin="0,0,0,12"/>
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" Text="ComfyUI Workloads" FontSize="18" FontWeight="Bold" Foreground="White" Margin="0,0,0,8"/>
 
-        <!-- Loading indicator -->
-        <StackPanel Grid.Row="1"
-                    VerticalAlignment="Center"
-                    HorizontalAlignment="Center"
-                    IsVisible="{Binding IsLoading}">
-            <ProgressBar IsIndeterminate="True" Width="200"/>
-            <TextBlock Text="Loading workloads..."
-                       HorizontalAlignment="Center"
-                       Foreground="#999999"
-                       Margin="0,8,0,0"/>
-        </StackPanel>
-        <!-- Tabbed content -->
-        <TabControl Grid.Row="1"
-                    SelectedIndex="{Binding SelectedTabIndex}"
-                    IsVisible="{Binding !IsLoading}">
-
-            <!-- Diffusion Nexus tab -->
+        <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedTabIndex}">
+            <!-- DiffusionNexus tab -->
             <TabItem Header="Diffusion Nexus">
                 <DataGrid ItemsSource="{Binding DiffusionNexusWorkloads}"
                           AutoGenerateColumns="False"
@@ -76,12 +54,19 @@
                         <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
                         <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*"/>
                         <DataGridTextColumn Header="Version" Binding="{Binding VersionDisplay}" Width="80"/>
-                        <DataGridTemplateColumn Header="Status" Width="140">
+                        <DataGridTemplateColumn Header="Status" Width="180">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:WorkloadItemViewModel">
                                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="4,0">
-                                        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="#999999"/>
-                                        <Button Classes="details-btn" Content="Details" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Status}"
+                                                   Foreground="{Binding StatusColor}"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Classes="details-btn"
+                                                Content="Details"
+                                                VerticalAlignment="Center"
+                                                Command="{Binding $parent[DataGrid].((vm:WorkloadsViewModel)DataContext).ShowDetailsCommand}"
+                                                CommandParameter="{Binding}"
+                                                IsVisible="{Binding CheckResult, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                                     </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -105,12 +90,19 @@
                         <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
                         <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*"/>
                         <DataGridTextColumn Header="Version" Binding="{Binding VersionDisplay}" Width="80"/>
-                        <DataGridTemplateColumn Header="Status" Width="140">
+                        <DataGridTemplateColumn Header="Status" Width="180">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:WorkloadItemViewModel">
                                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="4,0">
-                                        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="#999999"/>
-                                        <Button Classes="details-btn" Content="Details" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Status}"
+                                                   Foreground="{Binding StatusColor}"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Classes="details-btn"
+                                                Content="Details"
+                                                VerticalAlignment="Center"
+                                                Command="{Binding $parent[DataGrid].((vm:WorkloadsViewModel)DataContext).ShowDetailsCommand}"
+                                                CommandParameter="{Binding}"
+                                                IsVisible="{Binding CheckResult, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                                     </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
