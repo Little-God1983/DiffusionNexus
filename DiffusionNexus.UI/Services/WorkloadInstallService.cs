@@ -94,6 +94,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
                 progress?.Report(new WorkloadInstallProgress
                 {
+                    ItemId = node.Id,
                     ItemName = node.Name,
                     Message = $"Cloning {node.Name}..."
                 });
@@ -116,6 +117,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                         Logger.Warning("Failed to clone {Name}: {Message}", node.Name, result.Message);
                         progress?.Report(new WorkloadInstallProgress
                         {
+                            ItemId = node.Id,
                             ItemName = node.Name,
                             Message = $"Failed to clone {node.Name}: {result.Message}",
                             IsFailed = true
@@ -142,6 +144,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
                     progress?.Report(new WorkloadInstallProgress
                     {
+                        ItemId = node.Id,
                         ItemName = node.Name,
                         Message = $"Installed {node.Name}",
                         IsSuccess = true
@@ -153,6 +156,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                     Logger.Error(ex, "Error installing {Name}", node.Name);
                     progress?.Report(new WorkloadInstallProgress
                     {
+                        ItemId = node.Id,
                         ItemName = node.Name,
                         Message = $"Error installing {node.Name}: {ex.Message}",
                         IsFailed = true
@@ -186,6 +190,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
                 progress?.Report(new WorkloadInstallProgress
                 {
+                    ItemId = model.Id,
                     ItemName = model.Name,
                     Message = $"Downloading {model.Name}..."
                 });
@@ -206,6 +211,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                     Logger.Error(ex, "Error downloading {Name}", model.Name);
                     progress?.Report(new WorkloadInstallProgress
                     {
+                        ItemId = model.Id,
                         ItemName = model.Name,
                         Message = $"Error downloading {model.Name}: {ex.Message}",
                         IsFailed = true
@@ -381,6 +387,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             {
                 progress?.Report(new WorkloadInstallProgress
                 {
+                    ItemId = model.Id,
                     ItemName = model.Name,
                     Message = $"No download URL for {model.Name}",
                     IsFailed = true
@@ -393,6 +400,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             {
                 progress?.Report(new WorkloadInstallProgress
                 {
+                    ItemId = model.Id,
                     ItemName = model.Name,
                     Message = $"Skipped {model.Name} (VRAM profile mismatch)"
                 });
@@ -407,7 +415,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
                 cancellationToken, skipToken);
 
-            ReportDownloadResult(progress, model.Name, ok);
+            ReportDownloadResult(progress, model.Id, model.Name, ok);
             return ok ? (1, 0) : (0, 1);
         }
 
@@ -419,6 +427,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         {
             progress?.Report(new WorkloadInstallProgress
             {
+                ItemId = model.Id,
                 ItemName = model.Name,
                 Message = $"No suitable download links for {model.Name} with {selectedVramGb} GB VRAM"
             });
@@ -448,7 +457,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             else fail++;
         }
 
-        ReportDownloadResult(progress, model.Name, fail == 0);
+        ReportDownloadResult(progress, model.Id, model.Name, fail == 0);
         return (success, fail);
     }
 
@@ -485,10 +494,11 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     }
 
     private static void ReportDownloadResult(
-        IProgress<WorkloadInstallProgress>? progress, string name, bool success)
+        IProgress<WorkloadInstallProgress>? progress, Guid id, string name, bool success)
     {
         progress?.Report(new WorkloadInstallProgress
         {
+            ItemId = id,
             ItemName = name,
             Message = success ? $"Downloaded {name}" : $"Failed to download {name}",
             IsSuccess = success,

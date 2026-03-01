@@ -3,7 +3,6 @@ using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
-using Avalonia.Threading;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
@@ -201,49 +200,59 @@ public partial class WorkloadDetailsDialog : Window
                 selected, vramGb, installProgress, downloadProgress, GetSkipDownloadToken, CancellationToken.None);
             DidInstall = true;
 
-            Dispatcher.UIThread.Post(() =>
+            HideDownloadProgress();
+            AppendLog($"--- {summary} ---");
+            var statusText = this.FindControl<TextBlock>("ProgressStatusText");
+            if (statusText is not null)
             {
-                HideDownloadProgress();
-                AppendLog($"--- {summary} ---");
-                var statusText = this.FindControl<TextBlock>("ProgressStatusText");
-                if (statusText is not null)
-                {
-                    statusText.Text = "Installation complete";
-                    statusText.Foreground = new Avalonia.Media.SolidColorBrush(
-                        Avalonia.Media.Color.Parse("#4CAF50"));
-                }
-            });
+                statusText.Text = "Installation complete";
+                statusText.Foreground = new Avalonia.Media.SolidColorBrush(
+                    Avalonia.Media.Color.Parse("#4CAF50"));
+            }
         }
         catch (Exception ex)
         {
-            Dispatcher.UIThread.Post(() =>
+            HideDownloadProgress();
+            AppendLog($"ERROR: {ex.Message}");
+            var statusText = this.FindControl<TextBlock>("ProgressStatusText");
+            if (statusText is not null)
             {
-                HideDownloadProgress();
-                AppendLog($"ERROR: {ex.Message}");
-                var statusText = this.FindControl<TextBlock>("ProgressStatusText");
-                if (statusText is not null)
-                {
-                    statusText.Text = "Installation failed";
-                    statusText.Foreground = new Avalonia.Media.SolidColorBrush(
-                        Avalonia.Media.Color.Parse("#F44336"));
-                }
-            });
+                statusText.Text = "Installation failed";
+                statusText.Foreground = new Avalonia.Media.SolidColorBrush(
+                    Avalonia.Media.Color.Parse("#F44336"));
+            }
         }
         finally
         {
             _isInstalling = false;
             _skipDownloadCts?.Dispose();
             _skipDownloadCts = null;
-            Dispatcher.UIThread.Post(() => SetInstallingUiState(false));
+            SetInstallingUiState(false);
         }
     }
 
     /// <summary>
     /// Called on the UI thread for each install step progress report.
+    /// When an item reports success, marks the matching grid row as installed
+    /// so its status turns green immediately.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Progress{T}"/> already marshals to the captured SynchronizationContext
+    /// (the UI thread), so we update controls directly — no extra Dispatcher.Post needed.
+    /// </remarks>
     private void OnInstallProgressReport(WorkloadInstallProgress p)
     {
-        Dispatcher.UIThread.Post(() => AppendLog(p.Message));
+        AppendLog(p.Message);
+
+        if (p.IsSuccess && p.ItemId != Guid.Empty)
+        {
+            var match = _detailItems.FirstOrDefault(i => i.Id == p.ItemId);
+            if (match is not null && !match.IsInstalled)
+            {
+                match.IsInstalled = true;
+                match.IsSelected = false;
+            }
+        }
     }
 
     /// <summary>
@@ -252,47 +261,45 @@ public partial class WorkloadDetailsDialog : Window
     /// </summary>
     private void OnDownloadProgressReport(DownloadProgress p)
     {
-        Dispatcher.UIThread.Post(() =>
+        var panel = this.FindControl<Border>("DownloadProgressPanel");
+        var bar = this.FindControl<ProgressBar>("DownloadProgressBar");
+        var fileName = this.FindControl<TextBlock>("DownloadFileNameText");
+        var sizeText = this.FindControl<TextBlock>("DownloadSizeText");
+        var speedText = this.FindControl<TextBlock>("DownloadSpeedText");
+
+        if (p.IsComplete || !p.IsActive)
         {
-            var panel = this.FindControl<Border>("DownloadProgressPanel");
-            var bar = this.FindControl<ProgressBar>("DownloadProgressBar");
-            var fileName = this.FindControl<TextBlock>("DownloadFileNameText");
-            var sizeText = this.FindControl<TextBlock>("DownloadSizeText");
-            var speedText = this.FindControl<TextBlock>("DownloadSpeedText");
+            // Download finished or inactive — hide the bar
+            if (panel is not null) panel.IsVisible = false;
+            return;
+        }
 
-            if (p.IsComplete || !p.IsActive)
-            {
-                // Download finished or inactive — hide the bar
-                if (panel is not null) panel.IsVisible = false;
-                return;
-            }
+        // Show the download progress panel
+        if (panel is not null) panel.IsVisible = true;
+        if (fileName is not null) fileName.Text = p.FileName;
+        if (speedText is not null) speedText.Text = p.SpeedText;
 
-            // Show the download progress panel
-            if (panel is not null) panel.IsVisible = true;
-            if (fileName is not null) fileName.Text = p.FileName;
-            if (speedText is not null) speedText.Text = p.SpeedText;
-
-            if (p.TotalBytes.HasValue && p.TotalBytes > 0)
+        if (p.TotalBytes.HasValue && p.TotalBytes > 0)
+        {
+            if (bar is not null)
             {
-                if (bar is not null)
-                {
-                    bar.Maximum = p.TotalBytes.Value;
-                    bar.Value = p.BytesDownloaded;
-                }
-                if (sizeText is not null) sizeText.Text = $"{p.DownloadedSizeText} / {p.TotalSizeText}";
+                bar.IsIndeterminate = false;
+                bar.Maximum = p.TotalBytes.Value;
+                bar.Value = p.BytesDownloaded;
             }
-            else
+            if (sizeText is not null) sizeText.Text = $"{p.DownloadedSizeText} / {p.TotalSizeText}";
+        }
+        else
+        {
+            // Unknown total — show indeterminate-style
+            if (bar is not null)
             {
-                // Unknown total — show indeterminate-style
-                if (bar is not null)
-                {
-                    bar.Maximum = 100;
-                    bar.Value = 0;
-                    bar.IsIndeterminate = true;
-                }
-                if (sizeText is not null) sizeText.Text = p.DownloadedSizeText;
+                bar.Maximum = 100;
+                bar.Value = 0;
+                bar.IsIndeterminate = true;
             }
-        });
+            if (sizeText is not null) sizeText.Text = p.DownloadedSizeText;
+        }
     }
 
     /// <summary>

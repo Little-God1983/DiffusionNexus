@@ -19,6 +19,9 @@ public partial class WorkloadDetailItemViewModel : ViewModelBase
     private string _category = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusText))]
+    [NotifyPropertyChangedFor(nameof(StatusColor))]
+    [NotifyPropertyChangedFor(nameof(IsMissing))]
     private bool _isInstalled;
 
     [ObservableProperty]

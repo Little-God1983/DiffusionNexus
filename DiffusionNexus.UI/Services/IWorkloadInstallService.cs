@@ -9,6 +9,9 @@ namespace DiffusionNexus.UI.Services;
 /// </summary>
 public sealed record WorkloadInstallProgress
 {
+    /// <summary>Entity ID of the item (ModelDownload or GitRepository).</summary>
+    public Guid ItemId { get; init; }
+
     /// <summary>Name of the item currently being processed.</summary>
     public required string ItemName { get; init; }
 
