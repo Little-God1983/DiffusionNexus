@@ -9,14 +9,19 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Services;
+using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SdkContext = DiffusionNexus.Installer.SDK.DataAccess.DiffusionNexusContext;
 
 namespace DiffusionNexus.UI;
 
@@ -81,9 +86,12 @@ public partial class App : Application
                 Serilog.Log.Information("Initializing thumbnail service...");
                 InitializeThumbnailService();
 
-                // TEMPORARILY SKIP DATABASE - debugging invisible window issue
-                Serilog.Log.Information("SKIPPING database initialization for debugging...");
+                // Initialize databases
+                Serilog.Log.Information("Initializing app database...");
                 InitializeDatabase();
+
+                Serilog.Log.Information("Initializing SDK database...");
+                InitializeSdkDatabase();
 
                 // Create main window with modules
                 Serilog.Log.Information("Creating main window view model...");
@@ -231,6 +239,25 @@ public partial class App : Application
         }
 
         Serilog.Log.Information("InitializeDatabase: Completed");
+    }
+
+    /// <summary>
+    /// Ensures the SDK database (diffusion_nexus.db) schema is up-to-date via EF Core migrations.
+    /// The database is sourced from the NuGet package and stored at %LocalAppData%.
+    /// </summary>
+    private static void InitializeSdkDatabase()
+    {
+        try
+        {
+            var sdkContext = Services!.GetRequiredService<SdkContext>();
+            Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
+            sdkContext.Database.Migrate();
+            Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to migrate SDK database");
+        }
     }
 
     /// <summary>
@@ -461,6 +488,35 @@ public partial class App : Application
         // Package process manager (singleton - owns child process lifecycles)
         services.AddSingleton<PackageProcessManager>();
 
+        // ?? Installer SDK services ??
+        // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
+        services.AddDiffusionNexusDataAccess();
+
+        // Register SDK installation pipeline and all step handlers
+        services.AddInstallationServices();
+
+        // Configuration checker (singleton - accessible across the entire application)
+        services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
+
+        // Workload installer (singleton - clones custom nodes + downloads models)
+        services.AddSingleton<IWorkloadInstallService>(sp =>
+            new WorkloadInstallService(
+                sp.GetRequiredService<IGitService>(),
+                new HttpClient()));
+
+        // Register SDK core services required by installation steps
+        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        services.AddSingleton<IGitService, GitService>();
+        services.AddSingleton<IPythonService, PythonService>();
+
+        // Register the orchestrator and engine
+        services.AddSingleton<IInstallationOrchestrator, InstallationOrchestrator>();
+        services.AddSingleton<InstallationEngine>(sp =>
+        {
+            var orchestrator = sp.GetRequiredService<IInstallationOrchestrator>();
+            return new InstallationEngine(orchestrator);
+        });
+
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
@@ -518,7 +574,10 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsRepository>(),
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
-            sp.GetRequiredService<IDatasetEventAggregator>()));
+            sp.GetRequiredService<IDatasetEventAggregator>(),
+            sp.GetRequiredService<IConfigurationRepository>(),
+            sp.GetRequiredService<IConfigurationCheckerService>(),
+            sp.GetRequiredService<IWorkloadInstallService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

@@ -6,7 +6,9 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
 
 
@@ -24,6 +26,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IUnitOfWork _unitOfWork;
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
+    private readonly IConfigurationRepository _configurationRepository;
+    private readonly IConfigurationCheckerService _checkerService;
+    private readonly IWorkloadInstallService _installService;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -52,7 +57,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IAppSettingsRepository appSettingsRepository,
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager,
-        IDatasetEventAggregator eventAggregator)
+        IDatasetEventAggregator eventAggregator,
+        IConfigurationRepository configurationRepository,
+        IConfigurationCheckerService checkerService,
+        IWorkloadInstallService installService)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
@@ -60,6 +68,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _unitOfWork = unitOfWork;
         _processManager = processManager;
         _eventAggregator = eventAggregator;
+        _configurationRepository = configurationRepository;
+        _checkerService = checkerService;
+        _installService = installService;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -197,6 +208,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.SettingsRequested += OnSettingsRequestedAsync;
         card.ConsoleRequested += OnConsoleRequestedAsync;
         card.MakeDefaultRequested += OnMakeDefaultRequestedAsync;
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
 
         // Restore running state if the process is still alive
         if (_processManager.IsRunning(card.Id))
@@ -450,6 +462,31 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to set default installation {Name}", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to set default: {ex.Message}");
+        }
+    }
+
+    private async Task OnWorkloadsRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        try
+        {
+            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, _installService, card.InstallationPath);
+            await vm.LoadWorkloadsCommand.ExecuteAsync(null);
+
+            var dialog = new Views.Dialogs.WorkloadsDialog
+            {
+                DataContext = vm
+            };
+
+            var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+
+            if (parentWindow is not null)
+                await dialog.ShowDialog(parentWindow);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
     }
 

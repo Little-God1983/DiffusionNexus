@@ -113,6 +113,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public event Action<InstallerPackageCardViewModel>? OpenFolderRequested;
 
     /// <summary>
+    /// Raised when the user requests to view workloads for this installation.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? WorkloadsRequested;
+
+    /// <summary>
     /// Raised when the user requests to open settings for this installation.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? SettingsRequested;
@@ -233,6 +238,13 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to open Web UI at {Url}", DetectedWebUrl);
         }
+    }
+
+    [RelayCommand]
+    private async Task ShowWorkloadsAsync()
+    {
+        if (WorkloadsRequested is not null)
+            await WorkloadsRequested.Invoke(this);
     }
 
     [RelayCommand]
