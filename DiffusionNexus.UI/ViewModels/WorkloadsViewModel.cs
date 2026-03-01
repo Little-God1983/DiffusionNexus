@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
+using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
@@ -218,10 +219,11 @@ public partial class WorkloadsViewModel : ViewModelBase
     /// <summary>
     /// Creates the install callback that the dialog invokes with live progress.
     /// </summary>
-    private Func<IReadOnlyList<WorkloadDetailItemViewModel>, int, IProgress<WorkloadInstallProgress>, CancellationToken, Task<string>>
+    private Func<IReadOnlyList<WorkloadDetailItemViewModel>, int, IProgress<WorkloadInstallProgress>,
+        IProgress<DownloadProgress>, Func<CancellationToken>, CancellationToken, Task<string>>
         CreateInstallCallback(WorkloadItemViewModel item)
     {
-        return async (selectedItems, vramGb, progress, ct) =>
+        return async (selectedItems, vramGb, progress, downloadProgress, skipTokenProvider, ct) =>
         {
             var config = _loadedConfigurations.FirstOrDefault(c => c.Id == item.Id);
             if (config is null)
@@ -245,7 +247,7 @@ public partial class WorkloadsViewModel : ViewModelBase
             return await _installService.InstallSelectedAsync(
                 config, _comfyUIRootPath,
                 selectedNodes, selectedModels,
-                vramGb, progress, ct);
+                vramGb, progress, downloadProgress, skipTokenProvider, ct);
         };
     }
 

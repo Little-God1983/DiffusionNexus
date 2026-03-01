@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
@@ -11,12 +12,19 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 
 /// <summary>
 /// Detail dialog showing which models and custom nodes are installed or missing.
-/// Allows the user to select missing items and trigger installation with live progress.
+/// Allows the user to select missing items and trigger installation with live progress,
+/// including a real-time download progress bar and the ability to skip individual downloads.
 /// </summary>
 public partial class WorkloadDetailsDialog : Window
 {
     private readonly ObservableCollection<string> _logLines = [];
     private bool _isInstalling;
+
+    /// <summary>
+    /// Token source used to skip the current model download.
+    /// Recreated for each new download so that previously-skipped tokens don't affect later files.
+    /// </summary>
+    private CancellationTokenSource? _skipDownloadCts;
 
     public WorkloadDetailsDialog()
     {
@@ -91,10 +99,11 @@ public partial class WorkloadDetailsDialog : Window
 
     /// <summary>
     /// Callback that performs the actual installation. Set by the caller before ShowDialog.
-    /// Receives the selected items, VRAM selection, and a progress reporter.
+    /// Parameters: selected items, VRAM GB, install progress, download progress, skip token provider, cancellation token.
     /// Returns a summary string.
     /// </summary>
-    public Func<IReadOnlyList<WorkloadDetailItemViewModel>, int, IProgress<WorkloadInstallProgress>, CancellationToken, Task<string>>?
+    public Func<IReadOnlyList<WorkloadDetailItemViewModel>, int, IProgress<WorkloadInstallProgress>,
+        IProgress<DownloadProgress>, Func<CancellationToken>, CancellationToken, Task<string>>?
         InstallCallback { get; set; }
 
     /// <summary>
@@ -150,6 +159,29 @@ public partial class WorkloadDetailsDialog : Window
         await RunInstallWithProgressAsync(selected, SelectedVramProfileGb ?? 0);
     }
 
+    private void OnSkipDownload(object sender, RoutedEventArgs e)
+    {
+        if (_skipDownloadCts is not null && !_skipDownloadCts.IsCancellationRequested)
+        {
+            AppendLog("Skipping current download...");
+            _skipDownloadCts.Cancel();
+
+            // Create a fresh token source for the next download
+            var old = _skipDownloadCts;
+            _skipDownloadCts = new CancellationTokenSource();
+            old.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Returns the current skip token. Called by the download handler to check for skip requests.
+    /// </summary>
+    private CancellationToken GetSkipDownloadToken()
+    {
+        _skipDownloadCts ??= new CancellationTokenSource();
+        return _skipDownloadCts.Token;
+    }
+
     /// <summary>
     /// Executes the install callback while showing live progress in the dialog.
     /// </summary>
@@ -157,17 +189,21 @@ public partial class WorkloadDetailsDialog : Window
         IReadOnlyList<WorkloadDetailItemViewModel> selected, int vramGb)
     {
         _isInstalling = true;
+        _skipDownloadCts = new CancellationTokenSource();
         SetInstallingUiState(true);
 
-        var progress = new Progress<WorkloadInstallProgress>(OnProgressReport);
+        var installProgress = new Progress<WorkloadInstallProgress>(OnInstallProgressReport);
+        var downloadProgress = new Progress<DownloadProgress>(OnDownloadProgressReport);
 
         try
         {
-            var summary = await InstallCallback!(selected, vramGb, progress, CancellationToken.None);
+            var summary = await InstallCallback!(
+                selected, vramGb, installProgress, downloadProgress, GetSkipDownloadToken, CancellationToken.None);
             DidInstall = true;
 
             Dispatcher.UIThread.Post(() =>
             {
+                HideDownloadProgress();
                 AppendLog($"--- {summary} ---");
                 var statusText = this.FindControl<TextBlock>("ProgressStatusText");
                 if (statusText is not null)
@@ -182,6 +218,7 @@ public partial class WorkloadDetailsDialog : Window
         {
             Dispatcher.UIThread.Post(() =>
             {
+                HideDownloadProgress();
                 AppendLog($"ERROR: {ex.Message}");
                 var statusText = this.FindControl<TextBlock>("ProgressStatusText");
                 if (statusText is not null)
@@ -195,16 +232,76 @@ public partial class WorkloadDetailsDialog : Window
         finally
         {
             _isInstalling = false;
+            _skipDownloadCts?.Dispose();
+            _skipDownloadCts = null;
             Dispatcher.UIThread.Post(() => SetInstallingUiState(false));
         }
     }
 
     /// <summary>
-    /// Called on the UI thread for each progress report from the install service.
+    /// Called on the UI thread for each install step progress report.
     /// </summary>
-    private void OnProgressReport(WorkloadInstallProgress p)
+    private void OnInstallProgressReport(WorkloadInstallProgress p)
     {
         Dispatcher.UIThread.Post(() => AppendLog(p.Message));
+    }
+
+    /// <summary>
+    /// Called on the UI thread for each download byte-level progress report.
+    /// Updates the progress bar, file name, size text, and speed text.
+    /// </summary>
+    private void OnDownloadProgressReport(DownloadProgress p)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var panel = this.FindControl<Border>("DownloadProgressPanel");
+            var bar = this.FindControl<ProgressBar>("DownloadProgressBar");
+            var fileName = this.FindControl<TextBlock>("DownloadFileNameText");
+            var sizeText = this.FindControl<TextBlock>("DownloadSizeText");
+            var speedText = this.FindControl<TextBlock>("DownloadSpeedText");
+
+            if (p.IsComplete || !p.IsActive)
+            {
+                // Download finished or inactive — hide the bar
+                if (panel is not null) panel.IsVisible = false;
+                return;
+            }
+
+            // Show the download progress panel
+            if (panel is not null) panel.IsVisible = true;
+            if (fileName is not null) fileName.Text = p.FileName;
+            if (speedText is not null) speedText.Text = p.SpeedText;
+
+            if (p.TotalBytes.HasValue && p.TotalBytes > 0)
+            {
+                if (bar is not null)
+                {
+                    bar.Maximum = p.TotalBytes.Value;
+                    bar.Value = p.BytesDownloaded;
+                }
+                if (sizeText is not null) sizeText.Text = $"{p.DownloadedSizeText} / {p.TotalSizeText}";
+            }
+            else
+            {
+                // Unknown total — show indeterminate-style
+                if (bar is not null)
+                {
+                    bar.Maximum = 100;
+                    bar.Value = 0;
+                    bar.IsIndeterminate = true;
+                }
+                if (sizeText is not null) sizeText.Text = p.DownloadedSizeText;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Hides the download progress bar panel.
+    /// </summary>
+    private void HideDownloadProgress()
+    {
+        var panel = this.FindControl<Border>("DownloadProgressPanel");
+        if (panel is not null) panel.IsVisible = false;
     }
 
     /// <summary>

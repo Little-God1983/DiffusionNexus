@@ -47,6 +47,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         IReadOnlyList<ModelCheckResult> selectedModels,
         int selectedVramGb,
         IProgress<WorkloadInstallProgress>? progress = null,
+        IProgress<DownloadProgress>? downloadProgress = null,
+        Func<CancellationToken>? skipDownloadTokenProvider = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -192,7 +194,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 {
                     var (ok, fail) = await DownloadModelAsync(
                         downloader, configuration, model, repositoryPath,
-                        extraBasePath, selectedVramGb, progress, cancellationToken);
+                        extraBasePath, selectedVramGb, progress,
+                        downloadProgress, skipDownloadTokenProvider, cancellationToken);
 
                     modelsDownloaded += ok;
                     modelsFailed += fail;
@@ -364,9 +367,12 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         string? modelBaseFolder,
         int selectedVramGb,
         IProgress<WorkloadInstallProgress>? progress,
+        IProgress<DownloadProgress>? downloadProgress,
+        Func<CancellationToken>? skipDownloadTokenProvider,
         CancellationToken cancellationToken)
     {
         var enabledLinks = model.DownloadLinks?.Where(l => l.Enabled).ToList() ?? [];
+        var skipToken = skipDownloadTokenProvider?.Invoke() ?? CancellationToken.None;
 
         if (enabledLinks.Count == 0)
         {
@@ -398,8 +404,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
             var ok = await downloader.DownloadSingleFileAsync(
                 model.Url, destination, model.Name,
-                verboseLogging: false, logProgress: null, downloadProgress: null,
-                cancellationToken);
+                verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
+                cancellationToken, skipToken);
 
             ReportDownloadResult(progress, model.Name, ok);
             return ok ? (1, 0) : (0, 1);
@@ -425,6 +431,9 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Get a fresh skip token for each file so a previous skip doesn't affect later files
+            skipToken = skipDownloadTokenProvider?.Invoke() ?? CancellationToken.None;
+
             var destination = !string.IsNullOrWhiteSpace(link.Destination)
                 ? ResolvePathFromLink(link.Destination, repositoryPath, configuration)
                 : ModelDestinationResolver.Resolve(
@@ -432,8 +441,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
             var ok = await downloader.DownloadSingleFileAsync(
                 link.Url, destination, model.Name,
-                verboseLogging: false, logProgress: null, downloadProgress: null,
-                cancellationToken);
+                verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
+                cancellationToken, skipToken);
 
             if (ok) success++;
             else fail++;

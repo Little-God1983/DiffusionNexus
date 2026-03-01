@@ -87,8 +87,8 @@
                 CornerRadius="6"
                 Padding="12,8"
                 Margin="0,8,0,0"
-                MaxHeight="140">
-            <Grid RowDefinitions="Auto,*">
+                MaxHeight="200">
+            <Grid RowDefinitions="Auto,Auto,*">
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
                     <TextBlock x:Name="ProgressStatusText"
                                Text="Installing..."
@@ -96,7 +96,68 @@
                                FontWeight="SemiBold"
                                Foreground="#0088CC"/>
                 </StackPanel>
-                <ScrollViewer Grid.Row="1" x:Name="ProgressLogScroller" MaxHeight="100">
+
+                <!-- Download progress bar (visible only during model downloads) -->
+                <Border Grid.Row="1"
+                        x:Name="DownloadProgressPanel"
+                        IsVisible="False"
+                        Background="#1A2A3A"
+                        CornerRadius="4"
+                        Padding="10,8"
+                        Margin="0,0,0,6">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                            <TextBlock Grid.Column="0"
+                                       x:Name="DownloadFileNameText"
+                                       FontSize="12"
+                                       Foreground="#88AAFF"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1"
+                                       x:Name="DownloadSizeText"
+                                       FontSize="12"
+                                       Foreground="#AAAACC"
+                                       Margin="12,0"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2"
+                                       x:Name="DownloadSpeedText"
+                                       FontSize="12"
+                                       Foreground="#88FF88"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,12,0"
+                                       VerticalAlignment="Center"/>
+                            <Button Grid.Column="3"
+                                    x:Name="SkipDownloadButton"
+                                    Content="⏭ Skip"
+                                    Click="OnSkipDownload"
+                                    Background="#AA6644"
+                                    Foreground="White"
+                                    FontSize="11"
+                                    FontWeight="SemiBold"
+                                    Padding="12,6"
+                                    CornerRadius="4"
+                                    Cursor="Hand"
+                                    ToolTip.Tip="Skip this model and continue with the next one"
+                                    VerticalAlignment="Center"/>
+                        </Grid>
+                        <ProgressBar x:Name="DownloadProgressBar"
+                                     Height="10"
+                                     CornerRadius="5"
+                                     Background="#2A3A4A"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="0">
+                            <ProgressBar.Foreground>
+                                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                                    <GradientStop Color="#667EEA" Offset="0"/>
+                                    <GradientStop Color="#764BA2" Offset="1"/>
+                                </LinearGradientBrush>
+                            </ProgressBar.Foreground>
+                        </ProgressBar>
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="2" x:Name="ProgressLogScroller" MaxHeight="80">
                     <ItemsControl x:Name="ProgressLogList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

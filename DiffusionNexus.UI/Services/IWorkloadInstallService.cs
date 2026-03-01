@@ -1,4 +1,5 @@
 using DiffusionNexus.Installer.SDK.Models.Configuration;
+using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 
 namespace DiffusionNexus.UI.Services;
@@ -36,6 +37,8 @@ public interface IWorkloadInstallService
     /// <param name="selectedModels">Model check results the user selected for installation.</param>
     /// <param name="selectedVramGb">VRAM selection in GB, or 0 to skip VRAM-based filtering.</param>
     /// <param name="progress">Reports per-item progress.</param>
+    /// <param name="downloadProgress">Reports byte-level download progress for model files.</param>
+    /// <param name="skipDownloadTokenProvider">Provides a cancellation token to skip the current download.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Summary message.</returns>
     Task<string> InstallSelectedAsync(
@@ -45,5 +48,7 @@ public interface IWorkloadInstallService
         IReadOnlyList<ModelCheckResult> selectedModels,
         int selectedVramGb,
         IProgress<WorkloadInstallProgress>? progress = null,
+        IProgress<DownloadProgress>? downloadProgress = null,
+        Func<CancellationToken>? skipDownloadTokenProvider = null,
         CancellationToken cancellationToken = default);
 }
