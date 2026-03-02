@@ -242,13 +242,45 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Ensures the SDK database (diffusion_nexus.db) schema is up-to-date via EF Core migrations.
-    /// The database is sourced from the NuGet package and stored at %LocalAppData%.
+    /// Ensures the SDK database (diffusion_nexus.db) is deployed and up-to-date.
+    /// On first launch the pre-populated file shipped inside the
+    /// <c>DiffusionNexus.Installer.SDK.Database</c> NuGet package is copied from the
+    /// build output to <c>%LocalAppData%\diffusion_nexus.db</c>. Subsequent launches
+    /// only apply pending EF Core migrations.
     /// </summary>
     private static void InitializeSdkDatabase()
     {
+        const string databaseFileName = "diffusion_nexus.db";
+
         try
         {
+            // The NuGet contentFiles mechanism copies the seed DB next to the executable
+            var shippedDb = Path.Combine(AppContext.BaseDirectory, databaseFileName);
+
+            // Runtime location: directly in %LocalAppData% (no subfolder)
+            // TODO: Linux Implementation — use XDG_DATA_HOME or ~/.local/share
+            var runtimeDb = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                databaseFileName);
+
+            if (!File.Exists(runtimeDb))
+            {
+                if (File.Exists(shippedDb))
+                {
+                    File.Copy(shippedDb, runtimeDb);
+                    Serilog.Log.Information(
+                        "InitializeSdkDatabase: Deployed seed DB from {Source} to {Target}",
+                        shippedDb, runtimeDb);
+                }
+                else
+                {
+                    Serilog.Log.Warning(
+                        "InitializeSdkDatabase: No seed DB found at {Path} — " +
+                        "database will be created empty from migrations only", shippedDb);
+                }
+            }
+
+            // Apply any pending schema migrations on top of the (seed) data
             var sdkContext = Services!.GetRequiredService<SdkContext>();
             Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
             sdkContext.Database.Migrate();
@@ -256,7 +288,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to migrate SDK database");
+            Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to initialize SDK database");
         }
     }
 
