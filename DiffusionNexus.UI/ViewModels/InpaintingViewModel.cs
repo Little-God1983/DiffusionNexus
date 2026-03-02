@@ -389,6 +389,8 @@ public partial class InpaintingViewModel : ObservableObject
             var resolvedUnetName = await ResolveQwenImageGGUFModelAsync();
             if (resolvedUnetName is null)
             {
+                HasError = true;
+                ProgressDisplayText = "No Qwen Image GGUF model found";
                 StatusMessageChanged?.Invoke(this,
                     "No Qwen Image 2512 GGUF model found in ComfyUI. " +
                     "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
@@ -405,6 +407,8 @@ public partial class InpaintingViewModel : ObservableObject
 
             if (!File.Exists(workflowPath))
             {
+                HasError = true;
+                ProgressDisplayText = "Inpainting workflow file missing";
                 StatusMessageChanged?.Invoke(this, $"Inpainting workflow not found: {workflowPath}");
                 OnFinished();
                 return;

@@ -45,6 +45,7 @@ public class InpaintingViewModelGGUFResolutionTests
         await _sut.ProcessInpaintAsync(CreateTempImage());
 
         // Assert
+        _sut.HasError.Should().BeTrue("the error bar should stay visible when no model is found");
         _statusMessages.Should().Contain(m => m != null && m.Contains("No Qwen Image 2512 GGUF model found"));
         _comfyMock.Verify(
             s => s.QueueWorkflowAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, Action<JsonNode>>>(), It.IsAny<CancellationToken>()),
@@ -157,6 +158,7 @@ public class InpaintingViewModelGGUFResolutionTests
         await _sut.ProcessInpaintAsync(CreateTempImage());
 
         // Assert
+        _sut.HasError.Should().BeTrue("the error bar should stay visible when no model is found");
         _statusMessages.Should().Contain(m => m != null && m.Contains("No Qwen Image 2512 GGUF model found"));
         _comfyMock.Verify(
             s => s.QueueWorkflowAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, Action<JsonNode>>>(), It.IsAny<CancellationToken>()),
