@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -11,6 +12,8 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public partial class InpaintingViewModel : ObservableObject
 {
+    private static readonly ILogger Logger = Log.ForContext<InpaintingViewModel>();
+
     private readonly Func<bool> _hasImage;
     private readonly Action<string> _deactivateOtherTools;
     private readonly IComfyUIWrapperService? _comfyUiService;
@@ -21,6 +24,10 @@ public partial class InpaintingViewModel : ObservableObject
     private const string InpaintPositivePromptNodeId = "5";
     private const string InpaintNegativePromptNodeId = "8";
     private const string InpaintKSamplerNodeId = "11";
+    private const string InpaintUnetLoaderNodeId = "15";
+    private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
+    private const string QwenImageGGUFPrefix = "qwen-image-2512-";
+    private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
     private const string DefaultNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
 
     private static readonly string[] FunProgressMessages =
@@ -378,6 +385,18 @@ public partial class InpaintingViewModel : ObservableObject
             Status = "Uploading image to ComfyUI...";
             var uploadedFilename = await _comfyUiService.UploadImageAsync(maskedImagePath);
 
+            Status = "Checking available models...";
+            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync();
+            if (resolvedUnetName is null)
+            {
+                StatusMessageChanged?.Invoke(this,
+                    "No Qwen Image 2512 GGUF model found in ComfyUI. " +
+                    "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
+                    "and place it in your ComfyUI diffusion_models folder.");
+                OnFinished();
+                return;
+            }
+
             Status = "Queuing inpainting workflow...";
 
             var workflowPath = Path.Combine(
@@ -413,6 +432,10 @@ public partial class InpaintingViewModel : ObservableObject
                     {
                         node["inputs"]!["seed"] = seed;
                         node["inputs"]!["denoise"] = _denoise;
+                    },
+                    [InpaintUnetLoaderNodeId] = node =>
+                    {
+                        node["inputs"]!["unet_name"] = resolvedUnetName;
                     }
                 });
 
@@ -625,6 +648,81 @@ public partial class InpaintingViewModel : ObservableObject
     {
         GenerateCommand.NotifyCanExecuteChanged();
         GenerateAndCompareCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Preferred GGUF quantization variants in descending quality order.
+    /// Higher-quality variants are tried first; the first match found on the server wins.
+    /// </summary>
+    private static readonly string[] PreferredQuantOrder =
+    [
+        "Q8_0",
+        "Q6_K",
+        "Q5_K_M",
+        "Q5_K_S",
+        "Q5_1",
+        "Q5_0",
+        "Q4_K_M",
+        "Q4_K_S",
+        "Q4_1",
+        "Q4_0",
+        "Q3_K_M",
+        "Q3_K_S",
+        "Q2_K",
+        "F16",
+        "BF16"
+    ];
+
+    /// <summary>
+    /// Queries ComfyUI for available UnetLoaderGGUF models and returns the best
+    /// <c>qwen-image-2512-*.gguf</c> variant, or <c>null</c> if none is installed.
+    /// </summary>
+    private async Task<string?> ResolveQwenImageGGUFModelAsync()
+    {
+        if (_comfyUiService is null)
+            return null;
+
+        try
+        {
+            var availableModels = await _comfyUiService.GetNodeInputOptionsAsync(
+                UnetLoaderGGUFNodeType, "unet_name");
+
+            // Filter to only qwen-image-2512 GGUF variants (case-insensitive)
+            var qwenModels = availableModels
+                .Where(m => m.StartsWith(QwenImageGGUFPrefix, StringComparison.OrdinalIgnoreCase)
+                         && m.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (qwenModels.Count == 0)
+            {
+                Logger.Warning("No {Prefix}*.gguf models found on ComfyUI server", QwenImageGGUFPrefix);
+                return null;
+            }
+
+            // Pick the best variant by walking the preference list
+            foreach (var quant in PreferredQuantOrder)
+            {
+                var expected = $"{QwenImageGGUFPrefix}{quant}.gguf";
+                var match = qwenModels.FirstOrDefault(
+                    m => m.Equals(expected, StringComparison.OrdinalIgnoreCase));
+
+                if (match is not null)
+                {
+                    Logger.Information("Resolved Qwen Image GGUF model: {Model}", match);
+                    return match;
+                }
+            }
+
+            // Fallback: use the first available variant even if not in our preference list
+            var fallback = qwenModels[0];
+            Logger.Information("Using fallback Qwen Image GGUF model: {Model}", fallback);
+            return fallback;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to query ComfyUI for available GGUF models, falling back to {Default}", DefaultQwenImageGGUF);
+            return DefaultQwenImageGGUF;
+        }
     }
 
     #endregion
