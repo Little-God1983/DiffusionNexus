@@ -2,7 +2,9 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
@@ -54,13 +56,20 @@ public class InstallerManagerViewModelTests
             .Setup(e => e.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()))
             .Callback(() => settingsSavedCount++);
 
+        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
+
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
             mockRepo.Object,
             mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
-            mockEventAggregator.Object);
+            mockEventAggregator.Object,
+            mockConfigRepo.Object,
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -96,6 +105,9 @@ public class InstallerManagerViewModelTests
         var mockProcessManager = new PackageProcessManager();
         var mockAppSettings = new Mock<IAppSettingsRepository>();
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
@@ -103,7 +115,10 @@ public class InstallerManagerViewModelTests
             mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
-            mockEventAggregator.Object);
+            mockEventAggregator.Object,
+            mockConfigRepo.Object,
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -150,6 +165,9 @@ public class InstallerManagerViewModelTests
             .ReturnsAsync(1);
         var mockProcessManager = new PackageProcessManager();
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockCheckerService = new Mock<IConfigurationCheckerService>();
+        var mockInstallService = new Mock<IWorkloadInstallService>();
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
@@ -157,7 +175,10 @@ public class InstallerManagerViewModelTests
             mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
-            mockEventAggregator.Object);
+            mockEventAggregator.Object,
+            mockConfigRepo.Object,
+            mockCheckerService.Object,
+            mockInstallService.Object);
 
         // Load cards
         await vm.LoadInstallationsCommand.ExecuteAsync(null);

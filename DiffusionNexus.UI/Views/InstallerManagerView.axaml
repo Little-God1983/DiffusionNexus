@@ -306,7 +306,8 @@
                                         </StackPanel>
                                     </Button>
                                     <Button Classes="workloads-btn"
-                                            IsVisible="{Binding IsComfyUi}">
+                                            IsVisible="{Binding IsComfyUi}"
+                                            Command="{Binding ShowWorkloadsCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Text="&#x1F9F0;" FontSize="14" VerticalAlignment="Center"/>
                                             <TextBlock Text="Workloads" FontSize="14" VerticalAlignment="Center"/>

@@ -1,0 +1,46 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="220"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.VramSelectionDialog"
+        Title="Select VRAM Size"
+        Width="400" Height="220"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#1E1E1E">
+
+    <Window.Styles>
+        <Style Selector="Button.ok-btn">
+            <Setter Property="Background" Value="#0088CC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="20,8"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.ok-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#009AE0"/>
+        </Style>
+        <Style Selector="Button.cancel-btn">
+            <Setter Property="Background" Value="#333333"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="20,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.cancel-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#444444"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid Margin="20" RowDefinitions="Auto,Auto,*,Auto">
+        <TextBlock Grid.Row="0" Text="Select Your GPU VRAM" FontSize="16" FontWeight="Bold" Foreground="White" Margin="0,0,0,8"/>
+        <TextBlock Grid.Row="1" Text="Some selected models have variants optimized for different VRAM sizes. Please select the VRAM available on your GPU." FontSize="13" Foreground="#BBBBBB" TextWrapping="Wrap" Margin="0,0,0,12"/>
+        <ComboBox Grid.Row="2" x:Name="VramComboBox" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="0,0,0,16"/>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Classes="cancel-btn" Content="Cancel" Click="OnCancel"/>
+            <Button Classes="ok-btn" Content="OK" Click="OnOk"/>
+        </StackPanel>
+    </Grid>
+</Window>

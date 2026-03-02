@@ -18,6 +18,8 @@ jobs:
 
     - name: Restore dependencies
       run: dotnet restore
+      env:
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build
       run: dotnet build --no-restore --configuration Release
