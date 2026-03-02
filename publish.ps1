@@ -9,8 +9,7 @@
 param(
     [switch]$SkipDatabasePrompt,
     [switch]$IncludeDatabase,
-    [switch]$NoZip,
-    [switch]$ClearDisclaimerAcceptances  # Clear disclaimer acceptances for rollout
+    [switch]$NoZip
 )
 
 $ErrorActionPreference = "Stop"
@@ -190,25 +189,16 @@ if (Test-Path $UserDbPath) {
         $destDbPath = Join-Path $OutputDir $DbFilename
         Copy-Item -Path $UserDbPath -Destination $destDbPath
         Write-Host "Database copied to publish folder." -ForegroundColor Green
-        
-        # Clear DisclaimerAcceptances table for rollout if requested
-        $shouldSanitize = $ClearDisclaimerAcceptances
 
-        if (-not $shouldSanitize -and -not $SkipDatabasePrompt) {
-            Write-Host ""
-            $resp = Read-Host "Sanitize database (clear personal paths, history, backups)? (Y/N)"
-            $shouldSanitize = $resp -eq "Y" -or $resp -eq "y"
-        }
+        # Always produce a clean database: keep only schema + seed DatasetCategories
+        Write-SubHeader "Creating Clean Database for Release"
 
-        if ($shouldSanitize) {
-            Write-SubHeader "Sanitizing Database for Release"
-            
-            try {
-                # Create a temporary .NET project to execute the SQLite command
-                $tempDir = Join-Path $env:TEMP "DiffusionNexus_DbCleanup_$(Get-Random)"
-                New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-                
-                $csprojContent = @"
+        try {
+            # Create a temporary .NET project to execute the SQLite commands
+            $tempDir = Join-Path $env:TEMP "DiffusionNexus_DbCleanup_$(Get-Random)"
+            New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+            $csprojContent = @"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -220,8 +210,8 @@ if (Test-Path $UserDbPath) {
   </ItemGroup>
 </Project>
 "@
-                
-                $programContent = @"
+
+            $programContent = @"
 using Microsoft.Data.Sqlite;
 
 var dbPath = args[0];
@@ -230,45 +220,65 @@ connection.Open();
 
 using var command = connection.CreateCommand();
 command.CommandText = @"
+    -- Delete all data from child tables first (FK order)
+    DELETE FROM [ModelTags];
+    DELETE FROM [TriggerWords];
+    DELETE FROM [ModelImages];
+    DELETE FROM [ModelFiles];
+    DELETE FROM [ModelVersions];
+    DELETE FROM [Tags];
+    DELETE FROM [Creators];
+    DELETE FROM [Models];
+    DELETE FROM [DatasetCategories];
     DELETE FROM [DisclaimerAcceptances];
     DELETE FROM [LoraSources];
-    UPDATE [AppSettings] 
-    SET AutoBackupEnabled = 0, 
-        AutoBackupLocation = NULL,
-        DatasetStoragePath = NULL,
-        LoraSortSourcePath = NULL,
-        LoraSortTargetPath = NULL;
+    DELETE FROM [ImageGalleries];
+    DELETE FROM [InstallerPackages];
+    DELETE FROM [AppSettings];
+
+    -- Seed minimal AppSettings row (required as FK parent for DatasetCategories)
+    INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, AutoBackupEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, ComfyUiServerUrl, UpdatedAt)
+    VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 10, 'http://127.0.0.1:8188/', datetime('now'));
+
+    -- Seed default DatasetCategories
+    INSERT INTO [DatasetCategories] (Id, Name, Description, [Order], IsDefault, AppSettingsId, CreatedAt)
+    VALUES (1, 'Character', NULL, 0, 1, 1, datetime('now'));
+    INSERT INTO [DatasetCategories] (Id, Name, Description, [Order], IsDefault, AppSettingsId, CreatedAt)
+    VALUES (2, 'Style', NULL, 1, 1, 1, datetime('now'));
+    INSERT INTO [DatasetCategories] (Id, Name, Description, [Order], IsDefault, AppSettingsId, CreatedAt)
+    VALUES (3, 'Concept', NULL, 2, 1, 1, datetime('now'));
+
+    VACUUM;
 ";
 var rows = command.ExecuteNonQuery();
 
-Console.WriteLine(`$"Sanitization complete. Database reset for rollout (Rows modified: {rows}).");
+Console.WriteLine(`$"Clean database created. Only DatasetCategories seeded (Rows affected: {rows}).");
 "@
-                
-                Set-Content -Path (Join-Path $tempDir "cleanup.csproj") -Value $csprojContent
-                Set-Content -Path (Join-Path $tempDir "Program.cs") -Value $programContent
-                
-                Push-Location $tempDir
-                try {
-                    Write-Host "Building SQLite cleanup tool..." -ForegroundColor Gray
-                    & dotnet build -c Release --verbosity quiet 2>&1 | Out-Null
-                    
-                    if ($LASTEXITCODE -eq 0) {
-                        $result = & dotnet run -c Release --no-build -- $destDbPath 2>&1
-                        Write-Host $result -ForegroundColor Green
-                    } else {
-                        Write-Host "WARNING: Could not build cleanup tool." -ForegroundColor Yellow
-                    }
+
+            Set-Content -Path (Join-Path $tempDir "cleanup.csproj") -Value $csprojContent
+            Set-Content -Path (Join-Path $tempDir "Program.cs") -Value $programContent
+
+            Push-Location $tempDir
+            try {
+                Write-Host "Building database cleanup tool..." -ForegroundColor Gray
+                & dotnet build -c Release --verbosity quiet 2>&1 | Out-Null
+
+                if ($LASTEXITCODE -eq 0) {
+                    $result = & dotnet run -c Release --no-build -- $destDbPath 2>&1
+                    Write-Host $result -ForegroundColor Green
+                } else {
+                    Write-Host "WARNING: Could not build cleanup tool." -ForegroundColor Yellow
                 }
-                finally {
-                    Pop-Location
-                }
-                
-                # Cleanup temp directory
-                Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
             }
-            catch {
-                Write-Host "WARNING: Failed to clear DisclaimerAcceptances: $($_.Exception.Message)" -ForegroundColor Yellow
+            finally {
+                Pop-Location
             }
+
+            # Cleanup temp directory
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Host "WARNING: Failed to create clean database: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     } else {
         Write-Host "Skipping database. Users will need existing configs in `$env:LOCALAPPDATA." -ForegroundColor Yellow
