@@ -415,6 +415,11 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
                 cancellationToken, skipToken);
 
+            if (ok)
+            {
+                TryRenameToConfiguredName(model.Url, destination, model.Name);
+            }
+
             ReportDownloadResult(progress, model.Id, model.Name, ok);
             return ok ? (1, 0) : (0, 1);
         }
@@ -453,12 +458,49 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
                 cancellationToken, skipToken);
 
-            if (ok) success++;
+            if (ok)
+            {
+                TryRenameToConfiguredName(link.Url, destination, model.Name);
+                success++;
+            }
             else fail++;
         }
 
         ReportDownloadResult(progress, model.Id, model.Name, fail == 0);
         return (success, fail);
+    }
+
+    /// <summary>
+    /// After a successful download, renames the file from the URL-derived name to the
+    /// configured name (<c>{model.Name}{ext}</c>) when they differ.
+    /// HuggingFace often uses generic file names like <c>diffusion_pytorch_model.safetensors</c>.
+    /// </summary>
+    private static void TryRenameToConfiguredName(string downloadUrl, string destinationDir, string modelName)
+    {
+        try
+        {
+            var urlFileName = ConfigurationCheckerService.GetFileNameFromUrl(downloadUrl);
+            var configuredName = ConfigurationCheckerService.DeriveConfiguredFileName(modelName, urlFileName);
+
+            if (configuredName is null) return;
+
+            var downloadedPath = Path.Combine(destinationDir, urlFileName);
+            var configuredPath = Path.Combine(destinationDir, configuredName);
+
+            if (File.Exists(downloadedPath) && !File.Exists(configuredPath))
+            {
+                File.Move(downloadedPath, configuredPath);
+                Logger.Information(
+                    "Renamed downloaded model from {UrlName} to {ConfiguredName}",
+                    urlFileName, configuredName);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex,
+                "Failed to rename downloaded model to configured name for {ModelName}",
+                modelName);
+        }
     }
 
     #endregion
