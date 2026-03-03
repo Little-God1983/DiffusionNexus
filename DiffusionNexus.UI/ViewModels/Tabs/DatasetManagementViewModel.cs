@@ -1248,13 +1248,19 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Reset to Training tab when opening a dataset
             SelectedSubTab = VersionSubTab.Training;
 
-            // Populate available versions
+            // Populate available versions and default to the latest
             AvailableVersions.Clear();
             if (dataset.IsVersionedStructure)
             {
                 foreach (var version in dataset.GetAllVersionNumbers())
                 {
                     AvailableVersions.Add(version);
+                }
+
+                // Always open the latest version
+                if (AvailableVersions.Count > 0)
+                {
+                    dataset.CurrentVersion = AvailableVersions[^1];
                 }
             }
             else
