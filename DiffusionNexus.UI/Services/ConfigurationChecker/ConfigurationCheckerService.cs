@@ -418,6 +418,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
 
                 if (fileNames.Count > 0)
                 {
+                    AppendConfiguredFileNames(fileNames, model.Name);
                     return (fileNames, true, scopedProfile);
                 }
             }
@@ -443,7 +444,55 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             }
         }
 
+        AppendConfiguredFileNames(allFileNames, model.Name);
+
         return (allFileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), false, null);
+    }
+
+    /// <summary>
+    /// Appends configured file names derived from the model display name and
+    /// extensions found in the existing URL-derived file names. This handles the
+    /// common case where HuggingFace uses generic names like
+    /// <c>diffusion_pytorch_model.safetensors</c> instead of the configured model name.
+    /// </summary>
+    private static void AppendConfiguredFileNames(List<string> fileNames, string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return;
+
+        foreach (var urlFileName in fileNames.ToList())
+        {
+            var configuredName = DeriveConfiguredFileName(modelName, urlFileName);
+            if (configuredName is not null &&
+                !fileNames.Contains(configuredName, StringComparer.OrdinalIgnoreCase))
+            {
+                fileNames.Add(configuredName);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Derives a configured file name by combining the model's display name with the
+    /// extension of the URL-derived file name. Used to find models renamed after
+    /// downloading from sources like HuggingFace where generic file names
+    /// (e.g. <c>diffusion_pytorch_model.safetensors</c>) are common.
+    /// Returns <c>null</c> when the names already match or derivation is not possible.
+    /// </summary>
+    internal static string? DeriveConfiguredFileName(string modelName, string urlFileName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName) || string.IsNullOrWhiteSpace(urlFileName))
+            return null;
+
+        var ext = Path.GetExtension(urlFileName);
+        if (string.IsNullOrEmpty(ext))
+            return null;
+
+        var configured = modelName.EndsWith(ext, StringComparison.OrdinalIgnoreCase)
+            ? modelName
+            : modelName + ext;
+
+        return configured.Equals(urlFileName, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : configured;
     }
 
     /// <summary>
