@@ -1231,11 +1231,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         if (dataset is null) return;
 
+        // Detect fresh open (from overview) vs re-open (version switch, refresh, add images).
+        // On fresh open, default to the latest version. On re-open, preserve CurrentVersion.
+        var isFreshOpen = ActiveDataset != dataset;
+
         IsLoading = true;
         try
         {
             _state.SetActiveDataset(dataset);
-            
+
             // Force property change notifications for safe properties since SetActiveDataset might not trigger
             // if the dataset reference is the same but its properties changed (e.g. after version switch)
             OnPropertyChanged(nameof(DatasetName));
@@ -1248,7 +1252,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             // Reset to Training tab when opening a dataset
             SelectedSubTab = VersionSubTab.Training;
 
-            // Populate available versions and default to the latest
+            // Populate available versions and default to the latest on fresh open
             AvailableVersions.Clear();
             if (dataset.IsVersionedStructure)
             {
@@ -1257,8 +1261,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     AvailableVersions.Add(version);
                 }
 
-                // Always open the latest version
-                if (AvailableVersions.Count > 0)
+                // Default to latest version only on fresh open; preserve current on switch/refresh
+                if (isFreshOpen && !dataset.IsVersionCard && AvailableVersions.Count > 0)
                 {
                     dataset.CurrentVersion = AvailableVersions[^1];
                 }
