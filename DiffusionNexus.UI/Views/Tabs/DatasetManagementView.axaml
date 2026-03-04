@@ -6,6 +6,7 @@
              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetManagementView"
              x:DataType="vmTabs:DatasetManagementViewModel">
@@ -498,7 +499,7 @@
                           </Border>
                           <Border Grid.Row="2" Padding="10">
                             <Grid RowDefinitions="*,Auto">
-                              <TextBox Grid.Row="0" Text="{Binding Caption, Mode=TwoWay}" Watermark="Enter caption..."
+                              <controls:SpellCheckTextBox Grid.Row="0" Text="{Binding Caption, Mode=TwoWay}" Watermark="Enter caption..."
                                        TextWrapping="Wrap" AcceptsReturn="True" FontSize="13" MinHeight="80" MaxHeight="120"/>
                               <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
                                       Margin="0,6,0,0">

@@ -3,6 +3,7 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        xmlns:spellcheck="using:DiffusionNexus.UI.Controls"
         x:Class="DiffusionNexus.UI.Views.Dialogs.ImageViewerDialog"
         x:DataType="vm:ImageViewerViewModel"
         WindowState="Maximized"
@@ -262,7 +263,7 @@
                     Background="#80333333"
                     CornerRadius="6"
                     Padding="4">
-              <TextBox x:Name="CaptionTextBox"
+              <spellcheck:SpellCheckTextBox x:Name="CaptionTextBox"
                        Text="{Binding CurrentImage.Caption, Mode=TwoWay}"
                        AcceptsReturn="True"
                        TextWrapping="Wrap"

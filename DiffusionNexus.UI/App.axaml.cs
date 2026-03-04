@@ -14,8 +14,10 @@ using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Converters;
+using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
+using DiffusionNexus.UI.Services.SpellCheck;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.Data.Sqlite;
@@ -86,6 +88,10 @@ public partial class App : Application
                 Serilog.Log.Information("Initializing thumbnail service...");
                 InitializeThumbnailService();
 
+                // Initialize spell check and autocomplete for caption editors
+                Serilog.Log.Information("Initializing spell check services...");
+                InitializeSpellCheckServices();
+
                 // Initialize databases
                 Serilog.Log.Information("Initializing app database...");
                 InitializeDatabase();
@@ -149,6 +155,16 @@ public partial class App : Application
     {
         var orchestrator = Services!.GetRequiredService<IThumbnailOrchestrator>();
         PathToBitmapConverter.ThumbnailOrchestrator = orchestrator;
+    }
+
+    /// <summary>
+    /// Initializes the spell check and autocomplete services for SpellCheckTextBox controls.
+    /// </summary>
+    private static void InitializeSpellCheckServices()
+    {
+        var spellCheck = Services!.GetRequiredService<ISpellCheckService>();
+        var autoComplete = Services!.GetRequiredService<IAutoCompleteService>();
+        SpellCheckTextBox.Initialize(spellCheck, autoComplete);
     }
 
     private static void InitializeDatabase()
@@ -573,6 +589,12 @@ public partial class App : Application
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
         services.AddSingleton<IDatasetState, DatasetStateService>();
         services.AddSingleton<IDatasetStorageService, DatasetStorageService>();
+
+        // Spell check & autocomplete services (singletons - shared across all caption editors)
+        services.AddSingleton<IUserDictionaryService, UserDictionaryService>();
+        services.AddSingleton<ISpellCheckService>(sp =>
+            new SpellCheckService(sp.GetRequiredService<IUserDictionaryService>()));
+        services.AddSingleton<IAutoCompleteService, AutoCompleteService>();
 
         // Image favorites service (singleton - per-folder .favorites.json persistence)
         services.AddSingleton<IImageFavoritesService, ImageFavoritesService>();
