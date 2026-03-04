@@ -21,7 +21,9 @@ public class SpellCheckTextBox : TextBox
     private static IAutoCompleteService? s_autoCompleteService;
 
     private readonly List<SpellCheckError> _errors = [];
-    private readonly Pen _squigglyPen;
+
+    // Overlay that draws squiggly lines on top of the TextPresenter
+    private SpellCheckOverlay? _overlay;
 
     // Autocomplete state
     private Popup? _autoCompletePopup;
@@ -61,7 +63,6 @@ public class SpellCheckTextBox : TextBox
     /// </summary>
     public SpellCheckTextBox()
     {
-        _squigglyPen = new Pen(Brushes.Red, 1.5, dashStyle: null);
     }
 
     /// <summary>
@@ -138,10 +139,33 @@ public class SpellCheckTextBox : TextBox
             RunSpellCheck();
         };
 
-        // Cache the TextPresenter for caret position lookups
-        _textPresenter = this.GetVisualDescendants()
-            .OfType<TextPresenter>()
-            .FirstOrDefault();
+        // Use NameScope to reliably find the TextPresenter template part.
+        // GetVisualDescendants() can return empty during OnApplyTemplate in some scenarios.
+        _textPresenter = e.NameScope.Find<TextPresenter>("PART_TextPresenter");
+
+        // Remove previous overlay if template is re-applied (e.g. theme switch)
+        if (_overlay?.Parent is Panel oldPanel)
+        {
+            oldPanel.Children.Remove(_overlay);
+        }
+        _overlay = null;
+
+        // Try to insert a transparent overlay into the TextPresenter's parent.
+        // In Avalonia's Fluent TextBox template, the TextPresenter lives inside
+        // a Panel (alongside the watermark). Adding our overlay AFTER the
+        // TextPresenter makes it paint ON TOP of text and focus highlights.
+        // If the parent isn't a Panel we fall back to the Render override.
+        if (_textPresenter?.Parent is Panel panel)
+        {
+            _overlay = new SpellCheckOverlay(this) { IsHitTestVisible = false };
+            panel.Children.Add(_overlay);
+        }
+
+        // Run initial spell check for text that was set via binding before the template existed
+        if (!string.IsNullOrEmpty(Text))
+        {
+            Dispatcher.UIThread.Post(RunSpellCheck, DispatcherPriority.Loaded);
+        }
     }
 
     /// <inheritdoc />
@@ -217,76 +241,56 @@ public class SpellCheckTextBox : TextBox
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Fallback rendering path: draws squiggly underlines at the TextBox level.
+    /// When the overlay is successfully inserted into the template Panel this is a
+    /// no-op because the overlay paints on top. When the overlay is null (parent was
+    /// not a Panel) this ensures underlines still appear — they may be slightly
+    /// dimmed by the focused background but remain visible.
+    /// </remarks>
     public override void Render(DrawingContext context)
     {
         base.Render(context);
 
+        // If the overlay is active it handles all drawing — skip the fallback
+        if (_overlay is not null) return;
+
         if (_errors.Count == 0 || Text is null) return;
 
-        // Find the TextPresenter inside the TextBox template
-        var textPresenter = this.GetVisualDescendants()
-            .OfType<TextPresenter>()
-            .FirstOrDefault();
+        // Lazy lookup: _textPresenter may have been null during OnApplyTemplate
+        var presenter = _textPresenter
+            ??= this.GetVisualDescendants().OfType<TextPresenter>().FirstOrDefault();
 
-        if (textPresenter is null) return;
+        if (presenter?.TextLayout is null) return;
 
-        var textLayout = textPresenter.TextLayout;
-        if (textLayout is null) return;
-
-        // Get the offset of the text presenter within this control
-        var presenterOffset = textPresenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+        var presenterOffset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
 
         foreach (var error in _errors)
         {
-            if (error.StartIndex + error.Length > (Text?.Length ?? 0))
+            if (error.StartIndex + error.Length > Text.Length)
                 continue;
 
             try
             {
-                var startRect = textLayout.HitTestTextPosition(error.StartIndex);
-                var endRect = textLayout.HitTestTextPosition(error.StartIndex + error.Length);
+                var startRect = presenter.TextLayout.HitTestTextPosition(error.StartIndex);
+                var endRect = presenter.TextLayout.HitTestTextPosition(error.StartIndex + error.Length);
 
                 var y = startRect.Bottom + presenterOffset.Y;
                 var startX = startRect.Left + presenterOffset.X;
                 var endX = endRect.Left + presenterOffset.X;
 
-                // Handle multi-line: if the end is on a different line, clamp to line end
                 if (Math.Abs(endRect.Top - startRect.Top) > 1)
                 {
                     endX = Bounds.Width - Padding.Right;
                 }
 
-                DrawSquigglyLine(context, startX, endX, y);
+                SpellCheckOverlay.DrawSquiggly(context, startX, endX, y);
             }
             catch
             {
-                // Layout measurement can fail during rapid editing; skip this error
+                // Layout measurement can fail during rapid editing
             }
         }
-    }
-
-    private static void DrawSquigglyLine(DrawingContext context, double startX, double endX, double y)
-    {
-        var geometry = new StreamGeometry();
-        using (var ctx = geometry.Open())
-        {
-            const double waveHeight = 2.0;
-            const double waveLength = 4.0;
-            var x = startX;
-            bool up = true;
-
-            ctx.BeginFigure(new Point(x, y), false);
-
-            while (x < endX)
-            {
-                x += waveLength;
-                if (x > endX) x = endX;
-                ctx.LineTo(new Point(x, up ? y - waveHeight : y + waveHeight));
-                up = !up;
-            }
-        }
-
-        context.DrawGeometry(null, new Pen(Brushes.Red, 1.5), geometry);
     }
 
     private void RunSpellCheck()
@@ -295,6 +299,7 @@ public class SpellCheckTextBox : TextBox
         {
             _errors.Clear();
             InvalidateVisual();
+            _overlay?.InvalidateVisual();
             return;
         }
 
@@ -303,12 +308,14 @@ public class SpellCheckTextBox : TextBox
         {
             _errors.Clear();
             InvalidateVisual();
+            _overlay?.InvalidateVisual();
             return;
         }
 
         _errors.Clear();
         _errors.AddRange(s_spellCheckService.CheckText(text));
         InvalidateVisual();
+        _overlay?.InvalidateVisual();
     }
 
     private void UpdateAutoComplete()
@@ -383,7 +390,7 @@ public class SpellCheckTextBox : TextBox
     private void PositionPopupAtCaret(Popup popup)
     {
         var presenter = _textPresenter
-            ?? this.GetVisualDescendants().OfType<TextPresenter>().FirstOrDefault();
+            ??= this.GetVisualDescendants().OfType<TextPresenter>().FirstOrDefault();
 
         if (presenter?.TextLayout is null) return;
 
@@ -539,4 +546,83 @@ public class SpellCheckTextBox : TextBox
     }
 
     private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '\'';
+
+    /// <summary>
+    /// Overlay control drawn on top of the TextPresenter inside the template Panel.
+    /// Draws red squiggly underlines that remain visible in all focus states.
+    /// </summary>
+    private sealed class SpellCheckOverlay : Control
+    {
+        private static readonly Pen s_pen = new(Brushes.Red, 1.5);
+        private readonly SpellCheckTextBox _owner;
+
+        public SpellCheckOverlay(SpellCheckTextBox owner)
+        {
+            _owner = owner;
+        }
+
+        public override void Render(DrawingContext context)
+        {
+            var presenter = _owner._textPresenter;
+            if (presenter?.TextLayout is null || _owner._errors.Count == 0) return;
+
+            var text = _owner.Text;
+            if (string.IsNullOrEmpty(text)) return;
+
+            // The overlay and TextPresenter are siblings in the same Panel.
+            // Translate to account for any margin/offset the TextPresenter has.
+            var offset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+
+            foreach (var error in _owner._errors)
+            {
+                if (error.StartIndex + error.Length > text.Length)
+                    continue;
+
+                try
+                {
+                    var startRect = presenter.TextLayout.HitTestTextPosition(error.StartIndex);
+                    var endRect = presenter.TextLayout.HitTestTextPosition(error.StartIndex + error.Length);
+
+                    var y = startRect.Bottom + offset.Y;
+                    var startX = startRect.Left + offset.X;
+                    var endX = endRect.Left + offset.X;
+
+                    if (Math.Abs(endRect.Top - startRect.Top) > 1)
+                    {
+                        endX = presenter.Bounds.Width + offset.X;
+                    }
+
+                    DrawSquiggly(context, startX, endX, y);
+                }
+                catch
+                {
+                    // Layout measurement can fail during rapid editing
+                }
+            }
+        }
+
+        internal static void DrawSquiggly(DrawingContext context, double startX, double endX, double y)
+        {
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                const double waveHeight = 2.0;
+                const double waveLength = 4.0;
+                var x = startX;
+                bool up = true;
+
+                ctx.BeginFigure(new Point(x, y), false);
+
+                while (x < endX)
+                {
+                    x += waveLength;
+                    if (x > endX) x = endX;
+                    ctx.LineTo(new Point(x, up ? y - waveHeight : y + waveHeight));
+                    up = !up;
+                }
+            }
+
+            context.DrawGeometry(null, s_pen, geometry);
+        }
+    }
 }
