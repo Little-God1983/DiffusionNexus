@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Primitives.PopupPositioning;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
@@ -95,7 +96,9 @@ public class SpellCheckTextBox : TextBox
         {
             Child = _suggestionListBox,
             PlacementTarget = this,
-            Placement = PlacementMode.Bottom,
+            Placement = PlacementMode.AnchorAndGravity,
+            PlacementAnchor = PopupAnchor.BottomLeft,
+            PlacementGravity = PopupGravity.BottomRight,
             IsLightDismissEnabled = true,
         };
 
@@ -118,7 +121,9 @@ public class SpellCheckTextBox : TextBox
         {
             Child = _correctionListBox,
             PlacementTarget = this,
-            Placement = PlacementMode.Bottom,
+            Placement = PlacementMode.AnchorAndGravity,
+            PlacementAnchor = PopupAnchor.BottomLeft,
+            PlacementGravity = PopupGravity.BottomRight,
             IsLightDismissEnabled = true,
         };
 
@@ -384,9 +389,8 @@ public class SpellCheckTextBox : TextBox
     }
 
     /// <summary>
-    /// Positions the popup directly below the current word by computing a
+    /// Positions the popup directly below the caret by computing a
     /// <see cref="Popup.PlacementRect"/> relative to the PlacementTarget (this TextBox).
-    /// Uses the start of the current word so the dropdown aligns with the text being completed.
     /// </summary>
     private void PositionPopupAtCaret(Popup popup)
     {
@@ -398,21 +402,12 @@ public class SpellCheckTextBox : TextBox
         try
         {
             var caretPos = Math.Min(CaretIndex, Text?.Length ?? 0);
-
-            // Find the start of the current word for horizontal alignment
-            var text = Text ?? string.Empty;
-            int wordStart = caretPos;
-            while (wordStart > 0 && IsWordChar(text[wordStart - 1]))
-                wordStart--;
-
-            var wordStartRect = presenter.TextLayout.HitTestTextPosition(wordStart);
             var caretRect = presenter.TextLayout.HitTestTextPosition(caretPos);
 
             // Translate from TextPresenter-local coordinates into TextBox-local coordinates
             var presenterOffset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
 
-            // Anchor at the word start so the dropdown lines up with the typed prefix
-            var anchorX = wordStartRect.Left + presenterOffset.X;
+            var anchorX = caretRect.Left + presenterOffset.X;
             var anchorTop = caretRect.Top + presenterOffset.Y;
             var anchorBottom = caretRect.Bottom + presenterOffset.Y;
 
