@@ -39,6 +39,7 @@ public class SpellCheckTextBox : TextBox
     private ListBox? _correctionListBox;
     private int _contextMenuWordStart;
     private int _contextMenuWordLength;
+    private bool _suppressContextMenu;
 
     // Debounce timer
     private DispatcherTimer? _debounceTimer;
@@ -115,7 +116,7 @@ public class SpellCheckTextBox : TextBox
             Padding = new Thickness(2),
             FontSize = 13,
         };
-        _correctionListBox.PointerPressed += OnCorrectionPointerPressed;
+        _correctionListBox.SelectionChanged += OnCorrectionSelectionChanged;
 
         _spellCheckPopup = new Popup
         {
@@ -132,6 +133,10 @@ public class SpellCheckTextBox : TextBox
         // top-level overlay host when opened and adding them breaks the TextBox template.
         ((ISetLogicalParent)_autoCompletePopup).SetParent(this);
         ((ISetLogicalParent)_spellCheckPopup).SetParent(this);
+
+        // Suppress the default Cut/Copy/Paste context flyout when the spell check
+        // correction popup is about to be shown (flag set in ShowSpellCheckSuggestions).
+        AddHandler(ContextRequestedEvent, OnContextRequested, RoutingStrategies.Tunnel);
 
         // Set up debounced spell check
         _debounceTimer = new DispatcherTimer
@@ -468,6 +473,15 @@ public class SpellCheckTextBox : TextBox
         Dispatcher.UIThread.Post(AcceptAutoCompleteSuggestion, DispatcherPriority.Input);
     }
 
+    private void OnContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (_suppressContextMenu)
+        {
+            e.Handled = true;
+            _suppressContextMenu = false;
+        }
+    }
+
     private void ShowSpellCheckSuggestions(PointerPressedEventArgs e)
     {
         if (s_spellCheckService is null || Text is null || _spellCheckPopup is null || _correctionListBox is null)
@@ -493,6 +507,9 @@ public class SpellCheckTextBox : TextBox
 
         if (clickedError is null) return;
 
+        // Suppress the default context flyout so only the correction popup appears
+        _suppressContextMenu = true;
+
         _contextMenuWordStart = clickedError.StartIndex;
         _contextMenuWordLength = clickedError.Length;
 
@@ -510,17 +527,21 @@ public class SpellCheckTextBox : TextBox
         e.Handled = true;
     }
 
-    private void OnCorrectionPointerPressed(object? sender, PointerPressedEventArgs e)
+    private void OnCorrectionSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
+        if (_correctionListBox?.SelectedItem is not string selected || Text is null)
+            return;
+
+        // Separator — deselect and ignore
+        if (selected.StartsWith("──", StringComparison.Ordinal))
+        {
+            _correctionListBox.SelectedIndex = -1;
+            return;
+        }
+
+        // Defer the replacement so the ListBox UI can finish updating
         Dispatcher.UIThread.Post(() =>
         {
-            if (_correctionListBox?.SelectedItem is not string selected || Text is null)
-            {
-                if (_spellCheckPopup is not null)
-                    _spellCheckPopup.IsOpen = false;
-                return;
-            }
-
             if (selected.StartsWith("Add \"", StringComparison.Ordinal))
             {
                 // "Add to dictionary" option
@@ -531,14 +552,9 @@ public class SpellCheckTextBox : TextBox
                 return;
             }
 
-            if (selected.StartsWith("──", StringComparison.Ordinal))
-            {
-                // Separator — ignore
-                return;
-            }
-
             // Replace the misspelled word with the selected correction
             var text = Text;
+            if (text is null) return;
             var before = text[.._contextMenuWordStart];
             var after = text[(_contextMenuWordStart + _contextMenuWordLength)..];
             Text = before + selected + after;
