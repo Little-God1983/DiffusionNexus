@@ -384,8 +384,9 @@ public class SpellCheckTextBox : TextBox
     }
 
     /// <summary>
-    /// Calculates the caret position via the TextPresenter's TextLayout and
-    /// sets the popup's offset so it appears directly below the word being typed.
+    /// Positions the popup directly below the current word by computing a
+    /// <see cref="Popup.PlacementRect"/> relative to the PlacementTarget (this TextBox).
+    /// Uses the start of the current word so the dropdown aligns with the text being completed.
     /// </summary>
     private void PositionPopupAtCaret(Popup popup)
     {
@@ -397,15 +398,31 @@ public class SpellCheckTextBox : TextBox
         try
         {
             var caretPos = Math.Min(CaretIndex, Text?.Length ?? 0);
+
+            // Find the start of the current word for horizontal alignment
+            var text = Text ?? string.Empty;
+            int wordStart = caretPos;
+            while (wordStart > 0 && IsWordChar(text[wordStart - 1]))
+                wordStart--;
+
+            var wordStartRect = presenter.TextLayout.HitTestTextPosition(wordStart);
             var caretRect = presenter.TextLayout.HitTestTextPosition(caretPos);
+
+            // Translate from TextPresenter-local coordinates into TextBox-local coordinates
             var presenterOffset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
 
-            popup.HorizontalOffset = caretRect.Left + presenterOffset.X;
-            popup.VerticalOffset = caretRect.Bottom + presenterOffset.Y - Bounds.Height;
+            // Anchor at the word start so the dropdown lines up with the typed prefix
+            var anchorX = wordStartRect.Left + presenterOffset.X;
+            var anchorTop = caretRect.Top + presenterOffset.Y;
+            var anchorBottom = caretRect.Bottom + presenterOffset.Y;
+
+            popup.PlacementRect = new Rect(anchorX, anchorTop, 1, anchorBottom - anchorTop);
+            popup.HorizontalOffset = 0;
+            popup.VerticalOffset = 0;
         }
         catch
         {
-            // Fall back to default placement if layout measurement fails
+            popup.PlacementRect = null;
             popup.HorizontalOffset = 0;
             popup.VerticalOffset = 0;
         }
