@@ -68,25 +68,115 @@ public sealed class AutoCompleteService : IAutoCompleteService
 
             var wordList = WordList.CreateFromFiles(dicPath, affPath);
 
-            // Index all root words from the dictionary
+            // Index root words and their common inflected forms.
+            // RootWords only contains stems (e.g. "disappoint") but not
+            // derived forms ("disappointed", "disappointing"). We expand each
+            // root with common English suffixes and validate via Check().
             lock (_lock)
             {
                 foreach (var entry in wordList.RootWords)
                 {
-                    if (entry.Length >= 2 && entry.All(c => char.IsLetter(c) || c == '\''))
+                    if (entry.Length < 2 || !entry.All(c => char.IsLetter(c) || c == '\''))
+                        continue;
+
+                    var lower = entry.ToLowerInvariant();
+                    Insert(lower, 1, increment: false);
+
+                    // Generate common inflected forms and keep any that the dictionary accepts
+                    foreach (var form in ExpandWordForms(lower))
                     {
-                        Insert(entry.ToLowerInvariant(), 1, increment: false);
+                        if (form.Length >= 2 && wordList.Check(form))
+                        {
+                            Insert(form, 1, increment: false);
+                        }
                     }
                 }
             }
 
-            Serilog.Log.Information("AutoComplete trie loaded with dictionary words");
+            Serilog.Log.Information("AutoComplete trie loaded with dictionary words and inflected forms");
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to load autocomplete dictionary");
         }
     }
+
+    /// <summary>
+    /// Generates common English inflected/derived forms from a root word.
+    /// Only candidates are returned — callers must validate via <see cref="WordList.Check"/>.
+    /// </summary>
+    private static IEnumerable<string> ExpandWordForms(string root)
+    {
+        // Direct suffixes
+        yield return root + "s";
+        yield return root + "es";
+        yield return root + "ed";
+        yield return root + "er";
+        yield return root + "ers";
+        yield return root + "est";
+        yield return root + "ing";
+        yield return root + "ings";
+        yield return root + "ly";
+        yield return root + "ment";
+        yield return root + "ments";
+        yield return root + "ness";
+        yield return root + "tion";
+        yield return root + "tions";
+        yield return root + "able";
+        yield return root + "ible";
+        yield return root + "ful";
+        yield return root + "less";
+        yield return root + "ous";
+        yield return root + "ive";
+        yield return root + "al";
+        yield return root + "ity";
+
+        if (root.Length < 3) yield break;
+
+        var last = root[^1];
+
+        // Consonant doubling: run → running, stop → stopped
+        if (last is not ('w' or 'x' or 'y') && !IsVowel(last))
+        {
+            var doubled = root + last;
+            yield return doubled + "ed";
+            yield return doubled + "er";
+            yield return doubled + "ers";
+            yield return doubled + "est";
+            yield return doubled + "ing";
+        }
+
+        // Silent-e drop: make → making, hope → hoped
+        if (last == 'e')
+        {
+            var trimmed = root[..^1];
+            yield return trimmed + "ing";
+            yield return trimmed + "ed";
+            yield return trimmed + "er";
+            yield return trimmed + "ers";
+            yield return trimmed + "est";
+            yield return trimmed + "able";
+            yield return trimmed + "ible";
+            yield return trimmed + "ation";
+            yield return trimmed + "ations";
+            yield return trimmed + "ive";
+        }
+
+        // Y → ied/ier/ies: happy → happier, carry → carried
+        if (last == 'y' && root.Length >= 3 && !IsVowel(root[^2]))
+        {
+            var trimmed = root[..^1];
+            yield return trimmed + "ied";
+            yield return trimmed + "ier";
+            yield return trimmed + "iers";
+            yield return trimmed + "ies";
+            yield return trimmed + "iest";
+            yield return trimmed + "ily";
+            yield return trimmed + "iness";
+        }
+    }
+
+    private static bool IsVowel(char c) => c is 'a' or 'e' or 'i' or 'o' or 'u';
 
     private void Insert(string word, int frequency, bool increment)
     {
