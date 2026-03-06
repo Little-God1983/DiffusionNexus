@@ -9,6 +9,7 @@ namespace DiffusionNexus.UI.Services.SpellCheck;
 public sealed class SpellCheckService : ISpellCheckService
 {
     private WordList? _wordList;
+    private readonly HashSet<string> _supplementaryWords = new(StringComparer.OrdinalIgnoreCase);
     private readonly IUserDictionaryService _userDictionary;
     private readonly string _dictionaryDirectory;
 
@@ -32,6 +33,7 @@ public sealed class SpellCheckService : ISpellCheckService
     {
         if (string.IsNullOrWhiteSpace(word)) return true;
         if (_userDictionary.Contains(word)) return true;
+        if (_supplementaryWords.Contains(word)) return true;
         return _wordList?.Check(word) ?? true;
     }
 
@@ -116,6 +118,34 @@ public sealed class SpellCheckService : ISpellCheckService
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to load spell check dictionary");
+        }
+
+        LoadSupplementaryWords();
+    }
+
+    private void LoadSupplementaryWords()
+    {
+        try
+        {
+            var path = Path.Combine(_dictionaryDirectory, "supplementary_words.txt");
+            if (!File.Exists(path)) return;
+
+            foreach (var line in File.ReadLines(path))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length >= 2 && !trimmed.StartsWith('#'))
+                {
+                    _supplementaryWords.Add(trimmed);
+                }
+            }
+
+            Serilog.Log.Information(
+                "Supplementary dictionary loaded with {Count} words from {Path}",
+                _supplementaryWords.Count, path);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to load supplementary dictionary");
         }
     }
 

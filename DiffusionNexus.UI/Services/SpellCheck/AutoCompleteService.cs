@@ -99,6 +99,43 @@ public sealed class AutoCompleteService : IAutoCompleteService
         {
             Serilog.Log.Error(ex, "Failed to load autocomplete dictionary");
         }
+
+        LoadSupplementaryWords(directory);
+    }
+
+    private void LoadSupplementaryWords(string directory)
+    {
+        try
+        {
+            var path = Path.Combine(directory, "supplementary_words.txt");
+            if (!File.Exists(path)) return;
+
+            int count = 0;
+            lock (_lock)
+            {
+                foreach (var line in File.ReadLines(path))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Length < 2 || trimmed.StartsWith('#'))
+                        continue;
+
+                    // Only index words that consist of letters, hyphens, or apostrophes
+                    if (!trimmed.All(c => char.IsLetter(c) || c is '\'' or '-'))
+                        continue;
+
+                    Insert(trimmed.ToLowerInvariant(), 1, increment: false);
+                    count++;
+                }
+            }
+
+            Serilog.Log.Information(
+                "AutoComplete trie supplemented with {Count} words from {Path}",
+                count, path);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to load supplementary autocomplete words");
+        }
     }
 
     /// <summary>
