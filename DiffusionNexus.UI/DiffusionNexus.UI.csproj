@@ -29,6 +29,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Dictionaries\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.12" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
@@ -57,6 +63,7 @@
     <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.3" />
     <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.3" />
     <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.3" />
+    <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1042,6 +1042,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                     var item = new CaptionHistoryItemViewModel(
                         p.LastResult.ImagePath, p.LastResult.Caption, thumbnail);
                     CaptionHistory.Insert(0, item);
+
+                    // Update dataset overview stats as captions are written to disk
+                    RefreshDatasetStats();
                 }
             });
 
