@@ -35,6 +35,7 @@
                         <Image Source="{Binding Logo}" Width="20" Height="20" IsVisible="{Binding Logo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                         <Ellipse Width="8" Height="8" Fill="#4CAF50" VerticalAlignment="Center" IsVisible="{Binding IsRunning}"/>
                         <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
+                        <TextBlock Text="&#x2B50;" FontSize="12" VerticalAlignment="Center" ToolTip.Tip="Default for this type" IsVisible="{Binding IsDefault}"/>
                       </StackPanel>
                     </Button>
                     <!-- Action buttons -->

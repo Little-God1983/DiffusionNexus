@@ -367,7 +367,10 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                 InstanceTabs.Clear();
                 foreach (var package in packages)
                 {
-                    var tab = new InstanceTabItem(package.Id, package.Name, package.Type);
+                    var tab = new InstanceTabItem(package.Id, package.Name, package.Type)
+                    {
+                        IsDefault = package.IsDefault
+                    };
 
                     // Restore running state if the process is still alive
                     if (_processManager?.IsRunning(package.Id) == true)

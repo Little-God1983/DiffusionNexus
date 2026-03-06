@@ -38,6 +38,12 @@ public partial class InstanceTabItem : ObservableObject
     private bool _isSelected;
 
     /// <summary>
+    /// Whether this installation is the default for its type.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDefault;
+
+    /// <summary>
     /// Show the Start button when not running.
     /// </summary>
     public bool ShowStartButton => !IsRunning;
