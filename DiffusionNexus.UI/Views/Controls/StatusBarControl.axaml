@@ -37,11 +37,11 @@
 
     <Grid RowDefinitions="Auto,Auto">
         
-        <!-- Expandable Log Panel -->
+        <!-- Expandable Unified Console Panel (replaces old Activity Log) -->
         <Border Grid.Row="0"
                 Height="250"
                 IsVisible="{Binding IsLogPanelOpen}">
-            <controls:ActivityLogPanel DataContext="{Binding LogViewModel}"/>
+            <controls:UnifiedConsoleView DataContext="{Binding UnifiedConsole}"/>
         </Border>
         
         <!-- Status Bar -->

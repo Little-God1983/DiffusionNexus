@@ -9,6 +9,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// Holds one tab per running process and supports pin/open behavior
 /// matching the Image Comparer tray pattern.
 /// </summary>
+[Obsolete("Use UnifiedConsoleViewModel instead. Will be removed once migration is complete.")]
 public partial class ProcessConsoleTrayViewModel : ViewModelBase
 {
     /// <summary>

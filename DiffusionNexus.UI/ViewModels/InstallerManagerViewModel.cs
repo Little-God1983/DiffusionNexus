@@ -44,6 +44,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// <summary>
     /// Bottom tray with one tab per running process console.
     /// </summary>
+    [Obsolete("Use the global UnifiedConsole in the StatusBar instead. Will be removed once migration is complete.")]
     public ProcessConsoleTrayViewModel ConsoleTray { get; } = new();
 
     /// <summary>

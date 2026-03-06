@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -33,8 +34,19 @@ public static class ServiceCollectionExtensions
         // Register SecureStorage
         services.AddSingleton<ISecureStorage, SecureStorageService>();
 
-        // Register ActivityLogService - singleton so all modules share the same log
-        services.AddSingleton<IActivityLogService, ActivityLogService>();
+        // Unified Logging – single source of truth for all logging
+        services.AddSingleton<IUnifiedLogger, UnifiedLogger>();
+
+        // Task Tracker – reusable progress tracking for long-running tasks
+        services.AddSingleton<ITaskTracker, TaskTracker>();
+
+        // Bridge: existing IActivityLogService consumers delegate to IUnifiedLogger
+#pragma warning disable CS0618 // Obsolete bridge kept for backward compatibility
+        services.AddSingleton<IActivityLogService>(sp =>
+            new ActivityLogServiceBridge(
+                sp.GetRequiredService<IUnifiedLogger>(),
+                sp.GetRequiredService<ITaskTracker>()));
+#pragma warning restore CS0618
 
         return services;
     }

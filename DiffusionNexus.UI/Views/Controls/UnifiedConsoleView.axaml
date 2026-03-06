@@ -1,0 +1,140 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+  xmlns:ul="using:DiffusionNexus.Domain.Services.UnifiedLogging"
+  x:Class="DiffusionNexus.UI.Views.Controls.UnifiedConsoleView"
+  x:DataType="vm:UnifiedConsoleViewModel">
+  <UserControl.Styles>
+    <Style Selector="ToggleButton.level-toggle">
+      <Setter Property="Padding" Value="8,4"/><Setter Property="FontSize" Value="12"/>
+      <Setter Property="CornerRadius" Value="3"/><Setter Property="MinWidth" Value="40"/>
+    </Style>
+    <Style Selector="ToggleButton.level-toggle:checked"><Setter Property="Background" Value="#3C3C3C"/></Style>
+    <Style Selector="Button.inst-start"><Setter Property="Background" Value="#28A745"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Button.inst-stop"><Setter Property="Background" Value="#DC3545"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Button.inst-restart"><Setter Property="Background" Value="#0088CC"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Button.inst-webui"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#0088CC"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="4,2"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <!-- Instance tab card: default vs selected -->
+    <Style Selector="Border.inst-tab"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Border.inst-tab-selected"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#0088CC"/><Setter Property="Cursor" Value="Hand"/></Style>
+  </UserControl.Styles>
+  <Border Background="#1E1E1E" BorderBrush="#3C3C3C" BorderThickness="0,1,0,0">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
+      <!-- Instance Tabs: Start/Stop instances from any module -->
+      <Border Grid.Row="0" Background="#1B1B1B" Padding="4,4" IsVisible="{Binding HasInstances}">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+          <ItemsControl ItemsSource="{Binding InstanceTabs}">
+            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:InstanceTabItem">
+                <Border Classes.inst-tab="{Binding !IsSelected}" Classes.inst-tab-selected="{Binding IsSelected}">
+                  <Grid RowDefinitions="Auto,Auto">
+                    <!-- Name + running indicator (clickable to filter) -->
+                    <Button Grid.Row="0" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand" HorizontalContentAlignment="Left" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).FilterByInstanceCommand}" CommandParameter="{Binding}">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Image Source="{Binding Logo}" Width="20" Height="20" IsVisible="{Binding Logo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                        <Ellipse Width="8" Height="8" Fill="#4CAF50" VerticalAlignment="Center" IsVisible="{Binding IsRunning}"/>
+                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
+                      </StackPanel>
+                    </Button>
+                    <!-- Action buttons -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+                      <!-- Start (when not running) -->
+                      <Button Classes="inst-start" IsVisible="{Binding ShowStartButton}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).LaunchInstanceCommand}" CommandParameter="{Binding}">
+                        <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x25B6;" FontSize="9" VerticalAlignment="Center"/><TextBlock Text="Start" VerticalAlignment="Center"/></StackPanel>
+                      </Button>
+                      <!-- Stop (when running) -->
+                      <Button Classes="inst-stop" IsVisible="{Binding ShowStopButtons}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).StopInstanceCommand}" CommandParameter="{Binding}">
+                        <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x25A0;" FontSize="9" VerticalAlignment="Center"/><TextBlock Text="Stop" VerticalAlignment="Center"/></StackPanel>
+                      </Button>
+                      <!-- Restart (when running) -->
+                      <Button Classes="inst-restart" IsVisible="{Binding ShowStopButtons}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).RestartInstanceCommand}" CommandParameter="{Binding}">
+                        <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x21BB;" FontSize="11" VerticalAlignment="Center"/><TextBlock Text="Restart" VerticalAlignment="Center"/></StackPanel>
+                      </Button>
+                      <!-- Open Web UI (when URL detected) -->
+                      <Button Classes="inst-webui" IsVisible="{Binding DetectedWebUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).OpenInstanceWebUiCommand}" CommandParameter="{Binding}">
+                        <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x2197;" FontSize="11"/><TextBlock Text="Web UI"/></StackPanel>
+                      </Button>
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+      <!-- Task filter banner -->
+      <Border Grid.Row="1" Background="#2E4A60" Padding="8,4" IsVisible="{Binding TaskIdFilter, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Content="Clear Filter" Command="{Binding ClearTaskFilterCommand}" Padding="6,2" FontSize="11"/>
+          <TextBlock Text="{Binding TaskIdFilter, StringFormat='Filtered to task: {0}'}" FontSize="12" VerticalAlignment="Center"/>
+        </DockPanel>
+      </Border>
+      <!-- Filter bar -->
+      <Border Grid.Row="2" Background="#252526" Padding="8,6">
+        <Grid ColumnDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Unified Console" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding TotalEntryCount, StringFormat='({0})'}" Foreground="#808080" FontSize="12" VerticalAlignment="Center"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+            <ToggleButton Classes="level-toggle" Content="TRC" IsChecked="{Binding ShowTrace}"/>
+            <ToggleButton Classes="level-toggle" Content="DBG" IsChecked="{Binding ShowDebug}"/>
+            <ToggleButton Classes="level-toggle" Content="INF" IsChecked="{Binding ShowInfo}"/>
+            <ToggleButton Classes="level-toggle" Content="WRN" IsChecked="{Binding ShowWarning}"/>
+            <ToggleButton Classes="level-toggle" Content="ERR" IsChecked="{Binding ShowError}"/>
+            <Border Width="1" Background="#3C3C3C" Margin="8,0"/>
+            <ComboBox ItemsSource="{Binding AvailableCategories}" SelectedItem="{Binding CategoryFilter}" PlaceholderText="All Categories" MinWidth="130" FontSize="12"/>
+            <Border Width="1" Background="#3C3C3C" Margin="8,0"/>
+            <TextBox Text="{Binding SearchText}" Watermark="Search..." MinWidth="150" FontSize="12"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+            <Button Content="Errors Only" Command="{Binding ShowErrorsOnlyCommand}" Padding="8,4" FontSize="12"/>
+            <Button Content="Show All" Command="{Binding ShowAllCommand}" Padding="8,4" FontSize="12"/>
+            <Button Content="Clear" Command="{Binding ClearLogCommand}" Padding="8,4" FontSize="12"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+      <!-- Active Tasks -->
+      <Border Grid.Row="3" Background="#252526" Padding="8,6" IsVisible="{Binding HasActiveTasks}">
+        <StackPanel>
+          <TextBlock Text="Active Tasks" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"/>
+          <ItemsControl ItemsSource="{Binding ActiveTasks}">
+            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="4"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="ul:TrackedTaskInfo">
+                <Border Background="#2D2D30" Padding="8,6" CornerRadius="4">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                      <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold"/>
+                      <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="1" Height="4"/>
+                      <TextBlock Text="{Binding StatusText}" Foreground="#808080" FontSize="11" IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Cancel" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).CancelTaskCommand}" CommandParameter="{Binding}" Padding="8,4" FontSize="11"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+      <!-- Log Entries -->
+      <ListBox x:Name="LogEntriesListBox" Grid.Row="4" ItemsSource="{Binding FilteredEntries}" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="ul:LogEntry">
+            <Border Padding="8,3" Margin="0,1" CornerRadius="2">
+              <Grid ColumnDefinitions="70,40,90,*">
+                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" Foreground="#808080" FontSize="11" FontFamily="Consolas,Menlo,monospace"/>
+                <TextBlock Grid.Column="1" Text="{Binding LevelAbbreviation}" FontSize="11" FontWeight="Bold" FontFamily="Consolas,Menlo,monospace"/>
+                <TextBlock Grid.Column="2" Text="{Binding Source}" FontSize="11" Foreground="#007ACC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="3" Text="{Binding Message}" FontSize="12" TextWrapping="Wrap"/>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <!-- Empty state -->
+      <TextBlock Grid.Row="4" Text="No log entries" Foreground="#606060" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding !FilteredEntries.Count}"/>
+    </Grid>
+  </Border>
+</UserControl>

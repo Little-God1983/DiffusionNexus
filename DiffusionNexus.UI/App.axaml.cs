@@ -107,6 +107,12 @@ public partial class App : Application
                 Serilog.Log.Information("Initializing status bar...");
                 mainViewModel.InitializeStatusBar();
 
+                // Force-resolve the InstanceProcessManager singleton so its constructor
+                // wires PackageProcessManager.OutputReceived ? IUnifiedLogger.
+                // Without this, process stdout/stderr never reaches the Unified Console.
+                Serilog.Log.Information("Initializing instance process manager...");
+                _ = Services!.GetRequiredService<IInstanceProcessManager>();
+
                 // Create and assign the main window before registering modules,
                 // because module resolution requires IDialogService which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
@@ -131,6 +137,8 @@ public partial class App : Application
                 // Cleanup on shutdown
                 desktop.ShutdownRequested += (_, _) =>
                 {
+                    // Dispose the instance process manager (unwires events)
+                    (Services?.GetService<IInstanceProcessManager>() as IDisposable)?.Dispose();
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
@@ -535,6 +543,15 @@ public partial class App : Application
 
         // Package process manager (singleton - owns child process lifecycles)
         services.AddSingleton<PackageProcessManager>();
+
+        // Instance process manager - decouples instance lifecycle from views,
+        // pipes stdout/stderr through IUnifiedLogger
+        services.AddSingleton<IInstanceProcessManager>(sp =>
+            new InstanceProcessManager(
+                sp.GetRequiredService<PackageProcessManager>(),
+                sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+                sp.GetRequiredService<Domain.Services.UnifiedLogging.ITaskTracker>(),
+                sp));
 
         // ?? Installer SDK services ??
         // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
