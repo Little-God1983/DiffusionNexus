@@ -2,6 +2,7 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -69,7 +70,8 @@ public class InstallerManagerViewModelTests
             mockEventAggregator.Object,
             mockConfigRepo.Object,
             mockCheckerService.Object,
-            mockInstallService.Object);
+            mockInstallService.Object,
+            Enumerable.Empty<IInstallerUpdateService>());
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -118,7 +120,8 @@ public class InstallerManagerViewModelTests
             mockEventAggregator.Object,
             mockConfigRepo.Object,
             mockCheckerService.Object,
-            mockInstallService.Object);
+            mockInstallService.Object,
+            Enumerable.Empty<IInstallerUpdateService>());
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -178,7 +181,8 @@ public class InstallerManagerViewModelTests
             mockEventAggregator.Object,
             mockConfigRepo.Object,
             mockCheckerService.Object,
-            mockInstallService.Object);
+            mockInstallService.Object,
+            Enumerable.Empty<IInstallerUpdateService>());
 
         // Load cards
         await vm.LoadInstallationsCommand.ExecuteAsync(null);

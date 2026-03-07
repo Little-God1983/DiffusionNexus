@@ -29,6 +29,7 @@ public partial class InstanceTabItem : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowStartButton))]
     [NotifyPropertyChangedFor(nameof(ShowStopButtons))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isRunning;
 
     [ObservableProperty]
@@ -44,6 +45,31 @@ public partial class InstanceTabItem : ObservableObject
     private bool _isDefault;
 
     /// <summary>
+    /// Whether a newer version is available on the remote.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isUpdateAvailable;
+
+    /// <summary>
+    /// Whether an update operation is currently running.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isUpdating;
+
+    /// <summary>
+    /// Human-readable summary of the update status (e.g. "3 commits behind origin/main").
+    /// </summary>
+    [ObservableProperty]
+    private string? _updateSummary;
+
+    /// <summary>
+    /// The installation root path (needed for update operations).
+    /// </summary>
+    public string InstallationPath { get; init; } = string.Empty;
+
+    /// <summary>
     /// Show the Start button when not running.
     /// </summary>
     public bool ShowStartButton => !IsRunning;
@@ -52,6 +78,11 @@ public partial class InstanceTabItem : ObservableObject
     /// Show Stop/Restart/WebUI when running.
     /// </summary>
     public bool ShowStopButtons => IsRunning;
+
+    /// <summary>
+    /// Show the Update button when an update is available, not currently updating, and not running.
+    /// </summary>
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning;
 
     /// <summary>
     /// Small logo for the tab.

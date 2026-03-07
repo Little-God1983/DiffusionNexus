@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -369,7 +370,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                 {
                     var tab = new InstanceTabItem(package.Id, package.Name, package.Type)
                     {
-                        IsDefault = package.IsDefault
+                        IsDefault = package.IsDefault,
+                        InstallationPath = package.InstallationPath,
+                        IsUpdateAvailable = package.IsUpdateAvailable
                     };
 
                     // Restore running state if the process is still alive
@@ -382,6 +385,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                     InstanceTabs.Add(tab);
                 }
                 HasInstances = InstanceTabs.Count > 0;
+
+                // Check for updates in the background after loading
+                _ = CheckAllForUpdatesAsync();
             });
         }
         catch (Exception ex)
@@ -455,6 +461,137 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to open Web UI at {Url}", tab.DetectedWebUrl);
+        }
+    }
+
+    [RelayCommand]
+    private async Task UpdateInstanceAsync(InstanceTabItem? tab)
+    {
+        if (tab is null || _serviceProvider is null) return;
+        if (tab.IsRunning)
+        {
+            _logger.Log(LogLevel.Warning, LogCategory.InstanceManagement, tab.Name,
+                "Cannot update while instance is running. Stop it first.");
+            return;
+        }
+
+        var updateService = ResolveUpdateService(tab.Type);
+        if (updateService is null)
+        {
+            _logger.Log(LogLevel.Warning, LogCategory.InstanceManagement, tab.Name,
+                "No update service available for this installer type.");
+            return;
+        }
+
+        tab.IsUpdating = true;
+        var progress = new Progress<string>(msg =>
+            _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name, msg));
+
+        try
+        {
+            var result = await updateService.UpdateAsync(tab.InstallationPath, progress);
+
+            if (result.Success)
+            {
+                tab.IsUpdateAvailable = false;
+                tab.UpdateSummary = "Up to date";
+
+                // Persist the new version hash to the database
+                if (result.NewHash is not null)
+                    await UpdatePackageVersionAsync(tab.PackageId, result.NewHash);
+
+                _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name,
+                    $"Update complete: {result.Message}");
+            }
+            else
+            {
+                _logger.Log(LogLevel.Error, LogCategory.InstanceManagement, tab.Name,
+                    $"Update failed: {result.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Update failed for {Name}", tab.Name);
+            _logger.Log(LogLevel.Error, LogCategory.InstanceManagement, tab.Name,
+                $"Update error: {ex.Message}");
+        }
+        finally
+        {
+            tab.IsUpdating = false;
+        }
+    }
+
+    /// <summary>
+    /// Checks all instances for available updates in parallel.
+    /// </summary>
+    private async Task CheckAllForUpdatesAsync()
+    {
+        var tasks = InstanceTabs.Select(tab => CheckForUpdatesAsync(tab));
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task CheckForUpdatesAsync(InstanceTabItem tab)
+    {
+        var updateService = ResolveUpdateService(tab.Type);
+        if (updateService is null) return;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var result = await updateService.CheckForUpdatesAsync(tab.InstallationPath, ct: cts.Token);
+            Dispatcher.UIThread.Post(() =>
+            {
+                tab.IsUpdateAvailable = result.IsUpdateAvailable;
+                tab.UpdateSummary = result.Summary;
+            });
+
+            if (result.IsUpdateAvailable)
+            {
+                Serilog.Log.Information("Update available for {Name}: {Summary}",
+                    tab.Name, result.Summary);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Serilog.Log.Warning("Update check timed out for {Name} at {Path}",
+                tab.Name, tab.InstallationPath);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Update check failed for {Name} at {Path}",
+                tab.Name, tab.InstallationPath);
+        }
+    }
+
+    private IInstallerUpdateService? ResolveUpdateService(Domain.Enums.InstallerType type)
+    {
+        if (_serviceProvider is null) return null;
+
+        var services = _serviceProvider.GetServices<IInstallerUpdateService>();
+        return services.FirstOrDefault(s => s.SupportedTypes.Contains(type));
+    }
+
+    private async Task UpdatePackageVersionAsync(int packageId, string newHash)
+    {
+        if (_serviceProvider is null) return;
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+
+            var package = await repo.GetByIdAsync(packageId);
+            if (package is not null)
+            {
+                package.Version = newHash;
+                package.IsUpdateAvailable = false;
+                await unitOfWork.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to persist new version for package {Id}", packageId);
         }
     }
 

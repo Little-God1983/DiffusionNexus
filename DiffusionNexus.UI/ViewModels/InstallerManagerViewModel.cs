@@ -29,6 +29,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IConfigurationRepository _configurationRepository;
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
+    private readonly IEnumerable<IInstallerUpdateService> _updateServices;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -61,7 +62,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IDatasetEventAggregator eventAggregator,
         IConfigurationRepository configurationRepository,
         IConfigurationCheckerService checkerService,
-        IWorkloadInstallService installService)
+        IWorkloadInstallService installService,
+        IEnumerable<IInstallerUpdateService> updateServices)
     {
         _dialogService = dialogService;
         _installerPackageRepository = installerPackageRepository;
@@ -72,6 +74,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _configurationRepository = configurationRepository;
         _checkerService = checkerService;
         _installService = installService;
+        _updateServices = updateServices;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -98,6 +101,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 InstallerCards.Add(CreateCard(package));
             }
+
+            // Check for updates in the background after loading
+            _ = CheckAllCardsForUpdatesAsync();
         }
         catch (Exception ex)
         {
@@ -210,6 +216,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.ConsoleRequested += OnConsoleRequestedAsync;
         card.MakeDefaultRequested += OnMakeDefaultRequestedAsync;
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        card.UpdateRequested += OnUpdateRequestedAsync;
 
         // Restore running state if the process is still alive
         if (_processManager.IsRunning(card.Id))
@@ -511,6 +518,106 @@ public partial class InstallerManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to open folder {Path}", card.InstallationPath);
+        }
+    }
+
+    private async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        if (card.IsRunning)
+        {
+            await _dialogService.ShowMessageAsync("Cannot Update", "Please stop the running process before updating.");
+            return;
+        }
+
+        var service = _updateServices.FirstOrDefault(s => s.SupportedTypes.Contains(card.Type));
+        if (service is null)
+        {
+            await _dialogService.ShowMessageAsync("Not Supported", "Update is not supported for this installer type.");
+            return;
+        }
+
+        card.IsUpdating = true;
+        try
+        {
+            var result = await service.UpdateAsync(card.InstallationPath);
+            if (result.Success)
+            {
+                card.IsUpdateAvailable = false;
+
+                // Persist new version
+                if (result.NewHash is not null)
+                {
+                    var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+                    if (entity is not null)
+                    {
+                        entity.Version = result.NewHash;
+                        entity.IsUpdateAvailable = false;
+                        await _unitOfWork.SaveChangesAsync();
+
+                        // Update the card's version display
+                        var branch = string.IsNullOrWhiteSpace(entity.Branch) ? null : entity.Branch;
+                        card.VersionDisplay = branch is not null ? $"{branch}@{result.NewHash}" : result.NewHash;
+                    }
+                }
+
+                await _dialogService.ShowMessageAsync("Update Complete", result.Message);
+            }
+            else
+            {
+                await _dialogService.ShowMessageAsync("Update Failed", result.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to update installation {Name}", card.Name);
+            await _dialogService.ShowMessageAsync("Error", $"Update failed: {ex.Message}");
+        }
+        finally
+        {
+            card.IsUpdating = false;
+        }
+    }
+
+    /// <summary>
+    /// Checks all installer cards for available updates in parallel.
+    /// Each check has a per-instance timeout to avoid blocking the others.
+    /// </summary>
+    private async Task CheckAllCardsForUpdatesAsync()
+    {
+        var tasks = InstallerCards.Select(card => CheckCardForUpdatesAsync(card));
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task CheckCardForUpdatesAsync(InstallerPackageCardViewModel card)
+    {
+        var service = _updateServices.FirstOrDefault(s => s.SupportedTypes.Contains(card.Type));
+        if (service is null) return;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var result = await service.CheckForUpdatesAsync(card.InstallationPath, ct: cts.Token);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                card.IsUpdateAvailable = result.IsUpdateAvailable;
+            });
+
+            if (result.IsUpdateAvailable)
+            {
+                Serilog.Log.Information("Update available for {Name}: {Summary}",
+                    card.Name, result.Summary);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Serilog.Log.Warning("Update check timed out for {Name} at {Path}",
+                card.Name, card.InstallationPath);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Update check failed for {Name} at {Path}",
+                card.Name, card.InstallationPath);
         }
     }
 

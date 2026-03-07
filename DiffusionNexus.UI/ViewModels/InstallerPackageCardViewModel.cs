@@ -40,7 +40,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string _arguments = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isUpdateAvailable;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isUpdating;
 
     [ObservableProperty]
     private bool _isDefault;
@@ -50,6 +55,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
     [NotifyPropertyChangedFor(nameof(ShowRunningControls))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isRunning;
 
     [ObservableProperty]
@@ -64,6 +70,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// True when running — show Stop/Restart/Console buttons.
     /// </summary>
     public bool ShowRunningControls => IsRunning;
+
+    /// <summary>
+    /// True when an update is available, not currently updating, and not running.
+    /// </summary>
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning;
 
     /// <summary>
     /// True when this installation is a ComfyUI installation.
@@ -126,6 +137,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// Raised when the user requests to make this installation the default for its type.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? MakeDefaultRequested;
+
+    /// <summary>
+    /// Raised when the user requests to update this installation.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? UpdateRequested;
 
     /// <summary>
     /// Logo image resolved from the installer type.
@@ -279,5 +295,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private void OpenFolder()
     {
         OpenFolderRequested?.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task UpdateAsync()
+    {
+        if (UpdateRequested is not null)
+            await UpdateRequested.Invoke(this);
     }
 }

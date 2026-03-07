@@ -574,6 +574,9 @@ public partial class App : Application
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IPythonService, PythonService>();
 
+        // Installer update services (one per supported type)
+        services.AddSingleton<Domain.Services.IInstallerUpdateService, Service.Services.ComfyUIUpdateService>();
+
         // Register the orchestrator and engine
         services.AddSingleton<IInstallationOrchestrator, InstallationOrchestrator>();
         services.AddSingleton<InstallationEngine>(sp =>
@@ -648,7 +651,8 @@ public partial class App : Application
             sp.GetRequiredService<IDatasetEventAggregator>(),
             sp.GetRequiredService<IConfigurationRepository>(),
             sp.GetRequiredService<IConfigurationCheckerService>(),
-            sp.GetRequiredService<IWorkloadInstallService>()));
+            sp.GetRequiredService<IWorkloadInstallService>(),
+            sp.GetServices<Domain.Services.IInstallerUpdateService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

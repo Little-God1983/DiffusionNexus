@@ -14,6 +14,7 @@
     <Style Selector="Button.inst-stop"><Setter Property="Background" Value="#DC3545"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Button.inst-restart"><Setter Property="Background" Value="#0088CC"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Button.inst-webui"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#0088CC"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="4,2"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Button.inst-update"><Setter Property="Background" Value="#FF8C00"/><Setter Property="Foreground" Value="White"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="6,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Cursor" Value="Hand"/></Style>
     <!-- Instance tab card: default vs selected -->
     <Style Selector="Border.inst-tab"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Border.inst-tab-selected"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#0088CC"/><Setter Property="Cursor" Value="Hand"/></Style>
@@ -56,6 +57,12 @@
                       <Button Classes="inst-webui" IsVisible="{Binding DetectedWebUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).OpenInstanceWebUiCommand}" CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x2197;" FontSize="11"/><TextBlock Text="Web UI"/></StackPanel>
                       </Button>
+                      <!-- Update (when update available, not running, not already updating) -->
+                      <Button Classes="inst-update" IsVisible="{Binding ShowUpdateButton}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).UpdateInstanceCommand}" CommandParameter="{Binding}" ToolTip.Tip="{Binding UpdateSummary}">
+                        <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x2B06;" FontSize="10" VerticalAlignment="Center"/><TextBlock Text="Update" VerticalAlignment="Center"/></StackPanel>
+                      </Button>
+                      <!-- Updating spinner -->
+                      <TextBlock Text="Updating..." FontSize="11" Foreground="#FF8C00" VerticalAlignment="Center" IsVisible="{Binding IsUpdating}"/>
                     </StackPanel>
                   </Grid>
                 </Border>
