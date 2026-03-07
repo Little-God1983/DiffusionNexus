@@ -1,4 +1,6 @@
+using Avalonia.Input.Platform;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
@@ -197,8 +199,10 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyTriggerWordsAsync()
     {
-        // TODO: Implement clipboard copy
-        await Task.CompletedTask;
+        var triggerWords = SelectedVersion?.TriggerWordsText;
+        if (string.IsNullOrWhiteSpace(triggerWords)) return;
+
+        await CopyToClipboardAsync(triggerWords);
     }
 
     /// <summary>
@@ -207,8 +211,27 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyFileNameAsync()
     {
-        // TODO: Implement clipboard copy for filename
-        await Task.CompletedTask;
+        var fileName = FileName;
+        if (string.IsNullOrWhiteSpace(fileName)) return;
+
+        await CopyToClipboardAsync(fileName);
+    }
+
+    /// <summary>
+    /// Copies text to the system clipboard via the Avalonia TopLevel.
+    /// </summary>
+    private static async Task CopyToClipboardAsync(string text)
+    {
+        var topLevel = Avalonia.Application.Current?.ApplicationLifetime
+            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
+
+        var clipboard = topLevel?.Clipboard;
+        if (clipboard is not null)
+        {
+            await clipboard.SetTextAsync(text);
+        }
     }
 
     /// <summary>
@@ -396,9 +419,61 @@ public partial class ModelTileViewModel : ViewModelBase
                 ThumbnailImage = null;
             }
         }
+        else if (SelectedVersion?.PrimaryImage is { } image && !string.IsNullOrEmpty(image.Url))
+        {
+            // No BLOB cached yet — download from Civitai URL in background
+            ThumbnailImage = null;
+            _ = DownloadThumbnailAsync(image);
+        }
         else
         {
             ThumbnailImage = null;
+        }
+    }
+
+    /// <summary>
+    /// Downloads a thumbnail from a Civitai image URL and caches it as a BLOB.
+    /// </summary>
+    private async Task DownloadThumbnailAsync(ModelImage image)
+    {
+        IsLoading = true;
+        try
+        {
+            // Civitai supports width parameter for resized images
+            var thumbnailUrl = image.Url.Contains('?')
+                ? $"{image.Url}&width=300"
+                : $"{image.Url}/width=300";
+
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var imageBytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
+
+            if (imageBytes.Length == 0) return;
+
+            // Store as BLOB for future fast loading
+            image.ThumbnailData = imageBytes;
+            image.ThumbnailMimeType = "image/jpeg";
+
+            // Display the downloaded thumbnail
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                try
+                {
+                    using var stream = new MemoryStream(imageBytes);
+                    ThumbnailImage = new Bitmap(stream);
+                }
+                catch
+                {
+                    ThumbnailImage = null;
+                }
+            });
+        }
+        catch
+        {
+            // Network errors are expected — silently fail
+        }
+        finally
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
         }
     }
 

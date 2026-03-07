@@ -593,6 +593,9 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
+        // Civitai API client (singleton - maintains HttpClient)
+        services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
+
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
@@ -641,7 +644,11 @@ public partial class App : Application
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>()));
         
-        services.AddScoped<LoraViewerViewModel>();
+        services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<IModelSyncService>(),
+            sp.GetService<Civitai.ICivitaiClient>(),
+            sp.GetService<ISecureStorage>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<IInstallerPackageRepository>(),
@@ -706,7 +713,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(loraDatasetHelperModule);
 
-        // LoRA Viewer module (hidden for now)
+        // LoRA Viewer module
         var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
         var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
 
@@ -714,7 +721,10 @@ public partial class App : Application
             "LoRA Viewer",
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
             loraViewerView,
-            isVisible: false));
+            isVisible: true)
+        {
+            ViewModel = loraViewerVm
+        });
 
         // Generation Gallery module
         var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();

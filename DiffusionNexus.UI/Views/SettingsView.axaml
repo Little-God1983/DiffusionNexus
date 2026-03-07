@@ -78,9 +78,7 @@
           </Border>
         </Expander>
 
-        <!-- LoRA Viewer settings – hidden until the LoRA Viewer module is integrated.
-             Do NOT remove; the ViewModel logic is still in place and will be re-enabled. -->
-        <!--
+        <!-- LoRA Viewer -->
         <Expander Header="LoRA Viewer" IsExpanded="False" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="16">
@@ -143,7 +141,6 @@
             </StackPanel>
           </Border>
         </Expander>
-        -->
 
         <!-- Generation Galleries -->
         <Expander Header="Generation Galleries" IsExpanded="False" HorizontalAlignment="Stretch">
