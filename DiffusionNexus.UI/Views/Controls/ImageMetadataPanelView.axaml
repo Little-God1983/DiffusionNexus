@@ -87,8 +87,8 @@
             </Border.Transitions>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          Padding="16,12">
-                <StackPanel Spacing="12">
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="12" Margin="16,12,16,12">
 
                     <!-- Header -->
                     <TextBlock Text="Generation Data"
