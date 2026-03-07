@@ -1,7 +1,8 @@
 namespace DiffusionNexus.UI.Models;
 
 /// <summary>
-/// Holds parsed generation metadata extracted from a ComfyUI-generated PNG image.
+/// Holds parsed generation metadata extracted from a PNG image.
+/// Supports ComfyUI (JSON workflow graph), Automatic1111, and Forge UI (plain-text parameters).
 /// </summary>
 public record ImageGenerationData
 {
