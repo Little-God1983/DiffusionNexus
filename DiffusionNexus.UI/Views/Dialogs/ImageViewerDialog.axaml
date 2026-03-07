@@ -116,7 +116,7 @@
           
           <!-- Keyboard shortcuts hint -->
           <TextBlock Grid.Column="4"
-                     Text="Arrow keys: Navigate  |  Esc: Close"
+                     Text="Arrow keys: Navigate  |  M: Metadata  |  Esc: Close"
                      FontSize="11"
                      Foreground="#666"
                      VerticalAlignment="Center"
@@ -135,9 +135,12 @@
                   ToolTip.Tip="Close (Escape)"/>
         </Grid>
       </Border>
-      
-      <!-- Image display area with navigation -->
-      <Grid Grid.Row="1">
+
+      <!-- Image display area + metadata panel -->
+      <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+
+        <!-- Image display area with navigation -->
+        <Grid Grid.Column="0">
         
         <!-- Previous button (left side) -->
         <Button Content="&lt;"
@@ -243,9 +246,15 @@
             </StackPanel>
           </StackPanel>
         </Border>
-        
+
+        </Grid>
+
+        <!-- Metadata side panel -->
+        <controls:ImageMetadataPanelView Grid.Column="1"
+                                          DataContext="{Binding MetadataPanel}"/>
+
       </Grid>
-      
+
       <!-- Bottom toolbar with actions and caption editor -->
       <Border Grid.Row="2"
               Background="#CC1A1A1A"

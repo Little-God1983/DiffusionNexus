@@ -185,6 +185,12 @@ public partial class ImageViewerDialog : Window
                     e.Handled = true;
                 }
                 break;
+
+            case Key.M:
+                // M key toggles metadata panel
+                _viewModel.MetadataPanel.TogglePanelCommand.Execute(null);
+                e.Handled = true;
+                break;
         }
     }
 }
