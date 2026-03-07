@@ -372,7 +372,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                     {
                         IsDefault = package.IsDefault,
                         InstallationPath = package.InstallationPath,
-                        IsUpdateAvailable = package.IsUpdateAvailable
+                        IsUpdateAvailable = package.IsUpdateAvailable,
+                        IsMissing = !Directory.Exists(package.InstallationPath)
                     };
 
                     // Restore running state if the process is still alive

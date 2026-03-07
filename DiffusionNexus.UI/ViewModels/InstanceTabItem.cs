@@ -70,9 +70,17 @@ public partial class InstanceTabItem : ObservableObject
     public string InstallationPath { get; init; } = string.Empty;
 
     /// <summary>
-    /// Show the Start button when not running.
+    /// True when the installation folder no longer exists on disk.
     /// </summary>
-    public bool ShowStartButton => !IsRunning;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowStartButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isMissing;
+
+    /// <summary>
+    /// Show the Start button when not running and not missing.
+    /// </summary>
+    public bool ShowStartButton => !IsRunning && !IsMissing;
 
     /// <summary>
     /// Show Stop/Restart/WebUI when running.
@@ -80,9 +88,9 @@ public partial class InstanceTabItem : ObservableObject
     public bool ShowStopButtons => IsRunning;
 
     /// <summary>
-    /// Show the Update button when an update is available, not currently updating, and not running.
+    /// Show the Update button when an update is available, not currently updating, not running, and not missing.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing;
 
     /// <summary>
     /// Small logo for the tab.

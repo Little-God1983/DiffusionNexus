@@ -50,6 +50,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isDefault;
 
+    /// <summary>
+    /// True when the installation folder no longer exists on disk.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isMissing;
+
     // ── Process state ──
 
     [ObservableProperty]
@@ -62,9 +70,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string? _detectedWebUrl;
 
     /// <summary>
-    /// True when not running — show the Launch button.
+    /// True when not running and not missing — show the Launch button.
     /// </summary>
-    public bool ShowLaunchButton => !IsRunning;
+    public bool ShowLaunchButton => !IsRunning && !IsMissing;
 
     /// <summary>
     /// True when running — show Stop/Restart/Console buttons.
@@ -72,9 +80,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public bool ShowRunningControls => IsRunning;
 
     /// <summary>
-    /// True when an update is available, not currently updating, and not running.
+    /// True when an update is available, not currently updating, not running, and not missing.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing;
 
     /// <summary>
     /// True when this installation is a ComfyUI installation.

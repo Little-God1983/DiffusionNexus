@@ -218,8 +218,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
         card.UpdateRequested += OnUpdateRequestedAsync;
 
+        // Check if the installation folder still exists on disk
+        card.IsMissing = !Directory.Exists(package.InstallationPath);
+
         // Restore running state if the process is still alive
-        if (_processManager.IsRunning(card.Id))
+        if (!card.IsMissing && _processManager.IsRunning(card.Id))
         {
             card.IsRunning = true;
             card.DetectedWebUrl = _processManager.GetDetectedUrl(card.Id);

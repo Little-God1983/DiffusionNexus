@@ -18,6 +18,7 @@
     <!-- Instance tab card: default vs selected -->
     <Style Selector="Border.inst-tab"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Border.inst-tab-selected"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#0088CC"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Border.inst-tab-missing"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#DC3545"/><Setter Property="Opacity" Value="0.6"/></Style>
   </UserControl.Styles>
   <Border Background="#1E1E1E" BorderBrush="#3C3C3C" BorderThickness="0,1,0,0">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
@@ -28,19 +29,22 @@
             <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:InstanceTabItem">
-                <Border Classes.inst-tab="{Binding !IsSelected}" Classes.inst-tab-selected="{Binding IsSelected}">
+                <Border Classes.inst-tab="{Binding !IsSelected}" Classes.inst-tab-selected="{Binding IsSelected}" Classes.inst-tab-missing="{Binding IsMissing}">
                   <Grid RowDefinitions="Auto,Auto">
                     <!-- Name + running indicator (clickable to filter) -->
                     <Button Grid.Row="0" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand" HorizontalContentAlignment="Left" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).FilterByInstanceCommand}" CommandParameter="{Binding}">
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <Image Source="{Binding Logo}" Width="20" Height="20" IsVisible="{Binding Logo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
                         <Ellipse Width="8" Height="8" Fill="#4CAF50" VerticalAlignment="Center" IsVisible="{Binding IsRunning}"/>
+                        <Ellipse Width="8" Height="8" Fill="#DC3545" VerticalAlignment="Center" IsVisible="{Binding IsMissing}"/>
                         <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
                         <TextBlock Text="&#x2B50;" FontSize="12" VerticalAlignment="Center" ToolTip.Tip="Default for this type" IsVisible="{Binding IsDefault}"/>
                       </StackPanel>
                     </Button>
-                    <!-- Action buttons -->
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+                    <!-- Missing indicator -->
+                    <TextBlock Grid.Row="1" Text="Not Found" FontSize="10" Foreground="#DC3545" FontWeight="SemiBold" Margin="0,2,0,0" IsVisible="{Binding IsMissing}"/>
+                    <!-- Action buttons (hidden when missing) -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0" IsVisible="{Binding !IsMissing}">
                       <!-- Start (when not running) -->
                       <Button Classes="inst-start" IsVisible="{Binding ShowStartButton}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).LaunchInstanceCommand}" CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x25B6;" FontSize="9" VerticalAlignment="Center"/><TextBlock Text="Start" VerticalAlignment="Center"/></StackPanel>

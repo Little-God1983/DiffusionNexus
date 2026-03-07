@@ -311,6 +311,17 @@
                                     </Grid>
                                 </Grid>
 
+                                <!-- Not Found banner (when folder deleted from disk) -->
+                                <Border Grid.Row="1"
+                                        Background="#44DC3545"
+                                        Padding="12,8"
+                                        IsVisible="{Binding IsMissing}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                        <TextBlock Text="&#x26A0;" FontSize="14" Foreground="#DC3545" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Installation folder not found" FontSize="13" Foreground="#DC3545" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+
                                 <!-- Launch + Workloads (when not running) -->
                                 <StackPanel Grid.Row="1"
                                             Spacing="4"
