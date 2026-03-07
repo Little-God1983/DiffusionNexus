@@ -37,11 +37,11 @@
 
     <Grid RowDefinitions="Auto,Auto">
         
-        <!-- Expandable Log Panel -->
+        <!-- Expandable Unified Console Panel (replaces old Activity Log) -->
         <Border Grid.Row="0"
                 Height="250"
                 IsVisible="{Binding IsLogPanelOpen}">
-            <controls:ActivityLogPanel DataContext="{Binding LogViewModel}"/>
+            <controls:UnifiedConsoleView DataContext="{Binding UnifiedConsole}"/>
         </Border>
         
         <!-- Status Bar -->
@@ -176,18 +176,21 @@
                 <!-- Toggle Log Panel Button -->
                 <Button Grid.Column="4"
                         Command="{Binding ToggleLogPanelCommand}"
-                        Padding="8,0"
-                        Background="Transparent"
+                        Padding="12,0"
+                        Background="#00000033"
                         BorderThickness="0"
                         Foreground="{Binding StatusForeground}"
-                        FontSize="10"
+                        FontSize="12"
+                        FontWeight="SemiBold"
                         VerticalContentAlignment="Center"
                         Cursor="Hand"
-                        ToolTip.Tip="Toggle Activity Log">
-                    <Panel>
-                        <TextBlock Text="?" IsVisible="{Binding IsLogPanelOpen}"/>
-                        <TextBlock Text="?" IsVisible="{Binding !IsLogPanelOpen}"/>
-                    </Panel>
+                        ToolTip.Tip="Toggle Unified Console">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Panel>
+                            <TextBlock Text="▼ Hide Console" IsVisible="{Binding IsLogPanelOpen}" FontSize="11"/>
+                            <TextBlock Text="▲ Show Console" IsVisible="{Binding !IsLogPanelOpen}" FontSize="11"/>
+                        </Panel>
+                    </StackPanel>
                 </Button>
             </Grid>
         </Border>

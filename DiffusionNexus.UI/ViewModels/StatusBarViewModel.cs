@@ -2,6 +2,8 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -13,6 +15,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
 {
     private readonly IActivityLogService _logService;
     private readonly ActivityLogViewModel _logViewModel;
+    private readonly UnifiedConsoleViewModel? _unifiedConsole;
     private bool _disposed;
 
     [ObservableProperty]
@@ -67,7 +70,14 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// The activity log ViewModel for binding to the log panel.
     /// </summary>
+    [Obsolete("Use UnifiedConsole instead. Kept for backward compatibility.")]
     public ActivityLogViewModel LogViewModel => _logViewModel;
+
+    /// <summary>
+    /// The unified console ViewModel that replaces the old Activity Log panel.
+    /// Shows all categories with filtering support, accessible from every module.
+    /// </summary>
+    public UnifiedConsoleViewModel? UnifiedConsole => _unifiedConsole;
 
     /// <summary>
     /// Background color based on status severity and active operation state.
@@ -109,10 +119,16 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string ProgressBarBackground => "#1E7E34"; // Darker green for contrast
 
-    public StatusBarViewModel(IActivityLogService logService)
+    public StatusBarViewModel(IActivityLogService logService, IUnifiedLogger? unifiedLogger = null, ITaskTracker? taskTracker = null)
     {
         _logService = logService;
         _logViewModel = new ActivityLogViewModel(logService);
+
+        // Create the unified console if the new logging services are available
+        if (unifiedLogger is not null && taskTracker is not null)
+        {
+            _unifiedConsole = new UnifiedConsoleViewModel(unifiedLogger, taskTracker);
+        }
 
         // Subscribe to events
         _logService.StatusChanged += OnStatusChanged;
@@ -124,6 +140,30 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
 
         // Initialize counts
         UpdateCounts();
+    }
+
+    /// <summary>
+    /// Wires instance management (Start/Stop/Restart) into the Unified Console.
+    /// Call after DI services are fully available.
+    /// </summary>
+    public void InitializeInstanceManagement(PackageProcessManager processManager, IServiceProvider serviceProvider)
+    {
+        _unifiedConsole?.InitializeInstanceManagement(processManager, serviceProvider);
+
+        // Auto-open the panel when the console requests it (e.g., instance launch)
+        if (_unifiedConsole is not null)
+            _unifiedConsole.PanelOpenRequested += OnConsolePanelOpenRequested;
+    }
+
+    private void OnConsolePanelOpenRequested(object? sender, EventArgs e)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            IsLogPanelOpen = true;
+            _logViewModel.IsPanelOpen = true;
+            if (_unifiedConsole is not null)
+                _unifiedConsole.IsPanelOpen = true;
+        });
     }
 
     private void OnStatusChanged(object? sender, EventArgs e)
@@ -215,6 +255,8 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     {
         IsLogPanelOpen = !IsLogPanelOpen;
         _logViewModel.IsPanelOpen = IsLogPanelOpen;
+        if (_unifiedConsole is not null)
+            _unifiedConsole.IsPanelOpen = IsLogPanelOpen;
     }
 
     [RelayCommand]
@@ -222,6 +264,8 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     {
         IsLogPanelOpen = true;
         _logViewModel.IsPanelOpen = true;
+        if (_unifiedConsole is not null)
+            _unifiedConsole.IsPanelOpen = true;
     }
 
     public void Dispose()
@@ -236,7 +280,11 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.LogCleared -= OnLogCleared;
         _logService.BackupProgressChanged -= OnBackupProgressChanged;
 
+        if (_unifiedConsole is not null)
+            _unifiedConsole.PanelOpenRequested -= OnConsolePanelOpenRequested;
+
         _logViewModel.Dispose();
+        _unifiedConsole?.Dispose();
 
         GC.SuppressFinalize(this);
     }

@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -117,11 +118,20 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         _activityLogService = App.Services?.GetService<IActivityLogService>();
         if (_activityLogService is not null)
         {
-            StatusBar = new StatusBarViewModel(_activityLogService);
+            var unifiedLogger = App.Services?.GetService<IUnifiedLogger>();
+            var taskTracker = App.Services?.GetService<ITaskTracker>();
+            StatusBar = new StatusBarViewModel(_activityLogService, unifiedLogger, taskTracker);
             _activityLogService.LogInfo("App", "Application started");
-            
+
             // Subscribe to backup progress changes
             _activityLogService.BackupProgressChanged += OnBackupProgressChanged;
+
+            // Wire instance management (Start/Stop/Restart) into the Unified Console
+            var processManager = App.Services?.GetService<Services.PackageProcessManager>();
+            if (processManager is not null && App.Services is not null)
+            {
+                StatusBar.InitializeInstanceManagement(processManager, App.Services);
+            }
         }
     }
 
