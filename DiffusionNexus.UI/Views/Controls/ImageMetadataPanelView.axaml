@@ -1,0 +1,285 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:models="using:DiffusionNexus.UI.Models"
+             x:Class="DiffusionNexus.UI.Views.Controls.ImageMetadataPanelView"
+             x:DataType="vm:ImageMetadataPanelViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.fieldLabel">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#AAA"/>
+        </Style>
+        <Style Selector="TextBlock.fieldValue">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="#DDD"/>
+        </Style>
+        <Style Selector="Button.copyBtn">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#888"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button.copyBtn:pointerover /template/ ContentPresenter">
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="TextBox.promptBox">
+            <Setter Property="Background" Value="#80222222"/>
+            <Setter Property="BorderBrush" Value="#444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Foreground" Value="#CCC"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="8"/>
+        </Style>
+        <Style Selector="Button.toggleBtn">
+            <Setter Property="Background" Value="#CC1A1A1A"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="CornerRadius" Value="4,0,0,4"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button.toggleBtn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#CC333333"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Panel>
+        <!-- Toggle Button (always visible at right edge) -->
+        <Button Classes="toggleBtn"
+                Command="{Binding TogglePanelCommand}"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Height="80"
+                ZIndex="10"
+                ToolTip.Tip="Toggle Generation Data (M)">
+            <Panel>
+                <TextBlock Text="◀" FontSize="12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding !IsPanelExpanded}"/>
+                <TextBlock Text="▶" FontSize="12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding IsPanelExpanded}"/>
+            </Panel>
+        </Button>
+
+        <!-- Sliding Panel -->
+        <Border Width="320"
+                HorizontalAlignment="Right"
+                Background="#CC1A1A1A"
+                BorderBrush="#444"
+                BorderThickness="1,0,0,0"
+                IsVisible="{Binding IsPanelExpanded}"
+                Margin="0,0,0,0">
+            <Border.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.2"/>
+                </Transitions>
+            </Border.Transitions>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="12" Margin="16,12,16,12">
+
+                    <!-- Header -->
+                    <TextBlock Text="Generation Data"
+                               FontSize="18" FontWeight="SemiBold"
+                               Foreground="White"
+                               Margin="0,0,0,4"/>
+
+                    <!-- No data message -->
+                    <TextBlock Text="{Binding StatusMessage}"
+                               IsVisible="{Binding !HasData}"
+                               Foreground="#888"
+                               TextWrapping="Wrap"
+                               FontSize="13"/>
+
+                    <!-- Data content -->
+                    <StackPanel Spacing="12"
+                                IsVisible="{Binding HasData}">
+
+                        <!-- Image Name -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Image Name" Classes="fieldLabel"/>
+                            <TextBlock Text="{Binding Metadata.FileName}"
+                                       TextWrapping="Wrap" Classes="fieldValue"/>
+                        </StackPanel>
+
+                        <!-- Resolution -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Resolution" Classes="fieldLabel"/>
+                            <TextBlock Text="{Binding Metadata.Resolution}"
+                                       Classes="fieldValue"/>
+                        </StackPanel>
+
+                        <Separator Background="#333" Height="1"/>
+
+                        <!-- Positive Prompt -->
+                        <StackPanel Spacing="4"
+                                    IsVisible="{Binding Metadata.PositivePrompt, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                            <DockPanel>
+                                <TextBlock Text="Positive Prompt"
+                                           Classes="fieldLabel"
+                                           DockPanel.Dock="Left"
+                                           VerticalAlignment="Center"/>
+                                <Button Command="{Binding CopyPositivePromptCommand}"
+                                        DockPanel.Dock="Right"
+                                        Classes="copyBtn"
+                                        ToolTip.Tip="Copy to clipboard"
+                                        HorizontalAlignment="Right">
+                                    <Panel>
+                                        <TextBlock Text="📋" IsVisible="{Binding !PositiveCopied}"/>
+                                        <TextBlock Text="✓" Foreground="#4CAF50" IsVisible="{Binding PositiveCopied}"/>
+                                    </Panel>
+                                </Button>
+                            </DockPanel>
+                            <TextBox Text="{Binding Metadata.PositivePrompt}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     MaxHeight="150"
+                                     Classes="promptBox"
+                                     AcceptsReturn="True"/>
+                        </StackPanel>
+
+                        <!-- Negative Prompt -->
+                        <StackPanel Spacing="4"
+                                    IsVisible="{Binding Metadata.NegativePrompt, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                            <DockPanel>
+                                <TextBlock Text="Negative Prompt"
+                                           Classes="fieldLabel"
+                                           DockPanel.Dock="Left"
+                                           VerticalAlignment="Center"/>
+                                <Button Command="{Binding CopyNegativePromptCommand}"
+                                        DockPanel.Dock="Right"
+                                        Classes="copyBtn"
+                                        ToolTip.Tip="Copy to clipboard"
+                                        HorizontalAlignment="Right">
+                                    <Panel>
+                                        <TextBlock Text="📋" IsVisible="{Binding !NegativeCopied}"/>
+                                        <TextBlock Text="✓" Foreground="#4CAF50" IsVisible="{Binding NegativeCopied}"/>
+                                    </Panel>
+                                </Button>
+                            </DockPanel>
+                            <TextBox Text="{Binding Metadata.NegativePrompt}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     MaxHeight="150"
+                                     Classes="promptBox"
+                                     AcceptsReturn="True"/>
+                        </StackPanel>
+
+                        <Separator Background="#333" Height="1"/>
+
+                        <!-- Checkpoint -->
+                        <StackPanel Spacing="2"
+                                    IsVisible="{Binding Metadata.Checkpoint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                            <TextBlock Text="Checkpoint" Classes="fieldLabel"/>
+                            <TextBlock Text="{Binding Metadata.Checkpoint}"
+                                       TextWrapping="Wrap" Classes="fieldValue"/>
+                        </StackPanel>
+
+                        <!-- LoRAs -->
+                        <StackPanel Spacing="4"
+                                    IsVisible="{Binding HasLoras}">
+                            <TextBlock Text="LoRAs" Classes="fieldLabel"/>
+                            <ItemsControl ItemsSource="{Binding Metadata.Loras}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:LoraInfo">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                                            <TextBlock Text="•" VerticalAlignment="Center" Foreground="#888"/>
+                                            <TextBlock Text="{Binding Name}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Classes="fieldValue"
+                                                       MaxWidth="200"/>
+                                            <TextBlock Text="{Binding StrengthModel, StringFormat='({0:F2})'}"
+                                                       Foreground="#888" FontSize="12"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <Separator Background="#333" Height="1"/>
+
+                        <!-- Sampler Settings Grid -->
+                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                              Margin="0,4">
+                            <!-- Sampler -->
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Sampler"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.SamplerName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1"
+                                       Text="{Binding Metadata.SamplerName}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.SamplerName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                            <!-- Scheduler -->
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Scheduler"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.Scheduler, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1"
+                                       Text="{Binding Metadata.Scheduler}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.Scheduler, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                            <!-- Steps -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Steps"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.Steps, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1"
+                                       Text="{Binding Metadata.Steps}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.Steps, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+                            <!-- Seed -->
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Seed"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.Seed, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1"
+                                       Text="{Binding Metadata.Seed}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.Seed, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+                            <!-- CFG -->
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="CFG"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.Cfg, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1"
+                                       Text="{Binding Metadata.Cfg, StringFormat='{}{0:F1}'}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.Cfg, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+                            <!-- Denoise (only if < 1.0) -->
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Denoise"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding ShowDenoise}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1"
+                                       Text="{Binding Metadata.Denoise, StringFormat='{}{0:F2}'}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding ShowDenoise}"/>
+                        </Grid>
+
+                        <!-- Parse error (if any) -->
+                        <TextBlock Text="{Binding Metadata.ParseError}"
+                                   IsVisible="{Binding Metadata.ParseError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                   Foreground="#DC3545"
+                                   TextWrapping="Wrap"
+                                   FontSize="11"
+                                   Margin="0,4,0,0"/>
+
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+    </Panel>
+</UserControl>

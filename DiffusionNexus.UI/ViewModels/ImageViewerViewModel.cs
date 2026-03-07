@@ -31,6 +31,9 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private bool _isFavorite;
 
+    /// <summary>ViewModel for the generation metadata side panel.</summary>
+    public ImageMetadataPanelViewModel MetadataPanel { get; } = new();
+
     /// <summary>Event raised when the dialog should close.</summary>
     public event EventHandler? CloseRequested;
 
@@ -56,6 +59,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(IsImage));
                 OnPropertyChanged(nameof(PositionText));
                 OnPropertyChanged(nameof(TotalCount));
+                MetadataPanel.LoadMetadata(value?.ImagePath);
                 CurrentImageChanged?.Invoke(this, EventArgs.Empty);
             }
         }

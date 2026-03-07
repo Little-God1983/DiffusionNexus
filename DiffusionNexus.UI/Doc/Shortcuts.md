@@ -17,3 +17,4 @@
 | Delete | Delete image | Always |
 | Ctrl+S | Save caption | Rating controls visible |
 | Ctrl+Z | Revert caption | Rating controls visible |
+| M | Toggle metadata panel | Always |
