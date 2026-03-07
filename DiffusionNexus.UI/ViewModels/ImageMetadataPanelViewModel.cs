@@ -14,7 +14,7 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
     private Func<string, Task>? _copyToClipboard;
 
     [ObservableProperty]
-    private bool _isPanelExpanded;
+    private bool _isPanelExpanded = true;
 
     [ObservableProperty]
     private ImageGenerationData? _metadata;

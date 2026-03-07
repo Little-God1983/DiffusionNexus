@@ -256,7 +256,8 @@ internal sealed class ImageMetadataParser
         ReadOnlySpan<string> textKeys =
         [
             "text", "text_g", "text_l", "text_positive",
-            "text_negative", "string", "value", "wildcard"
+            "text_negative", "string", "value", "wildcard",
+            "prompt", "instruction"
         ];
 
         foreach (var key in textKeys)
@@ -299,7 +300,27 @@ internal sealed class ImageMetadataParser
             }
         }
 
-        return $"[unresolved: {classType}]";
+        // Generic fallback: try common reference input keys on any unrecognized node
+        // (e.g. FluxKontextMultiReferenceLatentMethod, custom Flux nodes, etc.)
+        ReadOnlySpan<string> fallbackKeys =
+        [
+            "positive", "negative", "conditioning", "conditioning_1", "conditioning_2",
+            "cond", "clip", "prompt", "text_encode"
+        ];
+
+        foreach (var key in fallbackKeys)
+        {
+            if (inputs.TryGetProperty(key, out var refVal)
+                && refVal.ValueKind == JsonValueKind.Array
+                && refVal.GetArrayLength() == 2)
+            {
+                var result = TraceText(refVal, graph, depth + 1);
+                if (!string.IsNullOrEmpty(result) && !result.StartsWith("[unresolved:", StringComparison.Ordinal))
+                    return result;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
