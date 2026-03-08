@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -22,7 +22,7 @@
 
       <!-- Thumbnail Area -->
       <Border Grid.Row="0"
-              Height="220"
+              Height="260"
               Margin="0"
               Background="#1A1A1A"
               ClipToBounds="True">
@@ -149,45 +149,54 @@
               Margin="0"
               CornerRadius="0,0,8,8">
         
-        <Grid ColumnDefinitions="*,*,*,*">
-          
+        <Grid ColumnDefinitions="*,*,*,*,*">
+
           <!-- Open on Civitai -->
           <Button Grid.Column="0"
-                  Content="Web"
+                  Content="🌐"
                   Command="{Binding OpenOnCivitaiCommand}"
                   ToolTip.Tip="Open on Civitai"
                   HorizontalAlignment="Center"
                   Padding="6,4"
                   FontSize="10"/>
-          
+
           <!-- Copy Trigger Words -->
           <Button Grid.Column="1"
-                  Content="Copy"
+                  Content="📋"
                   Command="{Binding CopyTriggerWordsCommand}"
                   ToolTip.Tip="Copy Trigger Words"
                   HorizontalAlignment="Center"
                   Padding="6,4"
                   FontSize="10"/>
-          
-          <!-- Open Folder -->
+
+          <!-- Copy Real Filename -->
           <Button Grid.Column="2"
-                  Content="Folder"
+                  Content="🧾"
+                  Command="{Binding CopyFileNameCommand}"
+                  ToolTip.Tip="Copy Filename to Clipboard (for ComfyUI search)"
+                  HorizontalAlignment="Center"
+                  Padding="6,4"
+                  FontSize="10"/>
+
+          <!-- Open Folder -->
+          <Button Grid.Column="3"
+                  Content="📁"
                   Command="{Binding OpenFolderCommand}"
                   ToolTip.Tip="Open Folder"
                   HorizontalAlignment="Center"
                   Padding="6,4"
                   FontSize="10"/>
-          
+
           <!-- Delete -->
-          <Button Grid.Column="3"
-                  Content="X"
+          <Button Grid.Column="4"
+                  Content="❌"
                   FontWeight="Bold"
                   Foreground="#FF6B6B"
                   Command="{Binding DeleteCommand}"
                   ToolTip.Tip="Delete Model"
                   HorizontalAlignment="Center"
-                  Padding="8,4"
-                  FontSize="12"/>
+                  Padding="6,4"
+                  FontSize="10"/>
           
         </Grid>
       </Border>

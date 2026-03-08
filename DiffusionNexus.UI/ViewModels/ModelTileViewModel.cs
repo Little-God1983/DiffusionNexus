@@ -125,6 +125,24 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// The full filename on disk without extension (e.g., "Ellie_Williams_-_The_Last_of_Us_Part_I-ZIT").
+    /// Used for copying to clipboard so users can search in ComfyUI.
+    /// </summary>
+    public string RealFileName
+    {
+        get
+        {
+            var file = SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary)
+                       ?? SelectedVersion?.Files?.FirstOrDefault();
+            if (file?.FileName is null) return DisplayName;
+
+            var name = file.FileName;
+            var lastDot = name.LastIndexOf('.');
+            return lastDot > 0 ? name[..lastDot] : name;
+        }
+    }
+
+    /// <summary>
     /// Model type display (e.g., "LORA", "Checkpoint").
     /// </summary>
     public string ModelTypeDisplay => ModelEntity?.Type.ToString().ToUpperInvariant() ?? "UNKNOWN";
@@ -225,12 +243,12 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Copy model filename to clipboard.
+    /// Copy the real filename (with extension) to clipboard for ComfyUI search.
     /// </summary>
     [RelayCommand]
     private async Task CopyFileNameAsync()
     {
-        var fileName = FileName;
+        var fileName = RealFileName;
         if (string.IsNullOrWhiteSpace(fileName)) return;
 
         await CopyToClipboardAsync(fileName);
@@ -375,6 +393,7 @@ public partial class ModelTileViewModel : ViewModelBase
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
         OnPropertyChanged(nameof(FileName));
+        OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(DownloadCountDisplay));
         LoadThumbnailFromVersion();
