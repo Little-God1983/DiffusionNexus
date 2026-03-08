@@ -8,7 +8,9 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace DiffusionNexus.DataAccess.UnitOfWork;
 
 /// <summary>
-/// Coordinates transactions across multiple repositories sharing a single <see cref="DiffusionNexusCoreDbContext"/>.
+/// Coordinates transactions across multiple repositories, each backed by
+/// a <see cref="DiffusionNexusCoreDbContext"/> created from the factory.
+/// Register as <b>Transient</b> so every consumer gets its own context.
 /// </summary>
 internal sealed class UnitOfWork : IUnitOfWork
 {
@@ -22,10 +24,10 @@ internal sealed class UnitOfWork : IUnitOfWork
     private IDisclaimerAcceptanceRepository? _disclaimerAcceptances;
     private IInstallerPackageRepository? _installerPackages;
 
-    public UnitOfWork(DiffusionNexusCoreDbContext context)
+    public UnitOfWork(IDbContextFactory<DiffusionNexusCoreDbContext> factory)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        _context = context;
+        ArgumentNullException.ThrowIfNull(factory);
+        _context = factory.CreateDbContext();
     }
 
     /// <inheritdoc />

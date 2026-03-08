@@ -1,3 +1,4 @@
+using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -7,6 +8,8 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.ObjectModel;
 
@@ -17,6 +20,11 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public partial class ModelTileViewModel : ViewModelBase
 {
+    /// <summary>
+    /// Raised after the model (and all its grouped versions) has been deleted from disk and DB.
+    /// The parent view model should remove this tile from its collections.
+    /// </summary>
+    public event EventHandler? Deleted;
     #region Observable Properties
 
     /// <summary>
@@ -332,13 +340,255 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Delete the model.
+    /// Deletes the model from disk and database after user confirmation.
+    /// For single-version tiles, shows a simple confirmation dialog.
+    /// For multi-version tiles, shows a version picker so the user can choose which to delete.
     /// </summary>
     [RelayCommand]
     private async Task DeleteAsync()
     {
-        // TODO: Implement delete with confirmation
-        await Task.CompletedTask;
+        var logger = App.Services?.GetService<IUnifiedLogger>();
+        var dialogService = App.Services?.GetService<IDialogService>();
+
+        if (dialogService is null)
+        {
+            logger?.Error(LogCategory.General, "Delete", "Dialog service unavailable — cannot show confirmation.");
+            return;
+        }
+
+        var allVersions = Versions.ToList();
+
+        if (allVersions.Count <= 1)
+        {
+            // Single version: simple confirm dialog
+            await DeleteSingleVersionAsync(logger, dialogService);
+        }
+        else
+        {
+            // Multiple versions: show version picker
+            await DeleteWithVersionPickerAsync(logger);
+        }
+    }
+
+    /// <summary>
+    /// Simple confirmation + delete for single-version tiles.
+    /// </summary>
+    private async Task DeleteSingleVersionAsync(IUnifiedLogger? logger, IDialogService dialogService)
+    {
+        var filePaths = CollectAllLocalFiles();
+        var fileList = filePaths.Count > 0
+            ? Path.GetFileName(filePaths[0])
+            : "(no local file found)";
+
+        var confirmed = await dialogService.ShowConfirmAsync(
+            "Delete LoRA",
+            $"Delete '{DisplayName}' from disk?\n\n{fileList}\n\nThis action cannot be undone.");
+
+        if (!confirmed) return;
+
+        await ExecuteDeletion(logger, filePaths, GetAllModelIds());
+    }
+
+    /// <summary>
+    /// Shows a version picker dialog for multi-version grouped tiles.
+    /// </summary>
+    private async Task DeleteWithVersionPickerAsync(IUnifiedLogger? logger)
+    {
+        // Find the main window for ShowDialog
+        var lifetime = Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+        var mainWindow = lifetime?.MainWindow;
+        if (mainWindow is null)
+        {
+            logger?.Error(LogCategory.General, "Delete", "Cannot find main window for dialog.");
+            return;
+        }
+
+        var allModels = _allGroupedModels.Count > 0
+            ? _allGroupedModels
+            : ModelEntity is not null ? new List<Model> { ModelEntity } : [];
+
+        var dialog = new SelectLoraVersionsToDeleteDialog()
+            .WithVersions(DisplayName, Versions, allModels);
+
+        await dialog.ShowDialog(mainWindow);
+
+        var result = dialog.Result;
+        if (result is null || !result.Confirmed || result.SelectedItems.Count == 0)
+            return;
+
+        // Collect file paths and model IDs from selected items
+        var filePaths = result.SelectedItems
+            .Where(i => !string.IsNullOrWhiteSpace(i.LocalPath))
+            .Select(i => i.LocalPath!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var modelIdsToRemove = result.DeleteAll
+            ? GetAllModelIds()
+            : result.SelectedItems
+                .Where(i => i.ParentModel is not null)
+                .Select(i => i.ParentModel!.Id)
+                .Distinct()
+                .ToList();
+
+        await ExecuteDeletion(logger, filePaths, modelIdsToRemove);
+
+        // If only some versions were deleted, refresh the tile instead of removing it
+        if (!result.DeleteAll)
+        {
+            var deletedVersionIds = new HashSet<int>(result.SelectedItems.Select(i => i.Version.Id));
+
+            // Remove deleted versions from the in-memory collections
+            foreach (var item in result.SelectedItems)
+            {
+                Versions.Remove(item.Version);
+            }
+
+            // Remove corresponding version buttons
+            var buttonsToRemove = VersionButtons
+                .Where(b => deletedVersionIds.Contains(b.Version.Id))
+                .ToList();
+            foreach (var button in buttonsToRemove)
+            {
+                VersionButtons.Remove(button);
+            }
+
+            // Remove fully-deleted models from the group
+            var deletedModelIds = new HashSet<int>(modelIdsToRemove);
+            _allGroupedModels.RemoveAll(m => deletedModelIds.Contains(m.Id));
+
+            // If no versions left after partial delete, treat as full delete
+            if (Versions.Count == 0)
+            {
+                Deleted?.Invoke(this, EventArgs.Empty);
+            }
+            else
+            {
+                // If the currently selected version was deleted, switch to the first remaining one
+                if (SelectedVersion is null || deletedVersionIds.Contains(SelectedVersion.Id))
+                {
+                    var firstButton = VersionButtons.FirstOrDefault();
+                    if (firstButton is not null)
+                    {
+                        OnVersionButtonSelected(firstButton);
+                    }
+                }
+
+                // Update the primary ModelEntity if it was among the deleted ones
+                if (ModelEntity is not null && deletedModelIds.Contains(ModelEntity.Id))
+                {
+                    ModelEntity = _allGroupedModels.FirstOrDefault();
+                }
+
+                // Refresh UI with remaining versions
+                OnPropertyChanged(nameof(HasMultipleVersions));
+                OnPropertyChanged(nameof(IsGrouped));
+                OnPropertyChanged(nameof(VersionCountDisplay));
+                OnPropertyChanged(nameof(DisplayName));
+                OnPropertyChanged(nameof(FileName));
+                OnPropertyChanged(nameof(BaseModelsDisplay));
+                OnPropertyChanged(nameof(DownloadCountDisplay));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Executes the actual file deletion and DB removal.
+    /// </summary>
+    private async Task ExecuteDeletion(IUnifiedLogger? logger, List<string> filePaths, List<int> modelIds)
+    {
+        try
+        {
+            // Phase 1: Delete files from disk
+            var deletedCount = 0;
+            var failedCount = 0;
+            foreach (var path in filePaths)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                        deletedCount++;
+                        logger?.Info(LogCategory.General, "Delete", $"Deleted file: {path}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    logger?.Error(LogCategory.General, "Delete",
+                        $"Failed to delete file '{path}': {ex.Message}", ex);
+                }
+            }
+
+            // Phase 2: Remove model entities from the database
+            if (modelIds.Count > 0)
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+                foreach (var modelId in modelIds)
+                {
+                    var dbModel = await unitOfWork.Models.GetByIdAsync(modelId);
+                    if (dbModel is not null)
+                    {
+                        unitOfWork.Models.Remove(dbModel);
+                    }
+                }
+
+                await unitOfWork.SaveChangesAsync();
+                logger?.Info(LogCategory.General, "Delete",
+                    $"Removed {modelIds.Count} model record(s) from database for '{DisplayName}'.");
+            }
+
+            // Phase 3: Notify parent to remove the tile (only for full delete)
+            if (failedCount > 0)
+            {
+                logger?.Warn(LogCategory.General, "Delete",
+                    $"'{DisplayName}': {deletedCount} file(s) deleted, {failedCount} failed.");
+            }
+
+            // Full delete → remove tile
+            if (modelIds.SequenceEqual(GetAllModelIds()))
+            {
+                Deleted?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.Error(LogCategory.General, "Delete",
+                $"Failed to delete '{DisplayName}': {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Gets all model entity IDs across the group.
+    /// </summary>
+    private List<int> GetAllModelIds()
+    {
+        if (_allGroupedModels.Count > 0)
+            return _allGroupedModels.Select(m => m.Id).ToList();
+
+        return ModelEntity?.Id is { } id ? [id] : [];
+    }
+
+    /// <summary>
+    /// Collects all local file paths across all grouped models and their versions.
+    /// </summary>
+    private List<string> CollectAllLocalFiles()
+    {
+        var models = _allGroupedModels.Count > 0
+            ? _allGroupedModels
+            : ModelEntity is not null ? [ModelEntity] : [];
+
+        return models
+            .SelectMany(m => m.Versions)
+            .SelectMany(v => v.Files)
+            .Where(f => !string.IsNullOrWhiteSpace(f.LocalPath))
+            .Select(f => f.LocalPath!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     #endregion

@@ -19,6 +19,9 @@ public interface IUnitOfWork : IDisposable, IAsyncDisposable
     /// <summary>Repository for DisclaimerAcceptance entities.</summary>
     IDisclaimerAcceptanceRepository DisclaimerAcceptances { get; }
 
+    /// <summary>Repository for InstallerPackage entities.</summary>
+    IInstallerPackageRepository InstallerPackages { get; }
+
     /// <summary>
     /// Persists all pending changes to the database.
     /// </summary>

@@ -133,39 +133,35 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         try
         {
+            IsBusy = true;
+            BusyMessage = "Loading models...";
             SyncStatus = "Starting refresh...";
 
-            // Phase 1: Discover new files first (so they get saved to DB)
-            await DiscoverNewFilesAsync();
-
-            // Phase 2: Load all from database (includes newly discovered)
-            await RunBusyAsync(async () =>
+            // Offload all heavy I/O (file discovery + DB reads + grouping) to a
+            // single background task so the UI thread stays responsive.
+            // DiscoverNewFilesAsync already marshals progress to the UI via Dispatcher.Post.
+            var (allModels, tiles) = await Task.Run(async () =>
             {
-                SyncStatus = "Loading models from database...";
-
-                // Backfill CivitaiModelPageId for models synced before the field existed
+                await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
 
-                var allModels = await _syncService.LoadCachedModelsAsync();
+                Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
 
-                // Group models that share the same Civitai page into single tiles
-                var tiles = GroupModelsIntoTiles(allModels);
+                var models = await _syncService.LoadCachedModelsAsync();
+                var grouped = GroupModelsIntoTiles(models);
+                return (models, grouped);
+            });
 
-                // Update UI on dispatcher thread
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    AllTiles.Clear();
-                    foreach (var tile in tiles)
-                    {
-                        AllTiles.Add(tile);
-                    }
-                    TotalModelCount = AllTiles.Count;
-                    ApplyFilters();
-                });
-
-                SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
-
-            }, "Loading models...");
+            // Back on UI thread after await — update observable collections
+            AllTiles.Clear();
+            foreach (var tile in tiles)
+            {
+                tile.Deleted += OnTileDeleted;
+                AllTiles.Add(tile);
+            }
+            TotalModelCount = AllTiles.Count;
+            ApplyFilters();
+            SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
 
             // Phase 3: Verify existing files in background (low priority)
             _ = VerifyFilesInBackgroundAsync();
@@ -173,6 +169,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         catch (Exception ex)
         {
             SyncStatus = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = null;
         }
     }
 
@@ -217,16 +218,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>
     /// Background task to verify file existence.
+    /// Uses its own DI scope so the DbContext does not conflict with other
+    /// concurrent operations on the shared application scope.
     /// </summary>
     private async Task VerifyFilesInBackgroundAsync()
     {
-        if (_syncService is null)
-        {
-            return;
-        }
-
         try
         {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+
             var progress = new Progress<SyncProgress>(p =>
             {
                 Dispatcher.UIThread.Post(() =>
@@ -238,7 +239,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 });
             });
 
-            await _syncService.VerifyAndSyncFilesAsync(progress);
+            await syncService.VerifyAndSyncFilesAsync(progress);
         }
         catch
         {
@@ -962,6 +963,25 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     #region Private Methods
 
+    /// <summary>
+    /// Handles the <see cref="ModelTileViewModel.Deleted"/> event by removing the tile
+    /// from both <see cref="AllTiles"/> and <see cref="FilteredTiles"/>, then updating counts.
+    /// </summary>
+    private void OnTileDeleted(object? sender, EventArgs e)
+    {
+        if (sender is not ModelTileViewModel tile) return;
+
+        tile.Deleted -= OnTileDeleted;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            AllTiles.Remove(tile);
+            FilteredTiles.Remove(tile);
+            TotalModelCount = AllTiles.Count;
+            FilteredModelCount = FilteredTiles.Count;
+        });
+    }
+
     private void ApplyFilters()
     {
         FilteredTiles.Clear();
@@ -1018,6 +1038,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var tiles = GroupModelsIntoTiles(allDemoModels);
         foreach (var tile in tiles)
         {
+            tile.Deleted += OnTileDeleted;
             AllTiles.Add(tile);
         }
 

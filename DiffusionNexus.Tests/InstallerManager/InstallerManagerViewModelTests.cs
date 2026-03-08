@@ -49,6 +49,8 @@ public class InstallerManagerViewModelTests
         var mockUow = new Mock<IUnitOfWork>();
         mockUow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
+        mockUow.Setup(u => u.InstallerPackages).Returns(mockRepo.Object);
+        mockUow.Setup(u => u.AppSettings).Returns(mockAppSettings.Object);
 
         var mockProcessManager = new PackageProcessManager();
 
@@ -63,8 +65,6 @@ public class InstallerManagerViewModelTests
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
-            mockRepo.Object,
-            mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
             mockEventAggregator.Object,
@@ -103,9 +103,11 @@ public class InstallerManagerViewModelTests
         var mockUow = new Mock<IUnitOfWork>();
         mockUow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
+        mockUow.Setup(u => u.InstallerPackages).Returns(mockRepo.Object);
 
         var mockProcessManager = new PackageProcessManager();
         var mockAppSettings = new Mock<IAppSettingsRepository>();
+        mockUow.Setup(u => u.AppSettings).Returns(mockAppSettings.Object);
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
         var mockConfigRepo = new Mock<IConfigurationRepository>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
@@ -113,8 +115,6 @@ public class InstallerManagerViewModelTests
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
-            mockRepo.Object,
-            mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
             mockEventAggregator.Object,
@@ -162,10 +162,10 @@ public class InstallerManagerViewModelTests
         mockRepo.Setup(r => r.ClearDefaultByTypeAsync(InstallerType.ComfyUI, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var mockAppSettings = new Mock<IAppSettingsRepository>();
         var mockUow = new Mock<IUnitOfWork>();
         mockUow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
+        mockUow.Setup(u => u.InstallerPackages).Returns(mockRepo.Object);
         var mockProcessManager = new PackageProcessManager();
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
         var mockConfigRepo = new Mock<IConfigurationRepository>();
@@ -174,8 +174,6 @@ public class InstallerManagerViewModelTests
 
         var vm = new InstallerManagerViewModel(
             mockDialog.Object,
-            mockRepo.Object,
-            mockAppSettings.Object,
             mockUow.Object,
             mockProcessManager,
             mockEventAggregator.Object,

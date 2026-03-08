@@ -43,20 +43,14 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers repositories and Unit of Work (shared between AddDataAccessLayer overloads).
+    /// Registers Unit of Work (shared between AddDataAccessLayer overloads).
+    /// Transient so every consumer gets its own UoW with its own DbContext
+    /// created by <see cref="IDbContextFactory{TContext}"/>.
+    /// Repositories are accessed exclusively through <see cref="IUnitOfWork"/>.
     /// </summary>
     private static IServiceCollection AddDataAccessLayerCore(this IServiceCollection services)
     {
-        // Unit of Work (scoped — same lifetime as DbContext)
-        services.AddScoped<IUnitOfWork, DataAccess.UnitOfWork.UnitOfWork>();
-
-        // Repositories (scoped — resolved through UoW or directly)
-        services.AddScoped<IModelRepository, ModelRepository>();
-        services.AddScoped<IModelFileRepository, ModelFileRepository>();
-        services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
-        services.AddScoped<IDisclaimerAcceptanceRepository, DisclaimerAcceptanceRepository>();
-        services.AddScoped<IInstallerPackageRepository, InstallerPackageRepository>();
-
+        services.AddTransient<IUnitOfWork, DataAccess.UnitOfWork.UnitOfWork>();
         return services;
     }
 
@@ -70,7 +64,9 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         string? databaseDirectory = null)
     {
-        services.AddDbContext<DiffusionNexusCoreDbContext>(options =>
+        // Factory registration: UoW creates its own context per instance.
+        // AddDbContextFactory also registers DbContext as scoped for migration code.
+        services.AddDbContextFactory<DiffusionNexusCoreDbContext>(options =>
         {
             options.UseSqlite(DiffusionNexusCoreDbContext.GetConnectionString(databaseDirectory));
             // Suppress warning for pending model changes during development
@@ -91,7 +87,7 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         Action<DbContextOptionsBuilder> configureOptions)
     {
-        services.AddDbContext<DiffusionNexusCoreDbContext>(configureOptions);
+        services.AddDbContextFactory<DiffusionNexusCoreDbContext>(configureOptions);
         return services;
     }
 
