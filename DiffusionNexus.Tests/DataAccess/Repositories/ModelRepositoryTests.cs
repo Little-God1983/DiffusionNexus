@@ -308,6 +308,33 @@ public class ModelRepositoryTests : IDisposable
         needingSync[0].Name.Should().Be("NeverSynced");
     }
 
+    [Fact]
+    public async Task WhenModelsShareCivitaiModelPageIdThenBothArePersisted()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model
+        {
+            Name = "Ellie ZIT", Type = ModelType.LORA,
+            CivitaiId = 100, CivitaiModelPageId = 100
+        };
+        var modelB = new Model
+        {
+            Name = "Ellie Flux", Type = ModelType.LORA,
+            CivitaiId = null, CivitaiModelPageId = 100
+        };
+
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        var all = await uow.Models.GetAllAsync();
+        var sameGroup = all.Where(m => m.CivitaiModelPageId == 100).ToList();
+
+        sameGroup.Should().HaveCount(2);
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

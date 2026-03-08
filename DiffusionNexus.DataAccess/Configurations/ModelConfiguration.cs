@@ -13,6 +13,7 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
 
         // Indexes
         entity.HasIndex(e => e.CivitaiId).IsUnique().HasFilter("[CivitaiId] IS NOT NULL");
+        entity.HasIndex(e => e.CivitaiModelPageId);
         entity.HasIndex(e => e.Name);
         entity.HasIndex(e => e.Type);
         entity.HasIndex(e => e.CreatedAt);

@@ -51,6 +51,16 @@ public partial class ModelTileViewModel : ViewModelBase
 
     #endregion
 
+    #region Grouping
+
+    /// <summary>
+    /// All model entities in this group (same Civitai page).
+    /// For ungrouped models this contains just the single model.
+    /// </summary>
+    private List<Model> _allGroupedModels = [];
+
+    #endregion
+
     #region Collections
 
     /// <summary>
@@ -144,6 +154,11 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Whether this model has multiple versions.
     /// </summary>
     public bool HasMultipleVersions => Versions.Count > 1;
+
+    /// <summary>
+    /// Whether this tile groups multiple model entities (same Civitai page).
+    /// </summary>
+    public bool IsGrouped => _allGroupedModels.Count > 1;
 
     /// <summary>
     /// Version count display.
@@ -302,21 +317,29 @@ public partial class ModelTileViewModel : ViewModelBase
 
     partial void OnModelEntityChanged(Model? value)
     {
-        // Populate versions collection
+        // Populate versions from all grouped models (or just the primary model)
         Versions.Clear();
         VersionButtons.Clear();
-        
-        if (value?.Versions is not null)
+
+        var allVersions = _allGroupedModels.Count > 0
+            ? _allGroupedModels.SelectMany(m => m.Versions)
+            : value?.Versions ?? Enumerable.Empty<ModelVersion>();
+
+        // Deduplicate versions that share the same primary filename (re-discovery duplicates).
+        // Keep the version with the richest data per filename.
+        var uniqueVersions = DeduplicateVersions(allVersions);
+
+        var isGrouped = _allGroupedModels.Count > 1;
+
+        foreach (var version in uniqueVersions.OrderByDescending(v => v.CreatedAt))
         {
-            foreach (var version in value.Versions.OrderByDescending(v => v.CreatedAt))
-            {
-                Versions.Add(version);
-                
-                // Create button with short label from base model
-                var (label, icon) = GetVersionButtonInfo(version);
-                var button = new VersionButtonViewModel(version, label, icon, OnVersionButtonSelected);
-                VersionButtons.Add(button);
-            }
+            Versions.Add(version);
+
+            // Create button with short label from base model
+            var (label, icon) = GetVersionButtonInfo(version);
+            var tooltip = BuildVersionTooltip(version, isGrouped);
+            var button = new VersionButtonViewModel(version, label, icon, tooltip, OnVersionButtonSelected);
+            VersionButtons.Add(button);
         }
 
         OnPropertyChanged(nameof(DisplayName));
@@ -325,6 +348,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
         OnPropertyChanged(nameof(HasMultipleVersions));
+        OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
         OnPropertyChanged(nameof(CreatorName));
         OnPropertyChanged(nameof(DownloadCountDisplay));
@@ -354,6 +378,41 @@ public partial class ModelTileViewModel : ViewModelBase
 
     #region Private Methods
 
+    /// <summary>
+    /// Deduplicates versions that share the same primary filename (re-discovery duplicates).
+    /// Keeps the version with the richest metadata per unique filename.
+    /// </summary>
+    private static List<ModelVersion> DeduplicateVersions(IEnumerable<ModelVersion> versions)
+    {
+        var byFile = new Dictionary<string, ModelVersion>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var version in versions)
+        {
+            var fileName = version.PrimaryFile?.FileName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                // No file info — keep using a unique synthetic key
+                byFile[$"__no_file_{version.Id}_{byFile.Count}"] = version;
+                continue;
+            }
+
+            if (byFile.TryGetValue(fileName, out var existing))
+            {
+                // Keep the one with CivitaiId, then more images
+                if (version.CivitaiId.HasValue && !existing.CivitaiId.HasValue)
+                    byFile[fileName] = version;
+                else if (version.Images.Count > existing.Images.Count)
+                    byFile[fileName] = version;
+            }
+            else
+            {
+                byFile[fileName] = version;
+            }
+        }
+
+        return byFile.Values.ToList();
+    }
+
     private void OnVersionButtonSelected(VersionButtonViewModel selected)
     {
         // Update all button states
@@ -375,7 +434,7 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 return (mapping.Short, mapping.Icon);
             }
-            
+
             // Truncate if too long
             var baseModel = version.BaseModelRaw;
             if (baseModel.Length > 8)
@@ -384,7 +443,7 @@ public partial class ModelTileViewModel : ViewModelBase
             }
             return (baseModel, null);
         }
-        
+
         // Fall back to version name
         if (!string.IsNullOrWhiteSpace(version.Name))
         {
@@ -395,8 +454,37 @@ public partial class ModelTileViewModel : ViewModelBase
             }
             return (name, null);
         }
-        
+
         return ("???", null);
+    }
+
+    /// <summary>
+    /// Builds a rich tooltip for a version button showing version name and filename.
+    /// </summary>
+    private static string BuildVersionTooltip(ModelVersion version, bool isGrouped)
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(version.Name))
+        {
+            parts.Add(version.Name);
+        }
+
+        if (isGrouped)
+        {
+            var file = version.PrimaryFile;
+            if (file is not null && !string.IsNullOrWhiteSpace(file.FileName))
+            {
+                parts.Add($"File: {file.FileName}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(version.BaseModelRaw))
+            {
+                parts.Add($"Base: {version.BaseModelRaw}");
+            }
+        }
+
+        return parts.Count > 0 ? string.Join("\n", parts) : "Unknown version";
     }
 
     private static string FormatBaseModel(string? baseModel)
@@ -680,10 +768,28 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     public static ModelTileViewModel FromModel(Model model)
     {
-        var vm = new ModelTileViewModel
-        {
-            ModelEntity = model
-        };
+        var vm = new ModelTileViewModel();
+        vm._allGroupedModels = [model];
+        vm.ModelEntity = model;
+        return vm;
+    }
+
+    /// <summary>
+    /// Creates a ModelTileViewModel from multiple Model entities that share the same Civitai page.
+    /// Versions from all models are merged into a single tile.
+    /// </summary>
+    public static ModelTileViewModel FromModelGroup(IReadOnlyList<Model> models)
+    {
+        // Use the model with the richest data as the primary display model
+        var primary = models
+            .OrderByDescending(m => m.CivitaiId.HasValue)
+            .ThenByDescending(m => m.Versions.Sum(v => v.Images.Count))
+            .ThenByDescending(m => m.LastSyncedAt)
+            .First();
+
+        var vm = new ModelTileViewModel();
+        vm._allGroupedModels = models.ToList();
+        vm.ModelEntity = primary;
         return vm;
     }
 

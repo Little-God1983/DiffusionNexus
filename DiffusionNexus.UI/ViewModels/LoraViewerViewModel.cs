@@ -142,21 +142,28 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             await RunBusyAsync(async () =>
             {
                 SyncStatus = "Loading models from database...";
+
+                // Backfill CivitaiModelPageId for models synced before the field existed
+                await BackfillCivitaiModelPageIdAsync();
+
                 var allModels = await _syncService.LoadCachedModelsAsync();
+
+                // Group models that share the same Civitai page into single tiles
+                var tiles = GroupModelsIntoTiles(allModels);
 
                 // Update UI on dispatcher thread
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     AllTiles.Clear();
-                    foreach (var model in allModels)
+                    foreach (var tile in tiles)
                     {
-                        AllTiles.Add(ModelTileViewModel.FromModel(model));
+                        AllTiles.Add(tile);
                     }
                     TotalModelCount = AllTiles.Count;
                     ApplyFilters();
                 });
 
-                SyncStatus = $"Loaded {allModels.Count} models";
+                SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
 
             }, "Loading models...");
 
@@ -237,6 +244,128 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             // Silently fail - this is background work
         }
+    }
+
+    /// <summary>
+    /// Groups models so that different local files from the same LoRA appear as a single
+    /// tile with multiple version buttons.
+    /// <para>
+    /// Grouping strategy (in priority order):
+    /// <list type="number">
+    ///   <item>By <c>CivitaiModelPageId</c> when set (preferred, future-proof).</item>
+    ///   <item>By <c>Model.Name</c> as fallback (covers existing data where page ID is null).</item>
+    /// </list>
+    /// </para>
+    /// Within each group, re-discovery duplicates (same filename) are collapsed — only the
+    /// model with the richest metadata is kept per unique filename.
+    /// </summary>
+    private static List<ModelTileViewModel> GroupModelsIntoTiles(IReadOnlyList<Model> allModels)
+    {
+        var tiles = new List<ModelTileViewModel>();
+
+        // Phase 1: Group by CivitaiModelPageId (preferred key)
+        var byPageId = allModels
+            .Where(m => m.CivitaiModelPageId is not null)
+            .GroupBy(m => m.CivitaiModelPageId!.Value);
+
+        var consumed = new HashSet<int>(); // track model Ids already placed in a tile
+
+        foreach (var group in byPageId)
+        {
+            var deduped = DeduplicateModels(group.ToList());
+            foreach (var m in deduped)
+                consumed.Add(m.Id);
+
+            tiles.Add(deduped.Count == 1
+                ? ModelTileViewModel.FromModel(deduped[0])
+                : ModelTileViewModel.FromModelGroup(deduped));
+        }
+
+        // Phase 2: Group remaining models by Name (case-insensitive)
+        var remaining = allModels
+            .Where(m => !consumed.Contains(m.Id))
+            .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in remaining)
+        {
+            var deduped = DeduplicateModels(group.ToList());
+            foreach (var m in deduped)
+                consumed.Add(m.Id);
+
+            tiles.Add(deduped.Count == 1
+                ? ModelTileViewModel.FromModel(deduped[0])
+                : ModelTileViewModel.FromModelGroup(deduped));
+        }
+
+        return tiles;
+    }
+
+    /// <summary>
+    /// Collapses re-discovery duplicates within a group. Models whose primary file has the
+    /// same filename are considered duplicates — only the model with the richest metadata is
+    /// kept per unique filename.
+    /// </summary>
+    private static List<Model> DeduplicateModels(List<Model> models)
+    {
+        if (models.Count <= 1)
+            return models;
+
+        // Key: primary filename (lowered). Value: best model for that file.
+        var byFile = new Dictionary<string, Model>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var model in models)
+        {
+            var fileName = model.Versions
+                .SelectMany(v => v.Files)
+                .Where(f => f.IsPrimary)
+                .Select(f => f.FileName)
+                .FirstOrDefault()
+                ?? model.Versions
+                    .SelectMany(v => v.Files)
+                    .Select(f => f.FileName)
+                    .FirstOrDefault()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                // No file info — keep it as-is (unique key)
+                byFile[model.Id.ToString()] = model;
+                continue;
+            }
+
+            if (byFile.TryGetValue(fileName, out var existing))
+            {
+                // Keep the one with richer data
+                if (IsBetterModel(model, existing))
+                    byFile[fileName] = model;
+            }
+            else
+            {
+                byFile[fileName] = model;
+            }
+        }
+
+        return byFile.Values.ToList();
+    }
+
+    /// <summary>
+    /// Returns true if <paramref name="candidate"/> has richer metadata than <paramref name="current"/>.
+    /// </summary>
+    private static bool IsBetterModel(Model candidate, Model current)
+    {
+        // Prefer the one with CivitaiId
+        if (candidate.CivitaiId.HasValue && !current.CivitaiId.HasValue) return true;
+        if (!candidate.CivitaiId.HasValue && current.CivitaiId.HasValue) return false;
+
+        // Prefer more images
+        var candidateImages = candidate.Versions.Sum(v => v.Images.Count);
+        var currentImages = current.Versions.Sum(v => v.Images.Count);
+        if (candidateImages != currentImages) return candidateImages > currentImages;
+
+        // Prefer the one that was synced
+        if (candidate.LastSyncedAt.HasValue && !current.LastSyncedAt.HasValue) return true;
+
+        return false;
     }
 
     /// <summary>
@@ -556,6 +685,68 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Backfills <c>CivitaiModelPageId</c> for models that were synced before the field existed.
+    /// <para>
+    /// Step 1: Any model with <c>CivitaiId</c> set but <c>CivitaiModelPageId</c> null
+    ///         gets <c>CivitaiModelPageId = CivitaiId</c>.
+    /// </para>
+    /// <para>
+    /// Step 2: Any model that still has <c>CivitaiModelPageId</c> null but shares the same
+    ///         Name (case-insensitive) with a model that now has it → inherits the value.
+    /// </para>
+    /// Skips quickly when nothing needs updating.
+    /// </summary>
+    private async Task BackfillCivitaiModelPageIdAsync()
+    {
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+
+            var dirty = false;
+
+            // Step 1: CivitaiId → CivitaiModelPageId
+            foreach (var model in allModels)
+            {
+                if (model.CivitaiId.HasValue && !model.CivitaiModelPageId.HasValue)
+                {
+                    model.CivitaiModelPageId = model.CivitaiId.Value;
+                    dirty = true;
+                }
+            }
+
+            // Step 2: Propagate by Name for models that still lack it
+            var byName = allModels
+                .Where(m => m.CivitaiModelPageId.HasValue)
+                .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().CivitaiModelPageId!.Value, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var model in allModels)
+            {
+                if (!model.CivitaiModelPageId.HasValue
+                    && byName.TryGetValue(model.Name, out var pageId))
+                {
+                    model.CivitaiModelPageId = pageId;
+                    dirty = true;
+                }
+            }
+
+            if (dirty)
+            {
+                await unitOfWork.SaveChangesAsync();
+                _logger?.Info(LogCategory.General, "Backfill",
+                    "Backfilled CivitaiModelPageId for existing models");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "Backfill",
+                $"CivitaiModelPageId backfill failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Updates a model entity from Civitai API response data.
     /// </summary>
     private async Task UpdateModelFromCivitaiAsync(
@@ -590,6 +781,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // Update model-level fields from Civitai
         if (civitaiModel is not null)
         {
+            // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
+            dbModel.CivitaiModelPageId = civitaiModel.Id;
+
             // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
             var civitaiIdOwner = dbModels.FirstOrDefault(m => m.CivitaiId == civitaiModel.Id);
             if (civitaiIdOwner is null || civitaiIdOwner.Id == dbModel.Id)
@@ -802,26 +996,29 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         AllTiles.Clear();
 
-        // Create demo models with various base models
-        var demoModels = new[]
+        // All demo models — single and grouped — go through the same grouping pipeline
+        var allDemoModels = new List<Model>
         {
+            // Single-version models
             CreateDemoModel("Anime Character LoRA", "AIArtist", "Pony", 25000),
             CreateDemoModel("Realistic Portrait", "PhotoMaster", "SDXL 1.0", 45000),
-            CreateDemoModel("Fantasy Style", "DreamWeaver", "SD 1.5", "SDXL 1.0", 12000),
             CreateDemoModel("Cyberpunk Aesthetic", "NeonCreator", "Illustrious", 8500),
             CreateDemoModel("Vintage Film Look", "RetroVision", "SD 1.5", 3200),
-            CreateDemoModel("Anime Eyes Detail", "MangaKing", "Pony", "Illustrious", 67000),
             CreateDemoModel("Landscape Enhancer", "NatureAI", "SDXL 1.0", 15000),
             CreateDemoModel("Comic Book Style", "ComicFan", "SD 1.5", 9800),
-            CreateDemoModel("Oil Painting Effect", "ClassicArt", "SDXL 1.0", "SD 1.5", 21000),
             CreateDemoModel("Sci-Fi Concepts", "FutureTech", "Flux.1 D", 4500),
             CreateDemoModel("Video Enhancer", "VideoMaster", "Wan Video 14B t2v", 2100),
             CreateDemoModel("Turbo Generator", "SpeedyAI", "Z-Image-Turbo", 11000),
         };
 
-        foreach (var model in demoModels)
+        // Add grouped demo models (separate entities sharing the same Name)
+        allDemoModels.AddRange(CreateGroupedDemoModels());
+
+        // Use the same grouping pipeline as real data
+        var tiles = GroupModelsIntoTiles(allDemoModels);
+        foreach (var tile in tiles)
         {
-            AllTiles.Add(ModelTileViewModel.FromModel(model));
+            AllTiles.Add(tile);
         }
 
         TotalModelCount = AllTiles.Count;
@@ -831,11 +1028,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private static Model CreateDemoModel(string name, string creator, string baseModel, int downloads)
     {
         return CreateDemoModel(name, creator, new[] { baseModel }, downloads);
-    }
-
-    private static Model CreateDemoModel(string name, string creator, string baseModel1, string baseModel2, int downloads)
-    {
-        return CreateDemoModel(name, creator, new[] { baseModel1, baseModel2 }, downloads);
     }
 
     private static Model CreateDemoModel(string name, string creator, string[] baseModels, int downloads)
@@ -906,6 +1098,92 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             versionNum++;
         }
 
+        return model;
+    }
+
+    /// <summary>
+    /// Creates demo models that share the same Name to demonstrate grouped cards.
+    /// Each model is a separate entity (different local file) belonging to the same LoRA,
+    /// mirroring how Civitai models with multiple base-model versions appear after discovery.
+    /// </summary>
+    private static List<Model> CreateGroupedDemoModels()
+    {
+        var models = new List<Model>();
+
+        // Group 1: "Fantasy Style" exists as both SD 1.5 and SDXL versions
+        var fantasyCreator = new Creator { Username = "DreamWeaver" };
+        models.Add(CreateGroupedModel("Fantasy Style", fantasyCreator, "SD 1.5", "fantasy_style_sd15.safetensors", 6000));
+        models.Add(CreateGroupedModel("Fantasy Style", fantasyCreator, "SDXL 1.0", "fantasy_style_sdxl.safetensors", 6000));
+
+        // Group 2: "Anime Eyes Detail" exists as Pony and Illustrious versions
+        var animeEyesCreator = new Creator { Username = "MangaKing" };
+        models.Add(CreateGroupedModel("Anime Eyes Detail", animeEyesCreator, "Pony", "anime_eyes_pony.safetensors", 33000));
+        models.Add(CreateGroupedModel("Anime Eyes Detail", animeEyesCreator, "Illustrious", "anime_eyes_illustrious.safetensors", 34000));
+
+        // Group 3: "Oil Painting Effect" exists as SDXL and SD 1.5 versions
+        var oilPaintCreator = new Creator { Username = "ClassicArt" };
+        models.Add(CreateGroupedModel("Oil Painting Effect", oilPaintCreator, "SDXL 1.0", "oil_painting_sdxl.safetensors", 11000));
+        models.Add(CreateGroupedModel("Oil Painting Effect", oilPaintCreator, "SD 1.5", "oil_painting_sd15.safetensors", 10000));
+
+        return models;
+    }
+
+    /// <summary>
+    /// Creates a single model entity for use in grouped demo scenarios.
+    /// </summary>
+    private static Model CreateGroupedModel(
+        string name, Creator creator,
+        string baseModel, string fileName, int downloads)
+    {
+        var model = new Model
+        {
+            CivitaiId = Random.Shared.Next(10000, 999999),
+            Name = name,
+            Type = ModelType.LORA,
+            Creator = creator,
+            Source = DataSource.CivitaiApi,
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-Random.Shared.Next(1, 180)),
+        };
+
+        var version = new ModelVersion
+        {
+            CivitaiId = Random.Shared.Next(100000, 9999999),
+            Name = $"{name} - {baseModel}",
+            BaseModelRaw = baseModel,
+            BaseModel = ParseBaseModel(baseModel),
+            DownloadCount = downloads + Random.Shared.Next(-1000, 1000),
+            Rating = 4.0 + Random.Shared.NextDouble(),
+            RatingCount = Random.Shared.Next(10, 500),
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-Random.Shared.Next(1, 90)),
+            Model = model,
+        };
+
+        version.Files.Add(new ModelFile
+        {
+            FileName = fileName,
+            SizeKB = Random.Shared.Next(50000, 500000),
+            Format = FileFormat.SafeTensor,
+            IsPrimary = true,
+            ModelVersion = version,
+        });
+
+        version.Images.Add(new ModelImage
+        {
+            Url = $"https://example.com/images/{Random.Shared.Next(1000, 9999)}.jpg",
+            Width = 512,
+            Height = 768,
+            SortOrder = 0,
+            ModelVersion = version,
+        });
+
+        version.TriggerWords.Add(new TriggerWord
+        {
+            Word = name.Split(' ')[0].ToLowerInvariant(),
+            Order = 0,
+            ModelVersion = version,
+        });
+
+        model.Versions.Add(version);
         return model;
     }
 

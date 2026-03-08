@@ -42,12 +42,12 @@ public partial class VersionButtonViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSelected;
 
-    public VersionButtonViewModel(ModelVersion version, string label, string? icon, Action<VersionButtonViewModel> onSelected)
+    public VersionButtonViewModel(ModelVersion version, string label, string? icon, string tooltip, Action<VersionButtonViewModel> onSelected)
     {
         Version = version;
         Label = label;
         Icon = icon;
-        ToolTip = version.Name ?? label;
+        ToolTip = tooltip;
         _onSelected = onSelected;
     }
 
