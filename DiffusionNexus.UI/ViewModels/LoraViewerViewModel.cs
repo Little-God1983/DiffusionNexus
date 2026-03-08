@@ -242,6 +242,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <summary>
     /// Download missing metadata from Civitai for models that were discovered locally.
     /// Uses full-file SHA256 hash to find the matching Civitai model version.
+    /// Automatically re-fetches missing image data and downloads thumbnails afterward.
     /// </summary>
     [RelayCommand]
     private async Task DownloadMissingMetadataAsync()
@@ -261,118 +262,260 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         await RunBusyAsync(async () =>
         {
-            // Find tiles that are missing Civitai metadata (no CivitaiId on model)
-            var tilesNeedingMetadata = AllTiles
-                .Where(t => t.ModelEntity?.CivitaiId is null)
-                .ToList();
-
-            if (tilesNeedingMetadata.Count == 0)
-            {
-                _logger?.Info(LogCategory.Network, "CivitaiSync", "All models already have metadata.");
-                Dispatcher.UIThread.Post(() => SyncStatus = "All models already have metadata.");
-                return;
-            }
-
-            _logger?.Info(LogCategory.Network, "CivitaiSync",
-                $"{tilesNeedingMetadata.Count} models need metadata");
-
-            var updated = 0;
-            var notFound = 0;
-            var skipped = 0;
-            var errors = 0;
-
-            for (var i = 0; i < tilesNeedingMetadata.Count; i++)
-            {
-                var tile = tilesNeedingMetadata[i];
-                var file = tile.SelectedVersion?.PrimaryFile;
-                if (file is null)
-                {
-                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                        $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: no primary file");
-                    skipped++;
-                    continue;
-                }
-
-                var localPath = file.LocalPath;
-                if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
-                {
-                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                        $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: file not found at {localPath}");
-                    skipped++;
-                    continue;
-                }
-
-                Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Hashing {tile.DisplayName}...");
-
-                try
-                {
-                    // Compute full-file SHA256 — same method as the proven old ComputeSHA256
-                    var hash = await Task.Run(() => ComputeFullSha256(localPath));
-
-                    _logger?.Info(LogCategory.Network, "CivitaiSync",
-                        $"[{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                        $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
-
-                    Dispatcher.UIThread.Post(() =>
-                        SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Looking up {tile.DisplayName}...");
-
-                    // Send API key — authenticated requests get higher rate limits
-                    var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
-                    if (civitaiVersion is null)
-                    {
-                        _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                            $"NOT FOUND [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                            $"Hash {hash} returned 404 from Civitai");
-                        notFound++;
-                        continue;
-                    }
-
-                    _logger?.Info(LogCategory.Network, "CivitaiSync",
-                        $"MATCHED [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                        $"→ Model {civitaiVersion.ModelId}, Version {civitaiVersion.Id} ({civitaiVersion.Name})\n" +
-                        $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
-
-                    // Update model entity with Civitai data
-                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                    updated++;
-
-                    _logger?.Info(LogCategory.Network, "CivitaiSync",
-                        $"SAVED [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName} → DB updated");
-
-                    Dispatcher.UIThread.Post(() =>
-                        SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] ✓ {tile.DisplayName} ({updated} updated)");
-                }
-                catch (HttpRequestException ex)
-                {
-                    _logger?.Error(LogCategory.Network, "CivitaiSync",
-                        $"HTTP ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: " +
-                        $"Status={ex.StatusCode}, {ex.Message}", ex);
-                    errors++;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Error(LogCategory.Network, "CivitaiSync",
-                        $"ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: {ex.Message}", ex);
-                    errors++;
-                }
-
-                // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
-                // The CivitaiClient handles 429 retries internally, but we still pace requests.
-                await Task.Delay(1500);
-            }
-
             var statusParts = new List<string>();
-            if (updated > 0) statusParts.Add($"{updated} updated");
-            if (notFound > 0) statusParts.Add($"{notFound} not on Civitai");
-            if (errors > 0) statusParts.Add($"{errors} errors");
-            if (skipped > 0) statusParts.Add($"{skipped} skipped");
-            var statusText = $"Metadata sync: {string.Join(", ", statusParts)}";
 
+            // ── Phase 1: Sync metadata for models that have never been synced ──
+            await SyncMetadataPhaseAsync(apiKey, statusParts);
+
+            // ── Phase 2: Re-fetch images for synced models that have no preview images ──
+            await RefetchMissingImagesPhaseAsync(apiKey, statusParts);
+
+            // ── Phase 3: Download thumbnails for tiles still showing "No Preview" ──
+            // Brief pause to let fire-and-forget downloads from Phase 2 tile refresh settle
+            await Task.Delay(2000);
+            await DownloadMissingThumbnailsPhaseAsync(statusParts);
+
+            // Final status
+            if (statusParts.Count == 0)
+                statusParts.Add("Everything up to date");
+
+            var statusText = string.Join(" · ", statusParts);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             Dispatcher.UIThread.Post(() => SyncStatus = statusText);
 
-        }, "Downloading metadata from Civitai...");
+        }, "Syncing with Civitai...");
+    }
+
+    /// <summary>
+    /// Phase 1: Sync metadata for models that have never been synced.
+    /// </summary>
+    private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts)
+    {
+        var tilesNeedingMetadata = AllTiles
+            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null })
+            .ToList();
+
+        if (tilesNeedingMetadata.Count == 0)
+        {
+            _logger?.Debug(LogCategory.Network, "CivitaiSync", "All models already have metadata — skipping Phase 1");
+            return;
+        }
+
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Phase 1: {tilesNeedingMetadata.Count} models need metadata");
+
+        var updated = 0;
+        var notFound = 0;
+        var skipped = 0;
+        var errors = 0;
+
+        for (var i = 0; i < tilesNeedingMetadata.Count; i++)
+        {
+            var tile = tilesNeedingMetadata[i];
+            var file = tile.SelectedVersion?.PrimaryFile;
+            if (file is null)
+            {
+                _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: no primary file");
+                skipped++;
+                continue;
+            }
+
+            var localPath = file.LocalPath;
+            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
+            {
+                _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: file not found at {localPath}");
+                skipped++;
+                continue;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+                SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Hashing {tile.DisplayName}...");
+
+            try
+            {
+                // Compute full-file SHA256 — same method as the proven old ComputeSHA256
+                var hash = await Task.Run(() => ComputeFullSha256(localPath));
+
+                _logger?.Info(LogCategory.Network, "CivitaiSync",
+                    $"[{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                    $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
+
+                Dispatcher.UIThread.Post(() =>
+                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Looking up {tile.DisplayName}...");
+
+                // Send API key — authenticated requests get higher rate limits
+                var civitaiVersion = await _civitaiClient!.GetModelVersionByHashAsync(hash, apiKey);
+                if (civitaiVersion is null)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                        $"NOT FOUND [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                        $"Hash {hash} returned 404 from Civitai");
+                    notFound++;
+
+                    // Mark as synced so this model is not retried on every run
+                    await MarkModelSyncedAsync(tile.ModelEntity);
+                    continue;
+                }
+
+                _logger?.Info(LogCategory.Network, "CivitaiSync",
+                    $"MATCHED [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                    $"→ Model {civitaiVersion.ModelId}, Version {civitaiVersion.Id} ({civitaiVersion.Name})\n" +
+                    $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
+
+                // Update model entity with Civitai data
+                await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+                updated++;
+
+                _logger?.Info(LogCategory.Network, "CivitaiSync",
+                    $"SAVED [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName} → DB updated");
+
+                Dispatcher.UIThread.Post(() =>
+                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] ✓ {tile.DisplayName} ({updated} updated)");
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger?.Error(LogCategory.Network, "CivitaiSync",
+                    $"HTTP ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: " +
+                    $"Status={ex.StatusCode}, {ex.Message}", ex);
+                errors++;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(LogCategory.Network, "CivitaiSync",
+                    $"ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: {ex.Message}", ex);
+                errors++;
+            }
+
+            // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
+            // The CivitaiClient handles 429 retries internally, but we still pace requests.
+            await Task.Delay(1500);
+        }
+
+        var parts = new List<string>();
+        if (updated > 0) parts.Add($"{updated} updated");
+        if (notFound > 0) parts.Add($"{notFound} not on Civitai");
+        if (errors > 0) parts.Add($"{errors} errors");
+        if (skipped > 0) parts.Add($"{skipped} skipped");
+        statusParts.Add($"Metadata: {string.Join(", ", parts)}");
+    }
+
+    /// <summary>
+    /// Phase 2: Re-fetch image data from Civitai for models that were synced but have no preview images.
+    /// This happens when the initial sync didn't receive image data (empty images array from the API).
+    /// </summary>
+    private async Task RefetchMissingImagesPhaseAsync(string? apiKey, List<string> statusParts)
+    {
+        var tilesNeedingImages = AllTiles
+            .Where(t => t.IsImageDataMissing)
+            .ToList();
+
+        if (tilesNeedingImages.Count == 0)
+        {
+            _logger?.Debug(LogCategory.Network, "CivitaiSync", "No synced models missing images — skipping Phase 2");
+            return;
+        }
+
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Phase 2: {tilesNeedingImages.Count} synced models have no preview images, re-fetching from Civitai");
+
+        var fetched = 0;
+        var fetchErrors = 0;
+
+        for (var i = 0; i < tilesNeedingImages.Count; i++)
+        {
+            var tile = tilesNeedingImages[i];
+            var versionCivitaiId = tile.SelectedVersion?.CivitaiId;
+            if (versionCivitaiId is null) continue;
+
+            Dispatcher.UIThread.Post(() =>
+                SyncStatus = $"Re-fetching images [{i + 1}/{tilesNeedingImages.Count}] {tile.DisplayName}...");
+
+            try
+            {
+                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId.Value, apiKey);
+                if (civitaiVersion is not null && civitaiVersion.Images.Count > 0)
+                {
+                    _logger?.Info(LogCategory.Network, "CivitaiSync",
+                        $"Re-fetched {civitaiVersion.Images.Count} images for '{tile.DisplayName}'");
+
+                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+                    fetched++;
+                }
+                else
+                {
+                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                        $"No images available for '{tile.DisplayName}' on Civitai");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(LogCategory.Network, "CivitaiSync",
+                    $"Failed to re-fetch images for '{tile.DisplayName}': {ex.Message}", ex);
+                fetchErrors++;
+            }
+
+            await Task.Delay(1500);
+        }
+
+        if (fetched > 0 || fetchErrors > 0)
+        {
+            var part = $"Images re-fetched: {fetched}";
+            if (fetchErrors > 0) part += $", {fetchErrors} errors";
+            statusParts.Add(part);
+        }
+    }
+
+    /// <summary>
+    /// Phase 3: Download thumbnails for tiles still showing "No Preview" that have image URLs.
+    /// </summary>
+    private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts)
+    {
+        var tilesNeedingThumbs = AllTiles
+            .Where(t => t.IsThumbnailMissing)
+            .ToList();
+
+        if (tilesNeedingThumbs.Count == 0)
+        {
+            _logger?.Debug(LogCategory.General, "CivitaiSync", "No tiles with downloadable but missing thumbnails — skipping Phase 3");
+            return;
+        }
+
+        _logger?.Info(LogCategory.General, "CivitaiSync",
+            $"Phase 3: {tilesNeedingThumbs.Count} tiles need thumbnail download");
+
+        var thumbSuccess = 0;
+        var thumbFailed = 0;
+
+        for (var i = 0; i < tilesNeedingThumbs.Count; i++)
+        {
+            var tile = tilesNeedingThumbs[i];
+            Dispatcher.UIThread.Post(() =>
+                SyncStatus = $"Downloading thumbnail [{i + 1}/{tilesNeedingThumbs.Count}] {tile.DisplayName}...");
+
+            try
+            {
+                await tile.TryDownloadMissingThumbnailAsync();
+
+                if (!tile.IsThumbnailMissing)
+                    thumbSuccess++;
+                else
+                    thumbFailed++;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(LogCategory.General, "CivitaiSync",
+                    $"Failed thumbnail for '{tile.DisplayName}': {ex.Message}", ex);
+                thumbFailed++;
+            }
+
+            await Task.Delay(500);
+        }
+
+        var thumbPart = $"Thumbnails: {thumbSuccess} downloaded";
+        if (thumbFailed > 0) thumbPart += $", {thumbFailed} failed";
+        statusParts.Add(thumbPart);
     }
 
     /// <summary>
@@ -385,6 +528,31 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(stream);
         return Convert.ToHexStringLower(hash);
+    }
+
+    /// <summary>
+    /// Marks a model as synced (sets LastSyncedAt) so it is not retried on subsequent runs.
+    /// Used when the hash lookup returns 404 or the CivitaiId cannot be assigned.
+    /// </summary>
+    private static async Task MarkModelSyncedAsync(Model? model)
+    {
+        if (model is null) return;
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
+            if (dbModel is not null)
+            {
+                dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
+                await unitOfWork.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to mark model {Id} as synced", model.Id);
+        }
     }
 
     /// <summary>
@@ -512,6 +680,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     ModelVersionId = dbVersion.Id,
                     CivitaiId = civImage.Id,
                     Url = civImage.Url,
+                    MediaType = civImage.Type,
                     IsNsfw = civImage.Nsfw,
                     Width = civImage.Width,
                     Height = civImage.Height,

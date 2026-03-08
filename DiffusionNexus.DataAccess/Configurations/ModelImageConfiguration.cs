@@ -18,6 +18,7 @@ internal sealed class ModelImageConfiguration : IEntityTypeConfiguration<ModelIm
 
         // Properties
         entity.Property(e => e.Url).IsRequired().HasMaxLength(2000);
+        entity.Property(e => e.MediaType).HasMaxLength(20);
         entity.Property(e => e.NsfwLevel).HasConversion<string>().HasMaxLength(10);
         entity.Property(e => e.BlurHash).HasMaxLength(100);
         entity.Property(e => e.Username).HasMaxLength(200);
@@ -38,6 +39,7 @@ internal sealed class ModelImageConfiguration : IEntityTypeConfiguration<ModelIm
         entity.Ignore(e => e.IsPortrait);
         entity.Ignore(e => e.IsLandscape);
         entity.Ignore(e => e.HasThumbnail);
+        entity.Ignore(e => e.IsVideo);
         entity.Ignore(e => e.HasLocalCache);
         entity.Ignore(e => e.IsPrimary);
         entity.Ignore(e => e.ThumbnailSizeKB);

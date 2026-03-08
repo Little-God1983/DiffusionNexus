@@ -63,7 +63,7 @@
           
           <Button Content="Download Metadata"
                   Command="{Binding DownloadMissingMetadataCommand}"/>
-          
+
           <Button Content="Scan Duplicates"
                   Command="{Binding ScanDuplicatesCommand}"/>
           

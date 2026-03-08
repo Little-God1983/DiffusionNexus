@@ -5,6 +5,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.ObjectModel;
 
@@ -442,31 +444,81 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Returns true if the model was synced with Civitai but the selected version has no preview images.
+    /// These models need their image records re-fetched from the Civitai API.
+    /// </summary>
+    public bool IsImageDataMissing =>
+        ModelEntity?.CivitaiId is not null
+        && SelectedVersion?.CivitaiId is not null
+        && (SelectedVersion.Images is null || SelectedVersion.Images.Count == 0);
+
+    /// <summary>
+    /// Returns true if the tile is showing "No Preview" but has a downloadable image URL.
+    /// Checks the actual visual state (Bitmap) rather than entity data, so it catches
+    /// corrupt BLOBs and decode failures too.
+    /// </summary>
+    public bool IsThumbnailMissing =>
+        ThumbnailImage is null
+        && SelectedVersion?.PrimaryImage is { } img
+        && !string.IsNullOrEmpty(img.Url);
+
+    /// <summary>
+    /// Attempts to download the thumbnail for the selected version if it is missing.
+    /// </summary>
+    public async Task TryDownloadMissingThumbnailAsync()
+    {
+        if (!IsThumbnailMissing) return;
+        await DownloadThumbnailAsync(SelectedVersion!.PrimaryImage!);
+    }
+
+    /// <summary>
     /// Downloads a thumbnail from a Civitai image URL and caches it as a BLOB.
+    /// For video previews, downloads the video to a temp file and extracts the mid-frame.
     /// </summary>
     private async Task DownloadThumbnailAsync(ModelImage image)
     {
+        var logger = App.Services?.GetService<IUnifiedLogger>();
+        var isVideo = IsVideoPreview(image);
+        var previewType = isVideo ? "video" : "image";
+        var displayName = DisplayName;
+
+        logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+            $"Downloading {previewType} thumbnail for '{displayName}'",
+            $"URL: {image.Url}\nMediaType: {image.MediaType ?? "(null)"}");
+
         IsLoading = true;
         try
         {
-            // Civitai supports width parameter for resized images
-            var thumbnailUrl = image.Url.Contains('?')
-                ? $"{image.Url}&width=300"
-                : $"{image.Url}/width=300";
+            byte[] thumbnailBytes;
+            string mimeType;
 
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var imageBytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
+            if (isVideo)
+            {
+                (thumbnailBytes, mimeType) = await DownloadVideoThumbnailAsync(image.Url, logger).ConfigureAwait(false);
+            }
+            else
+            {
+                (thumbnailBytes, mimeType) = await DownloadImageThumbnailAsync(image.Url).ConfigureAwait(false);
+            }
 
-            if (imageBytes.Length == 0) return;
+            if (thumbnailBytes.Length == 0)
+            {
+                logger?.Warn(LogCategory.Network, "ThumbnailDownload",
+                    $"Empty {previewType} thumbnail for '{displayName}'");
+                return;
+            }
+
+            logger?.Info(LogCategory.Network, "ThumbnailDownload",
+                $"Thumbnail created for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB)");
 
             // Store in-memory for immediate display
-            image.ThumbnailData = imageBytes;
-            image.ThumbnailMimeType = "image/jpeg";
+            image.ThumbnailData = thumbnailBytes;
+            image.ThumbnailMimeType = mimeType;
 
             // Persist BLOB to the database so next startup is instant
             if (image.Id > 0)
             {
-                await PersistThumbnailAsync(image.Id, imageBytes);
+                await PersistThumbnailAsync(image.Id, thumbnailBytes, mimeType);
             }
 
             // Display the downloaded thumbnail
@@ -474,7 +526,7 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 try
                 {
-                    using var stream = new MemoryStream(imageBytes);
+                    using var stream = new MemoryStream(thumbnailBytes);
                     ThumbnailImage = new Bitmap(stream);
                 }
                 catch
@@ -483,9 +535,10 @@ public partial class ModelTileViewModel : ViewModelBase
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
-            // Network errors are expected — silently fail
+            logger?.Error(LogCategory.Network, "ThumbnailDownload",
+                $"Failed to create {previewType} thumbnail for '{displayName}': {ex.Message}", ex);
         }
         finally
         {
@@ -494,9 +547,111 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Determines whether a preview image is a video based on MediaType or URL extension.
+    /// Falls back to URL extension for legacy records that don't have MediaType set.
+    /// </summary>
+    private static bool IsVideoPreview(ModelImage image)
+    {
+        if (image.IsVideo)
+            return true;
+
+        // Fallback: detect video by URL extension for legacy records without MediaType
+        if (image.MediaType is null && !string.IsNullOrEmpty(image.Url))
+        {
+            var extension = Path.GetExtension(new Uri(image.Url).AbsolutePath);
+            return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Downloads an image thumbnail from a Civitai URL.
+    /// </summary>
+    private static async Task<(byte[] Data, string MimeType)> DownloadImageThumbnailAsync(string url)
+    {
+        // Civitai supports width parameter for resized images
+        var thumbnailUrl = url.Contains('?')
+            ? $"{url}&width=300"
+            : $"{url}/width=300";
+
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
+        return (bytes, "image/jpeg");
+    }
+
+    /// <summary>
+    /// Downloads a video preview from Civitai, extracts a frame at the midpoint using FFmpeg,
+    /// and returns the frame as thumbnail bytes.
+    /// </summary>
+    private static async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
+        string videoUrl, IUnifiedLogger? logger)
+    {
+        var videoThumbnailService = App.Services?.GetService<IVideoThumbnailService>();
+        if (videoThumbnailService is null)
+        {
+            logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                "IVideoThumbnailService not available — cannot extract video thumbnail");
+            return ([], string.Empty);
+        }
+
+        var tempVideoPath = Path.Combine(Path.GetTempPath(), $"dn_preview_{Guid.NewGuid():N}.mp4");
+        string? generatedThumbnailPath = null;
+        try
+        {
+            // Download the video to a temp file
+            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                $"Downloading video to temp: {tempVideoPath}",
+                $"URL: {videoUrl}");
+
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            var videoBytes = await httpClient.GetByteArrayAsync(videoUrl).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(tempVideoPath, videoBytes).ConfigureAwait(false);
+
+            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                $"Video downloaded ({videoBytes.Length / 1024.0:F0} KB), extracting mid-frame...");
+
+            // Extract mid-frame thumbnail (VideoThumbnailService defaults to midpoint)
+            var result = await videoThumbnailService.GenerateThumbnailAsync(
+                tempVideoPath,
+                new VideoThumbnailOptions { MaxWidth = 300, OutputFormat = ThumbnailFormat.WebP })
+                .ConfigureAwait(false);
+
+            if (!result.Success || string.IsNullOrEmpty(result.ThumbnailPath))
+            {
+                logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                    $"FFmpeg frame extraction failed: {result.ErrorMessage ?? "unknown error"}");
+                return ([], string.Empty);
+            }
+
+            generatedThumbnailPath = result.ThumbnailPath;
+            var thumbnailBytes = await File.ReadAllBytesAsync(result.ThumbnailPath).ConfigureAwait(false);
+
+            logger?.Debug(LogCategory.General, "ThumbnailDownload",
+                $"Video frame extracted ({thumbnailBytes.Length / 1024.0:F1} KB, {result.Width}x{result.Height})",
+                $"Captured at {result.CapturePosition} of {result.VideoDuration}");
+
+            return (thumbnailBytes, "image/webp");
+        }
+        finally
+        {
+            // TODO: Linux Implementation for temp file cleanup
+            TryDeleteFile(tempVideoPath);
+            if (generatedThumbnailPath is not null)
+                TryDeleteFile(generatedThumbnailPath);
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { File.Delete(path); }
+        catch { /* Best-effort cleanup */ }
+    }
+
+    /// <summary>
     /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
     /// </summary>
-    private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData)
+    private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
     {
         try
         {
@@ -506,7 +661,7 @@ public partial class ModelTileViewModel : ViewModelBase
             if (dbImage is not null)
             {
                 dbImage.ThumbnailData = thumbnailData;
-                dbImage.ThumbnailMimeType = "image/jpeg";
+                dbImage.ThumbnailMimeType = mimeType;
                 await dbContext.SaveChangesAsync();
             }
         }
