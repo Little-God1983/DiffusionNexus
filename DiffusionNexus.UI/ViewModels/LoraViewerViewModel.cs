@@ -422,7 +422,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // Update model-level fields from Civitai
         if (civitaiModel is not null)
         {
-            dbModel.CivitaiId = civitaiModel.Id;
+            // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
+            var civitaiIdOwner = dbModels.FirstOrDefault(m => m.CivitaiId == civitaiModel.Id);
+            if (civitaiIdOwner is null || civitaiIdOwner.Id == dbModel.Id)
+            {
+                dbModel.CivitaiId = civitaiModel.Id;
+            }
+            else
+            {
+                _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                    $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
+                    $"already assigned to model '{civitaiIdOwner.Name}' (Id={civitaiIdOwner.Id})");
+            }
+
             dbModel.Name = civitaiModel.Name;
             dbModel.Description = civitaiModel.Description;
             dbModel.IsNsfw = civitaiModel.Nsfw;
@@ -446,7 +458,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         if (dbVersion is not null)
         {
-            dbVersion.CivitaiId = bestCivitaiVersion.Id;
+            // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
+            var versionCivitaiIdOwner = dbModels
+                .SelectMany(m => m.Versions)
+                .FirstOrDefault(v => v.CivitaiId == bestCivitaiVersion.Id);
+            if (versionCivitaiIdOwner is null || versionCivitaiIdOwner.Id == dbVersion.Id)
+            {
+                dbVersion.CivitaiId = bestCivitaiVersion.Id;
+            }
+            else
+            {
+                _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                    $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
+                    $"already assigned to version '{versionCivitaiIdOwner.Name}' (Id={versionCivitaiIdOwner.Id})");
+            }
+
             dbVersion.Name = bestCivitaiVersion.Name;
             dbVersion.Description = bestCivitaiVersion.Description;
             dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;

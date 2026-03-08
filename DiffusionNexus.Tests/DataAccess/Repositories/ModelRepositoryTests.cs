@@ -122,6 +122,73 @@ public class ModelRepositoryTests : IDisposable
         result.Should().BeNull();
     }
 
+    [Fact]
+    public async Task WhenDuplicateCivitaiIdAssignedToModelThenSaveThrows()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model { Name = "ModelA", Type = ModelType.LORA, CivitaiId = 42 };
+        var modelB = new Model { Name = "ModelB", Type = ModelType.LORA };
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        modelB.CivitaiId = 42;
+
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().ThrowAsync<DiffusionNexus.DataAccess.Exceptions.DatabaseOperationException>()
+            .WithMessage("*UNIQUE constraint*");
+    }
+
+    [Fact]
+    public async Task WhenDuplicateCivitaiIdAssignedToVersionThenSaveThrows()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = CreateModelWithLocalFile("ModelA", "/a.safetensors");
+        modelA.Versions.First().CivitaiId = 99;
+        var modelB = CreateModelWithLocalFile("ModelB", "/b.safetensors");
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        modelB.Versions.First().CivitaiId = 99;
+
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().ThrowAsync<DiffusionNexus.DataAccess.Exceptions.DatabaseOperationException>()
+            .WithMessage("*UNIQUE constraint*");
+    }
+
+    [Fact]
+    public async Task WhenCivitaiIdOwnershipCheckedThenDuplicateIsAvoided()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model { Name = "ModelA", Type = ModelType.LORA, CivitaiId = 42 };
+        var modelB = new Model { Name = "ModelB", Type = ModelType.LORA };
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        // Guard: only assign if no other model owns the CivitaiId
+        var allModels = await uow.Models.GetAllAsync();
+        var existingOwner = allModels.FirstOrDefault(m => m.CivitaiId == 42);
+        if (existingOwner is null || existingOwner.Id == modelB.Id)
+        {
+            modelB.CivitaiId = 42;
+        }
+
+        // Save should succeed because the guard prevented the duplicate assignment
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().NotThrowAsync();
+
+        // modelB should still have no CivitaiId
+        modelB.CivitaiId.Should().BeNull();
+    }
+
     private static Model CreateModelWithLocalFile(string name, string? localPath)
     {
         var model = new Model
