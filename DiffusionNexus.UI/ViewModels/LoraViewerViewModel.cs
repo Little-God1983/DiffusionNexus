@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Security.Cryptography;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -8,6 +9,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -22,6 +24,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly IModelSyncService? _syncService;
     private readonly ICivitaiClient? _civitaiClient;
     private readonly ISecureStorage? _secureStorage;
+    private readonly IUnifiedLogger? _logger;
 
     #region Observable Properties
 
@@ -88,6 +91,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _syncService = null;
         _civitaiClient = null;
         _secureStorage = null;
+        _logger = null;
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -99,12 +103,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         IAppSettingsService settingsService,
         IModelSyncService syncService,
         ICivitaiClient? civitaiClient = null,
-        ISecureStorage? secureStorage = null)
+        ISecureStorage? secureStorage = null,
+        IUnifiedLogger? logger = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
         _civitaiClient = civitaiClient;
         _secureStorage = secureStorage;
+        _logger = logger;
     }
 
     #endregion
@@ -235,7 +241,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>
     /// Download missing metadata from Civitai for models that were discovered locally.
-    /// Uses file hash to find the matching Civitai model version.
+    /// Uses full-file SHA256 hash to find the matching Civitai model version.
     /// </summary>
     [RelayCommand]
     private async Task DownloadMissingMetadataAsync()
@@ -246,9 +252,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        // Get API key for authenticated requests
+        // Get API key — authenticated requests get higher rate limits on Civitai
         var settings = await _settingsService.GetSettingsAsync();
         var apiKey = _secureStorage?.Decrypt(settings.EncryptedCivitaiApiKey);
+
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
 
         await RunBusyAsync(async () =>
         {
@@ -259,62 +268,123 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             if (tilesNeedingMetadata.Count == 0)
             {
+                _logger?.Info(LogCategory.Network, "CivitaiSync", "All models already have metadata.");
                 Dispatcher.UIThread.Post(() => SyncStatus = "All models already have metadata.");
                 return;
             }
 
+            _logger?.Info(LogCategory.Network, "CivitaiSync",
+                $"{tilesNeedingMetadata.Count} models need metadata");
+
             var updated = 0;
-            var failed = 0;
+            var notFound = 0;
+            var skipped = 0;
+            var errors = 0;
 
             for (var i = 0; i < tilesNeedingMetadata.Count; i++)
             {
                 var tile = tilesNeedingMetadata[i];
                 var file = tile.SelectedVersion?.PrimaryFile;
-                if (file is null) continue;
+                if (file is null)
+                {
+                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                        $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: no primary file");
+                    skipped++;
+                    continue;
+                }
+
+                var localPath = file.LocalPath;
+                if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
+                {
+                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                        $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: file not found at {localPath}");
+                    skipped++;
+                    continue;
+                }
 
                 Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"Fetching metadata {i + 1}/{tilesNeedingMetadata.Count}: {tile.DisplayName}");
+                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Hashing {tile.DisplayName}...");
 
                 try
                 {
-                    // Try hash lookup first (most reliable)
-                    var hash = file.HashSHA256;
-                    if (string.IsNullOrEmpty(hash) && !string.IsNullOrEmpty(file.LocalPath))
+                    // Compute full-file SHA256 — same method as the proven old ComputeSHA256
+                    var hash = await Task.Run(() => ComputeFullSha256(localPath));
+
+                    _logger?.Info(LogCategory.Network, "CivitaiSync",
+                        $"[{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                        $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
+
+                    Dispatcher.UIThread.Post(() =>
+                        SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Looking up {tile.DisplayName}...");
+
+                    // Send API key — authenticated requests get higher rate limits
+                    var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
+                    if (civitaiVersion is null)
                     {
-                        // Compute hash if missing
-                        hash = await _syncService!.ComputeFileHashAsync(file.LocalPath);
-                        file.HashSHA256 = hash;
+                        _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                            $"NOT FOUND [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                            $"Hash {hash} returned 404 from Civitai");
+                        notFound++;
+                        continue;
                     }
 
-                    if (string.IsNullOrEmpty(hash)) { failed++; continue; }
+                    _logger?.Info(LogCategory.Network, "CivitaiSync",
+                        $"MATCHED [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                        $"→ Model {civitaiVersion.ModelId}, Version {civitaiVersion.Id} ({civitaiVersion.Name})\n" +
+                        $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
 
-                    var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
-                    if (civitaiVersion is null) { failed++; continue; }
-
-                    // Update model entity with Civitai data using a fresh scope
+                    // Update model entity with Civitai data
                     await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
                     updated++;
+
+                    _logger?.Info(LogCategory.Network, "CivitaiSync",
+                        $"SAVED [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName} → DB updated");
+
+                    Dispatcher.UIThread.Post(() =>
+                        SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] ✓ {tile.DisplayName} ({updated} updated)");
                 }
-                catch (HttpRequestException)
+                catch (HttpRequestException ex)
                 {
-                    failed++;
-                    // Rate limit or network error - wait and continue
-                    await Task.Delay(2000);
+                    _logger?.Error(LogCategory.Network, "CivitaiSync",
+                        $"HTTP ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: " +
+                        $"Status={ex.StatusCode}, {ex.Message}", ex);
+                    errors++;
                 }
                 catch (Exception ex)
                 {
-                    Serilog.Log.Warning(ex, "Failed to fetch metadata for {ModelName}", tile.DisplayName);
-                    failed++;
+                    _logger?.Error(LogCategory.Network, "CivitaiSync",
+                        $"ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: {ex.Message}", ex);
+                    errors++;
                 }
 
-                // Small delay to avoid rate limiting
-                await Task.Delay(500);
+                // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
+                // The CivitaiClient handles 429 retries internally, but we still pace requests.
+                await Task.Delay(1500);
             }
 
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Metadata sync complete: {updated} updated, {failed} failed.");
+            var statusParts = new List<string>();
+            if (updated > 0) statusParts.Add($"{updated} updated");
+            if (notFound > 0) statusParts.Add($"{notFound} not on Civitai");
+            if (errors > 0) statusParts.Add($"{errors} errors");
+            if (skipped > 0) statusParts.Add($"{skipped} skipped");
+            var statusText = $"Metadata sync: {string.Join(", ", statusParts)}";
+
+            _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
+            Dispatcher.UIThread.Post(() => SyncStatus = statusText);
 
         }, "Downloading metadata from Civitai...");
+    }
+
+    /// <summary>
+    /// Computes the full-file SHA256 hash for Civitai API lookup.
+    /// Uses the exact same approach as the proven old LoraMetadataDownloadService.ComputeSHA256.
+    /// </summary>
+    private static string ComputeFullSha256(string filePath)
+    {
+        using var stream = File.OpenRead(filePath);
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(stream);
+        return Convert.ToHexStringLower(hash);
     }
 
     /// <summary>
@@ -325,12 +395,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         CivitaiModelVersion civitaiVersion,
         string? apiKey)
     {
-        // Fetch the full model to get all versions
+        // Fetch the full model to get all versions (richer data including images)
         CivitaiModel? civitaiModel = null;
         if (civitaiVersion.ModelId > 0)
         {
             civitaiModel = await _civitaiClient!.GetModelAsync(civitaiVersion.ModelId, apiKey);
         }
+
+        // Resolve the best image source: the full model response is more reliable than
+        // the hash-lookup response which often returns an empty images array.
+        var bestCivitaiVersion = civitaiModel?.ModelVersions
+            .FirstOrDefault(v => v.Id == civitaiVersion.Id) ?? civitaiVersion;
 
         // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -371,19 +446,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         if (dbVersion is not null)
         {
-            dbVersion.CivitaiId = civitaiVersion.Id;
-            dbVersion.Name = civitaiVersion.Name;
-            dbVersion.Description = civitaiVersion.Description;
-            dbVersion.BaseModelRaw = civitaiVersion.BaseModel;
-            dbVersion.DownloadUrl = civitaiVersion.DownloadUrl;
-            dbVersion.DownloadCount = civitaiVersion.Stats?.DownloadCount ?? 0;
-            dbVersion.PublishedAt = civitaiVersion.PublishedAt;
-            dbVersion.EarlyAccessDays = civitaiVersion.EarlyAccessTimeFrame;
+            dbVersion.CivitaiId = bestCivitaiVersion.Id;
+            dbVersion.Name = bestCivitaiVersion.Name;
+            dbVersion.Description = bestCivitaiVersion.Description;
+            dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
+            dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
+            dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
+            dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
+            dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
 
             // Update trigger words
             dbVersion.TriggerWords.Clear();
             var order = 0;
-            foreach (var word in civitaiVersion.TrainedWords)
+            foreach (var word in bestCivitaiVersion.TrainedWords)
             {
                 dbVersion.TriggerWords.Add(new TriggerWord
                 {
@@ -392,16 +467,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 });
             }
 
-            // Update images (add missing ones)
-            var existingImageIds = dbVersion.Images.Select(i => i.CivitaiId).ToHashSet();
+            // Add images from Civitai (use the version with the richest data)
+            var existingImageIds = dbVersion.Images
+                .Where(i => i.CivitaiId.HasValue)
+                .Select(i => i.CivitaiId!.Value)
+                .ToHashSet();
             var sortOrder = dbVersion.Images.Count;
-            foreach (var civImage in civitaiVersion.Images)
+            foreach (var civImage in bestCivitaiVersion.Images)
             {
+                if (string.IsNullOrEmpty(civImage.Url))
+                    continue;
+
                 if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value))
                     continue;
 
                 dbVersion.Images.Add(new ModelImage
                 {
+                    ModelVersionId = dbVersion.Id,
                     CivitaiId = civImage.Id,
                     Url = civImage.Url,
                     IsNsfw = civImage.Nsfw,
@@ -422,7 +504,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
 
             // Update file hashes from Civitai data
-            var civFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
+            var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
             if (civFile?.Hashes is not null)
             {
                 var dbFile = dbVersion.PrimaryFile;
@@ -439,10 +521,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         await unitOfWork.SaveChangesAsync();
 
+        // Reload model from DB after save to get generated IDs on new images
+        var refreshedModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+        var refreshedModel = refreshedModels.FirstOrDefault(m => m.Id == model.Id);
+
         // Refresh tile on UI thread with updated data
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            tile.ModelEntity = dbModel;
+            tile.ModelEntity = refreshedModel ?? dbModel;
         });
     }
 

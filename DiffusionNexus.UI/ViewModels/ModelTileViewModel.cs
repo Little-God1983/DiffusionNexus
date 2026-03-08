@@ -3,7 +3,9 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using Microsoft.Extensions.DependencyInjection;
 using System.Collections.ObjectModel;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -235,17 +237,25 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Open model on Civitai.
+    /// Open model on Civitai. Falls back to a version-level URL when the
+    /// model-level CivitaiId hasn't been synced yet.
     /// </summary>
     [RelayCommand]
     private void OpenOnCivitai()
     {
-        if (ModelEntity?.CivitaiId is null)
+        string? url = null;
+
+        if (ModelEntity?.CivitaiId is not null)
         {
-            return;
+            url = $"https://civitai.com/models/{ModelEntity.CivitaiId}";
+        }
+        else if (SelectedVersion?.CivitaiId is not null)
+        {
+            url = $"https://civitai.com/models/{SelectedVersion.CivitaiId}";
         }
 
-        var url = $"https://civitai.com/models/{ModelEntity.CivitaiId}";
+        if (url is null) return;
+
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
         {
             UseShellExecute = true
@@ -449,9 +459,15 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (imageBytes.Length == 0) return;
 
-            // Store as BLOB for future fast loading
+            // Store in-memory for immediate display
             image.ThumbnailData = imageBytes;
             image.ThumbnailMimeType = "image/jpeg";
+
+            // Persist BLOB to the database so next startup is instant
+            if (image.Id > 0)
+            {
+                await PersistThumbnailAsync(image.Id, imageBytes);
+            }
 
             // Display the downloaded thumbnail
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -474,6 +490,29 @@ public partial class ModelTileViewModel : ViewModelBase
         finally
         {
             await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+        }
+    }
+
+    /// <summary>
+    /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
+    /// </summary>
+    private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData)
+    {
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<DataAccess.Data.DiffusionNexusCoreDbContext>();
+            var dbImage = await dbContext.ModelImages.FindAsync(imageId);
+            if (dbImage is not null)
+            {
+                dbImage.ThumbnailData = thumbnailData;
+                dbImage.ThumbnailMimeType = "image/jpeg";
+                await dbContext.SaveChangesAsync();
+            }
+        }
+        catch
+        {
+            // Non-critical — thumbnail will be re-downloaded next time
         }
     }
 

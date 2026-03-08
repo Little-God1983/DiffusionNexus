@@ -648,7 +648,8 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IModelSyncService>(),
             sp.GetService<Civitai.ICivitaiClient>(),
-            sp.GetService<ISecureStorage>()));
+            sp.GetService<ISecureStorage>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<IInstallerPackageRepository>(),
