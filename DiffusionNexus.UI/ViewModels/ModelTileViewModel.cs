@@ -254,24 +254,36 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Open model on Civitai. Falls back to a version-level URL when the
-    /// model-level CivitaiId hasn't been synced yet.
+    /// Open model on Civitai. Tries multiple ID sources to build the URL:
+    /// CivitaiId → CivitaiModelPageId → SelectedVersion.CivitaiId (version-level URL).
+    /// Logs a warning to the Unified Console when no Civitai link is available.
     /// </summary>
     [RelayCommand]
     private void OpenOnCivitai()
     {
         string? url = null;
 
-        if (ModelEntity?.CivitaiId is not null)
+        if (ModelEntity?.CivitaiId is { } modelCivitaiId)
         {
-            url = $"https://civitai.com/models/{ModelEntity.CivitaiId}";
+            url = $"https://civitai.com/models/{modelCivitaiId}";
         }
-        else if (SelectedVersion?.CivitaiId is not null)
+        else if (ModelEntity?.CivitaiModelPageId is { } pageId)
         {
-            url = $"https://civitai.com/models/{SelectedVersion.CivitaiId}";
+            url = $"https://civitai.com/models/{pageId}";
+        }
+        else if (SelectedVersion?.CivitaiId is { } versionCivitaiId)
+        {
+            // Version-level ID — link to the version page directly
+            url = $"https://civitai.com/api/v1/model-versions/{versionCivitaiId}";
         }
 
-        if (url is null) return;
+        if (url is null)
+        {
+            var logger = App.Services?.GetService<IUnifiedLogger>();
+            logger?.Warn(LogCategory.General, "OpenOnCivitai",
+                $"No Civitai link available for '{DisplayName}' — run 'Download Metadata' first to sync with Civitai.");
+            return;
+        }
 
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
         {
