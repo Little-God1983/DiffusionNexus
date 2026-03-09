@@ -196,5 +196,10 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             string name, string installationPath, DiffusionNexus.Domain.Enums.InstallerType type,
             string executablePath, string outputFolderPath) =>
             Task.FromResult(AddExistingInstallationResult.Cancelled());
+
+        public Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
+            string modelName, DiffusionNexus.Civitai.Models.CivitaiModelVersion civitaiVersion,
+            IReadOnlyList<string> sourceFolders) =>
+            Task.FromResult(DownloadLoraVersionResult.Cancelled());
     }
 }

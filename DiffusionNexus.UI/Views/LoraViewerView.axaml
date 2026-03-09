@@ -151,31 +151,36 @@
       </Grid>
     </Border>
 
-    <!-- Main Content: Tiles + Detail Panel -->
-    <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+    <!-- Main Content: Tiles + Detail Panel (overlay) -->
+    <Grid Grid.Row="1">
 
-      <!-- Left: Model Tiles -->
-      <Grid Grid.Column="0">
+      <!-- Model Tiles (always full width — detail panel overlays from the right) -->
+      <Grid>
 
         <!-- Model Tiles Grid using WrapPanel -->
         <ScrollViewer Padding="16"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Auto">
 
-          <ItemsControl ItemsSource="{Binding FilteredTiles}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel Orientation="Horizontal"/>
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:ModelTileViewModel">
-                <Border Margin="6" Width="250">
-                  <controls:ModelTileControl/>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <StackPanel>
+            <ItemsControl ItemsSource="{Binding FilteredTiles}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ModelTileViewModel">
+                  <Border Margin="6" Width="250">
+                    <controls:ModelTileControl/>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Spacer so the last row clears the main window status bar -->
+            <Border Height="40"/>
+          </StackPanel>
 
         </ScrollViewer>
 
@@ -217,10 +222,10 @@
 
       </Grid>
 
-      <!-- Right: Detail Panel (IsVisible on wrapper to stay in parent DataContext) -->
-      <Border Grid.Column="1"
-              IsVisible="{Binding IsDetailOpen}"
-              Width="520">
+      <!-- Detail Panel (overlay, pinned to the right edge) -->
+      <Border IsVisible="{Binding IsDetailOpen}"
+              HorizontalAlignment="Right"
+              Width="624">
         <controls:ModelDetailView DataContext="{Binding DetailViewModel}"/>
       </Border>
 

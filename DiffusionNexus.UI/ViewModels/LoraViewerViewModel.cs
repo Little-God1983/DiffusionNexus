@@ -1264,17 +1264,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     private static BaseModelType ParseBaseModel(string baseModelRaw)
-    {
-        return baseModelRaw switch
-        {
-            "SD 1.5" => BaseModelType.SD15,
-            "SDXL 1.0" => BaseModelType.SDXL10,
-            "Pony" => BaseModelType.Pony,
-            "Illustrious" => BaseModelType.Illustrious,
-            "Flux.1 D" => BaseModelType.Flux1D,
-            _ => BaseModelType.Other
-        };
-    }
+        => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
 
     #endregion
 }

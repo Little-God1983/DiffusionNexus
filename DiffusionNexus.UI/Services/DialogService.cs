@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
@@ -503,5 +504,17 @@ public class DialogService : IDialogService
             vm.Version,
             vm.Branch
         );
+    }
+
+    public async Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
+        string modelName,
+        CivitaiModelVersion civitaiVersion,
+        IReadOnlyList<string> sourceFolders)
+    {
+        var dialog = new DownloadLoraVersionDialog()
+            .WithVersionInfo(modelName, civitaiVersion, sourceFolders);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
 }
