@@ -456,25 +456,44 @@ public partial class ModelDetailViewModel : ViewModelBase
             }
 
             var fileInfo = new FileInfo(filePath);
-            var civFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
+
+            // When ModelId is 0 (local-only tab) but we have a version CivitaiId,
+            // fetch the version first to discover the parent model ID.
+            var effectiveVersion = civitaiVersion;
+            if (civitaiVersion.ModelId <= 0 && civitaiVersion.Id > 0 && _civitaiClient is not null)
+            {
+                var apiKey = await GetApiKeyAsync();
+                var fetched = await _civitaiClient.GetModelVersionAsync(civitaiVersion.Id, apiKey);
+                if (fetched is not null)
+                {
+                    effectiveVersion = fetched;
+                    _logger?.Debug(LogCategory.Download, "LoraDownload",
+                        $"Resolved ModelId={fetched.ModelId} from version {fetched.Id}");
+                }
+            }
 
             // Fetch full model for richer data (description, tags, license).
             // This is the same GetModelAsync call that "Download Metadata" uses.
             CivitaiModel? civitaiModel = null;
-            if (civitaiVersion.ModelId > 0 && _civitaiClient is not null)
+            if (effectiveVersion.ModelId > 0 && _civitaiClient is not null)
             {
                 var apiKey = await GetApiKeyAsync();
-                civitaiModel = await _civitaiClient.GetModelAsync(civitaiVersion.ModelId, apiKey);
+                civitaiModel = await _civitaiClient.GetModelAsync(effectiveVersion.ModelId, apiKey);
             }
 
             // Resolve the Civitai model page ID. civitaiModel.Id is authoritative when
-            // available; civitaiVersion.ModelId is a fallback (may be 0 for nested versions).
-            var modelPageId = civitaiModel?.Id ?? (civitaiVersion.ModelId > 0 ? civitaiVersion.ModelId : (int?)null);
+            // available; effectiveVersion.ModelId is a fallback (may be 0 for nested versions).
+            var modelPageId = civitaiModel?.Id ?? (effectiveVersion.ModelId > 0 ? effectiveVersion.ModelId : (int?)null);
 
             // If the full model has a richer version (with images), prefer it
             var bestVersion = civitaiModel?.ModelVersions
-                .FirstOrDefault(v => v.Id == civitaiVersion.Id) ?? civitaiVersion;
+                .FirstOrDefault(v => v.Id == effectiveVersion.Id) ?? effectiveVersion;
+
+            // Resolve primary file from best available data
+            var civFile = bestVersion.Files.FirstOrDefault(f => f.Primary == true)
+                          ?? bestVersion.Files.FirstOrDefault()
+                          ?? civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
+                          ?? civitaiVersion.Files.FirstOrDefault();
 
             // --- Check if a model with this Civitai page ID already exists (grouping) ---
             Model? model = null;
@@ -728,6 +747,31 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         foreach (var version in tile.Versions)
         {
+            // Map local files to CivitaiModelFile so PersistDownloadedModelAsync has data
+            var civFiles = version.Files.Select(f => new CivitaiModelFile
+            {
+                Id = f.CivitaiId ?? 0,
+                Name = f.FileName,
+                SizeKB = f.SizeKB,
+                Primary = f.IsPrimary,
+                DownloadUrl = f.DownloadUrl,
+            }).ToList();
+
+            // Map local images to CivitaiModelImage so thumbnails/IDs carry through
+            var civImages = version.Images.Select(img => new CivitaiModelImage
+            {
+                Id = img.CivitaiId,
+                Url = img.Url,
+                Nsfw = img.IsNsfw,
+                Width = img.Width,
+                Height = img.Height,
+                Hash = img.BlurHash,
+                Type = img.MediaType,
+                CreatedAt = img.CreatedAt,
+                PostId = img.PostId,
+                Username = img.Username,
+            }).ToList();
+
             var civitaiVersion = new CivitaiModelVersion
             {
                 Id = version.CivitaiId ?? 0,
@@ -736,6 +780,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                 BaseModel = version.BaseModelRaw ?? "Unknown",
                 TrainedWords = version.TriggerWords.Select(tw => tw.Word).ToList(),
                 DownloadUrl = version.DownloadUrl,
+                Files = civFiles,
+                Images = civImages,
             };
 
             var label = !string.IsNullOrWhiteSpace(version.Name) ? version.Name : version.BaseModelRaw ?? "???";
