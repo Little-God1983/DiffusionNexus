@@ -25,6 +25,13 @@ public partial class ModelTileViewModel : ViewModelBase
     /// The parent view model should remove this tile from its collections.
     /// </summary>
     public event EventHandler? Deleted;
+
+    /// <summary>
+    /// Raised when the user wants to view the detail panel for this tile.
+    /// The parent view model should open the detail view.
+    /// </summary>
+    public event EventHandler? DetailRequested;
+
     #region Observable Properties
 
     /// <summary>
@@ -235,7 +242,7 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private void OpenDetails()
     {
-        // Will be implemented when details view is created
+        DetailRequested?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

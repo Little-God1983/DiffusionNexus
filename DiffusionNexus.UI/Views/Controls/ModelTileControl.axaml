@@ -20,60 +20,71 @@
 
     <Grid RowDefinitions="*,Auto">
 
-      <!-- Thumbnail Area -->
-      <Border Grid.Row="0"
-              Height="260"
-              Margin="0"
-              Background="#1A1A1A"
-              ClipToBounds="True">
+      <!-- Thumbnail Area (clickable to open details) -->
+      <Button Grid.Row="0"
+              Command="{Binding OpenDetailsCommand}"
+              Background="Transparent"
+              Padding="0"
+              BorderThickness="0"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch"
+              HorizontalContentAlignment="Stretch"
+              VerticalContentAlignment="Stretch"
+              CornerRadius="0"
+              Cursor="Hand">
+        <Border Height="260"
+                Margin="0"
+                Background="#1A1A1A"
+                ClipToBounds="True">
 
-        <Grid>
-          <!-- Actual Image -->
-          <Image Source="{Binding ThumbnailImage}"
-                 Stretch="UniformToFill"
-                 IsVisible="{Binding HasThumbnail}"/>
+          <Grid>
+            <!-- Actual Image -->
+            <Image Source="{Binding ThumbnailImage}"
+                   Stretch="UniformToFill"
+                   IsVisible="{Binding HasThumbnail}"/>
 
-          <!-- Placeholder -->
-          <Border IsVisible="{Binding ShowPlaceholder}"
-                  Background="#252525">
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-              <Border Background="#333" CornerRadius="8" Padding="12,8">
-                <TextBlock Text="No Preview" FontSize="11" Opacity="0.4" HorizontalAlignment="Center"/>
-              </Border>
-            </StackPanel>
-          </Border>
+            <!-- Placeholder -->
+            <Border IsVisible="{Binding ShowPlaceholder}"
+                    Background="#252525">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Border Background="#333" CornerRadius="8" Padding="12,8">
+                  <TextBlock Text="No Preview" FontSize="11" Opacity="0.4" HorizontalAlignment="Center"/>
+                </Border>
+              </StackPanel>
+            </Border>
 
-          <!-- Loading Indicator -->
-          <Border IsVisible="{Binding IsLoading}"
-                  Background="#80000000">
-            <ProgressBar IsIndeterminate="True" Width="80" VerticalAlignment="Center"/>
-          </Border>
+            <!-- Loading Indicator -->
+            <Border IsVisible="{Binding IsLoading}"
+                    Background="#80000000">
+              <ProgressBar IsIndeterminate="True" Width="80" VerticalAlignment="Center"/>
+            </Border>
 
-          <!-- NSFW Badge -->
-          <Border IsVisible="{Binding IsNsfw}"
-                  Background="#E53935"
-                  CornerRadius="4"
-                  Padding="6,2"
-                  HorizontalAlignment="Right"
-                  VerticalAlignment="Top"
-                  Margin="4">
-            <TextBlock Text="NSFW" FontSize="9" FontWeight="Bold" Foreground="White"/>
-          </Border>
+            <!-- NSFW Badge -->
+            <Border IsVisible="{Binding IsNsfw}"
+                    Background="#E53935"
+                    CornerRadius="4"
+                    Padding="6,2"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="4">
+              <TextBlock Text="NSFW" FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
 
-          <!-- Grouped Badge -->
-          <Border IsVisible="{Binding IsGrouped}"
-                  Background="#0078D4"
-                  CornerRadius="4"
-                  Padding="6,2"
-                  HorizontalAlignment="Left"
-                  VerticalAlignment="Top"
-                  Margin="4"
-                  Opacity="0.9">
-            <TextBlock Text="{Binding VersionCountDisplay}" 
-                       FontSize="9" FontWeight="Bold" Foreground="White"/>
-          </Border>
-        </Grid>
-      </Border>
+            <!-- Grouped Badge -->
+            <Border IsVisible="{Binding IsGrouped}"
+                    Background="#0078D4"
+                    CornerRadius="4"
+                    Padding="6,2"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="4"
+                    Opacity="0.9">
+              <TextBlock Text="{Binding VersionCountDisplay}" 
+                         FontSize="9" FontWeight="Bold" Foreground="White"/>
+            </Border>
+          </Grid>
+        </Border>
+      </Button>
 
       <!-- Version Selector Label Buttons (overlay on thumbnail top) -->
       <Border Grid.Row="0"
@@ -149,7 +160,7 @@
               Margin="0"
               CornerRadius="0,0,8,8">
         
-        <Grid ColumnDefinitions="*,*,*,*,*">
+        <Grid ColumnDefinitions="*,*,*,*,*,*">
 
           <!-- Open on Civitai -->
           <Button Grid.Column="0"
@@ -178,8 +189,19 @@
                   Padding="6,4"
                   FontSize="10"/>
 
-          <!-- Open Folder -->
+          <!-- Details -->
           <Button Grid.Column="3"
+                  Content="ℹ"
+                  FontWeight="Bold"
+                  Foreground="#66AAFF"
+                  Command="{Binding OpenDetailsCommand}"
+                  ToolTip.Tip="View Details"
+                  HorizontalAlignment="Center"
+                  Padding="6,4"
+                  FontSize="10"/>
+
+          <!-- Open Folder -->
+          <Button Grid.Column="4"
                   Content="📁"
                   Command="{Binding OpenFolderCommand}"
                   ToolTip.Tip="Open Folder"
@@ -188,7 +210,7 @@
                   FontSize="10"/>
 
           <!-- Delete -->
-          <Button Grid.Column="4"
+          <Button Grid.Column="5"
                   Content="❌"
                   FontWeight="Bold"
                   Foreground="#FF6B6B"

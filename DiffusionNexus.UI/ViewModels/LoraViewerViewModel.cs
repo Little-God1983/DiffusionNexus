@@ -74,6 +74,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
 
+    /// <summary>
+    /// Whether the detail panel is open.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDetailOpen;
+
+    /// <summary>
+    /// ViewModel for the detail panel.
+    /// </summary>
+    [ObservableProperty]
+    private ModelDetailViewModel? _detailViewModel;
+
     #endregion
 
     #region Collections
@@ -172,6 +184,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             foreach (var tile in tiles)
             {
                 tile.Deleted += OnTileDeleted;
+                tile.DetailRequested += OnTileDetailRequested;
                 AllTiles.Add(tile);
             }
             TotalModelCount = AllTiles.Count;
@@ -838,6 +851,51 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Opens the detail panel for the given tile.
+    /// Called by <see cref="ModelTileViewModel"/> when the user clicks a tile.
+    /// </summary>
+    public async Task OpenDetailAsync(ModelTileViewModel tile)
+    {
+        // Unsubscribe from previous detail VM
+        if (DetailViewModel is not null)
+        {
+            DetailViewModel.CloseRequested -= OnDetailCloseRequested;
+        }
+
+        var detailVm = new ModelDetailViewModel(
+            _civitaiClient,
+            _settingsService,
+            _secureStorage,
+            _logger);
+
+        detailVm.CloseRequested += OnDetailCloseRequested;
+        DetailViewModel = detailVm;
+        IsDetailOpen = true;
+
+        await detailVm.LoadAsync(tile);
+    }
+
+    /// <summary>
+    /// Closes the detail panel.
+    /// </summary>
+    [RelayCommand]
+    private void CloseDetail()
+    {
+        if (DetailViewModel is not null)
+        {
+            DetailViewModel.CloseRequested -= OnDetailCloseRequested;
+        }
+
+        IsDetailOpen = false;
+        DetailViewModel = null;
+    }
+
+    private void OnDetailCloseRequested(object? sender, EventArgs e)
+    {
+        CloseDetail();
+    }
+
+    /// <summary>
     /// Clears only the base model filter selections without touching other filters.
     /// </summary>
     [RelayCommand]
@@ -901,6 +959,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             FilteredModelCount = FilteredTiles.Count;
             RebuildAvailableBaseModels();
         });
+    }
+
+    /// <summary>
+    /// Handles the <see cref="ModelTileViewModel.DetailRequested"/> event by opening the detail panel.
+    /// </summary>
+    private async void OnTileDetailRequested(object? sender, EventArgs e)
+    {
+        if (sender is not ModelTileViewModel tile) return;
+        await OpenDetailAsync(tile);
     }
 
     /// <summary>
@@ -1025,6 +1092,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         foreach (var tile in tiles)
         {
             tile.Deleted += OnTileDeleted;
+            tile.DetailRequested += OnTileDetailRequested;
             AllTiles.Add(tile);
         }
 
