@@ -25,22 +25,22 @@
         
         <!-- Left: Search and Filters -->
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
-          
+
           <!-- Search Box -->
           <TextBox Text="{Binding SearchText, Mode=TwoWay}"
                    Watermark="Search models..."
                    Width="300"/>
-          
+
           <!-- NSFW Toggle -->
           <CheckBox Content="Show NSFW"
                     IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
                     VerticalAlignment="Center"/>
-          
+
           <!-- Reset Filters -->
           <Button Content="Reset"
                   Command="{Binding ResetFiltersCommand}"
                   VerticalAlignment="Center"/>
-          
+
         </StackPanel>
 
         <!-- Center: Model Count -->
@@ -57,16 +57,95 @@
 
         <!-- Right: Actions -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-          
+
           <Button Content="Refresh"
                   Command="{Binding RefreshCommand}"/>
-          
+
           <Button Content="Download Metadata"
                   Command="{Binding DownloadMissingMetadataCommand}"/>
 
           <Button Content="Scan Duplicates"
                   Command="{Binding ScanDuplicatesCommand}"/>
-          
+
+          <!-- Base Model Filter Flyout Button -->
+          <Button VerticalAlignment="Center"
+                  Padding="8,6"
+                  ToolTip.Tip="Filter by base model">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <TextBlock Text="&#x25BD;" FontSize="14"
+                         IsVisible="{Binding !IsBaseModelFilterActive}"
+                         Foreground="#AAAAAA"/>
+              <TextBlock Text="&#x25BD;" FontSize="14"
+                         IsVisible="{Binding IsBaseModelFilterActive}"
+                         Foreground="#FF4444"/>
+              <TextBlock Text="{Binding ActiveBaseModelFilterCount}"
+                         IsVisible="{Binding IsBaseModelFilterActive}"
+                         Foreground="#FF4444"
+                         FontSize="11"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+            <Button.Flyout>
+              <Flyout Placement="BottomEdgeAlignedRight"
+                      ShowMode="TransientWithDismissOnPointerMoveAway">
+                <Border Background="#1E1E1E"
+                        BorderBrush="#444"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8"
+                        MinWidth="200"
+                        MaxHeight="400">
+                  <Grid RowDefinitions="Auto,Auto,*">
+                    <!-- Header -->
+                    <TextBlock Grid.Row="0"
+                               Text="Filter by base model"
+                               FontWeight="SemiBold"
+                               Margin="4,0,4,8"
+                               Opacity="0.7"/>
+
+                    <!-- Clear button -->
+                    <Button Grid.Row="1"
+                            Content="Clear all"
+                            Command="{Binding ClearBaseModelFiltersCommand}"
+                            IsVisible="{Binding IsBaseModelFilterActive}"
+                            Padding="4,2"
+                            Margin="4,0,4,8"
+                            FontSize="11"
+                            HorizontalAlignment="Left"/>
+
+                    <!-- Scrollable list of toggle buttons -->
+                    <ScrollViewer Grid.Row="2"
+                                  MaxHeight="340"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                      <ItemsControl ItemsSource="{Binding AvailableBaseModels}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <StackPanel Spacing="2"/>
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:BaseModelFilterItem">
+                            <ToggleButton IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                          HorizontalAlignment="Stretch"
+                                          HorizontalContentAlignment="Left"
+                                          Padding="8,6"
+                                          Background="Transparent"
+                                          BorderThickness="1"
+                                          BorderBrush="#333"
+                                          CornerRadius="4">
+                              <TextBlock Text="{Binding BaseModelRaw}"
+                                         FontSize="13"/>
+                            </ToggleButton>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                  </Grid>
+                </Border>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+
         </StackPanel>
         
       </Grid>

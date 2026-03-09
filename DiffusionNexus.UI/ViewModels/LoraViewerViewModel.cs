@@ -64,6 +64,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [ObservableProperty]
     private string? _syncStatus;
 
+    /// <summary>
+    /// Whether any base model filter is currently active (for visual indicator on the filter button).
+    /// </summary>
+    public bool IsBaseModelFilterActive => AvailableBaseModels.Any(f => f.IsSelected);
+
+    /// <summary>
+    /// Count of currently active base model filters.
+    /// </summary>
+    public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
+
     #endregion
 
     #region Collections
@@ -77,6 +87,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Filtered model tiles for display.
     /// </summary>
     public ObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
+
+    /// <summary>
+    /// Distinct base model names available for filtering, built from all tiles.
+    /// </summary>
+    public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; } = [];
 
     #endregion
 
@@ -160,6 +175,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 AllTiles.Add(tile);
             }
             TotalModelCount = AllTiles.Count;
+            RebuildAvailableBaseModels();
             ApplyFilters();
             SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
 
@@ -936,12 +952,30 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Clears only the base model filter selections without touching other filters.
+    /// </summary>
+    [RelayCommand]
+    private void ClearBaseModelFilters()
+    {
+        foreach (var item in AvailableBaseModels)
+        {
+            item.IsSelected = false;
+        }
+    }
+
+    /// <summary>
     /// Reset all filters.
     /// </summary>
     [RelayCommand]
     private void ResetFilters()
     {
         SearchText = null;
+
+        foreach (var item in AvailableBaseModels)
+        {
+            item.IsSelected = false;
+        }
+
         ApplyFilters();
     }
 
@@ -979,7 +1013,59 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             FilteredTiles.Remove(tile);
             TotalModelCount = AllTiles.Count;
             FilteredModelCount = FilteredTiles.Count;
+            RebuildAvailableBaseModels();
         });
+    }
+
+    /// <summary>
+    /// Rebuilds <see cref="AvailableBaseModels"/> from the distinct <c>BaseModelRaw</c>
+    /// values across all tile versions. Preserves existing selections where the value still exists.
+    /// </summary>
+    private void RebuildAvailableBaseModels()
+    {
+        // Collect distinct BaseModelRaw values from all versions across all tiles
+        var distinctBaseModels = AllTiles
+            .SelectMany(t => t.Versions)
+            .Select(v => v.BaseModelRaw)
+            .Where(raw => !string.IsNullOrWhiteSpace(raw))
+            .Select(raw => raw!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Snapshot currently selected values so we can restore them
+        var previouslySelected = AvailableBaseModels
+            .Where(f => f.IsSelected)
+            .Select(f => f.BaseModelRaw)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Unsubscribe from old items
+        foreach (var item in AvailableBaseModels)
+        {
+            item.SelectionChanged -= OnBaseModelFilterChanged;
+        }
+
+        AvailableBaseModels.Clear();
+
+        foreach (var raw in distinctBaseModels)
+        {
+            var item = new BaseModelFilterItem(raw)
+            {
+                IsSelected = previouslySelected.Contains(raw)
+            };
+            item.SelectionChanged += OnBaseModelFilterChanged;
+            AvailableBaseModels.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Called when any base model filter item's selection changes.
+    /// </summary>
+    private void OnBaseModelFilterChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(IsBaseModelFilterActive));
+        OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        ApplyFilters();
     }
 
     private void ApplyFilters()
@@ -1002,6 +1088,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (!ShowNsfw)
         {
             query = query.Where(t => !t.IsNsfw);
+        }
+
+        // Filter by selected base models (multi-select, OR logic)
+        var activeBaseModels = AvailableBaseModels
+            .Where(f => f.IsSelected)
+            .Select(f => f.BaseModelRaw)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (activeBaseModels.Count > 0)
+        {
+            query = query.Where(t =>
+                t.Versions.Any(v =>
+                    !string.IsNullOrEmpty(v.BaseModelRaw) &&
+                    activeBaseModels.Contains(v.BaseModelRaw)));
         }
 
         foreach (var tile in query)
@@ -1043,6 +1143,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         }
 
         TotalModelCount = AllTiles.Count;
+        RebuildAvailableBaseModels();
         ApplyFilters();
     }
 
