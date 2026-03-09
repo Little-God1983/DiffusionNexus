@@ -67,6 +67,23 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// </summary>
     public bool ShowBackupProgress => IsBackupInProgress;
 
+    // Download-specific progress properties
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusBackground))]
+    [NotifyPropertyChangedFor(nameof(ShowDownloadProgress))]
+    private bool _isDownloadInProgress;
+
+    [ObservableProperty]
+    private int _downloadProgressPercent;
+
+    [ObservableProperty]
+    private string? _downloadOperationName;
+
+    /// <summary>
+    /// Whether to show the download progress bar (only when a download is in progress).
+    /// </summary>
+    public bool ShowDownloadProgress => IsDownloadInProgress;
+
     /// <summary>
     /// The activity log ViewModel for binding to the log panel.
     /// </summary>
@@ -90,11 +107,15 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
             // Show green when backup is running
             if (IsBackupInProgress)
                 return "#28A745";
-            
+
+            // Show blue when downloading
+            if (IsDownloadInProgress)
+                return "#007ACC";
+
             // Show green when actively working
             if (HasActiveOperation)
                 return "#28A745";
-            
+
             return StatusSeverity switch
             {
                 ActivitySeverity.Success => "#28A745",
@@ -110,7 +131,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string StatusForeground => StatusSeverity switch
     {
-        ActivitySeverity.Warning when !HasActiveOperation && !IsBackupInProgress => "#000000",
+        ActivitySeverity.Warning when !HasActiveOperation && !IsBackupInProgress && !IsDownloadInProgress => "#000000",
         _ => "#FFFFFF"
     };
 
@@ -137,6 +158,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.EntryAdded += OnEntryAdded;
         _logService.LogCleared += OnLogCleared;
         _logService.BackupProgressChanged += OnBackupProgressChanged;
+        _logService.DownloadProgressChanged += OnDownloadProgressChanged;
 
         // Initialize counts
         UpdateCounts();
@@ -232,6 +254,17 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         });
     }
 
+    private void OnDownloadProgressChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            IsDownloadInProgress = _logService.IsDownloadInProgress;
+            DownloadProgressPercent = _logService.DownloadProgressPercent ?? 0;
+            DownloadOperationName = _logService.DownloadOperationName;
+            OnPropertyChanged(nameof(ShowDownloadProgress));
+        });
+    }
+
     private void OnEntryAdded(object? sender, ActivityLogEntry entry)
     {
         Dispatcher.UIThread.Post(UpdateCounts);
@@ -279,6 +312,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.EntryAdded -= OnEntryAdded;
         _logService.LogCleared -= OnLogCleared;
         _logService.BackupProgressChanged -= OnBackupProgressChanged;
+        _logService.DownloadProgressChanged -= OnDownloadProgressChanged;
 
         if (_unifiedConsole is not null)
             _unifiedConsole.PanelOpenRequested -= OnConsolePanelOpenRequested;

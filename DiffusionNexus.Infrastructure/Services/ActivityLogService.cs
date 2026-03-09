@@ -27,6 +27,12 @@ public sealed class ActivityLogService : IActivityLogService
     private int? _backupProgressPercent;
     private string? _backupOperationName;
 
+    // Download progress tracking
+    private readonly object _downloadLock = new();
+    private bool _isDownloadInProgress;
+    private int? _downloadProgressPercent;
+    private string? _downloadOperationName;
+
     /// <inheritdoc />
     public int MaxEntries { get; set; } = DefaultMaxEntries;
 
@@ -91,6 +97,42 @@ public sealed class ActivityLogService : IActivityLogService
     }
 
     /// <inheritdoc />
+    public bool IsDownloadInProgress
+    {
+        get
+        {
+            lock (_downloadLock)
+            {
+                return _isDownloadInProgress;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public int? DownloadProgressPercent
+    {
+        get
+        {
+            lock (_downloadLock)
+            {
+                return _downloadProgressPercent;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public string? DownloadOperationName
+    {
+        get
+        {
+            lock (_downloadLock)
+            {
+                return _downloadOperationName;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public event EventHandler<ActivityLogEntry>? EntryAdded;
 
     /// <inheritdoc />
@@ -107,6 +149,9 @@ public sealed class ActivityLogService : IActivityLogService
 
     /// <inheritdoc />
     public event EventHandler? BackupProgressChanged;
+
+    /// <inheritdoc />
+    public event EventHandler? DownloadProgressChanged;
 
     #region Logging
 
@@ -324,6 +369,62 @@ public sealed class ActivityLogService : IActivityLogService
         }
         
         BackupProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    #endregion
+
+    #region Download Progress
+
+    /// <inheritdoc />
+    public void StartDownloadProgress(string operationName)
+    {
+        lock (_downloadLock)
+        {
+            _isDownloadInProgress = true;
+            _downloadProgressPercent = 0;
+            _downloadOperationName = operationName;
+        }
+
+        LogInfo("Download", $"Starting: {operationName}");
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void ReportDownloadProgress(int percent, string? statusMessage = null)
+    {
+        lock (_downloadLock)
+        {
+            _downloadProgressPercent = Math.Clamp(percent, 0, 100);
+        }
+
+        if (!string.IsNullOrEmpty(statusMessage))
+        {
+            SetStatus(statusMessage, ActivitySeverity.Info);
+        }
+
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void CompleteDownloadProgress(bool success, string message)
+    {
+        lock (_downloadLock)
+        {
+            _isDownloadInProgress = false;
+            _downloadProgressPercent = null;
+            _downloadOperationName = null;
+        }
+
+        if (success)
+        {
+            LogSuccess("Download", message);
+        }
+        else
+        {
+            LogError("Download", message);
+        }
+
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
     #endregion

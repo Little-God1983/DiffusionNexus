@@ -28,6 +28,12 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
 
+    /// <summary>
+    /// Cached Civitai model data from the initial API fetch.
+    /// Reused after download to rebuild version tabs without an extra API call.
+    /// </summary>
+    private CivitaiModel? _cachedCivitaiModel;
+
     #region Observable Properties
 
     /// <summary>
@@ -193,6 +199,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     public async Task LoadAsync(ModelTileViewModel tile)
     {
+        _cachedCivitaiModel = null;
         SourceTile = tile;
 
         // Populate from local data immediately
@@ -294,8 +301,11 @@ public partial class ModelDetailViewModel : ViewModelBase
     private async Task DownloadFileAsync(string downloadUrl, string targetPath, CivitaiVersionTabItem tab)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
+        var activityLog = App.Services?.GetService<IActivityLogService>();
         var taskName = $"Downloading {Path.GetFileName(targetPath)}";
         using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
+
+        activityLog?.StartDownloadProgress(taskName);
 
         try
         {
@@ -348,11 +358,18 @@ public partial class ModelDetailViewModel : ViewModelBase
                     var buffer = new byte[81920];
                     long totalRead = 0;
                     int bytesRead;
+                    var lastProgressReport = Environment.TickCount64;
 
                     while ((bytesRead = await contentStream.ReadAsync(buffer, ct)) > 0)
                     {
                         await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
                         totalRead += bytesRead;
+
+                        // Throttle progress updates to ~4/sec so the UI thread
+                        // is not starved when the unified log is open.
+                        var now = Environment.TickCount64;
+                        if (now - lastProgressReport < 250) continue;
+                        lastProgressReport = now;
 
                         if (totalBytes.HasValue && totalBytes.Value > 0)
                         {
@@ -360,6 +377,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                             var mbDownloaded = totalRead / (1024.0 * 1024.0);
                             var mbTotal = totalBytes.Value / (1024.0 * 1024.0);
                             taskHandle?.ReportProgress(progress, $"{mbDownloaded:F1} / {mbTotal:F1} MB");
+                            activityLog?.ReportDownloadProgress((int)(progress * 100),
+                                $"{mbDownloaded:F1} / {mbTotal:F1} MB");
                         }
                         else
                         {
@@ -367,7 +386,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                             taskHandle?.ReportIndeterminate($"{mbDownloaded:F1} MB downloaded");
                         }
                     }
-                } // streams closed here — file is no longer locked
+                }
 
                 // Rename temp to final
                 if (File.Exists(targetPath))
@@ -378,7 +397,11 @@ public partial class ModelDetailViewModel : ViewModelBase
                 // with full Civitai metadata — no legacy .civitai.info sidecar files.
                 await PersistDownloadedModelAsync(targetPath, tab.CivitaiVersion);
 
+                // Refresh the tile and detail panel so the downloaded version shows as blue
+                await RefreshAfterDownloadAsync(targetPath);
+
                 taskHandle?.Complete($"Downloaded to {targetPath}");
+                activityLog?.CompleteDownloadProgress(true, $"Downloaded {Path.GetFileName(targetPath)}");
                 _logger?.Info(LogCategory.Download, "LoraDownload",
                     $"Downloaded '{Path.GetFileName(targetPath)}' successfully",
                     $"Path: {targetPath}");
@@ -386,6 +409,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         catch (OperationCanceledException)
         {
+            activityLog?.CompleteDownloadProgress(false, $"Download cancelled: {Path.GetFileName(targetPath)}");
             _logger?.Info(LogCategory.Download, "LoraDownload",
                 $"Download cancelled: {Path.GetFileName(targetPath)}");
             CleanupTempFile(targetPath);
@@ -393,6 +417,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         catch (Exception ex)
         {
             taskHandle?.Fail(ex, $"Failed to download {Path.GetFileName(targetPath)}");
+            activityLog?.CompleteDownloadProgress(false, $"Download failed: {Path.GetFileName(targetPath)}");
             _logger?.Error(LogCategory.Download, "LoraDownload",
                 $"Download failed: {ex.Message}", ex);
             CleanupTempFile(targetPath);
@@ -400,6 +425,67 @@ public partial class ModelDetailViewModel : ViewModelBase
         finally
         {
             await Dispatcher.UIThread.InvokeAsync(() => tab.IsDownloading = false);
+        }
+    }
+
+    /// <summary>
+    /// Reloads the model from the database and refreshes the source tile and detail panel
+    /// so the newly downloaded version appears as "downloaded" (blue tab).
+    /// Uses <see cref="_cachedCivitaiModel"/> to rebuild tabs without an extra API call.
+    /// </summary>
+    private async Task RefreshAfterDownloadAsync(string downloadedFilePath)
+    {
+        try
+        {
+            var sourceTile = SourceTile;
+            if (sourceTile is null) return;
+
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+
+            // Find the model that owns the file we just downloaded
+            var refreshedModel = allModels.FirstOrDefault(m =>
+                m.Versions.Any(v => v.Files.Any(f =>
+                    string.Equals(f.LocalPath, downloadedFilePath, StringComparison.OrdinalIgnoreCase))));
+
+            // Fallback: match by existing tile model ID
+            refreshedModel ??= allModels.FirstOrDefault(m => m.Id == sourceTile.ModelEntity?.Id);
+
+            if (refreshedModel is null)
+            {
+                _logger?.Debug(LogCategory.Download, "LoraDownload",
+                    "Could not find model in DB after download \u2014 UI not refreshed");
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                // Update tile (triggers OnModelEntityChanged \u2192 rebuilds version buttons in the grid)
+                sourceTile.ModelEntity = refreshedModel;
+
+                // Update model-level display fields from the refreshed entity
+                ModelName = refreshedModel.Name;
+                ModelIdDisplay = refreshedModel.CivitaiId?.ToString()
+                                 ?? refreshedModel.CivitaiModelPageId?.ToString()
+                                 ?? "\u2014";
+                CreatorDisplay = refreshedModel.Creator?.Username ?? "Unknown";
+
+                // Rebuild detail panel tabs using cached Civitai data (no extra API call)
+                if (_cachedCivitaiModel is not null)
+                {
+                    BuildCivitaiVersionTabs(_cachedCivitaiModel, sourceTile);
+                }
+                else
+                {
+                    BuildLocalVersionTabs(sourceTile);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "LoraDownload",
+                $"Failed to refresh UI after download: {ex.Message}");
         }
     }
 
@@ -826,6 +912,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                 StatusMessage = "Model not found on Civitai";
                 return;
             }
+
+            _cachedCivitaiModel = civitaiModel;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
