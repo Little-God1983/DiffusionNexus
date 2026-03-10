@@ -888,8 +888,16 @@ public partial class ModelDetailViewModel : ViewModelBase
             VersionTabs.Add(tab);
         }
 
-        // Select first tab
-        if (VersionTabs.Count > 0)
+        // Select the tab matching the tile's currently selected version, or the first tab
+        var selectedVersionId = tile.SelectedVersion?.Id;
+        var matchingTab = selectedVersionId.HasValue
+            ? VersionTabs.FirstOrDefault(t => t.LocalVersion?.Id == selectedVersionId.Value)
+            : null;
+        if (matchingTab is not null)
+        {
+            OnVersionTabSelected(matchingTab);
+        }
+        else if (VersionTabs.Count > 0)
         {
             OnVersionTabSelected(VersionTabs[0]);
         }
@@ -1002,9 +1010,15 @@ public partial class ModelDetailViewModel : ViewModelBase
             VersionTabs.Add(tab);
         }
 
-        // Select the first downloaded tab, or the first tab
-        var firstDownloaded = VersionTabs.FirstOrDefault(t => t.IsDownloaded);
-        var firstTab = firstDownloaded ?? VersionTabs.FirstOrDefault();
+        // Select the tab matching the tile's currently selected version, then fall back
+        // to the first downloaded tab, then the first tab overall.
+        var selectedVersionId = tile.SelectedVersion?.Id;
+        var matchingTab = selectedVersionId.HasValue
+            ? VersionTabs.FirstOrDefault(t => t.LocalVersion?.Id == selectedVersionId.Value)
+            : null;
+        var firstTab = matchingTab
+                       ?? VersionTabs.FirstOrDefault(t => t.IsDownloaded)
+                       ?? VersionTabs.FirstOrDefault();
         if (firstTab is not null)
         {
             OnVersionTabSelected(firstTab);
