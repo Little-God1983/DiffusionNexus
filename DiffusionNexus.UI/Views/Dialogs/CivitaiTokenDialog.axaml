@@ -12,11 +12,17 @@
 
   <StackPanel Margin="24" Spacing="16">
 
-    <!-- Help heading -->
-    <TextBlock Text="How do I get an API token/key?"
-               FontSize="18"
+    <!-- Help heading with explicit line breaks -->
+    <TextBlock FontSize="18"
                FontWeight="Bold"
-               Foreground="White"/>
+               Foreground="White">
+      <Run Text="This action requires a Civitai API token"/>
+      <LineBreak/>
+      <Run Text="to download content from Civitai."/>
+      <LineBreak/>
+      <LineBreak/>
+      <Run Text="How do I get an API token/key?"/>
+    </TextBlock>
 
     <!-- Instructions -->
     <StackPanel Spacing="8">
