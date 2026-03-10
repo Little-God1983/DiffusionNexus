@@ -957,11 +957,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Opens the detail panel for the given tile.
+    /// Opens the detail panel for the given tile, or closes it if the same tile is already shown.
     /// Called by <see cref="ModelTileViewModel"/> when the user clicks a tile.
     /// </summary>
     public async Task OpenDetailAsync(ModelTileViewModel tile)
     {
+        // Toggle: close if the same tile is already displayed
+        if (IsDetailOpen && DetailViewModel?.SourceTile == tile)
+        {
+            CloseDetail();
+            return;
+        }
+
         // Unsubscribe from previous detail VM
         if (DetailViewModel is not null)
         {
