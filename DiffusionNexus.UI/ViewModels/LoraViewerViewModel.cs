@@ -315,8 +315,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // ── Phase 2: Re-fetch images for synced models that have no preview images ──
             await RefetchMissingImagesPhaseAsync(apiKey, statusParts);
 
-            // ── Phase 3: Download thumbnails for tiles still showing "No Preview" ──
-            // Brief pause to let fire-and-forget downloads from Phase 2 tile refresh settle
+            // ── Phase 3: Backfill tags for models synced before tag persistence was added ──
+            await BackfillMissingTagsPhaseAsync(apiKey, statusParts);
+
+            // ── Phase 4: Download thumbnails for tiles still showing "No Preview" ──
+            // Brief pause to let fire-and-forget downloads from earlier phases settle
             await Task.Delay(2000);
             await DownloadMissingThumbnailsPhaseAsync(statusParts);
 
@@ -513,7 +516,69 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Phase 3: Download thumbnails for tiles still showing "No Preview" that have image URLs.
+    /// Phase 3: Backfill tags for models that were synced before tag persistence was added.
+    /// Uses the existing CivitaiId to fetch from Civitai — no file hashing needed.
+    /// Once all models have tags this phase becomes a no-op.
+    /// </summary>
+    private async Task BackfillMissingTagsPhaseAsync(string? apiKey, List<string> statusParts)
+    {
+        var tilesNeedingTags = AllTiles
+            .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
+                        && t.TagNames.Count == 0
+                        && t.SelectedVersion?.CivitaiId is not null)
+            .ToList();
+
+        if (tilesNeedingTags.Count == 0)
+        {
+            _logger?.Debug(LogCategory.Network, "CivitaiSync",
+                "All synced models already have tags — skipping Phase 3");
+            return;
+        }
+
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Phase 3: {tilesNeedingTags.Count} synced models need tag backfill");
+
+        var backfilled = 0;
+        var errors = 0;
+
+        for (var i = 0; i < tilesNeedingTags.Count; i++)
+        {
+            var tile = tilesNeedingTags[i];
+            var versionCivitaiId = tile.SelectedVersion!.CivitaiId!.Value;
+
+            Dispatcher.UIThread.Post(() =>
+                SyncStatus = $"Backfilling tags [{i + 1}/{tilesNeedingTags.Count}] {tile.DisplayName}...");
+
+            try
+            {
+                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId, apiKey);
+                if (civitaiVersion is not null)
+                {
+                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+                    backfilled++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(LogCategory.Network, "CivitaiSync",
+                    $"Failed to backfill tags for '{tile.DisplayName}': {ex.Message}", ex);
+                errors++;
+            }
+
+            // Civitai rate limit pacing
+            await Task.Delay(1500);
+        }
+
+        if (backfilled > 0 || errors > 0)
+        {
+            var part = $"Tags backfilled: {backfilled}";
+            if (errors > 0) part += $", {errors} errors";
+            statusParts.Add(part);
+        }
+    }
+
+    /// <summary>
+    /// Phase 4: Download thumbnails for tiles still showing "No Preview" that have image URLs.
     /// </summary>
     private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts)
     {
@@ -523,12 +588,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         if (tilesNeedingThumbs.Count == 0)
         {
-            _logger?.Debug(LogCategory.General, "CivitaiSync", "No tiles with downloadable but missing thumbnails — skipping Phase 3");
+            _logger?.Debug(LogCategory.General, "CivitaiSync", "No tiles with downloadable but missing thumbnails — skipping Phase 4");
             return;
         }
 
         _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 3: {tilesNeedingThumbs.Count} tiles need thumbnail download");
+            $"Phase 4: {tilesNeedingThumbs.Count} tiles need thumbnail download");
 
         var thumbSuccess = 0;
         var thumbFailed = 0;
@@ -824,6 +889,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
+        // Sync tags from Civitai model response
+        if (civitaiModel?.Tags is { Count: > 0 } civitaiTags)
+        {
+            SyncTagsFromCivitai(dbModel, civitaiTags, dbModels);
+        }
+
         await unitOfWork.SaveChangesAsync();
 
         // Reload model from DB after save to get generated IDs on new images
@@ -835,6 +906,41 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             tile.ModelEntity = refreshedModel ?? dbModel;
         });
+    }
+
+    /// <summary>
+    /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
+    /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
+    /// </summary>
+    private static void SyncTagsFromCivitai(
+        Model dbModel,
+        IReadOnlyList<string> civitaiTags,
+        IReadOnlyList<Model> allLoadedModels)
+    {
+        // Build a lookup of Tag entities already tracked by the DbContext
+        var knownTags = allLoadedModels
+            .SelectMany(m => m.Tags)
+            .Select(mt => mt.Tag!)
+            .Where(t => t is not null)
+            .DistinctBy(t => t.NormalizedName)
+            .ToDictionary(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase);
+
+        dbModel.Tags.Clear();
+
+        foreach (var tagName in civitaiTags)
+        {
+            if (string.IsNullOrWhiteSpace(tagName)) continue;
+
+            var normalized = tagName.Trim().ToLowerInvariant();
+
+            if (!knownTags.TryGetValue(normalized, out var tag))
+            {
+                tag = new Tag { Name = tagName, NormalizedName = normalized };
+                knownTags[normalized] = tag;
+            }
+
+            dbModel.Tags.Add(new ModelTag { Tag = tag });
+        }
     }
 
     /// <summary>
@@ -1027,14 +1133,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         var query = AllTiles.AsEnumerable();
 
-        // Filter by search text
+        // Filter by search text (name, filename, creator, or tags)
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             var search = SearchText.Trim();
             query = query.Where(t =>
                 t.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 t.FileName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                t.CreatorName.Contains(search, StringComparison.OrdinalIgnoreCase));
+                t.CreatorName.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                t.TagNames.Any(tag => tag.Contains(search, StringComparison.OrdinalIgnoreCase)));
         }
 
         // Filter by NSFW

@@ -259,6 +259,12 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     public bool ShowPlaceholder => !HasThumbnail && !IsLoading;
 
+    /// <summary>
+    /// Tag names collected from all grouped models for search filtering.
+    /// Built once per <see cref="ModelEntity"/> change; no DB round-trip.
+    /// </summary>
+    public IReadOnlyList<string> TagNames { get; private set; } = [];
+
     #endregion
 
     #region Commands
@@ -666,6 +672,19 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(VersionCountDisplay));
         OnPropertyChanged(nameof(CreatorName));
         OnPropertyChanged(nameof(DownloadCountDisplay));
+
+        // Build tag index from all grouped models
+        var models = _allGroupedModels.Count > 0
+            ? _allGroupedModels
+            : value is not null ? [value] : [];
+
+        TagNames = models
+            .SelectMany(m => m.Tags)
+            .Select(mt => mt.Tag?.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList()!;
+        OnPropertyChanged(nameof(TagNames));
 
         // Auto-select first version
         if (VersionButtons.Count > 0)

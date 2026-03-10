@@ -708,11 +708,16 @@ public partial class ModelDetailViewModel : ViewModelBase
             version.Files.Add(modelFile);
             model.Versions.Add(version);
 
-            // Tags from full model response (only for new models — existing ones already have tags)
-            if (!isExistingModel && civitaiModel?.Tags is { Count: > 0 } tags)
+            // Tags from full model response — sync for both new and existing models
+            if (civitaiModel?.Tags is { Count: > 0 } tags)
             {
+                // For existing models, replace stale tags; for new models, populate them.
+                model.Tags.Clear();
+
                 foreach (var tagName in tags)
                 {
+                    if (string.IsNullOrWhiteSpace(tagName)) continue;
+
                     model.Tags.Add(new ModelTag
                     {
                         Tag = new Tag
