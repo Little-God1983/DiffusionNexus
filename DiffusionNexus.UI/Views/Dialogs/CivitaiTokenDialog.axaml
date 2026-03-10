@@ -1,0 +1,92 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.CivitaiTokenDialog"
+        x:DataType="local:CivitaiTokenDialog"
+        Title="Civitai API Token Required"
+        Width="540"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="24" Spacing="16">
+
+    <!-- Help heading -->
+    <TextBlock Text="How do I get an API token/key?"
+               FontSize="18"
+               FontWeight="Bold"
+               Foreground="White"/>
+
+    <!-- Instructions -->
+    <StackPanel Spacing="8">
+      <TextBlock TextWrapping="Wrap"
+                 Foreground="#CCCCCC"
+                 FontSize="14"
+                 LineHeight="22"
+                 Text="1. Create an API token from your user account page:"/>
+
+      <TextBlock TextWrapping="Wrap"
+                 Foreground="#66AAFF"
+                 FontSize="14"
+                 Cursor="Hand"
+                 TextDecorations="Underline"
+                 PointerPressed="OnCivitaiLinkClick"
+                 Margin="16,0,0,0"
+                 Text="https://civitai.com/user/account"/>
+
+      <TextBlock TextWrapping="Wrap"
+                 Foreground="#CCCCCC"
+                 FontSize="14"
+                 LineHeight="22"
+                 Text="2. Copy the token and paste it in the field below (it will be encrypted)."/>
+    </StackPanel>
+
+    <!-- Reference image -->
+    <Border Background="#1A1A1A"
+            CornerRadius="6"
+            Padding="8"
+            HorizontalAlignment="Center">
+      <Image Source="avares://DiffusionNexus.UI/Assets/LoraViewer/API-Key.png"
+             MaxWidth="480"
+             Stretch="Uniform"/>
+    </Border>
+
+    <!-- Token input -->
+    <Grid ColumnDefinitions="Auto,*" Margin="0,4,0,0">
+      <TextBlock Grid.Column="0"
+                 Text="API Token:"
+                 Foreground="White"
+                 FontWeight="SemiBold"
+                 VerticalAlignment="Center"
+                 Margin="0,0,12,0"/>
+      <TextBox Grid.Column="1"
+               Name="TokenTextBox"
+               Text="{Binding TokenText}"
+               Watermark="Paste your Civitai API token here..."
+               PasswordChar="*"
+               FontSize="14"
+               Padding="8,6"/>
+    </Grid>
+
+    <!-- Buttons -->
+    <StackPanel Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8"
+                Margin="0,8,0,0">
+      <Button Content="Cancel"
+              Width="90"
+              Padding="8,6"
+              Click="OnCancelClick"/>
+      <Button Content="Save and Continue"
+              Width="140"
+              Padding="8,6"
+              IsDefault="True"
+              Background="#4CAF50"
+              Foreground="White"
+              FontWeight="SemiBold"
+              Click="OnSaveClick"/>
+    </StackPanel>
+
+  </StackPanel>
+</Window>

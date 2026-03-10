@@ -13,6 +13,7 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -269,6 +270,11 @@ public partial class ModelDetailViewModel : ViewModelBase
     {
         var tab = SelectedVersionTab;
         if (tab is null || tab.IsDownloaded) return;
+
+        // Ensure a Civitai API token is configured before downloading.
+        // If missing, show the token dialog so the user can paste one.
+        if (!await EnsureCivitaiTokenAsync())
+            return;
 
         // Resolve download URL
         var primaryFile = tab.CivitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
@@ -644,6 +650,23 @@ public partial class ModelDetailViewModel : ViewModelBase
                     model.AllowNoCredit = civitaiModel.AllowNoCredit;
                     model.AllowDerivatives = civitaiModel.AllowDerivatives;
                     model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
+
+                    // Update or create creator
+                    if (civitaiModel.Creator is not null)
+                    {
+                        if (model.Creator is not null)
+                        {
+                            model.Creator.Username = civitaiModel.Creator.Username;
+                        }
+                        else
+                        {
+                            model.Creator = new Creator
+                            {
+                                Username = civitaiModel.Creator.Username,
+                                AvatarUrl = civitaiModel.Creator.Image,
+                            };
+                        }
+                    }
                 }
                 else if (modelPageId.HasValue)
                 {
@@ -672,6 +695,15 @@ public partial class ModelDetailViewModel : ViewModelBase
                     model.AllowDerivatives = civitaiModel.AllowDerivatives;
                     model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
                     model.IsPoi = civitaiModel.Poi;
+
+                    if (civitaiModel.Creator is not null)
+                    {
+                        model.Creator = new Creator
+                        {
+                            Username = civitaiModel.Creator.Username,
+                            AvatarUrl = civitaiModel.Creator.Image,
+                        };
+                    }
                 }
             }
 
@@ -1220,6 +1252,42 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (_settingsService is null || _secureStorage is null) return null;
         var settings = await _settingsService.GetSettingsAsync();
         return _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+    }
+
+    /// <summary>
+    /// Checks whether a Civitai API token is configured. If not, opens a dialog
+    /// for the user to enter one. Returns true when a token is available (either
+    /// already configured or just provided), false when the user cancelled.
+    /// </summary>
+    private async Task<bool> EnsureCivitaiTokenAsync()
+    {
+        var existingKey = await GetApiKeyAsync();
+        if (!string.IsNullOrWhiteSpace(existingKey))
+            return true;
+
+        // Show the token dialog on the UI thread
+        return await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            var mainWindow = (App.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+            if (mainWindow is null) return false;
+
+            var dialog = new CivitaiTokenDialog();
+            await dialog.ShowDialog(mainWindow);
+
+            if (!dialog.IsSaved || string.IsNullOrWhiteSpace(dialog.TokenText))
+                return false;
+
+            // Persist the token (encrypted) via the settings service
+            if (_settingsService is not null)
+            {
+                await _settingsService.SetCivitaiApiKeyAsync(dialog.TokenText);
+                _logger?.Info(LogCategory.General, "CivitaiToken",
+                    "Civitai API token saved from download prompt");
+            }
+
+            return true;
+        });
     }
 
     private static async Task CopyToClipboardAsync(string text)

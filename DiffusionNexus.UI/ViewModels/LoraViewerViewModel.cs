@@ -833,10 +833,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
             dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
 
-            // Update creator
-            if (civitaiModel.Creator is not null && dbModel.Creator is not null)
+            // Update or create creator
+            if (civitaiModel.Creator is not null)
             {
-                dbModel.Creator.Username = civitaiModel.Creator.Username;
+                if (dbModel.Creator is not null)
+                {
+                    dbModel.Creator.Username = civitaiModel.Creator.Username;
+                }
+                else
+                {
+                    dbModel.Creator = new Creator
+                    {
+                        Username = civitaiModel.Creator.Username,
+                        AvatarUrl = civitaiModel.Creator.Image,
+                    };
+                }
             }
         }
 
