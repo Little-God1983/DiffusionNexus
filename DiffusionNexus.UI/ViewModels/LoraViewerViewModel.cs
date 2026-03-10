@@ -174,7 +174,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
                 Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
 
-                var models = await _syncService.LoadCachedModelsAsync();
+                // Use a fresh DI scope so the DbContext sees the latest committed data
+                // (DiscoverNewFilesAsync and other operations write via their own scopes).
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+
+                var models = await freshSyncService.LoadCachedModelsAsync();
                 var grouped = GroupModelsIntoTiles(models);
                 return (models, grouped);
             });
@@ -208,16 +213,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>
     /// Discover new files and add them to the database.
+    /// Uses a fresh DI scope so the DbContext sees the latest committed data
+    /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
     private async Task DiscoverNewFilesAsync()
     {
-        if (_syncService is null)
-        {
-            return;
-        }
-
         try
         {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+
             var progress = new Progress<SyncProgress>(p =>
             {
                 // Update status on UI thread
@@ -229,7 +234,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 });
             });
 
-            var newModels = await _syncService.DiscoverNewFilesAsync(progress);
+            var newModels = await syncService.DiscoverNewFilesAsync(progress);
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -331,7 +336,47 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             Dispatcher.UIThread.Post(() => SyncStatus = statusText);
 
+            // ── Rebuild tiles so newly assigned CivitaiModelPageIds trigger proper grouping ──
+            await RebuildTilesFromDatabaseAsync();
+
         }, "Syncing with Civitai...");
+    }
+
+    /// <summary>
+    /// Reloads all models from the database and rebuilds tiles with proper grouping.
+    /// Uses a fresh DI scope so the DbContext sees the latest committed data.
+    /// Preserves the user's search/filter state.
+    /// </summary>
+    private async Task RebuildTilesFromDatabaseAsync()
+    {
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+
+        var models = await syncService.LoadCachedModelsAsync();
+        var tiles = GroupModelsIntoTiles(models);
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            // Unsubscribe from old tiles
+            foreach (var oldTile in AllTiles)
+            {
+                oldTile.Deleted -= OnTileDeleted;
+                oldTile.DetailRequested -= OnTileDetailRequested;
+            }
+
+            AllTiles.Clear();
+
+            foreach (var tile in tiles)
+            {
+                tile.Deleted += OnTileDeleted;
+                tile.DetailRequested += OnTileDetailRequested;
+                AllTiles.Add(tile);
+            }
+
+            TotalModelCount = AllTiles.Count;
+            RebuildAvailableBaseModels();
+            ApplyFilters();
+        });
     }
 
     /// <summary>
@@ -901,10 +946,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var refreshedModels = await unitOfWork.Models.GetAllWithIncludesAsync();
         var refreshedModel = refreshedModels.FirstOrDefault(m => m.Id == model.Id);
 
-        // Refresh tile on UI thread with updated data
+        // Refresh tile on UI thread with updated data — use RefreshModelData to
+        // properly update _allGroupedModels and re-pick the primary entity.
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            tile.ModelEntity = refreshedModel ?? dbModel;
+            tile.RefreshModelData(refreshedModel ?? dbModel);
         });
     }
 
@@ -973,6 +1019,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
+            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
         }
 
         var detailVm = new ModelDetailViewModel(
@@ -982,6 +1029,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
+        detailVm.DownloadCompleted += OnDetailDownloadCompleted;
         DetailViewModel = detailVm;
         IsDetailOpen = true;
 
@@ -997,6 +1045,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
+            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
         }
 
         IsDetailOpen = false;
@@ -1006,6 +1055,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private void OnDetailCloseRequested(object? sender, EventArgs e)
     {
         CloseDetail();
+    }
+
+    private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
+    {
+        await RebuildTilesFromDatabaseAsync();
     }
 
     /// <summary>

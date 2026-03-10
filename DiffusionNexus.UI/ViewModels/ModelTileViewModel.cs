@@ -4,12 +4,14 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.ObjectModel;
 
@@ -426,7 +428,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (!confirmed) return;
 
-        await ExecuteDeletion(logger, filePaths, GetAllModelIds());
+        await ExecuteFullDeletion(logger, filePaths, GetAllModelIds());
     }
 
     /// <summary>
@@ -457,22 +459,28 @@ public partial class ModelTileViewModel : ViewModelBase
         if (result is null || !result.Confirmed || result.SelectedItems.Count == 0)
             return;
 
-        // Collect file paths and model IDs from selected items
+        // Collect file paths and version IDs from selected items
         var filePaths = result.SelectedItems
             .Where(i => !string.IsNullOrWhiteSpace(i.LocalPath))
             .Select(i => i.LocalPath!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var modelIdsToRemove = result.DeleteAll
-            ? GetAllModelIds()
-            : result.SelectedItems
-                .Where(i => i.ParentModel is not null)
-                .Select(i => i.ParentModel!.Id)
+        if (result.DeleteAll)
+        {
+            // Full delete: remove entire model entities
+            await ExecuteFullDeletion(logger, filePaths, GetAllModelIds());
+        }
+        else
+        {
+            // Partial delete: remove only selected versions, keep models alive
+            var versionIdsToRemove = result.SelectedItems
+                .Select(i => i.Version.Id)
                 .Distinct()
                 .ToList();
 
-        await ExecuteDeletion(logger, filePaths, modelIdsToRemove);
+            await ExecutePartialDeletion(logger, filePaths, versionIdsToRemove);
+        }
 
         // If only some versions were deleted, refresh the tile instead of removing it
         if (!result.DeleteAll)
@@ -494,9 +502,20 @@ public partial class ModelTileViewModel : ViewModelBase
                 VersionButtons.Remove(button);
             }
 
-            // Remove fully-deleted models from the group
-            var deletedModelIds = new HashSet<int>(modelIdsToRemove);
-            _allGroupedModels.RemoveAll(m => deletedModelIds.Contains(m.Id));
+            // Remove deleted versions from in-memory model entities
+            foreach (var model in _allGroupedModels)
+            {
+                var versionsToRemove = model.Versions
+                    .Where(v => deletedVersionIds.Contains(v.Id))
+                    .ToList();
+                foreach (var v in versionsToRemove)
+                {
+                    model.Versions.Remove(v);
+                }
+            }
+
+            // Remove models that have no versions left
+            _allGroupedModels.RemoveAll(m => m.Versions.Count == 0);
 
             // If no versions left after partial delete, treat as full delete
             if (Versions.Count == 0)
@@ -515,10 +534,16 @@ public partial class ModelTileViewModel : ViewModelBase
                     }
                 }
 
-                // Update the primary ModelEntity if it was among the deleted ones
-                if (ModelEntity is not null && deletedModelIds.Contains(ModelEntity.Id))
+                // Re-pick the primary ModelEntity from remaining models
+                var primary = _allGroupedModels
+                    .OrderByDescending(m => m.CivitaiId.HasValue)
+                    .ThenByDescending(m => m.Versions.Sum(v => v.Images.Count))
+                    .ThenByDescending(m => m.LastSyncedAt)
+                    .FirstOrDefault();
+
+                if (primary is not null && primary != ModelEntity)
                 {
-                    ModelEntity = _allGroupedModels.FirstOrDefault();
+                    ModelEntity = primary;
                 }
 
                 // Refresh UI with remaining versions
@@ -529,40 +554,21 @@ public partial class ModelTileViewModel : ViewModelBase
                 OnPropertyChanged(nameof(FileName));
                 OnPropertyChanged(nameof(BaseModelsDisplay));
                 OnPropertyChanged(nameof(DownloadCountDisplay));
+                OnPropertyChanged(nameof(TagNames));
             }
         }
     }
 
     /// <summary>
-    /// Executes the actual file deletion and DB removal.
+    /// Executes a full deletion: removes files from disk and entire model entities from the database.
     /// </summary>
-    private async Task ExecuteDeletion(IUnifiedLogger? logger, List<string> filePaths, List<int> modelIds)
+    private async Task ExecuteFullDeletion(IUnifiedLogger? logger, List<string> filePaths, List<int> modelIds)
     {
         try
         {
-            // Phase 1: Delete files from disk
-            var deletedCount = 0;
-            var failedCount = 0;
-            foreach (var path in filePaths)
-            {
-                try
-                {
-                    if (File.Exists(path))
-                    {
-                        File.Delete(path);
-                        deletedCount++;
-                        logger?.Info(LogCategory.General, "Delete", $"Deleted file: {path}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    failedCount++;
-                    logger?.Error(LogCategory.General, "Delete",
-                        $"Failed to delete file '{path}': {ex.Message}", ex);
-                }
-            }
+            DeleteFilesFromDisk(logger, filePaths);
 
-            // Phase 2: Remove model entities from the database
+            // Remove entire model entities from the database
             if (modelIds.Count > 0)
             {
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -582,23 +588,90 @@ public partial class ModelTileViewModel : ViewModelBase
                     $"Removed {modelIds.Count} model record(s) from database for '{DisplayName}'.");
             }
 
-            // Phase 3: Notify parent to remove the tile (only for full delete)
-            if (failedCount > 0)
-            {
-                logger?.Warn(LogCategory.General, "Delete",
-                    $"'{DisplayName}': {deletedCount} file(s) deleted, {failedCount} failed.");
-            }
-
             // Full delete → remove tile
-            if (modelIds.SequenceEqual(GetAllModelIds()))
-            {
-                Deleted?.Invoke(this, EventArgs.Empty);
-            }
+            Deleted?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception ex)
         {
             logger?.Error(LogCategory.General, "Delete",
                 $"Failed to delete '{DisplayName}': {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Executes a partial deletion: removes files from disk and only the selected versions
+    /// from the database. Models that lose all their versions are also removed.
+    /// </summary>
+    private async Task ExecutePartialDeletion(IUnifiedLogger? logger, List<string> filePaths, List<int> versionIds)
+    {
+        try
+        {
+            DeleteFilesFromDisk(logger, filePaths);
+
+            if (versionIds.Count > 0)
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<IDbContextFactory<DiffusionNexusCoreDbContext>>()
+                    .CreateDbContext();
+                await using (dbContext)
+                {
+                    // Remove only the selected versions (cascade handles Files, Images, TriggerWords)
+                    var versionsToDelete = await dbContext.ModelVersions
+                        .Where(v => versionIds.Contains(v.Id))
+                        .ToListAsync();
+
+                    dbContext.ModelVersions.RemoveRange(versionsToDelete);
+                    await dbContext.SaveChangesAsync();
+
+                    // Remove any orphaned models (models that now have zero versions)
+                    var affectedModelIds = versionsToDelete
+                        .Select(v => v.ModelId)
+                        .Distinct()
+                        .ToList();
+
+                    var orphanedModels = await dbContext.Models
+                        .Where(m => affectedModelIds.Contains(m.Id))
+                        .Where(m => !dbContext.ModelVersions.Any(v => v.ModelId == m.Id))
+                        .ToListAsync();
+
+                    if (orphanedModels.Count > 0)
+                    {
+                        dbContext.Models.RemoveRange(orphanedModels);
+                        await dbContext.SaveChangesAsync();
+                    }
+
+                    logger?.Info(LogCategory.General, "Delete",
+                        $"Removed {versionsToDelete.Count} version(s) from database for '{DisplayName}'.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.Error(LogCategory.General, "Delete",
+                $"Failed to delete versions from '{DisplayName}': {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Deletes files from disk, logging successes and failures.
+    /// </summary>
+    private static void DeleteFilesFromDisk(IUnifiedLogger? logger, List<string> filePaths)
+    {
+        foreach (var path in filePaths)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    logger?.Info(LogCategory.General, "Delete", $"Deleted file: {path}");
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.Error(LogCategory.General, "Delete",
+                    $"Failed to delete file '{path}': {ex.Message}", ex);
+            }
         }
     }
 

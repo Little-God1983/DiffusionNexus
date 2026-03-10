@@ -401,7 +401,7 @@ public partial class ModelDetailViewModel : ViewModelBase
 
                 // Persist Model/ModelVersion/ModelFile to Diffusion_Nexus-core.db
                 // with full Civitai metadata — no legacy .civitai.info sidecar files.
-                await PersistDownloadedModelAsync(targetPath, tab.CivitaiVersion);
+                await PersistDownloadedModelAsync(targetPath, tab.CivitaiVersion, SourceTile?.ModelEntity?.Id);
 
                 // Refresh the tile and detail panel so the downloaded version shows as blue
                 await RefreshAfterDownloadAsync(targetPath);
@@ -459,41 +459,44 @@ public partial class ModelDetailViewModel : ViewModelBase
             // Fallback: match by existing tile model ID
             refreshedModel ??= allModels.FirstOrDefault(m => m.Id == sourceTile.ModelEntity?.Id);
 
-            if (refreshedModel is null)
+            if (refreshedModel is not null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    sourceTile.RefreshModelData(refreshedModel);
+
+                    ModelName = refreshedModel.Name;
+                    ModelIdDisplay = refreshedModel.CivitaiId?.ToString()
+                                     ?? refreshedModel.CivitaiModelPageId?.ToString()
+                                     ?? "\u2014";
+                    CreatorDisplay = refreshedModel.Creator?.Username ?? "Unknown";
+
+                    if (_cachedCivitaiModel is not null)
+                    {
+                        BuildCivitaiVersionTabs(_cachedCivitaiModel, sourceTile);
+                    }
+                    else
+                    {
+                        BuildLocalVersionTabs(sourceTile);
+                    }
+                });
+            }
+            else
             {
                 _logger?.Debug(LogCategory.Download, "LoraDownload",
                     "Could not find model in DB after download \u2014 UI not refreshed");
-                return;
             }
-
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                // Update tile's grouped models and trigger full rebuild
-                // (directly setting ModelEntity would skip _allGroupedModels, leaving stale version data)
-                sourceTile.RefreshModelData(refreshedModel);
-
-                // Update model-level display fields from the refreshed entity
-                ModelName = refreshedModel.Name;
-                ModelIdDisplay = refreshedModel.CivitaiId?.ToString()
-                                 ?? refreshedModel.CivitaiModelPageId?.ToString()
-                                 ?? "\u2014";
-                CreatorDisplay = refreshedModel.Creator?.Username ?? "Unknown";
-
-                // Rebuild detail panel tabs using cached Civitai data (no extra API call)
-                if (_cachedCivitaiModel is not null)
-                {
-                    BuildCivitaiVersionTabs(_cachedCivitaiModel, sourceTile);
-                }
-                else
-                {
-                    BuildLocalVersionTabs(sourceTile);
-                }
-            });
         }
         catch (Exception ex)
         {
             _logger?.Debug(LogCategory.Download, "LoraDownload",
                 $"Failed to refresh UI after download: {ex.Message}");
+        }
+        finally
+        {
+            // Always notify parent to rebuild tiles with proper grouping,
+            // even if the tile-level refresh above failed.
+            DownloadCompleted?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -525,7 +528,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </para>
     /// Uses a scoped <see cref="IUnitOfWork"/> to avoid DbContext conflicts.
     /// </summary>
-    private async Task PersistDownloadedModelAsync(string filePath, CivitaiModelVersion civitaiVersion)
+    private async Task PersistDownloadedModelAsync(string filePath, CivitaiModelVersion civitaiVersion, int? existingModelId = null)
     {
         try
         {
@@ -589,15 +592,22 @@ public partial class ModelDetailViewModel : ViewModelBase
                           ?? civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
                           ?? civitaiVersion.Files.FirstOrDefault();
 
-            // --- Check if a model with this Civitai page ID already exists (grouping) ---
+            // --- Check if a model already exists (grouping) ---
+            // Load with full includes so Versions, Tags, Files etc. are available.
+            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
             Model? model = null;
             bool isExistingModel = false;
 
             if (modelPageId.HasValue)
             {
-                var existingModels = await unitOfWork.Models.FindAsync(
-                    m => m.CivitaiModelPageId == modelPageId.Value);
-                model = existingModels.FirstOrDefault();
+                model = allModels.FirstOrDefault(m => m.CivitaiModelPageId == modelPageId.Value);
+            }
+
+            // Fallback: find by the source tile's model ID (covers locally-discovered
+            // models that don't have CivitaiModelPageId yet).
+            if (model is null && existingModelId.HasValue)
+            {
+                model = allModels.FirstOrDefault(m => m.Id == existingModelId.Value);
             }
 
             if (model is not null)
@@ -605,6 +615,26 @@ public partial class ModelDetailViewModel : ViewModelBase
                 isExistingModel = true;
                 _logger?.Debug(LogCategory.Download, "LoraDownload",
                     $"Adding version to existing model '{model.Name}' (Id={model.Id}, PageId={modelPageId})");
+
+                // Enrich existing model with Civitai metadata it was missing
+                if (civitaiModel is not null)
+                {
+                    model.CivitaiId ??= modelPageId;
+                    model.CivitaiModelPageId ??= modelPageId;
+                    model.Name = civitaiModel.Name;
+                    model.Description ??= civitaiModel.Description;
+                    model.IsNsfw = civitaiModel.Nsfw;
+                    model.IsPoi = civitaiModel.Poi;
+                    model.Source = DataSource.CivitaiApi;
+                    model.LastSyncedAt = DateTimeOffset.UtcNow;
+                    model.AllowNoCredit = civitaiModel.AllowNoCredit;
+                    model.AllowDerivatives = civitaiModel.AllowDerivatives;
+                    model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
+                }
+                else if (modelPageId.HasValue)
+                {
+                    model.CivitaiModelPageId ??= modelPageId;
+                }
             }
             else
             {
@@ -706,26 +736,51 @@ public partial class ModelDetailViewModel : ViewModelBase
             };
 
             version.Files.Add(modelFile);
-            model.Versions.Add(version);
 
-            // Tags from full model response — sync for both new and existing models
+            // Guard: don't add a duplicate version if one with the same CivitaiId
+            // already exists on this model (e.g., re-download of an already-tracked version).
+            var duplicateVersion = version.CivitaiId.HasValue
+                ? model.Versions.FirstOrDefault(v => v.CivitaiId == version.CivitaiId)
+                : null;
+
+            if (duplicateVersion is not null)
+            {
+                _logger?.Debug(LogCategory.Download, "LoraDownload",
+                    $"Version CivitaiId={version.CivitaiId} already exists on model '{model.Name}' — skipping add");
+            }
+            else
+            {
+                model.Versions.Add(version);
+            }
+
+            // Tags from full model response — sync for both new and existing models.
+            // Must reuse existing Tag entities to avoid UNIQUE constraint violations
+            // on Tags.NormalizedName (same approach as SyncTagsFromCivitai).
             if (civitaiModel?.Tags is { Count: > 0 } tags)
             {
-                // For existing models, replace stale tags; for new models, populate them.
+                // Build lookup of Tag entities already tracked by this DbContext
+                var knownTags = allModels
+                    .SelectMany(m => m.Tags)
+                    .Select(mt => mt.Tag!)
+                    .Where(t => t is not null)
+                    .DistinctBy(t => t.NormalizedName)
+                    .ToDictionary(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase);
+
                 model.Tags.Clear();
 
                 foreach (var tagName in tags)
                 {
                     if (string.IsNullOrWhiteSpace(tagName)) continue;
 
-                    model.Tags.Add(new ModelTag
+                    var normalized = tagName.Trim().ToLowerInvariant();
+
+                    if (!knownTags.TryGetValue(normalized, out var tag))
                     {
-                        Tag = new Tag
-                        {
-                            Name = tagName,
-                            NormalizedName = tagName.Trim().ToLowerInvariant()
-                        }
-                    });
+                        tag = new Tag { Name = tagName, NormalizedName = normalized };
+                        knownTags[normalized] = tag;
+                    }
+
+                    model.Tags.Add(new ModelTag { Tag = tag });
                 }
             }
 
@@ -781,6 +836,12 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// Raised when the user requests to close the detail panel.
     /// </summary>
     public event EventHandler? CloseRequested;
+
+    /// <summary>
+    /// Raised after a version download completes and is persisted to the database.
+    /// The parent LoraViewerViewModel subscribes to rebuild tiles with proper grouping.
+    /// </summary>
+    public event EventHandler? DownloadCompleted;
 
     #endregion
 

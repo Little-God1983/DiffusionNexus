@@ -190,4 +190,67 @@ public class TileGroupingHelperTests
     }
 
     #endregion
+
+    #region RefreshModelData
+
+    [Fact]
+    public void WhenRefreshModelDataCalledThenVersionsRebuildFromAllGroupedModels()
+    {
+        // Arrange — create a grouped tile with two models
+        var modelA = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        var modelB = CreateModel(id: 11, name: "MyLora", pageId: 42,
+            fileName: "mylora_v2.safetensors", baseModel: "Flux.1 D");
+
+        var tile = ModelTileViewModel.FromModelGroup(new List<Model> { modelA, modelB });
+        tile.Versions.Should().HaveCount(2, "initial state should have 2 versions");
+
+        // Act — refresh modelA with updated data (e.g., new images)
+        var refreshedA = CreateModel(id: 10, name: "MyLora Updated", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0", hasCivitaiId: true);
+        tile.RefreshModelData(refreshedA);
+
+        // Assert
+        tile.Versions.Should().HaveCount(2, "both versions should still be present after refresh");
+        tile.DisplayName.Should().Be("MyLora Updated",
+            "display name should reflect the refreshed (richer) model");
+    }
+
+    [Fact]
+    public void WhenRefreshModelDataAddsNewModelThenVersionsIncludeIt()
+    {
+        // Arrange — tile starts with one model
+        var modelA = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        var tile = ModelTileViewModel.FromModel(modelA);
+        tile.Versions.Should().HaveCount(1);
+
+        // Act — refresh with a new model that joins the group (e.g., downloaded a new version)
+        var modelB = CreateModel(id: 11, name: "MyLora", pageId: 42,
+            fileName: "mylora_v2.safetensors", baseModel: "Flux.1 D", hasCivitaiId: true);
+        tile.RefreshModelData(modelB);
+
+        // Assert
+        tile.Versions.Should().HaveCount(2, "new model's version should be added to the tile");
+    }
+
+    [Fact]
+    public void WhenRefreshModelDataPicksRichestModelAsPrimary()
+    {
+        // Arrange — model without CivitaiId
+        var modelA = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        var tile = ModelTileViewModel.FromModel(modelA);
+
+        // Act — refresh with model that has CivitaiId (richer)
+        var modelB = CreateModel(id: 11, name: "MyLora Enriched", pageId: 42,
+            fileName: "mylora_v2.safetensors", baseModel: "Flux.1 D", hasCivitaiId: true);
+        tile.RefreshModelData(modelB);
+
+        // Assert — model with CivitaiId should become primary
+        tile.ModelEntity!.CivitaiId.Should().NotBeNull(
+            "the model with CivitaiId should be picked as primary");
+    }
+
+    #endregion
 }

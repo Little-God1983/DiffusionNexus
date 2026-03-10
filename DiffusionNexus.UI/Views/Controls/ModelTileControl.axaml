@@ -156,10 +156,10 @@
       <!-- Bottom Action Buttons -->
       <Border Grid.Row="1"
               Background="#252525"
-              Padding="8,4"
+              Padding="8,6"
               Margin="0"
               CornerRadius="0,0,8,8">
-        
+
         <Grid ColumnDefinitions="*,*,*,*,*">
 
           <!-- Open on Civitai -->
@@ -169,7 +169,7 @@
                   ToolTip.Tip="Open on Civitai"
                   HorizontalAlignment="Center"
                   Padding="6,4"
-                  FontSize="10"/>
+                  FontSize="14"/>
 
           <!-- Copy Trigger Words -->
           <Button Grid.Column="1"
@@ -178,7 +178,7 @@
                   ToolTip.Tip="Copy Trigger Words"
                   HorizontalAlignment="Center"
                   Padding="6,4"
-                  FontSize="10"/>
+                  FontSize="14"/>
 
           <!-- Copy Real Filename -->
           <Button Grid.Column="2"
@@ -187,7 +187,7 @@
                   ToolTip.Tip="Copy Filename to Clipboard (for ComfyUI search)"
                   HorizontalAlignment="Center"
                   Padding="6,4"
-                  FontSize="10"/>
+                  FontSize="14"/>
 
           <!-- Open Folder -->
           <Button Grid.Column="3"
@@ -196,7 +196,7 @@
                   ToolTip.Tip="Open Folder"
                   HorizontalAlignment="Center"
                   Padding="6,4"
-                  FontSize="10"/>
+                  FontSize="14"/>
 
           <!-- Delete -->
           <Button Grid.Column="4"
@@ -207,7 +207,7 @@
                   ToolTip.Tip="Delete Model"
                   HorizontalAlignment="Center"
                   Padding="6,4"
-                  FontSize="10"/>
+                  FontSize="14"/>
           
         </Grid>
       </Border>
