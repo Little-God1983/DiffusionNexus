@@ -166,7 +166,7 @@
               <!-- Metadata -->
               <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
                 <Grid ColumnDefinitions="Auto,*"
-                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       Margin="0">
 
                   <TextBlock Grid.Row="0" Grid.Column="0"
@@ -221,11 +221,23 @@
                              Margin="0,0,0,6"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0"
+                             Text="Category:"
+                             Foreground="#FF66AA"
+                             FontWeight="SemiBold"
+                             Margin="0,0,12,6"
+                             IsVisible="{Binding HasCategory}"/>
+                  <TextBlock Grid.Row="5" Grid.Column="1"
+                             Text="{Binding CategoryDisplay}"
+                             Foreground="White"
+                             Margin="0,0,0,6"
+                             IsVisible="{Binding HasCategory}"/>
+
+                  <TextBlock Grid.Row="6" Grid.Column="0"
                              Text="Creator:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,0"/>
-                  <TextBlock Grid.Row="5" Grid.Column="1"
+                  <TextBlock Grid.Row="6" Grid.Column="1"
                              Text="{Binding CreatorDisplay}"
                              Foreground="White"/>
                 </Grid>

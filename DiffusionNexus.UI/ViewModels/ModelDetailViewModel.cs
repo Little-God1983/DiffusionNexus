@@ -103,6 +103,18 @@ public partial class ModelDetailViewModel : ViewModelBase
     private bool _hasTags;
 
     /// <summary>
+    /// The inferred category (e.g., Character, Style, Concept) derived from the model's tags.
+    /// </summary>
+    [ObservableProperty]
+    private string _categoryDisplay = string.Empty;
+
+    /// <summary>
+    /// Whether a category could be inferred from the model's tags.
+    /// </summary>
+    [ObservableProperty]
+    private bool _hasCategory;
+
+    /// <summary>
     /// The currently selected version tab.
     /// </summary>
     [ObservableProperty]
@@ -173,6 +185,8 @@ public partial class ModelDetailViewModel : ViewModelBase
         HasTriggerWords = true;
         TagsDisplay = "3d, fortnite, style, character";
         HasTags = true;
+        CategoryDisplay = "Style";
+        HasCategory = true;
     }
 
     /// <summary>
@@ -899,6 +913,41 @@ public partial class ModelDetailViewModel : ViewModelBase
             TagsDisplay = string.Empty;
             HasTags = false;
         }
+
+        // Infer category from the first tag that matches a known CivitaiCategory enum value
+        // (same logic as MetaDataUtilService.GetCategoryFromTags)
+        var category = InferCategoryFromTags(model);
+        CategoryDisplay = category ?? string.Empty;
+        HasCategory = category is not null;
+    }
+
+    /// <summary>
+    /// Infers a human-readable category (e.g., "Character", "Style") from the model's tags.
+    /// Returns null when no tag matches a known <see cref="Domain.Enums.CivitaiCategory"/> value.
+    /// </summary>
+    private static string? InferCategoryFromTags(Model? model)
+    {
+        if (model?.Tags is not { Count: > 0 } tags) return null;
+
+        foreach (var mt in tags)
+        {
+            var tagName = mt.Tag?.Name;
+            if (string.IsNullOrWhiteSpace(tagName)) continue;
+
+            var normalized = tagName.Replace(" ", "_").Trim();
+            if (Enum.TryParse<Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
+                && category != Domain.Enums.CivitaiCategory.Unknown)
+            {
+                // Return a friendly display name (e.g., "BaseModel" → "Base Model")
+                return category switch
+                {
+                    Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
+                    _ => category.ToString()
+                };
+            }
+        }
+
+        return null;
     }
 
     private void BuildLocalVersionTabs(ModelTileViewModel tile)
