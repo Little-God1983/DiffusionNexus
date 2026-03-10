@@ -265,6 +265,8 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _logger.Info(LogCategory.Backup, "Backup", message);
         else
             _logger.Error(LogCategory.Backup, "Backup", message);
+
+        SetStatus(message, success ? ActivitySeverity.Success : ActivitySeverity.Error);
         BackupProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -331,6 +333,8 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _logger.Info(LogCategory.Download, "Download", message);
         else
             _logger.Error(LogCategory.Download, "Download", message);
+
+        SetStatus(message, success ? ActivitySeverity.Success : ActivitySeverity.Error);
         DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 

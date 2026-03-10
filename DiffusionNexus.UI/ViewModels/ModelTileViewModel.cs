@@ -74,6 +74,33 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     private List<Model> _allGroupedModels = [];
 
+    /// <summary>
+    /// Updates the tile after a new version has been downloaded and persisted.
+    /// Replaces or adds the refreshed model in the grouped models list, then triggers
+    /// a full UI rebuild via the <see cref="ModelEntity"/> property change.
+    /// </summary>
+    public void RefreshModelData(Model refreshedModel)
+    {
+        var index = _allGroupedModels.FindIndex(m => m.Id == refreshedModel.Id);
+        if (index >= 0)
+        {
+            _allGroupedModels[index] = refreshedModel;
+        }
+        else
+        {
+            _allGroupedModels.Add(refreshedModel);
+        }
+
+        // Pick the richest model as primary (same logic as FromModelGroup)
+        var primary = _allGroupedModels
+            .OrderByDescending(m => m.CivitaiId.HasValue)
+            .ThenByDescending(m => m.Versions.Sum(v => v.Images.Count))
+            .ThenByDescending(m => m.LastSyncedAt)
+            .First();
+
+        ModelEntity = primary;
+    }
+
     #endregion
 
     #region Collections

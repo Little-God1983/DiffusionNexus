@@ -5,7 +5,6 @@ using System.Text;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
@@ -458,8 +457,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
-            var packages = await repo.GetAllAsync();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            var packages = await unitOfWork.InstallerPackages.GetAllAsync();
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -516,8 +515,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider!.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
-            var package = await repo.GetByIdAsync(tab.PackageId);
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            var package = await unitOfWork.InstallerPackages.GetByIdAsync(tab.PackageId);
             if (package is null) return;
 
             if (string.IsNullOrWhiteSpace(package.ExecutablePath)) return;
@@ -677,10 +676,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
 
-            var package = await repo.GetByIdAsync(packageId);
+            var package = await unitOfWork.InstallerPackages.GetByIdAsync(packageId);
             if (package is not null)
             {
                 package.Version = newHash;

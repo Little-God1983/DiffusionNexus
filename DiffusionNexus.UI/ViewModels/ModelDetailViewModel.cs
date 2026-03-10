@@ -348,6 +348,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 response.EnsureSuccessStatusCode();
 
                 var totalBytes = response.Content.Headers.ContentLength;
+                long totalRead = 0;
                 var tempPath = targetPath + ".tmp";
 
                 // Use explicit using blocks so streams close before File.Move
@@ -356,7 +357,6 @@ public partial class ModelDetailViewModel : ViewModelBase
                     bufferSize: 81920, useAsync: true))
                 {
                     var buffer = new byte[81920];
-                    long totalRead = 0;
                     int bytesRead;
                     var lastProgressReport = Environment.TickCount64;
 
@@ -393,6 +393,12 @@ public partial class ModelDetailViewModel : ViewModelBase
                     File.Delete(targetPath);
                 File.Move(tempPath, targetPath);
 
+                // Build a human-readable size summary for completion messages
+                var finalMb = totalRead / (1024.0 * 1024.0);
+                var sizeText = totalBytes.HasValue && totalBytes.Value > 0
+                    ? $"{finalMb:F1} / {totalBytes.Value / (1024.0 * 1024.0):F1} MB"
+                    : $"{finalMb:F1} MB";
+
                 // Persist Model/ModelVersion/ModelFile to Diffusion_Nexus-core.db
                 // with full Civitai metadata — no legacy .civitai.info sidecar files.
                 await PersistDownloadedModelAsync(targetPath, tab.CivitaiVersion);
@@ -400,10 +406,11 @@ public partial class ModelDetailViewModel : ViewModelBase
                 // Refresh the tile and detail panel so the downloaded version shows as blue
                 await RefreshAfterDownloadAsync(targetPath);
 
-                taskHandle?.Complete($"Downloaded to {targetPath}");
-                activityLog?.CompleteDownloadProgress(true, $"Downloaded {Path.GetFileName(targetPath)}");
+                taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
+                activityLog?.CompleteDownloadProgress(true,
+                    $"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
                 _logger?.Info(LogCategory.Download, "LoraDownload",
-                    $"Downloaded '{Path.GetFileName(targetPath)}' successfully",
+                    $"Downloaded '{Path.GetFileName(targetPath)}' successfully — {sizeText}",
                     $"Path: {targetPath}");
             }
         }
@@ -461,8 +468,9 @@ public partial class ModelDetailViewModel : ViewModelBase
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                // Update tile (triggers OnModelEntityChanged \u2192 rebuilds version buttons in the grid)
-                sourceTile.ModelEntity = refreshedModel;
+                // Update tile's grouped models and trigger full rebuild
+                // (directly setting ModelEntity would skip _allGroupedModels, leaving stale version data)
+                sourceTile.RefreshModelData(refreshedModel);
 
                 // Update model-level display fields from the refreshed entity
                 ModelName = refreshedModel.Name;
