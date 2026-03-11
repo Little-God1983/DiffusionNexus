@@ -833,16 +833,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
             dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
 
-            // Update or create creator
+            // Update or create creator — reuse existing Creator entity by
+            // Username to avoid UNIQUE constraint violations.
             if (civitaiModel.Creator is not null)
             {
                 if (dbModel.Creator is not null)
                 {
                     dbModel.Creator.Username = civitaiModel.Creator.Username;
+                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
                 }
                 else
                 {
-                    dbModel.Creator = new Creator
+                    var existingCreator = dbModels
+                        .Select(m => m.Creator)
+                        .FirstOrDefault(c => c is not null &&
+                            string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+
+                    dbModel.Creator = existingCreator ?? new Creator
                     {
                         Username = civitaiModel.Creator.Username,
                         AvatarUrl = civitaiModel.Creator.Image,

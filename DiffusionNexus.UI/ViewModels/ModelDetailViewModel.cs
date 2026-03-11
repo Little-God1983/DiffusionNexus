@@ -651,16 +651,23 @@ public partial class ModelDetailViewModel : ViewModelBase
                     model.AllowDerivatives = civitaiModel.AllowDerivatives;
                     model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
 
-                    // Update or create creator
+                    // Update or create creator — reuse existing Creator entity by
+                    // Username to avoid UNIQUE constraint violations.
                     if (civitaiModel.Creator is not null)
                     {
                         if (model.Creator is not null)
                         {
                             model.Creator.Username = civitaiModel.Creator.Username;
+                            model.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
                         }
                         else
                         {
-                            model.Creator = new Creator
+                            var existingCreator = allModels
+                                .Select(m => m.Creator)
+                                .FirstOrDefault(c => c is not null &&
+                                    string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+
+                            model.Creator = existingCreator ?? new Creator
                             {
                                 Username = civitaiModel.Creator.Username,
                                 AvatarUrl = civitaiModel.Creator.Image,
@@ -698,7 +705,12 @@ public partial class ModelDetailViewModel : ViewModelBase
 
                     if (civitaiModel.Creator is not null)
                     {
-                        model.Creator = new Creator
+                        var existingCreator = allModels
+                            .Select(m => m.Creator)
+                            .FirstOrDefault(c => c is not null &&
+                                string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+
+                        model.Creator = existingCreator ?? new Creator
                         {
                             Username = civitaiModel.Creator.Username,
                             AvatarUrl = civitaiModel.Creator.Image,

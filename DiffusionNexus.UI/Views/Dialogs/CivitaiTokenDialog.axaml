@@ -75,16 +75,42 @@
                Padding="8,6"/>
     </Grid>
 
+    <!-- Validation status -->
+    <StackPanel Name="ValidationPanel"
+                Orientation="Horizontal"
+                Spacing="8"
+                HorizontalAlignment="Center"
+                IsVisible="False">
+      <ProgressBar Name="ValidationSpinner"
+                   IsIndeterminate="True"
+                   Width="80"
+                   Height="4"/>
+      <TextBlock Name="ValidationMessage"
+                 Foreground="#CCCCCC"
+                 FontSize="13"
+                 VerticalAlignment="Center"/>
+    </StackPanel>
+
+    <!-- Error message -->
+    <TextBlock Name="ErrorMessage"
+               Foreground="#FF6666"
+               FontSize="13"
+               TextWrapping="Wrap"
+               HorizontalAlignment="Center"
+               IsVisible="False"/>
+
     <!-- Buttons -->
     <StackPanel Orientation="Horizontal"
                 HorizontalAlignment="Right"
                 Spacing="8"
                 Margin="0,8,0,0">
-      <Button Content="Cancel"
+      <Button Name="CancelButton"
+              Content="Cancel"
               Width="90"
               Padding="8,6"
               Click="OnCancelClick"/>
-      <Button Content="Save and Continue"
+      <Button Name="SaveButton"
+              Content="Save and Continue"
               Width="140"
               Padding="8,6"
               IsDefault="True"
