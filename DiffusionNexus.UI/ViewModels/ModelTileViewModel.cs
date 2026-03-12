@@ -13,6 +13,7 @@ using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SkiaSharp;
 using System.Collections.ObjectModel;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -918,8 +919,19 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             try
             {
-                using var stream = new MemoryStream(data);
-                ThumbnailImage = new Bitmap(stream);
+                // Use SkiaSharp to decode (handles WebP, JPEG, PNG, etc.)
+                using var skBitmap = SKBitmap.Decode(data);
+                if (skBitmap is not null)
+                {
+                    using var skImage = SKImage.FromBitmap(skBitmap);
+                    using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+                    using var stream = new MemoryStream(encoded.ToArray());
+                    ThumbnailImage = new Bitmap(stream);
+                }
+                else
+                {
+                    ThumbnailImage = null;
+                }
             }
             catch
             {
@@ -950,20 +962,47 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>
     /// Returns true if the tile is showing "No Preview" but has a downloadable image URL.
     /// Checks the actual visual state (Bitmap) rather than entity data, so it catches
-    /// corrupt BLOBs and decode failures too.
+    /// corrupt BLOBs and decode failures too. Also returns true when the primary image is
+    /// a video but a static sibling image exists that could be used instead.
     /// </summary>
     public bool IsThumbnailMissing =>
         ThumbnailImage is null
-        && SelectedVersion?.PrimaryImage is { } img
-        && !string.IsNullOrEmpty(img.Url);
+        && SelectedVersion?.Images is { Count: > 0 }
+        && SelectedVersion.Images.Any(i => !string.IsNullOrEmpty(i.Url));
 
     /// <summary>
     /// Attempts to download the thumbnail for the selected version if it is missing.
+    /// When the primary image is a video, prefers a static sibling image from the same
+    /// version — Civitai CDN only serves resized images for static URLs, not for video URLs.
     /// </summary>
     public async Task TryDownloadMissingThumbnailAsync()
     {
         if (!IsThumbnailMissing) return;
-        await DownloadThumbnailAsync(SelectedVersion!.PrimaryImage!);
+
+        var primaryImage = SelectedVersion!.PrimaryImage!;
+
+        // When the primary image is a video, look for a static sibling first — much more
+        // reliable than FFmpeg extraction and avoids downloading the full video file.
+        if (IsVideoPreview(primaryImage))
+        {
+            var staticSibling = SelectedVersion.Images
+                .Where(i => !string.IsNullOrEmpty(i.Url) && !IsVideoPreview(i) && i.ThumbnailData is null)
+                .OrderBy(i => i.IsNsfw) // prefer SFW
+                .ThenBy(i => i.SortOrder)
+                .FirstOrDefault();
+
+            if (staticSibling is not null)
+            {
+                var logger = App.Services?.GetService<IUnifiedLogger>();
+                logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                    $"Primary image for '{DisplayName}' is video — using static sibling (ImageId={staticSibling.Id})");
+
+                await DownloadThumbnailAsync(staticSibling);
+                return;
+            }
+        }
+
+        await DownloadThumbnailAsync(primaryImage);
     }
 
     /// <summary>
@@ -999,12 +1038,22 @@ public partial class ModelTileViewModel : ViewModelBase
             if (thumbnailBytes.Length == 0)
             {
                 logger?.Warn(LogCategory.Network, "ThumbnailDownload",
-                    $"Empty {previewType} thumbnail for '{displayName}'");
+                    $"No usable {previewType} thumbnail for '{displayName}' — download returned no data");
+                return;
+            }
+
+            // Transcode to JPEG if Avalonia can't decode the raw bytes (e.g., WebP from Civitai CDN).
+            // Also rejects video data that was mistakenly downloaded instead of an image.
+            (thumbnailBytes, mimeType) = EnsureDecodableBytes(thumbnailBytes, mimeType, logger, displayName);
+
+            if (thumbnailBytes.Length == 0)
+            {
+                // EnsureDecodableBytes already logged the specific reason (video data, corrupt, etc.)
                 return;
             }
 
             logger?.Info(LogCategory.Network, "ThumbnailDownload",
-                $"Thumbnail created for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB)");
+                $"Thumbnail ready for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB, ImageId={image.Id})");
 
             // Store in-memory for immediate display
             image.ThumbnailData = thumbnailBytes;
@@ -1015,6 +1064,11 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 await PersistThumbnailAsync(image.Id, thumbnailBytes, mimeType);
             }
+            else
+            {
+                logger?.Warn(LogCategory.Network, "ThumbnailDownload",
+                    $"Cannot persist thumbnail for '{displayName}': image.Id is 0 (not yet saved to DB)");
+            }
 
             // Display the downloaded thumbnail
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -1024,8 +1078,10 @@ public partial class ModelTileViewModel : ViewModelBase
                     using var stream = new MemoryStream(thumbnailBytes);
                     ThumbnailImage = new Bitmap(stream);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                        $"Failed to decode thumbnail Bitmap for '{displayName}': {ex.Message}");
                     ThumbnailImage = null;
                 }
             });
@@ -1076,54 +1132,21 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Gets a thumbnail for a video preview. First tries Civitai's server-side thumbnail
-    /// (same URL with <c>/width=300</c>), which works without FFmpeg. Falls back to
-    /// downloading the full video and extracting a mid-frame via FFmpeg if the server
-    /// thumbnail is unavailable.
+    /// Gets a thumbnail for a video preview by extracting a frame via FFmpeg.
+    /// The Civitai CDN does not serve static poster images for video URLs;
+    /// the <c>/width=300</c> trick only works for image URLs.
     /// </summary>
     private static async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
         string videoUrl, IUnifiedLogger? logger)
     {
-        // --- Attempt 1: Civitai serves static thumbnails for videos via the same CDN ---
-        // Requesting {videoUrl}/width=300 returns a JPEG/WebP still frame without
-        // needing to download the entire video or depend on FFmpeg.
-        try
-        {
-            var thumbnailUrl = videoUrl.Contains('?')
-                ? $"{videoUrl}&width=300"
-                : $"{videoUrl}/width=300";
 
-            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                "Trying Civitai server-side video thumbnail",
-                $"URL: {thumbnailUrl}");
-
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
-
-            if (bytes.Length > 0)
-            {
-                logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                    $"Civitai video thumbnail downloaded ({bytes.Length / 1024.0:F1} KB)");
-                return (bytes, "image/jpeg");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                $"Civitai video thumbnail not available ({ex.StatusCode}), trying FFmpeg fallback");
-        }
-        catch (TaskCanceledException)
-        {
-            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                "Civitai video thumbnail request timed out, trying FFmpeg fallback");
-        }
-
-        // --- Attempt 2: Download video + FFmpeg frame extraction ---
+        // FFmpeg frame extraction — the only reliable way to get a poster from a video URL
         var videoThumbnailService = App.Services?.GetService<IVideoThumbnailService>();
         if (videoThumbnailService is null)
         {
             logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                "IVideoThumbnailService not available — cannot extract video thumbnail");
+                "Video-only model: FFmpeg is required to generate thumbnails from video previews. " +
+                "Install FFmpeg and ensure it is on PATH, or wait until a static preview image is available on Civitai.");
             return ([], string.Empty);
         }
 
@@ -1179,10 +1202,95 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Returns <c>true</c> when the byte payload looks like a video container (MP4/WebM/AVI/MKV)
+    /// rather than a decodable image. Used to reject CDN responses that return the full
+    /// video stream instead of a poster frame.
+    /// </summary>
+    private static bool IsVideoData(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 12)
+            return false;
+
+        // MP4 / MOV — "ftyp" box at offset 4
+        if (data[4] == (byte)'f' && data[5] == (byte)'t' && data[6] == (byte)'y' && data[7] == (byte)'p')
+            return true;
+
+        // WebM / MKV — EBML header (0x1A 0x45 0xDF 0xA3)
+        if (data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3)
+            return true;
+
+        // AVI — "RIFF....AVI "
+        if (data[0] == (byte)'R' && data[1] == (byte)'I' && data[2] == (byte)'F' && data[3] == (byte)'F'
+            && data[8] == (byte)'A' && data[9] == (byte)'V' && data[10] == (byte)'I')
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Ensures the thumbnail bytes are in a format Avalonia's <see cref="Bitmap"/> can decode.
+    /// Civitai's CDN often returns WebP for thumbnails, which Avalonia cannot decode
+    /// natively. This method detects the issue and transcodes to JPEG via SkiaSharp.
+    /// Returns empty data when the payload is video data (not an image at all).
+    /// </summary>
+    private static (byte[] Data, string MimeType) EnsureDecodableBytes(
+        byte[] data, string mimeType, IUnifiedLogger? logger, string displayName)
+    {
+        // Reject video data early — CDN may return the full MP4 instead of a poster frame
+        if (IsVideoData(data))
+        {
+            logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                $"Downloaded data for '{displayName}' is video ({data.Length / 1024.0:F1} KB), not an image — cannot use as thumbnail");
+            return ([], string.Empty);
+        }
+
+        // Quick check: try Avalonia decode first — most JPEG/PNG will work
+        try
+        {
+            using var testStream = new MemoryStream(data);
+            _ = new Bitmap(testStream);
+            return (data, mimeType); // Already decodable
+        }
+        catch
+        {
+            // Fall through to SkiaSharp transcode
+        }
+
+        // Transcode via SkiaSharp (handles WebP, AVIF, etc.)
+        try
+        {
+            using var skBitmap = SKBitmap.Decode(data);
+            if (skBitmap is null)
+            {
+                logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                    $"Neither Avalonia nor SkiaSharp can decode thumbnail for '{displayName}' " +
+                    $"({data.Length / 1024.0:F1} KB) — data may be corrupted or an unsupported format");
+                return ([], string.Empty);
+            }
+
+            using var skImage = SKImage.FromBitmap(skBitmap);
+            using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+            var jpegBytes = encoded.ToArray();
+
+            logger?.Debug(LogCategory.General, "ThumbnailDownload",
+                $"Transcoded thumbnail for '{displayName}' to JPEG ({data.Length / 1024.0:F1} KB → {jpegBytes.Length / 1024.0:F1} KB)");
+
+            return (jpegBytes, "image/jpeg");
+        }
+        catch (Exception ex)
+        {
+            logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                $"SkiaSharp transcode failed for '{displayName}' ({data.Length / 1024.0:F1} KB): {ex.Message}");
+            return ([], string.Empty);
+        }
+    }
+
+    /// <summary>
     /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
     /// </summary>
     private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
     {
+        var logger = App.Services?.GetService<IUnifiedLogger>();
         try
         {
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -1193,11 +1301,19 @@ public partial class ModelTileViewModel : ViewModelBase
                 dbImage.ThumbnailData = thumbnailData;
                 dbImage.ThumbnailMimeType = mimeType;
                 await dbContext.SaveChangesAsync();
+                logger?.Debug(LogCategory.General, "ThumbnailDownload",
+                    $"Thumbnail persisted to DB for ImageId={imageId} ({thumbnailData.Length / 1024.0:F1} KB)");
+            }
+            else
+            {
+                logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                    $"Cannot persist thumbnail: ImageId={imageId} not found in database");
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Non-critical — thumbnail will be re-downloaded next time
+            logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                $"Failed to persist thumbnail for ImageId={imageId}: {ex.Message}");
         }
     }
 

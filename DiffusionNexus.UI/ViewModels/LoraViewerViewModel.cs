@@ -323,9 +323,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // ── Phase 3: Backfill tags for models synced before tag persistence was added ──
             await BackfillMissingTagsPhaseAsync(apiKey, statusParts);
 
+            // ── Rebuild tiles first so Phase 4 operates on fresh DB-backed tiles ──
+            // Newly synced images have their real DB Ids, enabling thumbnail persistence.
+            await RebuildTilesFromDatabaseAsync();
+
             // ── Phase 4: Download thumbnails for tiles still showing "No Preview" ──
-            // Brief pause to let fire-and-forget downloads from earlier phases settle
-            await Task.Delay(2000);
             await DownloadMissingThumbnailsPhaseAsync(statusParts);
 
             // Final status
@@ -335,9 +337,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             var statusText = string.Join(" · ", statusParts);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             Dispatcher.UIThread.Post(() => SyncStatus = statusText);
-
-            // ── Rebuild tiles so newly assigned CivitaiModelPageIds trigger proper grouping ──
-            await RebuildTilesFromDatabaseAsync();
 
         }, "Syncing with Civitai...");
     }
