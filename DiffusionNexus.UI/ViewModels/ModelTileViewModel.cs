@@ -1139,7 +1139,6 @@ public partial class ModelTileViewModel : ViewModelBase
     private static async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
         string videoUrl, IUnifiedLogger? logger)
     {
-
         // FFmpeg frame extraction — the only reliable way to get a poster from a video URL
         var videoThumbnailService = App.Services?.GetService<IVideoThumbnailService>();
         if (videoThumbnailService is null)
@@ -1147,6 +1146,19 @@ public partial class ModelTileViewModel : ViewModelBase
             logger?.Warn(LogCategory.General, "ThumbnailDownload",
                 "Video-only model: FFmpeg is required to generate thumbnails from video previews. " +
                 "Install FFmpeg and ensure it is on PATH, or wait until a static preview image is available on Civitai.");
+            return ([], string.Empty);
+        }
+
+        // Ensure FFmpeg is available BEFORE downloading the video — avoids wasting
+        // bandwidth on a multi-MB download when FFmpeg can't be found/downloaded.
+        try
+        {
+            await videoThumbnailService.EnsureFFmpegAvailableAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger?.Warn(LogCategory.General, "ThumbnailDownload",
+                $"FFmpeg is not available — video thumbnails cannot be generated: {ex.Message}");
             return ([], string.Empty);
         }
 
