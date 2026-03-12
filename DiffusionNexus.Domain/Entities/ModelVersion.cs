@@ -67,9 +67,15 @@ public class ModelVersion : BaseEntity
     public ModelFile? PrimaryFile =>
         Files.FirstOrDefault(f => f.IsPrimary) ?? Files.FirstOrDefault();
 
-    /// <summary>Gets the primary preview image.</summary>
+    /// <summary>
+    /// Gets the primary preview image, preferring static images over video previews.
+    /// Falls back to video only when no static image is available.
+    /// </summary>
     public ModelImage? PrimaryImage =>
-        Images.FirstOrDefault(i => !i.IsNsfw) ?? Images.FirstOrDefault();
+        Images.FirstOrDefault(i => !i.IsNsfw && !i.IsVideo)
+        ?? Images.FirstOrDefault(i => !i.IsVideo)
+        ?? Images.FirstOrDefault(i => !i.IsNsfw)
+        ?? Images.FirstOrDefault();
 
     /// <summary>Gets all trigger words as a single string.</summary>
     public string TriggerWordsText =>

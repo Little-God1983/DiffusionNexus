@@ -81,9 +81,9 @@ public class Model : BaseEntity
     public int TotalDownloads =>
         Versions.Sum(v => v.DownloadCount);
 
-    /// <summary>Gets the primary preview image from the latest version.</summary>
+    /// <summary>Gets the primary preview image from the latest version, preferring static images over video.</summary>
     public ModelImage? PrimaryImage =>
-        LatestVersion?.Images.FirstOrDefault(i => !i.IsNsfw) ?? LatestVersion?.Images.FirstOrDefault();
+        LatestVersion?.PrimaryImage;
 
     #endregion
 }

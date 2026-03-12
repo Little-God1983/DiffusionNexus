@@ -1076,12 +1076,49 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Downloads a video preview from Civitai, extracts a frame at the midpoint using FFmpeg,
-    /// and returns the frame as thumbnail bytes.
+    /// Gets a thumbnail for a video preview. First tries Civitai's server-side thumbnail
+    /// (same URL with <c>/width=300</c>), which works without FFmpeg. Falls back to
+    /// downloading the full video and extracting a mid-frame via FFmpeg if the server
+    /// thumbnail is unavailable.
     /// </summary>
     private static async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
         string videoUrl, IUnifiedLogger? logger)
     {
+        // --- Attempt 1: Civitai serves static thumbnails for videos via the same CDN ---
+        // Requesting {videoUrl}/width=300 returns a JPEG/WebP still frame without
+        // needing to download the entire video or depend on FFmpeg.
+        try
+        {
+            var thumbnailUrl = videoUrl.Contains('?')
+                ? $"{videoUrl}&width=300"
+                : $"{videoUrl}/width=300";
+
+            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                "Trying Civitai server-side video thumbnail",
+                $"URL: {thumbnailUrl}");
+
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
+
+            if (bytes.Length > 0)
+            {
+                logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                    $"Civitai video thumbnail downloaded ({bytes.Length / 1024.0:F1} KB)");
+                return (bytes, "image/jpeg");
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                $"Civitai video thumbnail not available ({ex.StatusCode}), trying FFmpeg fallback");
+        }
+        catch (TaskCanceledException)
+        {
+            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
+                "Civitai video thumbnail request timed out, trying FFmpeg fallback");
+        }
+
+        // --- Attempt 2: Download video + FFmpeg frame extraction ---
         var videoThumbnailService = App.Services?.GetService<IVideoThumbnailService>();
         if (videoThumbnailService is null)
         {
@@ -1094,7 +1131,6 @@ public partial class ModelTileViewModel : ViewModelBase
         string? generatedThumbnailPath = null;
         try
         {
-            // Download the video to a temp file
             logger?.Debug(LogCategory.Network, "ThumbnailDownload",
                 $"Downloading video to temp: {tempVideoPath}",
                 $"URL: {videoUrl}");
@@ -1106,7 +1142,6 @@ public partial class ModelTileViewModel : ViewModelBase
             logger?.Debug(LogCategory.Network, "ThumbnailDownload",
                 $"Video downloaded ({videoBytes.Length / 1024.0:F0} KB), extracting mid-frame...");
 
-            // Extract mid-frame thumbnail (VideoThumbnailService defaults to midpoint)
             var result = await videoThumbnailService.GenerateThumbnailAsync(
                 tempVideoPath,
                 new VideoThumbnailOptions { MaxWidth = 300, OutputFormat = ThumbnailFormat.WebP })

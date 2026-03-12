@@ -364,6 +364,41 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Resolves the correct "datasets" directory for an AI Toolkit installation.
+    /// The installation path may point to a launcher folder (e.g. <c>E:\AI\Toolkit\</c>)
+    /// while the actual toolkit lives in a subfolder (e.g. <c>E:\AI\Toolkit\AI-Toolkit\</c>).
+    /// This method checks both locations and returns whichever already contains a
+    /// <c>datasets</c> folder; when neither exists yet it falls back to the path that
+    /// contains the <c>AI-Toolkit</c> subfolder.
+    /// </summary>
+    /// <param name="installationPath">The root installation path stored on the <see cref="InstallerPackage"/>.</param>
+    /// <returns>The full path to the <c>datasets</c> directory.</returns>
+    internal static string ResolveAIToolkitDatasetsPath(string installationPath)
+    {
+        // Direct: {InstallationPath}/datasets  (e.g. E:\AI\AI-Toolkit\datasets)
+        var directDatasets = Path.Combine(installationPath, "datasets");
+
+        // Nested: {InstallationPath}/AI-Toolkit/datasets  (e.g. E:\AI\Toolkit\AI-Toolkit\datasets)
+        var nestedBase = Path.Combine(installationPath, "AI-Toolkit");
+        var nestedDatasets = Path.Combine(nestedBase, "datasets");
+
+        // Prefer whichever datasets folder already exists on disk
+        if (Directory.Exists(nestedDatasets))
+            return nestedDatasets;
+
+        if (Directory.Exists(directDatasets))
+            return directDatasets;
+
+        // Neither datasets folder exists yet — check for the AI-Toolkit subfolder
+        // to decide where to create datasets
+        if (Directory.Exists(nestedBase))
+            return nestedDatasets;
+
+        // Fallback: assume installation path is the toolkit root itself
+        return directDatasets;
+    }
+
+    /// <summary>
     /// Checks whether the resolved AI Toolkit destination folder exists and has files.
     /// </summary>
     private void RefreshFolderExistsState()
@@ -374,10 +409,10 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
         if (_selectedAIToolkitInstance is not null
             && !string.IsNullOrWhiteSpace(_aiToolkitFolderName))
         {
-            var path = Path.Combine(
-                _selectedAIToolkitInstance.InstallationPath,
-                "datasets",
-                _aiToolkitFolderName.Trim());
+            var datasetsDir = ResolveAIToolkitDatasetsPath(
+                _selectedAIToolkitInstance.InstallationPath);
+
+            var path = Path.Combine(datasetsDir, _aiToolkitFolderName.Trim());
 
             if (Directory.Exists(path))
             {
