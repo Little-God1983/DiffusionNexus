@@ -355,11 +355,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // ── Run sync phases (network + file I/O — awaits release the UI thread) ──
             var statusParts = new List<string>();
 
-            // ── Phase 0b: Re-process LocalFile models that still have placeholder metadata ──
-            await ReprocessLocalFileModelsPhaseAsync(statusParts);
-
-            // ── Phase 1: Sync metadata for models that have never been synced ──
+            // ── Phase 1: Sync metadata via Civitai API hash lookup (freshly discovered models) ──
+            // Must run before Phase 1b so the API gets first chance at providing rich metadata.
+            // Phase 1 already falls back to local sidecar files when the API returns 404.
             await SyncMetadataPhaseAsync(apiKey, statusParts);
+
+            // ── Phase 1b: Re-process historical LocalFile models with sidecar fallback ──
+            // Targets models synced before sidecar parsing was added (already have LastSyncedAt
+            // but still have placeholder BaseModelRaw). Phase 1 handles fresh models.
+            await ReprocessLocalFileModelsPhaseAsync(statusParts);
 
             // ── Phase 2: Re-fetch images for synced models that have no preview images ──
             await RefetchMissingImagesPhaseAsync(apiKey, statusParts);
@@ -431,26 +435,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Phase 0b: Re-process LocalFile models that were synced before sidecar parsing was added.
-    /// Targets models with Source=LocalFile, no CivitaiId, and placeholder BaseModelRaw ('???' or empty).
-    /// Attempts to apply sidecar .civitai.info / .json metadata files that may exist on disk.
+    /// Phase 1b: Re-process historical LocalFile models that were synced before sidecar parsing was added.
+    /// Targets models with Source=LocalFile, no CivitaiId, placeholder BaseModelRaw, AND LastSyncedAt
+    /// already set (meaning Phase 1 already ran on them in a previous session but found no API match).
+    /// Fresh models (LastSyncedAt=null) are handled by Phase 1 which includes its own sidecar fallback.
     /// </summary>
     private async Task ReprocessLocalFileModelsPhaseAsync(List<string> statusParts)
     {
         var tilesNeedingReprocess = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, Source: DataSource.LocalFile }
+            .Where(t => t.ModelEntity is { CivitaiId: null, Source: DataSource.LocalFile, LastSyncedAt: not null }
                         && IsPlaceholderBaseModel(t.SelectedVersion?.BaseModelRaw))
             .ToList();
 
         if (tilesNeedingReprocess.Count == 0)
         {
             _logger?.Debug(LogCategory.General, "CivitaiSync",
-                "No LocalFile models with placeholder metadata — skipping Phase 0b");
+                "No historical LocalFile models with placeholder metadata — skipping Phase 1b");
             return;
         }
 
         _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 0b: {tilesNeedingReprocess.Count} LocalFile models need sidecar re-processing");
+            $"Phase 1b: {tilesNeedingReprocess.Count} historical LocalFile models need sidecar re-processing");
 
         var reprocessed = 0;
         var skipped = 0;
