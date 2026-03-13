@@ -944,7 +944,8 @@ public partial class ModelTileViewModel : ViewModelBase
                 ThumbnailImage = null;
             }
         }
-        else if (SelectedVersion?.PrimaryImage is { } image && !string.IsNullOrEmpty(image.Url))
+        else if (SelectedVersion?.PrimaryImage is { } image && !string.IsNullOrEmpty(image.Url)
+                 && !image.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
         {
             // No BLOB cached yet — download from Civitai URL in background
             ThumbnailImage = null;
@@ -952,7 +953,87 @@ public partial class ModelTileViewModel : ViewModelBase
         }
         else
         {
+            // Last resort: try to find a local preview image next to the safetensors file
             ThumbnailImage = null;
+            _ = TryLoadLocalPreviewAsync();
+        }
+    }
+
+    /// <summary>
+    /// Image extensions to search for when looking for local preview images alongside model files.
+    /// Ordered by preference (preview-specific suffixes first, then common formats).
+    /// </summary>
+    private static readonly string[] LocalPreviewExtensions =
+    [
+        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
+        ".thumb.jpg",
+        ".png", ".jpg", ".jpeg", ".webp"
+    ];
+
+    /// <summary>
+    /// Searches for a local preview image next to the model's safetensors file and displays it.
+    /// Looks for files sharing the same base name with common image extensions
+    /// (e.g., mymodel.preview.png, mymodel.jpg).
+    /// </summary>
+    private async Task TryLoadLocalPreviewAsync()
+    {
+        try
+        {
+            var localPath = SelectedVersion?.PrimaryFile?.LocalPath;
+            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath)) return;
+
+            var directory = Path.GetDirectoryName(localPath);
+            if (directory is null) return;
+
+            var baseName = Path.GetFileNameWithoutExtension(localPath);
+
+            // Search for local preview images by base name + known image extensions
+            string? localImagePath = null;
+            foreach (var ext in LocalPreviewExtensions)
+            {
+                var candidate = Path.Combine(directory, baseName + ext);
+                if (File.Exists(candidate))
+                {
+                    localImagePath = candidate;
+                    break;
+                }
+            }
+
+            if (localImagePath is null) return;
+
+            // Load via ThumbnailService if registered, otherwise decode directly
+            var thumbnailService = App.Services?.GetService<IThumbnailService>();
+            if (thumbnailService is not null)
+            {
+                var bitmap = await thumbnailService.LoadThumbnailAsync(localImagePath);
+                if (bitmap is not null)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => ThumbnailImage = bitmap);
+                }
+            }
+            else
+            {
+                // Direct decode fallback
+                var bytes = await File.ReadAllBytesAsync(localImagePath);
+                if (bytes.Length == 0) return;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        using var stream = new MemoryStream(bytes);
+                        ThumbnailImage = new Bitmap(stream);
+                    }
+                    catch
+                    {
+                        ThumbnailImage = null;
+                    }
+                });
+            }
+        }
+        catch
+        {
+            // Local preview is best-effort — don't propagate failures
         }
     }
 

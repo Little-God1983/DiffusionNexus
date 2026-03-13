@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -398,6 +399,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         var updated = 0;
         var notFound = 0;
+        var localFallback = 0;
         var skipped = 0;
         var errors = 0;
 
@@ -446,6 +448,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                         $"Hash {hash} returned 404 from Civitai");
                     notFound++;
 
+                    // Fallback: try to read local .civitai.info / .json metadata files
+                    var localFallbackApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
+                    if (localFallbackApplied)
+                    {
+                        _logger?.Info(LogCategory.Network, "CivitaiSync",
+                            $"LOCAL FALLBACK [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
+                            "Applied metadata from local .civitai.info / .json file");
+                        localFallback++;
+                    }
+
                     // Mark as synced so this model is not retried on every run
                     await MarkModelSyncedAsync(tile.ModelEntity);
                     continue;
@@ -487,6 +499,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         var parts = new List<string>();
         if (updated > 0) parts.Add($"{updated} updated");
+        if (localFallback > 0) parts.Add($"{localFallback} from local files");
         if (notFound > 0) parts.Add($"{notFound} not on Civitai");
         if (errors > 0) parts.Add($"{errors} errors");
         if (skipped > 0) parts.Add($"{skipped} skipped");
@@ -706,6 +719,251 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Failed to mark model {Id} as synced", model.Id);
+        }
+    }
+
+    /// <summary>
+    /// Fallback: reads local .civitai.info or .json metadata files next to the safetensors file
+    /// and applies the discovered metadata to the model entity in the database.
+    /// Also discovers local preview images (same base name, image extension) and stores
+    /// them as thumbnail BLOBs so tiles show a preview without Civitai.
+    /// </summary>
+    /// <returns>True if any local metadata was found and applied.</returns>
+    private async Task<bool> TryApplyLocalMetadataFallbackAsync(ModelTileViewModel tile, string localPath)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(localPath);
+            var directory = fileInfo.Directory;
+            if (directory is null || !directory.Exists) return false;
+
+            var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
+
+            // Look for .civitai.info or .json sidecar files
+            var civitaiInfoFile = directory.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
+            var jsonFile = directory.GetFiles($"{baseName}.json").FirstOrDefault();
+
+            if (civitaiInfoFile is null && jsonFile is null)
+            {
+                // No sidecar metadata — still try local thumbnail
+                var thumbnailApplied = await TryApplyLocalThumbnailAsync(tile, directory, baseName);
+                return thumbnailApplied;
+            }
+
+            // Parse the sidecar file
+            var metadataFile = civitaiInfoFile ?? jsonFile!;
+            var json = await File.ReadAllTextAsync(metadataFile.FullName);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Use a fresh DI scope for DB writes
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var model = tile.ModelEntity;
+            if (model is null) return false;
+
+            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
+            if (dbModel is null) return false;
+
+            var dirty = false;
+
+            // Extract model name from sidecar
+            if (root.TryGetProperty("model", out var modelProp))
+            {
+                if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
+                {
+                    dbModel.Name = nameStr;
+                    dirty = true;
+                }
+
+                if (modelProp.TryGetProperty("nsfw", out var nsfw) && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+                {
+                    dbModel.IsNsfw = nsfw.GetBoolean();
+                    dirty = true;
+                }
+            }
+
+            // Extract base model for the version
+            var dbVersion = dbModel.Versions.FirstOrDefault(v =>
+                v.Files.Any(f => string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)));
+
+            if (dbVersion is not null)
+            {
+                if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
+                {
+                    dbVersion.BaseModelRaw = baseModelStr;
+                    dirty = true;
+                }
+
+                // Extract trained words / trigger words
+                if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    dbVersion.TriggerWords.Clear();
+                    var order = 0;
+                    foreach (var wordElement in trained.EnumerateArray())
+                    {
+                        if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
+                        {
+                            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
+                            dirty = true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback for .json format: "sd version" instead of "baseModel"
+            if (dbVersion is not null && (dbVersion.BaseModelRaw is null or "???"))
+            {
+                if (root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
+                {
+                    dbVersion.BaseModelRaw = sdVerStr;
+                    dirty = true;
+                }
+            }
+
+            dbModel.Source = DataSource.LocalFile;
+            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
+            dirty = true;
+
+            if (dirty)
+            {
+                await unitOfWork.SaveChangesAsync();
+
+                // Reload and refresh the tile UI
+                var refreshedModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+                var refreshedModel = refreshedModels.FirstOrDefault(m => m.Id == model.Id);
+                if (refreshedModel is not null)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
+                }
+            }
+
+            // Try to find and apply a local thumbnail image
+            await TryApplyLocalThumbnailAsync(tile, directory, baseName);
+
+            return dirty;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "LocalFallback",
+                $"Failed to read local metadata for '{tile.DisplayName}': {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Image extensions to search for when looking for local preview images alongside model files.
+    /// Ordered by preference (preview-specific suffixes first, then common formats).
+    /// </summary>
+    private static readonly string[] LocalPreviewExtensions =
+    [
+        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
+        ".thumb.jpg",
+        ".png", ".jpg", ".jpeg", ".webp"
+    ];
+
+    /// <summary>
+    /// Searches for a local preview image next to the model file (same base name, image extension)
+    /// and stores it as a thumbnail BLOB on the primary image entity.
+    /// </summary>
+    /// <returns>True if a local thumbnail was found and applied.</returns>
+    private async Task<bool> TryApplyLocalThumbnailAsync(ModelTileViewModel tile, DirectoryInfo directory, string baseName)
+    {
+        try
+        {
+            // Search for local preview images by base name + known image extensions
+            string? localImagePath = null;
+            foreach (var ext in LocalPreviewExtensions)
+            {
+                var candidate = Path.Combine(directory.FullName, baseName + ext);
+                if (File.Exists(candidate))
+                {
+                    localImagePath = candidate;
+                    break;
+                }
+            }
+
+            if (localImagePath is null) return false;
+
+            _logger?.Debug(LogCategory.General, "LocalFallback",
+                $"Found local preview for '{tile.DisplayName}': {Path.GetFileName(localImagePath)}");
+
+            // Read and transcode the local image to JPEG for BLOB storage
+            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
+            if (imageBytes.Length == 0) return false;
+
+            byte[] thumbnailBytes;
+            using (var skBitmap = SKBitmap.Decode(imageBytes))
+            {
+                if (skBitmap is null) return false;
+
+                // Resize to thumbnail width (340px) to keep BLOB small
+                var targetWidth = 340;
+                var scale = (float)targetWidth / skBitmap.Width;
+                var targetHeight = (int)(skBitmap.Height * scale);
+                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), SKFilterQuality.Medium);
+                if (resized is null) return false;
+
+                using var skImage = SKImage.FromBitmap(resized);
+                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
+                thumbnailBytes = encoded.ToArray();
+            }
+
+            if (thumbnailBytes.Length == 0) return false;
+
+            // Store in DB on the primary image (create one if needed)
+            var version = tile.SelectedVersion;
+            if (version is null) return false;
+
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var dbModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+            var dbModel = dbModels.FirstOrDefault(m => m.Id == tile.ModelEntity?.Id);
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
+                v.Files.Any(f => string.Equals(f.LocalPath, tile.SelectedVersion?.PrimaryFile?.LocalPath, StringComparison.OrdinalIgnoreCase)));
+
+            if (dbVersion is null) return false;
+
+            var primaryImage = dbVersion.Images.FirstOrDefault();
+            if (primaryImage is null)
+            {
+                // Create a new image entity for the local thumbnail
+                primaryImage = new ModelImage
+                {
+                    ModelVersionId = dbVersion.Id,
+                    Url = $"file://{localImagePath}",
+                    SortOrder = 0,
+                };
+                dbVersion.Images.Add(primaryImage);
+            }
+
+            primaryImage.ThumbnailData = thumbnailBytes;
+            primaryImage.ThumbnailMimeType = "image/jpeg";
+
+            await unitOfWork.SaveChangesAsync();
+
+            // Display the thumbnail immediately
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                try
+                {
+                    using var stream = new MemoryStream(thumbnailBytes);
+                    tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
+                }
+                catch
+                {
+                    // Decode failure — not critical
+                }
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.General, "LocalFallback",
+                $"Failed to apply local thumbnail for '{tile.DisplayName}': {ex.Message}");
+            return false;
         }
     }
 
