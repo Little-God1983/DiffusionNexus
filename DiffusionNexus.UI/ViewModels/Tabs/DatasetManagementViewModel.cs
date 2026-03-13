@@ -862,11 +862,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _nextBackupTime = lastBackup + interval;
 
             // If next backup is in the past, it's due now - trigger backup
-            if (_nextBackupTime <= DateTimeOffset.UtcNow)
-            {
-                BackupStatusText = "Backup: Due now";
-                _ = ExecuteBackupIfDueAsync();
-            }
+                if (_nextBackupTime <= DateTimeOffset.UtcNow)
+                {
+                    BackupStatusText = "Backup: Due now";
+                    if (!_isBackupInProgress)
+                    {
+                        _ = ExecuteBackupIfDueAsync();
+                    }
+                }
             else
             {
                 UpdateBackupCountdownText();
@@ -890,15 +893,21 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
+        // Set in-progress BEFORE any await to prevent TOCTOU race:
+        // without this, a second caller can pass the _isBackupInProgress check
+        // while the first caller is awaiting IsBackupDueAsync, starting two concurrent backups.
+        _isBackupInProgress = true;
+        BackupNowCommand.NotifyCanExecuteChanged();
+
         var isDue = await _backupService.IsBackupDueAsync();
         if (!isDue)
         {
+            _isBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
             return;
         }
 
-        _isBackupInProgress = true;
         BackupStatusText = "Backup: Running...";
-        BackupNowCommand.NotifyCanExecuteChanged();
 
         // Start backup progress tracking in the status bar
         _activityLog?.StartBackupProgress("Backing up datasets");
@@ -927,9 +936,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-                
-                // Refresh backup status to show next backup time
+
+                // Refresh backup status to show next backup time.
+                // The backup ran on a separate DI scope, so the main DbContext still has
+                // the old LastBackupAt cached. Force the fresh timestamp to prevent
+                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
                 var settings = await _settingsService.GetSettingsAsync();
+                settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }
             else
@@ -993,9 +1006,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-                
-                // Refresh backup status to show next backup time
+
+                // Refresh backup status to show next backup time.
+                // The backup ran on a separate DI scope, so the main DbContext still has
+                // the old LastBackupAt cached. Force the fresh timestamp to prevent
+                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
                 var settings = await _settingsService.GetSettingsAsync();
+                settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }
             else
@@ -1132,7 +1149,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             UpdateBackupCountdownText();
             
             // Check if backup is now due
-            if (_nextBackupTime.HasValue && _nextBackupTime.Value <= DateTimeOffset.UtcNow)
+            if (_nextBackupTime.HasValue && _nextBackupTime.Value <= DateTimeOffset.UtcNow && !_isBackupInProgress)
             {
                 _ = ExecuteBackupIfDueAsync();
             }
