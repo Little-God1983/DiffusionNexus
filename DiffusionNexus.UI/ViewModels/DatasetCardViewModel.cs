@@ -2,6 +2,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -41,6 +42,7 @@ public class DatasetCardViewModel : ObservableObject
     private Dictionary<int, string?> _versionDescriptions = new();
     private Dictionary<int, bool> _versionNsfwFlags = new();
     private bool _isNsfw;
+    private Dictionary<int, List<TrainingRunInfo>> _trainingRuns = new();
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isTemporary;
@@ -703,25 +705,39 @@ public class DatasetCardViewModel : ObservableObject
     /// Path to the Epochs subfolder within the current version folder.
     /// Used to store trained model checkpoints (.safetensors, .pt, .pth, .gguf).
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.EpochsFolderPath instead. Output folders are now per training run.")]
     public string EpochsFolderPath => Path.Combine(CurrentVersionFolderPath, "Epochs");
 
     /// <summary>
     /// Path to the Notes subfolder within the current version folder.
     /// Used to store journal/text notes about training.
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.NotesFolderPath instead. Output folders are now per training run.")]
     public string NotesFolderPath => Path.Combine(CurrentVersionFolderPath, "Notes");
 
     /// <summary>
     /// Path to the Presentation subfolder within the current version folder.
     /// Reserved for future use (showcase images, demos, etc.).
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.PresentationFolderPath instead. Output folders are now per training run.")]
     public string PresentationFolderPath => Path.Combine(CurrentVersionFolderPath, "Presentation");
 
     /// <summary>
     /// Path to the Release subfolder within the current version folder.
     /// Used to store release-ready files.
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.ReleaseFolderPath instead. Output folders are now per training run.")]
     public string ReleaseFolderPath => Path.Combine(CurrentVersionFolderPath, "Release");
+
+    /// <summary>
+    /// Training runs metadata for each version.
+    /// Key is version number, value is list of training run info.
+    /// </summary>
+    public Dictionary<int, List<TrainingRunInfo>> TrainingRuns
+    {
+        get => _trainingRuns;
+        set => SetProperty(ref _trainingRuns, value);
+    }
 
     /// <summary>
     /// Event raised when category changes.
@@ -1054,6 +1070,7 @@ public class DatasetCardViewModel : ObservableObject
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
                 VersionDescriptions = metadata.VersionDescriptions ?? new();
                 VersionNsfwFlags = metadata.VersionNsfwFlags ?? new();
+                TrainingRuns = metadata.TrainingRuns ?? new();
                 
                 // Migrate old single Description to V1 if present and no version descriptions exist
                 if (!string.IsNullOrWhiteSpace(metadata.Description) && VersionDescriptions.Count == 0)
@@ -1099,7 +1116,8 @@ public class DatasetCardViewModel : ObservableObject
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
                 VersionDescriptions = VersionDescriptions,
-                VersionNsfwFlags = VersionNsfwFlags
+                VersionNsfwFlags = VersionNsfwFlags,
+                TrainingRuns = TrainingRuns
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -1344,6 +1362,12 @@ public class DatasetMetadata
     /// Key is version number, value is whether that version contains NSFW content.
     /// </summary>
     public Dictionary<int, bool> VersionNsfwFlags { get; set; } = new();
+
+    /// <summary>
+    /// Training runs for each version.
+    /// Key is version number, value is list of training run metadata.
+    /// </summary>
+    public Dictionary<int, List<TrainingRunInfo>> TrainingRuns { get; set; } = new();
 
     #region Legacy Properties (for migration)
 

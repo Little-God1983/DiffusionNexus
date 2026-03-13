@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -75,8 +76,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private bool _selectedNsfw;
 
     // Sub-tab fields
-    private VersionSubTab _selectedSubTab = VersionSubTab.Training;
+    private VersionSubTab _selectedSubTab = VersionSubTab.TrainingData;
     private IDialogService? _dialogService;
+
+    // Training run fields
+    private TrainingRunCardViewModel? _selectedTrainingRun;
+    private bool _isViewingTrainingRunDetail;
 
     #region IThumbnailAware
 
@@ -143,6 +148,40 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Captioning sub-tab.
     /// </summary>
     public CaptioningTabViewModel CaptioningTab { get; }
+
+    /// <summary>
+    /// Collection of training run cards for the current dataset version.
+    /// </summary>
+    public ObservableCollection<TrainingRunCardViewModel> TrainingRuns { get; } = [];
+
+    /// <summary>
+    /// Currently selected training run.
+    /// </summary>
+    public TrainingRunCardViewModel? SelectedTrainingRun
+    {
+        get => _selectedTrainingRun;
+        set
+        {
+            if (SetProperty(ref _selectedTrainingRun, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedTrainingRun));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a training run is currently selected.
+    /// </summary>
+    public bool HasSelectedTrainingRun => _selectedTrainingRun is not null;
+
+    /// <summary>
+    /// Whether we are viewing the detail of a specific training run.
+    /// </summary>
+    public bool IsViewingTrainingRunDetail
+    {
+        get => _isViewingTrainingRunDetail;
+        set => SetProperty(ref _isViewingTrainingRunDetail, value);
+    }
 
     #region Observable Properties (Delegated to State)
 
@@ -562,6 +601,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand DeleteSelectedCommand { get; }
     public IAsyncRelayCommand OpenCaptioningToolCommand { get; } // New Command
 
+    // Training Run commands
+    public IAsyncRelayCommand AddTrainingRunCommand { get; }
+    public IRelayCommand<TrainingRunCardViewModel?> OpenTrainingRunCommand { get; }
+    public IRelayCommand BackToTrainingRunsCommand { get; }
+    public IAsyncRelayCommand<TrainingRunCardViewModel?> DeleteTrainingRunCommand { get; }
+    public IAsyncRelayCommand<TrainingRunCardViewModel?> RenameTrainingRunCommand { get; }
+
     #endregion
 
     #region Constructors
@@ -638,6 +684,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
         
         OpenCaptioningToolCommand = new AsyncRelayCommand(OpenCaptioningToolAsync);
+
+        // Training Run commands
+        AddTrainingRunCommand = new AsyncRelayCommand(AddTrainingRunAsync);
+        OpenTrainingRunCommand = new RelayCommand<TrainingRunCardViewModel?>(OpenTrainingRun);
+        BackToTrainingRunsCommand = new RelayCommand(BackToTrainingRuns);
+        DeleteTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(DeleteTrainingRunAsync);
+        RenameTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(RenameTrainingRunAsync);
     }
 
     /// <summary>
@@ -1249,8 +1302,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             DatasetImages.Clear();
 
-            // Reset to Training tab when opening a dataset
-            SelectedSubTab = VersionSubTab.Training;
+            // Reset to Training Data tab when opening a dataset
+            SelectedSubTab = VersionSubTab.TrainingData;
 
             // Populate available versions and default to the latest on fresh open
             AvailableVersions.Clear();
@@ -1278,12 +1331,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _datasetStorageService.CreateDirectory(mediaFolderPath);
 
             // Initialize sub-tab ViewModels with the current version folder
+            // (kept for backward compatibility, but Training Runs now manages these per-run)
             EpochsTab.Initialize(dataset.CurrentVersionFolderPath);
             NotesTab.Initialize(dataset.CurrentVersionFolderPath);
             PresentationTab.Initialize(dataset.CurrentVersionFolderPath);
 
             // Ensure sub-folders exist (Epochs, Notes, Presentation)
             _datasetStorageService.EnsureVersionSubfolders(dataset.CurrentVersionFolderPath);
+
+            // Handle legacy migration and load training runs
+            LoadTrainingRuns(dataset);
 
             // Load media files using the shared MediaFileExtensions utility
             var allFiles = _datasetStorageService.EnumerateFiles(mediaFolderPath).ToList();
@@ -2773,6 +2830,252 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             StatusMessage = $"Error opening captioning tool: {ex.Message}";
             _activityLog?.LogError("Captioning", "Failed to open captioning tool", ex);
+        }
+    }
+
+    #endregion
+
+    #region Training Run Methods
+
+    /// <summary>
+    /// Loads training runs for the current dataset version.
+    /// Handles legacy migration if needed.
+    /// </summary>
+    private void LoadTrainingRuns(DatasetCardViewModel dataset)
+    {
+        TrainingRuns.Clear();
+        SelectedTrainingRun = null;
+        IsViewingTrainingRunDetail = false;
+
+        var versionPath = dataset.CurrentVersionFolderPath;
+
+        // Check for legacy layout and migrate if needed
+        if (TrainingRunMigrationUtility.IsLegacyLayout(versionPath))
+        {
+            var migrated = TrainingRunMigrationUtility.MigrateLegacyLayout(versionPath);
+            if (migrated is not null)
+            {
+                if (!dataset.TrainingRuns.ContainsKey(dataset.CurrentVersion))
+                {
+                    dataset.TrainingRuns[dataset.CurrentVersion] = [];
+                }
+                dataset.TrainingRuns[dataset.CurrentVersion].Add(migrated);
+                dataset.SaveMetadata();
+            }
+        }
+
+        // Load runs from metadata
+        var runs = dataset.TrainingRuns.GetValueOrDefault(dataset.CurrentVersion) ?? [];
+
+        // Also discover runs from filesystem that may not be in metadata
+        var diskRunNames = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath);
+        foreach (var diskRunName in diskRunNames)
+        {
+            if (!runs.Any(r => string.Equals(r.Name, diskRunName, StringComparison.OrdinalIgnoreCase)))
+            {
+                runs.Add(new TrainingRunInfo
+                {
+                    Name = diskRunName,
+                    CreatedAt = DateTimeOffset.Now,
+                    Description = "Discovered from filesystem"
+                });
+            }
+        }
+
+        foreach (var runInfo in runs)
+        {
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runInfo.Name);
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            {
+                DialogService = DialogService
+            };
+            TrainingRuns.Add(card);
+        }
+
+        OnPropertyChanged(nameof(TrainingRuns));
+    }
+
+    /// <summary>
+    /// Creates a new training run for the current dataset version.
+    /// </summary>
+    private async Task AddTrainingRunAsync()
+    {
+        if (DialogService is null || ActiveDataset is null) return;
+
+        var runName = await DialogService.ShowInputAsync(
+            "New Training Run",
+            "Enter a name for the training run (used as folder name):",
+            "SDXL_MyLoRA");
+
+        if (string.IsNullOrWhiteSpace(runName)) return;
+
+        runName = runName.Trim();
+
+        // Validate the name (filesystem-safe)
+        if (runName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            StatusMessage = "Run name contains invalid characters.";
+            return;
+        }
+
+        // Check for duplicates
+        if (TrainingRuns.Any(r => string.Equals(r.Name, runName, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusMessage = $"A training run named '{runName}' already exists.";
+            return;
+        }
+
+        try
+        {
+            var versionPath = ActiveDataset.CurrentVersionFolderPath;
+            TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, runName);
+
+            var runInfo = new TrainingRunInfo
+            {
+                Name = runName,
+                CreatedAt = DateTimeOffset.Now
+            };
+
+            // Save to metadata
+            if (!ActiveDataset.TrainingRuns.ContainsKey(ActiveDataset.CurrentVersion))
+            {
+                ActiveDataset.TrainingRuns[ActiveDataset.CurrentVersion] = [];
+            }
+            ActiveDataset.TrainingRuns[ActiveDataset.CurrentVersion].Add(runInfo);
+            ActiveDataset.SaveMetadata();
+
+            // Add to UI
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runName);
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            {
+                DialogService = DialogService
+            };
+            TrainingRuns.Add(card);
+
+            StatusMessage = $"Created training run '{runName}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error creating training run: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Opens the detail view for a training run.
+    /// </summary>
+    private void OpenTrainingRun(TrainingRunCardViewModel? run)
+    {
+        if (run is null) return;
+
+        SelectedTrainingRun = run;
+        IsViewingTrainingRunDetail = true;
+
+        // Initialize sub-tab ViewModels for this specific run
+        run.InitializeSubTabs();
+    }
+
+    /// <summary>
+    /// Returns from the training run detail view to the run list.
+    /// </summary>
+    private void BackToTrainingRuns()
+    {
+        IsViewingTrainingRunDetail = false;
+        SelectedTrainingRun = null;
+    }
+
+    /// <summary>
+    /// Deletes a training run.
+    /// </summary>
+    private async Task DeleteTrainingRunAsync(TrainingRunCardViewModel? run)
+    {
+        if (run is null || DialogService is null || ActiveDataset is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Training Run",
+            $"Are you sure you want to delete training run '{run.Name}'? This will permanently delete all epochs, notes, and presentation files in this run.");
+
+        if (!confirm) return;
+
+        try
+        {
+            // Delete the folder
+            if (Directory.Exists(run.RunFolderPath))
+            {
+                Directory.Delete(run.RunFolderPath, recursive: true);
+            }
+
+            // Remove from metadata
+            var runs = ActiveDataset.TrainingRuns.GetValueOrDefault(ActiveDataset.CurrentVersion);
+            runs?.RemoveAll(r => string.Equals(r.Name, run.Name, StringComparison.OrdinalIgnoreCase));
+            ActiveDataset.SaveMetadata();
+
+            // Remove from UI
+            TrainingRuns.Remove(run);
+
+            if (SelectedTrainingRun == run)
+            {
+                BackToTrainingRuns();
+            }
+
+            StatusMessage = $"Deleted training run '{run.Name}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting training run: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Renames a training run.
+    /// </summary>
+    private async Task RenameTrainingRunAsync(TrainingRunCardViewModel? run)
+    {
+        if (run is null || DialogService is null || ActiveDataset is null) return;
+
+        var newName = await DialogService.ShowInputAsync(
+            "Rename Training Run",
+            "Enter a new name for the training run:",
+            run.Name);
+
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        newName = newName.Trim();
+
+        if (string.Equals(newName, run.Name, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            StatusMessage = "Run name contains invalid characters.";
+            return;
+        }
+
+        if (TrainingRuns.Any(r => r != run && string.Equals(r.Name, newName, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusMessage = $"A training run named '{newName}' already exists.";
+            return;
+        }
+
+        try
+        {
+            var versionPath = ActiveDataset.CurrentVersionFolderPath;
+            var oldPath = run.RunFolderPath;
+            var newPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, newName);
+
+            // Rename folder
+            Directory.Move(oldPath, newPath);
+
+            // Update metadata
+            run.RunInfo.Name = newName;
+            ActiveDataset.SaveMetadata();
+
+            // Reload to update all paths
+            LoadTrainingRuns(ActiveDataset);
+
+            StatusMessage = $"Renamed training run to '{newName}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error renaming training run: {ex.Message}";
         }
     }
 

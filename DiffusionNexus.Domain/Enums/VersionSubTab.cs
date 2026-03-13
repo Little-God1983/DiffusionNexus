@@ -1,8 +1,8 @@
 namespace DiffusionNexus.Domain.Enums;
 
 /// <summary>
-/// Represents the sub-tabs available within a dataset version detail view.
-/// Each version folder can contain training data, epochs, notes, and presentation files.
+/// Represents the top-level sub-tabs available within a dataset version detail view.
+/// Training input (images + captions) is separated from training output (runs).
 /// </summary>
 public enum VersionSubTab
 {
@@ -10,20 +10,16 @@ public enum VersionSubTab
     /// Training data tab - images, videos, and captions for training.
     /// This is the original/default view.
     /// </summary>
+    [Obsolete("Use TrainingData instead.")]
     Training = 0,
 
     /// <summary>
-    /// Epochs tab - trained model checkpoint files (.safetensors, .pt, .pth, .gguf).
+    /// Training data tab - images, videos, and captions for training input.
     /// </summary>
-    Epochs = 1,
+    TrainingData = 0,
 
     /// <summary>
-    /// Notes tab - text journal entries for training parameters, remarks, and documentation.
+    /// Training runs tab - groups of training outputs (Epochs, Notes, Presentation per run).
     /// </summary>
-    Notes = 2,
-
-    /// <summary>
-    /// Presentation data tab - reserved for future use (e.g., showcase images, demos).
-    /// </summary>
-    Presentation = 3
+    TrainingRuns = 1
 }
