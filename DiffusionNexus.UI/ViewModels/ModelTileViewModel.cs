@@ -224,6 +224,12 @@ public partial class ModelTileViewModel : ViewModelBase
     public bool IsGrouped => _allGroupedModels.Count > 1;
 
     /// <summary>
+    /// Number of individual model entities in this tile (1 for ungrouped, >1 for grouped).
+    /// Used for accurate total/filtered counts that reflect individual LoRAs, not grouped cards.
+    /// </summary>
+    public int ModelCount => _allGroupedModels.Count > 0 ? _allGroupedModels.Count : 1;
+
+    /// <summary>
     /// Version count display.
     /// </summary>
     public string VersionCountDisplay => HasMultipleVersions

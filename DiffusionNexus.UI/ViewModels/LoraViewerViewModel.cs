@@ -38,7 +38,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Whether to show NSFW models.
     /// </summary>
     [ObservableProperty]
-    private bool _showNsfw;
+    private bool _showNsfw = true;
 
     /// <summary>
     /// Currently selected model tile.
@@ -192,7 +192,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 tile.DetailRequested += OnTileDetailRequested;
                 AllTiles.Add(tile);
             }
-            TotalModelCount = AllTiles.Count;
+            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
             ApplyFilters();
             SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
@@ -372,7 +372,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 AllTiles.Add(tile);
             }
 
-            TotalModelCount = AllTiles.Count;
+            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
             ApplyFilters();
         });
@@ -1247,7 +1247,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             FilteredTiles.Add(tile);
         }
 
-        FilteredModelCount = FilteredTiles.Count;
+        FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
     }
 
     private void LoadDemoData()
