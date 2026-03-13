@@ -18,6 +18,12 @@ public class Model : BaseEntity
     /// <summary>Civitai model ID. Null if discovered locally without API match.</summary>
     public int? CivitaiId { get; set; }
 
+    /// <summary>
+    /// Civitai model page ID used for grouping. Unlike CivitaiId (unique), this is set on ALL
+    /// model entities that belong to the same Civitai page so they can be grouped into a single tile.
+    /// </summary>
+    public int? CivitaiModelPageId { get; set; }
+
     /// <summary>The name of the model.</summary>
     public string Name { get; set; } = string.Empty;
 
@@ -75,9 +81,9 @@ public class Model : BaseEntity
     public int TotalDownloads =>
         Versions.Sum(v => v.DownloadCount);
 
-    /// <summary>Gets the primary preview image from the latest version.</summary>
+    /// <summary>Gets the primary preview image from the latest version, preferring static images over video.</summary>
     public ModelImage? PrimaryImage =>
-        LatestVersion?.Images.FirstOrDefault(i => !i.IsNsfw) ?? LatestVersion?.Images.FirstOrDefault();
+        LatestVersion?.PrimaryImage;
 
     #endregion
 }

@@ -54,6 +54,10 @@ public sealed record CivitaiModelImage
     /// <summary>Image statistics.</summary>
     [JsonPropertyName("stats")]
     public CivitaiImageStats? Stats { get; init; }
+
+    /// <summary>Media type: "image" or "video".</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; init; }
 }
 
 /// <summary>

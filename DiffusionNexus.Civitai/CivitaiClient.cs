@@ -158,24 +158,56 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
     private async Task<T?> GetAsync<T>(string endpoint, string? apiKey, CancellationToken cancellationToken)
         where T : class
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        const int maxRetries = 3;
 
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                // Civitai expects the "ApiKey" scheme, not "Bearer"
+                request.Headers.TryAddWithoutValidation("Authorization", $"ApiKey {apiKey}");
+            }
+
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            // Handle rate limiting with automatic retry
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                if (attempt == maxRetries) break;
+
+                // Respect Retry-After header, or use exponential backoff
+                var retryAfter = response.Headers.RetryAfter?.Delta
+                    ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1) * 5);
+
+                await Task.Delay(retryAfter, cancellationToken);
+                continue;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                throw new HttpRequestException(
+                    $"Civitai API {(int)response.StatusCode} for {endpoint}: {errorBody}",
+                    null,
+                    response.StatusCode);
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
         }
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
-        response.EnsureSuccessStatusCode();
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+        // All retries exhausted on rate limiting
+        throw new HttpRequestException(
+            $"Civitai API rate limited after {maxRetries} retries for {endpoint}",
+            null,
+            System.Net.HttpStatusCode.TooManyRequests);
     }
 
     #endregion

@@ -68,10 +68,25 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             if (_ffmpegInitialized)
                 return;
 
-            _logger.Information("Ensuring FFmpeg is available...");
-            await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
+            // Store FFmpeg next to the application executable so it is bundled with
+            // the deployment and not scattered across user-profile folders.
+            var ffmpegDir = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
+            Directory.CreateDirectory(ffmpegDir);
+            FFmpeg.SetExecutablesPath(ffmpegDir);
+
+            // TODO: Linux Implementation for FFmpeg binary name
+            var ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+            if (File.Exists(ffmpegExe))
+            {
+                _logger.Information("FFmpeg already present at {Path}", ffmpegDir);
+                _ffmpegInitialized = true;
+                return;
+            }
+
+            _logger.Information("FFmpeg not found — downloading to {Path}...", ffmpegDir);
+            await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, ffmpegDir);
             _ffmpegInitialized = true;
-            _logger.Information("FFmpeg is ready");
+            _logger.Information("FFmpeg downloaded and ready at {Path}", ffmpegDir);
         }
         finally
         {

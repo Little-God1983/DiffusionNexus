@@ -20,6 +20,9 @@ public class ModelImage
     /// <summary>Image URL on Civitai (source of truth for re-download).</summary>
     public string Url { get; set; } = string.Empty;
 
+    /// <summary>Media type from Civitai: "image" or "video". Null for legacy entries.</summary>
+    public string? MediaType { get; set; }
+
     /// <summary>Whether the image is NSFW.</summary>
     public bool IsNsfw { get; set; }
 
@@ -153,6 +156,9 @@ public class ModelImage
 
     /// <summary>Whether a thumbnail is available for instant display.</summary>
     public bool HasThumbnail => ThumbnailData is { Length: > 0 };
+
+    /// <summary>Whether the preview is a video (MP4, WebM, etc.).</summary>
+    public bool IsVideo => string.Equals(MediaType, "video", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether a full-resolution cached image is available.</summary>
     public bool HasLocalCache => IsLocalCacheValid && !string.IsNullOrEmpty(LocalCachePath);

@@ -19,6 +19,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     {
         return await Context.Models
             .Include(m => m.Creator)
+            .Include(m => m.Tags)
+                .ThenInclude(mt => mt.Tag)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.Files)
             .Include(m => m.Versions)
@@ -36,6 +38,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     {
         return await Context.Models
             .Include(m => m.Creator)
+            .Include(m => m.Tags)
+                .ThenInclude(mt => mt.Tag)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.Files)
             .Include(m => m.Versions)

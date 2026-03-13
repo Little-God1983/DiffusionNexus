@@ -126,10 +126,6 @@ public partial class App : Application
                 Serilog.Log.Information("Registering modules...");
                 RegisterModules(mainViewModel);
 
-                // Check disclaimer status after services are ready
-                Serilog.Log.Information("Checking disclaimer status...");
-                _ = mainViewModel.CheckDisclaimerStatusAsync();
-
                 // Force show the window explicitly
                 mainWindow.Show();
                 Serilog.Log.Information("Main window Show() called");
@@ -521,16 +517,16 @@ public partial class App : Application
         services.AddSingleton<IThumbnailOrchestrator>(sp =>
             new ThumbnailOrchestrator(sp.GetRequiredService<IThumbnailService>()));
 
-        // Application services - Scoped works within our app scope
-        services.AddScoped<IAppSettingsService, AppSettingsService>();
-        services.AddScoped<IModelSyncService, ModelFileSyncService>();
-        
+        // Application services - Transient so each consumer gets its own UoW/DbContext
+        services.AddTransient<IAppSettingsService, AppSettingsService>();
+        services.AddTransient<IModelSyncService, ModelFileSyncService>();
+
         // DatasetBackupService - use factory to inject activity log service
-        services.AddScoped<IDatasetBackupService>(sp => new DatasetBackupService(
+        services.AddTransient<IDatasetBackupService>(sp => new DatasetBackupService(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetService<IActivityLogService>()));
-        
-        services.AddScoped<IDisclaimerService, DisclaimerService>();
+
+        services.AddTransient<IDisclaimerService, DisclaimerService>();
 
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
         services.AddSingleton<IVideoThumbnailService, VideoThumbnailService>();
@@ -593,6 +589,9 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
+        // Civitai API client (singleton - maintains HttpClient)
+        services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
+
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
@@ -641,11 +640,14 @@ public partial class App : Application
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>()));
         
-        services.AddScoped<LoraViewerViewModel>();
+        services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<IModelSyncService>(),
+            sp.GetService<Civitai.ICivitaiClient>(),
+            sp.GetService<ISecureStorage>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
-            sp.GetRequiredService<IInstallerPackageRepository>(),
-            sp.GetRequiredService<IAppSettingsRepository>(),
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -706,7 +708,7 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(loraDatasetHelperModule);
 
-        // LoRA Viewer module (hidden for now)
+        // LoRA Viewer module
         var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
         var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
 
@@ -714,7 +716,10 @@ public partial class App : Application
             "LoRA Viewer",
             "avares://DiffusionNexus.UI/Assets/LoraSort.png",
             loraViewerView,
-            isVisible: false));
+            isVisible: true)
+        {
+            ViewModel = loraViewerVm
+        });
 
         // Generation Gallery module
         var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
@@ -779,21 +784,50 @@ public partial class App : Application
             mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
         };
 
-        // Load settings on startup
-        settingsVm.LoadCommand.Execute(null);
+        // Load startup data sequentially to avoid concurrent DbContext access.
+        // All scoped services share a single DiffusionNexusCoreDbContext instance
+        // which is NOT thread-safe; fire-and-forget Execute() calls run concurrently.
+        _ = LoadStartupDataAsync(
+            mainViewModel,
+            settingsVm,
+            loraViewerVm,
+            generationGalleryVm,
+            installerManagerVm,
+            loraDatasetHelperVm);
+    }
 
-        // Load models on startup
-        loraViewerVm.RefreshCommand.Execute(null);
+    /// <summary>
+    /// Loads startup data for each module. Disclaimer and settings load first
+    /// (needed by other modules), then independent modules load in parallel.
+    /// Each service owns its own <see cref="DiffusionNexusCoreDbContext"/> via
+    /// <c>IDbContextFactory</c>, so concurrent DB access is safe.
+    /// </summary>
+    private static async Task LoadStartupDataAsync(
+        DiffusionNexusMainWindowViewModel mainViewModel,
+        SettingsViewModel settingsVm,
+        LoraViewerViewModel loraViewerVm,
+        GenerationGalleryViewModel generationGalleryVm,
+        InstallerManagerViewModel installerManagerVm,
+        LoraDatasetHelperViewModel loraDatasetHelperVm)
+    {
+        try
+        {
+            // Disclaimer + settings must complete first — other modules depend on them.
+            await mainViewModel.CheckDisclaimerStatusAsync();
+            await settingsVm.LoadCommand.ExecuteAsync(null);
 
-        // Load Generation Gallery on startup
-        generationGalleryVm.LoadMediaCommand.Execute(null);
-
-        // Load saved installations on startup
-        installerManagerVm.LoadInstallationsCommand.Execute(null);
-
-        // Load datasets on startup so they are available for Image Comparer
-        // even when navigating directly without visiting Dataset Management first
-        loraDatasetHelperVm.DatasetManagement.CheckStorageConfigurationCommand.Execute(null);
+            // Remaining modules are independent — load in parallel.
+            await Task.WhenAll(
+                loraViewerVm.RefreshCommand.ExecuteAsync(null),
+                generationGalleryVm.LoadMediaCommand.ExecuteAsync(null),
+                installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null),
+                loraDatasetHelperVm.DatasetManagement
+                    .CheckStorageConfigurationCommand.ExecuteAsync(null));
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Error during startup data loading");
+        }
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

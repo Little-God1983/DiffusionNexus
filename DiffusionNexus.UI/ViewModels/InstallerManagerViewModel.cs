@@ -21,8 +21,6 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class InstallerManagerViewModel : ViewModelBase
 {
     private readonly IDialogService _dialogService;
-    private readonly IInstallerPackageRepository _installerPackageRepository;
-    private readonly IAppSettingsRepository _appSettingsRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
@@ -55,8 +53,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     public InstallerManagerViewModel(
         IDialogService dialogService,
-        IInstallerPackageRepository installerPackageRepository,
-        IAppSettingsRepository appSettingsRepository,
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager,
         IDatasetEventAggregator eventAggregator,
@@ -66,8 +62,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IEnumerable<IInstallerUpdateService> updateServices)
     {
         _dialogService = dialogService;
-        _installerPackageRepository = installerPackageRepository;
-        _appSettingsRepository = appSettingsRepository;
         _unitOfWork = unitOfWork;
         _processManager = processManager;
         _eventAggregator = eventAggregator;
@@ -95,7 +89,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             IsLoading = true;
             InstallerCards.Clear();
 
-            var packages = await _installerPackageRepository.GetAllAsync();
+            var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
             foreach (var package in packages)
             {
@@ -139,7 +133,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
         try
         {
-            await _installerPackageRepository.AddAsync(package);
+            await _unitOfWork.InstallerPackages.AddAsync(package);
             await _unitOfWork.SaveChangesAsync();
 
             // Link or create an ImageGallery for the output folder
@@ -169,11 +163,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     private async Task LinkOutputFolderAsync(InstallerPackage package, string outputFolderPath)
     {
-        var settings = await _appSettingsRepository.GetSettingsAsync();
+        var settings = await _unitOfWork.AppSettings.GetSettingsAsync();
         var appSettingsId = settings?.Id ?? 1;
 
         // Check if a gallery with this path already exists
-        var allSettings = await _appSettingsRepository.GetSettingsWithIncludesAsync();
+        var allSettings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
         var existing = allSettings.ImageGalleries
             .FirstOrDefault(g => string.Equals(g.FolderPath, outputFolderPath, StringComparison.OrdinalIgnoreCase));
 
@@ -193,7 +187,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 Order = allSettings.ImageGalleries.Count,
                 InstallerPackageId = package.Id
             };
-            await _appSettingsRepository.AddImageGalleryAsync(gallery);
+            await _unitOfWork.AppSettings.AddImageGalleryAsync(gallery);
         }
     }
 
@@ -332,10 +326,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
         try
         {
-            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is not null)
             {
-                _installerPackageRepository.Remove(entity);
+                _unitOfWork.InstallerPackages.Remove(entity);
                 await _unitOfWork.SaveChangesAsync();
             }
 
@@ -358,7 +352,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private async Task OnSettingsRequestedAsync(InstallerPackageCardViewModel card)
     {
         // Load the package with its linked gallery to get the output folder path
-        var entity = await _installerPackageRepository.GetByIdWithGalleryAsync(card.Id);
+        var entity = await _unitOfWork.InstallerPackages.GetByIdWithGalleryAsync(card.Id);
         if (entity is null) return;
 
         var currentOutputFolder = entity.ImageGallery?.FolderPath ?? string.Empty;
@@ -424,10 +418,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         try
         {
             // Remove from database first
-            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is not null)
             {
-                _installerPackageRepository.Remove(entity);
+                _unitOfWork.InstallerPackages.Remove(entity);
                 await _unitOfWork.SaveChangesAsync();
             }
 
@@ -453,10 +447,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         try
         {
             // Clear existing default for this installer type
-            await _installerPackageRepository.ClearDefaultByTypeAsync(card.Type);
+            await _unitOfWork.InstallerPackages.ClearDefaultByTypeAsync(card.Type);
 
             // Set the selected package as default
-            var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+            var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is null) return;
 
             entity.IsDefault = true;
@@ -550,7 +544,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 // Persist new version
                 if (result.NewHash is not null)
                 {
-                    var entity = await _installerPackageRepository.GetByIdAsync(card.Id);
+                    var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
                     if (entity is not null)
                     {
                         entity.Version = result.NewHash;

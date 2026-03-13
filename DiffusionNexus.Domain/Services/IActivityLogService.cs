@@ -379,4 +379,48 @@ public interface IActivityLogService
     event EventHandler? BackupProgressChanged;
 
     #endregion
+
+    #region Download Progress
+
+    /// <summary>
+    /// Starts tracking a download operation with progress bar display in the status bar.
+    /// </summary>
+    /// <param name="operationName">Display name of the download (e.g., file name).</param>
+    void StartDownloadProgress(string operationName);
+
+    /// <summary>
+    /// Updates the current download progress percentage.
+    /// </summary>
+    /// <param name="percent">Progress percentage (0-100).</param>
+    /// <param name="statusMessage">Optional status message to display.</param>
+    void ReportDownloadProgress(int percent, string? statusMessage = null);
+
+    /// <summary>
+    /// Completes the current download operation.
+    /// </summary>
+    /// <param name="success">Whether the download completed successfully.</param>
+    /// <param name="message">Completion message.</param>
+    void CompleteDownloadProgress(bool success, string message);
+
+    /// <summary>
+    /// Gets whether a download operation is currently in progress.
+    /// </summary>
+    bool IsDownloadInProgress { get; }
+
+    /// <summary>
+    /// Gets the current download progress percentage (0-100), or null if no download is running.
+    /// </summary>
+    int? DownloadProgressPercent { get; }
+
+    /// <summary>
+    /// Gets the current download operation name, or null if no download is running.
+    /// </summary>
+    string? DownloadOperationName { get; }
+
+    /// <summary>
+    /// Event raised when download progress state changes (started, progress updated, or completed).
+    /// </summary>
+    event EventHandler? DownloadProgressChanged;
+
+    #endregion
 }

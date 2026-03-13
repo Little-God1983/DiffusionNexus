@@ -50,20 +50,26 @@
                 Height="24">
             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
                 
-                <!-- Status Message (hidden when backup in progress) -->
+                <!-- Status Message (hidden when backup or download in progress) -->
                 <StackPanel Grid.Column="0" 
                             Orientation="Horizontal" 
                             Spacing="8"
                             Margin="8,0"
                             IsVisible="{Binding !ShowBackupProgress}">
+                    <StackPanel.IsVisible>
+                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                            <Binding Path="!ShowBackupProgress"/>
+                            <Binding Path="!ShowDownloadProgress"/>
+                        </MultiBinding>
+                    </StackPanel.IsVisible>
                     <TextBlock Text="{Binding StatusMessage}" 
                                Foreground="{Binding StatusForeground}"
                                VerticalAlignment="Center"
                                FontSize="12"
                                TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
-                
-                <!-- Backup Progress Bar (shown when backup in progress) -->
+
+                <!-- Backup Progress Bar (shown when backup in progress, takes priority over download) -->
                 <Grid Grid.Column="0"
                       Margin="8,0"
                       IsVisible="{Binding ShowBackupProgress}">
@@ -73,16 +79,16 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    
+
                     <!-- Spinning hourglass animation -->
                     <TextBlock Grid.Column="0"
-                               Text="?"
+                               Text="⏳"
                                FontSize="14"
                                VerticalAlignment="Center"
                                Foreground="{Binding StatusForeground}"
                                Margin="0,0,8,0"
                                Classes="spinning"/>
-                    
+
                     <!-- Backup operation name -->
                     <TextBlock Grid.Column="1"
                                Text="{Binding BackupOperationName, FallbackValue='Backup running...'}"
@@ -91,7 +97,7 @@
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"
                                Margin="0,0,12,0"/>
-                    
+
                     <!-- Progress bar that fills available space -->
                     <ProgressBar Grid.Column="2"
                                  Value="{Binding BackupProgressPercent}"
@@ -100,10 +106,62 @@
                                  Height="8"
                                  VerticalAlignment="Center"
                                  Classes="backup-progress"/>
-                    
+
                     <!-- Percentage text -->
                     <TextBlock Grid.Column="3"
                                Text="{Binding BackupProgressPercent, StringFormat='{}{0}%'}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0"/>
+                </Grid>
+
+                <!-- Download Progress Bar (shown when download in progress and no backup running) -->
+                <Grid Grid.Column="0"
+                      Margin="8,0">
+                    <Grid.IsVisible>
+                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                            <Binding Path="ShowDownloadProgress"/>
+                            <Binding Path="!ShowBackupProgress"/>
+                        </MultiBinding>
+                    </Grid.IsVisible>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Download arrow icon -->
+                    <TextBlock Grid.Column="0"
+                               Text="⬇"
+                               FontSize="14"
+                               VerticalAlignment="Center"
+                               Foreground="{Binding StatusForeground}"
+                               Margin="0,0,8,0"/>
+
+                    <!-- Download operation name -->
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding DownloadOperationName, FallbackValue='Downloading...'}"
+                               Foreground="{Binding StatusForeground}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="0,0,12,0"/>
+
+                    <!-- Progress bar -->
+                    <ProgressBar Grid.Column="2"
+                                 Value="{Binding DownloadProgressPercent}"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Height="8"
+                                 VerticalAlignment="Center"
+                                 Classes="backup-progress"/>
+
+                    <!-- Percentage text -->
+                    <TextBlock Grid.Column="3"
+                               Text="{Binding DownloadProgressPercent, StringFormat='{}{0}%'}"
                                Foreground="{Binding StatusForeground}"
                                FontSize="12"
                                FontWeight="Bold"

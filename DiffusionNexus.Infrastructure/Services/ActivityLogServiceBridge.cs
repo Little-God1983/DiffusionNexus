@@ -24,6 +24,12 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
     private int? _backupProgressPercent;
     private string? _backupOperationName;
 
+    // Download progress tracking
+    private readonly object _downloadLock = new();
+    private bool _isDownloadInProgress;
+    private int? _downloadProgressPercent;
+    private string? _downloadOperationName;
+
     public ActivityLogServiceBridge(IUnifiedLogger logger, ITaskTracker taskTracker)
     {
         _logger = logger;
@@ -259,11 +265,81 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _logger.Info(LogCategory.Backup, "Backup", message);
         else
             _logger.Error(LogCategory.Backup, "Backup", message);
+
+        SetStatus(message, success ? ActivitySeverity.Success : ActivitySeverity.Error);
         BackupProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <inheritdoc />
     public event EventHandler? BackupProgressChanged;
+
+    #endregion
+
+    #region Download Progress
+
+    /// <inheritdoc />
+    public bool IsDownloadInProgress
+    {
+        get { lock (_downloadLock) return _isDownloadInProgress; }
+    }
+
+    /// <inheritdoc />
+    public int? DownloadProgressPercent
+    {
+        get { lock (_downloadLock) return _downloadProgressPercent; }
+    }
+
+    /// <inheritdoc />
+    public string? DownloadOperationName
+    {
+        get { lock (_downloadLock) return _downloadOperationName; }
+    }
+
+    /// <inheritdoc />
+    public void StartDownloadProgress(string operationName)
+    {
+        lock (_downloadLock)
+        {
+            _isDownloadInProgress = true;
+            _downloadProgressPercent = 0;
+            _downloadOperationName = operationName;
+        }
+        _logger.Info(LogCategory.Download, "Download", $"Starting: {operationName}");
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void ReportDownloadProgress(int percent, string? statusMessage = null)
+    {
+        lock (_downloadLock)
+        {
+            _downloadProgressPercent = Math.Clamp(percent, 0, 100);
+        }
+        if (!string.IsNullOrEmpty(statusMessage))
+            SetStatus(statusMessage, ActivitySeverity.Info);
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void CompleteDownloadProgress(bool success, string message)
+    {
+        lock (_downloadLock)
+        {
+            _isDownloadInProgress = false;
+            _downloadProgressPercent = null;
+            _downloadOperationName = null;
+        }
+        if (success)
+            _logger.Info(LogCategory.Download, "Download", message);
+        else
+            _logger.Error(LogCategory.Download, "Download", message);
+
+        SetStatus(message, success ? ActivitySeverity.Success : ActivitySeverity.Error);
+        DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public event EventHandler? DownloadProgressChanged;
 
     #endregion
 

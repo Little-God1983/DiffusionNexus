@@ -122,6 +122,73 @@ public class ModelRepositoryTests : IDisposable
         result.Should().BeNull();
     }
 
+    [Fact]
+    public async Task WhenDuplicateCivitaiIdAssignedToModelThenSaveThrows()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model { Name = "ModelA", Type = ModelType.LORA, CivitaiId = 42 };
+        var modelB = new Model { Name = "ModelB", Type = ModelType.LORA };
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        modelB.CivitaiId = 42;
+
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().ThrowAsync<DiffusionNexus.DataAccess.Exceptions.DatabaseOperationException>()
+            .WithMessage("*UNIQUE constraint*");
+    }
+
+    [Fact]
+    public async Task WhenDuplicateCivitaiIdAssignedToVersionThenSaveThrows()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = CreateModelWithLocalFile("ModelA", "/a.safetensors");
+        modelA.Versions.First().CivitaiId = 99;
+        var modelB = CreateModelWithLocalFile("ModelB", "/b.safetensors");
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        modelB.Versions.First().CivitaiId = 99;
+
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().ThrowAsync<DiffusionNexus.DataAccess.Exceptions.DatabaseOperationException>()
+            .WithMessage("*UNIQUE constraint*");
+    }
+
+    [Fact]
+    public async Task WhenCivitaiIdOwnershipCheckedThenDuplicateIsAvoided()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model { Name = "ModelA", Type = ModelType.LORA, CivitaiId = 42 };
+        var modelB = new Model { Name = "ModelB", Type = ModelType.LORA };
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        // Guard: only assign if no other model owns the CivitaiId
+        var allModels = await uow.Models.GetAllAsync();
+        var existingOwner = allModels.FirstOrDefault(m => m.CivitaiId == 42);
+        if (existingOwner is null || existingOwner.Id == modelB.Id)
+        {
+            modelB.CivitaiId = 42;
+        }
+
+        // Save should succeed because the guard prevented the duplicate assignment
+        var act = () => uow.SaveChangesAsync();
+        await act.Should().NotThrowAsync();
+
+        // modelB should still have no CivitaiId
+        modelB.CivitaiId.Should().BeNull();
+    }
+
     private static Model CreateModelWithLocalFile(string name, string? localPath)
     {
         var model = new Model
@@ -150,6 +217,122 @@ public class ModelRepositoryTests : IDisposable
         version.Files.Add(file);
         model.Versions.Add(version);
         return model;
+    }
+
+    [Fact]
+    public void WhenMediaTypeIsVideoThenIsVideoReturnsTrue()
+    {
+        var image = new ModelImage { Url = "https://example.com/preview.mp4", MediaType = "video" };
+        image.IsVideo.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WhenMediaTypeIsImageThenIsVideoReturnsFalse()
+    {
+        var image = new ModelImage { Url = "https://example.com/preview.jpg", MediaType = "image" };
+        image.IsVideo.Should().BeFalse();
+    }
+
+    [Fact]
+    public void WhenMediaTypeIsNullThenIsVideoReturnsFalse()
+    {
+        var image = new ModelImage { Url = "https://example.com/preview.jpg" };
+        image.IsVideo.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenModelImageHasVideoMediaTypeThenItIsPersisted()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = CreateModelWithLocalFile("VideoModel", "/video.safetensors");
+        var version = model.Versions.First();
+        version.Images.Add(new ModelImage
+        {
+            Url = "https://civitai.com/some-preview.mp4",
+            MediaType = "video",
+            ModelVersion = version,
+            SortOrder = 0
+        });
+
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        var loaded = (await uow.Models.GetAllWithIncludesAsync()).First();
+        var loadedImage = loaded.Versions.First().Images.First();
+
+        loadedImage.MediaType.Should().Be("video");
+        loadedImage.IsVideo.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WhenMediaTypeIsNullAndUrlHasMp4ExtensionThenIsVideoReturnsFalse()
+    {
+        // IsVideo only checks MediaType, not URL — URL fallback is in the ViewModel
+        var image = new ModelImage { Url = "https://example.com/preview.mp4" };
+        image.IsVideo.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenModelHasLastSyncedAtButNoCivitaiIdThenItIsNotResynced()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var synced = new Model
+        {
+            Name = "SyncedNoCivitaiId",
+            Type = ModelType.LORA,
+            Source = DataSource.CivitaiApi,
+            LastSyncedAt = DateTimeOffset.UtcNow,
+            CivitaiId = null // Guard prevented assignment (duplicate)
+        };
+        var unsynced = new Model
+        {
+            Name = "NeverSynced",
+            Type = ModelType.LORA,
+            Source = DataSource.LocalFile,
+            LastSyncedAt = null,
+            CivitaiId = null
+        };
+
+        await uow.Models.AddAsync(synced);
+        await uow.Models.AddAsync(unsynced);
+        await uow.SaveChangesAsync();
+
+        var all = await uow.Models.GetAllAsync();
+        var needingSync = all.Where(m => m is { CivitaiId: null, LastSyncedAt: null }).ToList();
+
+        needingSync.Should().HaveCount(1);
+        needingSync[0].Name.Should().Be("NeverSynced");
+    }
+
+    [Fact]
+    public async Task WhenModelsShareCivitaiModelPageIdThenBothArePersisted()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var modelA = new Model
+        {
+            Name = "Ellie ZIT", Type = ModelType.LORA,
+            CivitaiId = 100, CivitaiModelPageId = 100
+        };
+        var modelB = new Model
+        {
+            Name = "Ellie Flux", Type = ModelType.LORA,
+            CivitaiId = null, CivitaiModelPageId = 100
+        };
+
+        await uow.Models.AddAsync(modelA);
+        await uow.Models.AddAsync(modelB);
+        await uow.SaveChangesAsync();
+
+        var all = await uow.Models.GetAllAsync();
+        var sameGroup = all.Where(m => m.CivitaiModelPageId == 100).ToList();
+
+        sameGroup.Should().HaveCount(2);
     }
 
     public void Dispose()

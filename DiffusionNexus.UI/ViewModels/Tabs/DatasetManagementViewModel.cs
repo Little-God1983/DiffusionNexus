@@ -3,7 +3,7 @@ using System.IO;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
@@ -2264,14 +2264,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        // Query AI Toolkit instances from the database
+        // Query AI Toolkit instances from the database via UnitOfWork
         IReadOnlyList<InstallerPackage>? aiToolkitInstances = null;
         try
         {
-            var repo = App.Services?.GetService<IInstallerPackageRepository>();
-            if (repo is not null)
+            await using var uow = App.Services?.GetService<IUnitOfWork>();
+            if (uow is not null)
             {
-                var allPackages = await repo.GetAllAsync();
+                var allPackages = await uow.InstallerPackages.GetAllAsync();
                 var toolkitList = allPackages
                     .Where(p => p.Type == InstallerType.AIToolkit)
                     .ToList();
@@ -2301,7 +2301,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 ? result.AIToolkitFolderName.Trim()
                 : ActiveDataset.Name;
 
-            destinationPath = Path.Combine(result.AIToolkitInstallationPath, "datasets", folderName);
+            var datasetsDir = ExportDatasetDialogViewModel.ResolveAIToolkitDatasetsPath(
+                result.AIToolkitInstallationPath);
+            destinationPath = Path.Combine(datasetsDir, folderName);
 
             if (Directory.Exists(destinationPath))
             {

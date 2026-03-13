@@ -78,9 +78,7 @@
           </Border>
         </Expander>
 
-        <!-- LoRA Viewer settings – hidden until the LoRA Viewer module is integrated.
-             Do NOT remove; the ViewModel logic is still in place and will be re-enabled. -->
-        <!--
+        <!-- LoRA Viewer -->
         <Expander Header="LoRA Viewer" IsExpanded="False" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="16">
@@ -137,13 +135,24 @@
                           IsChecked="{Binding ShowVideoPreview, Mode=TwoWay}"/>
                 <CheckBox Content="A1111/Forge style prompts"
                           IsChecked="{Binding UseForgeStylePrompts, Mode=TwoWay}"/>
-                <CheckBox Content="Merge LoRA sources by base model (experimental)"
-                          IsChecked="{Binding MergeLoraSources, Mode=TwoWay}"/>
-              </StackPanel>
-            </StackPanel>
-          </Border>
-        </Expander>
-        -->
+                      <CheckBox Content="Merge LoRA sources by base model (experimental)"
+                                  IsChecked="{Binding MergeLoraSources, Mode=TwoWay}"/>
+                      </StackPanel>
+                      <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+                      <StackPanel Spacing="8">
+                        <TextBlock Text="Database" FontWeight="SemiBold" FontSize="14"/>
+                        <TextBlock Text="Clear all cached LoRA metadata, thumbnails, and sync data from the database. Your LoRA files on disk and app settings are not affected." 
+                                   FontSize="12" 
+                                   Opacity="0.7"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="Reset LoRA Database"
+                                Command="{Binding ResetLoraDatabaseCommand}"
+                                Foreground="#FF6B6B"
+                                HorizontalAlignment="Left"/>
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+                </Expander>
 
         <!-- Generation Galleries -->
         <Expander Header="Generation Galleries" IsExpanded="False" HorizontalAlignment="Stretch">

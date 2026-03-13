@@ -1,9 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Reflection;
+using System.Text;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
@@ -345,8 +346,104 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ExportLogAsync()
     {
-        // TODO: implement file export via IDialogService.ShowSaveFileDialogAsync
-        await Task.CompletedTask;
+        var dialogService = _serviceProvider?.GetService<IDialogService>();
+        if (dialogService is null) return;
+
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+        var path = await dialogService.ShowSaveFileDialogAsync(
+            "Export Log",
+            $"DiffusionNexus_Log_{timestamp}.txt",
+            "Text files (*.txt)|*.txt|All files (*.*)|*.*");
+
+        if (string.IsNullOrEmpty(path)) return;
+
+        try
+        {
+            var content = FormatLogEntries(FilteredEntries);
+            await File.WriteAllTextAsync(path, content);
+            _logger.Info(LogCategory.General, "UnifiedConsole", $"Log exported to {path}");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(LogCategory.General, "UnifiedConsole", $"Failed to export log: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Copies the currently filtered log entries to the system clipboard.
+    /// </summary>
+    [RelayCommand]
+    private async Task CopyLogToClipboardAsync()
+    {
+        var content = FormatLogEntries(FilteredEntries);
+        if (string.IsNullOrEmpty(content)) return;
+
+        if (_clipboardFunc is not null)
+        {
+            try
+            {
+                await _clipboardFunc(content);
+                _logger.Info(LogCategory.General, "UnifiedConsole",
+                    $"Copied {FilteredEntries.Count} log entries to clipboard");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(LogCategory.General, "UnifiedConsole",
+                    $"Failed to copy to clipboard: {ex.Message}", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Delegate set by the View to perform clipboard operations via TopLevel.
+    /// </summary>
+    private Func<string, Task>? _clipboardFunc;
+
+    /// <summary>
+    /// Registers the clipboard write function from the View (which has access to TopLevel).
+    /// </summary>
+    public void RegisterClipboardHandler(Func<string, Task> clipboardFunc)
+    {
+        _clipboardFunc = clipboardFunc;
+    }
+
+    /// <summary>
+    /// Formats log entries into a human-readable text block for export or clipboard.
+    /// </summary>
+    private static string FormatLogEntries(IEnumerable<LogEntry> entries)
+    {
+        var version = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"DiffusionNexus Log Export — v{version} — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine(new string('─', 80));
+
+        foreach (var entry in entries)
+        {
+            sb.Append($"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss}] ");
+            sb.Append($"{entry.LevelAbbreviation} ");
+            sb.Append($"[{entry.Category}] ");
+            sb.Append($"{entry.Source}: ");
+            sb.AppendLine(entry.Message);
+
+            if (!string.IsNullOrEmpty(entry.Detail))
+            {
+                foreach (var line in entry.Detail.Split('\n'))
+                {
+                    sb.Append("    ");
+                    sb.AppendLine(line.TrimEnd());
+                }
+            }
+
+            if (entry.Exception is not null)
+            {
+                sb.Append("    Exception: ");
+                sb.AppendLine(entry.Exception.ToString());
+            }
+        }
+
+        return sb.ToString();
     }
 
     #endregion
@@ -360,8 +457,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
-            var packages = await repo.GetAllAsync();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            var packages = await unitOfWork.InstallerPackages.GetAllAsync();
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -418,8 +515,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider!.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
-            var package = await repo.GetByIdAsync(tab.PackageId);
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            var package = await unitOfWork.InstallerPackages.GetByIdAsync(tab.PackageId);
             if (package is null) return;
 
             if (string.IsNullOrWhiteSpace(package.ExecutablePath)) return;
@@ -579,10 +676,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         try
         {
             using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
 
-            var package = await repo.GetByIdAsync(packageId);
+            var package = await unitOfWork.InstallerPackages.GetByIdAsync(packageId);
             if (package is not null)
             {
                 package.Version = newHash;

@@ -3,9 +3,11 @@ using System.Net.Http;
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -1271,6 +1273,69 @@ public partial class SettingsViewModel : BusyViewModelBase
         {
             StatusMessage = $"Import failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Resets the LoRA database by clearing all LoRA-related tables.
+    /// Requires two confirmation dialogs before executing.
+    /// Only deletes database content — files on disk and app settings are not affected.
+    /// </summary>
+    [RelayCommand]
+    private async Task ResetLoraDatabaseAsync()
+    {
+        if (DialogService is null)
+        {
+            StatusMessage = "Dialog service is not available.";
+            return;
+        }
+
+        // Confirmation 1: Explain what will happen
+        var confirmed1 = await DialogService.ShowConfirmAsync(
+            "Reset LoRA Database",
+            "This will delete ALL LoRA model data from the database:\n\n" +
+            "  \u2022 Models, versions, and file records\n" +
+            "  \u2022 Preview images and thumbnails\n" +
+            "  \u2022 Trigger words, tags, and creator info\n\n" +
+            "Your LoRA files on disk will NOT be deleted.\n" +
+            "Your app settings and source folders will NOT be changed.\n\n" +
+            "Do you want to continue?");
+
+        if (!confirmed1) return;
+
+        // Confirmation 2: Final safety check
+        var confirmed2 = await DialogService.ShowConfirmAsync(
+            "Are you sure?",
+            "This action cannot be undone.\n\n" +
+            "All cached metadata, thumbnails, and Civitai sync data will be lost.\n" +
+            "You will need to run Refresh and Download Metadata again.\n\n" +
+            "Proceed with reset?");
+
+        if (!confirmed2) return;
+
+        await RunBusyAsync(async () =>
+        {
+            try
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+
+                // Delete in dependency order (children first) to respect FK constraints
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM TriggerWords");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM ModelImages");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM ModelFiles");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM ModelVersions");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM ModelTags");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM Tags");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM Models");
+                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM Creators");
+
+                StatusMessage = "LoRA database has been reset. Click Refresh in the LoRA Viewer to rescan your files.";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Reset failed: {ex.Message}";
+            }
+        }, "Resetting LoRA database...");
     }
 }
 

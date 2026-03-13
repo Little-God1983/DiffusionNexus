@@ -257,7 +257,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsDefault")
-                        .HasColumnType("INTEGER");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsUpdateAvailable")
                         .HasColumnType("INTEGER");
@@ -332,6 +334,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<int?>("CivitaiId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("CivitaiModelPageId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -378,6 +383,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.HasIndex("CivitaiId")
                         .IsUnique()
                         .HasFilter("[CivitaiId] IS NOT NULL");
+
+                    b.HasIndex("CivitaiModelPageId");
 
                     b.HasIndex("CreatedAt");
 
@@ -554,6 +561,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<string>("LocalCachePath")
                         .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MediaType")
+                        .HasMaxLength(20)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("ModelVersionId")

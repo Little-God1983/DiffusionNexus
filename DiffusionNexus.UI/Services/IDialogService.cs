@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 
 /// <summary>
@@ -289,6 +290,18 @@ public interface IDialogService
         DiffusionNexus.Domain.Enums.InstallerType type,
         string executablePath,
         string outputFolderPath);
+
+    /// <summary>
+    /// Shows the download LoRA version dialog for choosing a download destination.
+    /// </summary>
+    /// <param name="modelName">Display name of the model.</param>
+    /// <param name="civitaiVersion">The Civitai version to download.</param>
+    /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
+    /// <returns>Download result with target folder, or cancelled result.</returns>
+    Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
+        string modelName,
+        CivitaiModelVersion civitaiVersion,
+        IReadOnlyList<string> sourceFolders);
 }
 
 /// <summary>

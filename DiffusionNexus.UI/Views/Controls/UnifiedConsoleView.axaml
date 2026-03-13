@@ -104,6 +104,9 @@
             <Button Content="Errors Only" Command="{Binding ShowErrorsOnlyCommand}" Padding="8,4" FontSize="12"/>
             <Button Content="Show All" Command="{Binding ShowAllCommand}" Padding="8,4" FontSize="12"/>
             <Button Content="Clear" Command="{Binding ClearLogCommand}" Padding="8,4" FontSize="12"/>
+            <Border Width="1" Background="#3C3C3C" Margin="4,0"/>
+            <Button Content="&#x1F4CB; Copy" Command="{Binding CopyLogToClipboardCommand}" Padding="8,4" FontSize="12" ToolTip.Tip="Copy filtered log to clipboard"/>
+            <Button Content="&#x1F4BE; Export" Command="{Binding ExportLogCommand}" Padding="8,4" FontSize="12" ToolTip.Tip="Export filtered log to file"/>
           </StackPanel>
         </Grid>
       </Border>
