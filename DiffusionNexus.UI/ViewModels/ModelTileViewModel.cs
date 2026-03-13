@@ -971,7 +971,8 @@ public partial class ModelTileViewModel : ViewModelBase
     ];
 
     /// <summary>
-    /// Searches for a local preview image next to the model's safetensors file and displays it.
+    /// Searches for a local preview image next to the model's safetensors file, displays it,
+    /// and persists a resized thumbnail BLOB to the database so it loads instantly next time.
     /// Looks for files sharing the same base name with common image extensions
     /// (e.g., mymodel.preview.png, mymodel.jpg).
     /// </summary>
@@ -1001,35 +1002,91 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (localImagePath is null) return;
 
-            // Load via ThumbnailService if registered, otherwise decode directly
-            var thumbnailService = App.Services?.GetService<IThumbnailService>();
-            if (thumbnailService is not null)
+            var logger = App.Services?.GetService<IUnifiedLogger>();
+            logger?.Debug(LogCategory.General, "LocalPreview",
+                $"Found local preview for '{DisplayName}': {Path.GetFileName(localImagePath)}");
+
+            // Read and transcode to JPEG for BLOB storage + display
+            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
+            if (imageBytes.Length == 0) return;
+
+            byte[] thumbnailBytes;
+            using (var skBitmap = SKBitmap.Decode(imageBytes))
             {
-                var bitmap = await thumbnailService.LoadThumbnailAsync(localImagePath);
-                if (bitmap is not null)
+                if (skBitmap is null) return;
+
+                // Resize to thumbnail width (340px) to keep BLOB small
+                var targetWidth = 340;
+                var scale = (float)targetWidth / skBitmap.Width;
+                var targetHeight = (int)(skBitmap.Height * scale);
+                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), SKFilterQuality.Medium);
+                if (resized is null) return;
+
+                using var skImage = SKImage.FromBitmap(resized);
+                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
+                thumbnailBytes = encoded.ToArray();
+            }
+
+            if (thumbnailBytes.Length == 0) return;
+
+            // Persist to DB: create or update the ModelImage entity with the thumbnail BLOB
+            var version = SelectedVersion;
+            if (version is not null)
+            {
+                try
                 {
-                    await Dispatcher.UIThread.InvokeAsync(() => ThumbnailImage = bitmap);
+                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+
+                    var dbVersion = await dbContext.ModelVersions
+                        .Include(v => v.Images)
+                        .FirstOrDefaultAsync(v => v.Id == version.Id);
+
+                    if (dbVersion is not null)
+                    {
+                        var primaryImage = dbVersion.Images.FirstOrDefault();
+                        if (primaryImage is null)
+                        {
+                            // Create a new image entity for the local thumbnail
+                            primaryImage = new ModelImage
+                            {
+                                ModelVersionId = dbVersion.Id,
+                                Url = $"file://{localImagePath}",
+                                SortOrder = 0,
+                            };
+                            dbVersion.Images.Add(primaryImage);
+                        }
+
+                        primaryImage.ThumbnailData = thumbnailBytes;
+                        primaryImage.ThumbnailMimeType = "image/jpeg";
+
+                        await dbContext.SaveChangesAsync();
+
+                        logger?.Debug(LogCategory.General, "LocalPreview",
+                            $"Persisted local thumbnail for '{DisplayName}' ({thumbnailBytes.Length / 1024.0:F1} KB)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger?.Debug(LogCategory.General, "LocalPreview",
+                        $"Failed to persist local thumbnail for '{DisplayName}': {ex.Message}");
+                    // Non-fatal — still display the in-memory thumbnail below
                 }
             }
-            else
-            {
-                // Direct decode fallback
-                var bytes = await File.ReadAllBytesAsync(localImagePath);
-                if (bytes.Length == 0) return;
 
-                await Dispatcher.UIThread.InvokeAsync(() =>
+            // Display the thumbnail immediately
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                try
                 {
-                    try
-                    {
-                        using var stream = new MemoryStream(bytes);
-                        ThumbnailImage = new Bitmap(stream);
-                    }
-                    catch
-                    {
-                        ThumbnailImage = null;
-                    }
-                });
-            }
+                    using var stream = new MemoryStream(thumbnailBytes);
+                    ThumbnailImage = new Bitmap(stream);
+                }
+                catch
+                {
+                    ThumbnailImage = null;
+                }
+            });
         }
         catch
         {
