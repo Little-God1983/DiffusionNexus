@@ -28,6 +28,8 @@ public class DatasetCardViewModel : ObservableObject
     private int _totalImageCountAllVersions;
     private int _totalVideoCountAllVersions;
     private int _totalCaptionCountAllVersions;
+    private int _trainingRunCount;
+    private int _totalTrainingRunCountAllVersions;
     private string? _thumbnailPath;
     private bool _isSelected;
     private int? _categoryId;
@@ -592,6 +594,40 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Number of training runs for the current version.
+    /// </summary>
+    public int TrainingRunCount
+    {
+        get => _trainingRunCount;
+        set
+        {
+            if (SetProperty(ref _trainingRunCount, value))
+            {
+                OnPropertyChanged(nameof(DetailedCountText));
+                OnPropertyChanged(nameof(TrainingRunBadgeText));
+                OnPropertyChanged(nameof(ShowTrainingRunBadge));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Total number of training runs across all versions.
+    /// </summary>
+    public int TotalTrainingRunCountAllVersions
+    {
+        get => _totalTrainingRunCountAllVersions;
+        set
+        {
+            if (SetProperty(ref _totalTrainingRunCountAllVersions, value))
+            {
+                OnPropertyChanged(nameof(AllVersionsDetailedCountText));
+                OnPropertyChanged(nameof(TrainingRunBadgeText));
+                OnPropertyChanged(nameof(ShowTrainingRunBadge));
+            }
+        }
+    }
+
+    /// <summary>
     /// Display text showing total images across all versions.
     /// </summary>
     public string TotalImageCountAllVersionsText => _totalImageCountAllVersions == 1 ? "1 image" : $"{_totalImageCountAllVersions} images";
@@ -609,6 +645,7 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Detailed count text showing images, videos, and captions for the current version.
     /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// Training run count is displayed as a separate badge.
     /// </summary>
     public string DetailedCountText
     {
@@ -625,6 +662,7 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Detailed count text showing total images, videos, and captions across all versions.
     /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// Training run count is displayed as a separate badge.
     /// Used in collapsed (non-flattened) view.
     /// </summary>
     public string AllVersionsDetailedCountText
@@ -659,6 +697,22 @@ public class DatasetCardViewModel : ObservableObject
     /// Whether to show the version badge on the card.
     /// </summary>
     public bool ShowVersionBadge => _displayVersion.HasValue || _totalVersions > 1;
+
+    /// <summary>
+    /// Badge text for training runs.
+    /// In flattened view: shows runs for the specific version.
+    /// In collapsed view: shows total runs across all versions.
+    /// </summary>
+    public string TrainingRunBadgeText => _displayVersion.HasValue
+        ? $"{_trainingRunCount} {(_trainingRunCount == 1 ? "Run" : "Runs")}"
+        : $"{_totalTrainingRunCountAllVersions} {(_totalTrainingRunCountAllVersions == 1 ? "Run" : "Runs")}";
+
+    /// <summary>
+    /// Whether to show the training run badge on the card.
+    /// </summary>
+    public bool ShowTrainingRunBadge => _displayVersion.HasValue
+        ? _trainingRunCount > 0
+        : _totalTrainingRunCountAllVersions > 0;
 
     /// <summary>
     /// Whether there are multiple versions.
@@ -869,11 +923,13 @@ public class DatasetCardViewModel : ObservableObject
             card.ImageCount = images.Count;
             card.VideoCount = videos.Count;
             card.CaptionCount = captions.Count;
-            
+            card.TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath).Count;
+
             // For version cards, the "all versions" totals are not used (they show current version info)
             card.TotalImageCountAllVersions = images.Count;
             card.TotalVideoCountAllVersions = videos.Count;
             card.TotalCaptionCountAllVersions = captions.Count;
+            card.TotalTrainingRunCountAllVersions = card.TrainingRunCount;
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
             if (images.Count > 0)
@@ -919,9 +975,11 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             TotalImageCountAllVersions = 0;
             TotalVideoCountAllVersions = 0;
             TotalCaptionCountAllVersions = 0;
+            TotalTrainingRunCountAllVersions = 0;
             ThumbnailPath = null;
             return;
         }
@@ -949,16 +1007,19 @@ public class DatasetCardViewModel : ObservableObject
             var totalImages = 0;
             var totalVideos = 0;
             var totalCaptions = 0;
+            var totalTrainingRuns = 0;
             foreach (var versionFolder in versionFolders)
             {
                 var files = Directory.EnumerateFiles(versionFolder).ToList();
                 totalImages += files.Count(f => IsImageFile(f) && !IsVideoThumbnailFile(f));
                 totalVideos += files.Count(f => IsVideoFile(f));
                 totalCaptions += files.Count(f => IsCaptionFile(f));
+                totalTrainingRuns += TrainingRunMigrationUtility.GetTrainingRunNames(versionFolder).Count;
             }
             TotalImageCountAllVersions = totalImages;
             TotalVideoCountAllVersions = totalVideos;
             TotalCaptionCountAllVersions = totalCaptions;
+            TotalTrainingRunCountAllVersions = totalTrainingRuns;
         }
         else
         {
@@ -987,13 +1048,15 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = images.Count;
             VideoCount = videos.Count;
             CaptionCount = captions.Count;
-            
+            TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(mediaPath).Count;
+
             // For non-versioned structure, totals equal current counts
             if (!IsVersionedStructure)
             {
                 TotalImageCountAllVersions = images.Count;
                 TotalVideoCountAllVersions = videos.Count;
                 TotalCaptionCountAllVersions = captions.Count;
+                TotalTrainingRunCountAllVersions = TrainingRunCount;
             }
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
@@ -1018,13 +1081,15 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             ThumbnailPath = null;
-            
+
             if (!IsVersionedStructure)
             {
                 TotalImageCountAllVersions = 0;
                 TotalVideoCountAllVersions = 0;
                 TotalCaptionCountAllVersions = 0;
+                TotalTrainingRunCountAllVersions = 0;
             }
         }
     }
@@ -1222,6 +1287,7 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             ThumbnailPath = null;
             return;
         }
@@ -1235,11 +1301,13 @@ public class DatasetCardViewModel : ObservableObject
         ImageCount = images.Count;
         VideoCount = videos.Count;
         CaptionCount = captions.Count;
-        
+        TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath).Count;
+
         // For version cards, the "all versions" totals show the same as current (they display DetailedCountText)
         TotalImageCountAllVersions = images.Count;
         TotalVideoCountAllVersions = videos.Count;
         TotalCaptionCountAllVersions = captions.Count;
+        TotalTrainingRunCountAllVersions = TrainingRunCount;
         
         // Update thumbnail
         if (images.Count > 0)
@@ -1307,6 +1375,7 @@ public class DatasetCardViewModel : ObservableObject
         snapshot.TotalImageCountAllVersions = TotalImageCountAllVersions;
         snapshot.TotalVideoCountAllVersions = TotalVideoCountAllVersions;
         snapshot.TotalCaptionCountAllVersions = TotalCaptionCountAllVersions;
+        snapshot.TotalTrainingRunCountAllVersions = TotalTrainingRunCountAllVersions;
 
         return snapshot;
     }

@@ -326,6 +326,11 @@
                                         IsVisible="{Binding ShowVersionBadge}">
                                   <TextBlock Text="{Binding VersionBadgeText}" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
                                 </Border>
+                                <Border Background="#2196F3" CornerRadius="4" Padding="6,3"
+                                        HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
+                                        IsVisible="{Binding ShowTrainingRunBadge}">
+                                  <TextBlock Text="{Binding TrainingRunBadgeText}" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
+                                </Border>
                                 <Button Content="X"
                                         Command="{Binding $parent[ScrollViewer].((vmTabs:DatasetManagementViewModel)DataContext).DeleteDatasetCommand}"
                                         CommandParameter="{Binding}" HorizontalAlignment="Right" VerticalAlignment="Top"
