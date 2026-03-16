@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -607,6 +608,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand BackToTrainingRunsCommand { get; }
     public IAsyncRelayCommand<TrainingRunCardViewModel?> DeleteTrainingRunCommand { get; }
     public IAsyncRelayCommand<TrainingRunCardViewModel?> RenameTrainingRunCommand { get; }
+    public IAsyncRelayCommand ExportTrainingRunCommand { get; }
 
     #endregion
 
@@ -691,6 +693,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         BackToTrainingRunsCommand = new RelayCommand(BackToTrainingRuns);
         DeleteTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(DeleteTrainingRunAsync);
         RenameTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(RenameTrainingRunAsync);
+        ExportTrainingRunCommand = new AsyncRelayCommand(ExportTrainingRunAsync);
     }
 
     /// <summary>
@@ -3096,6 +3099,147 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             StatusMessage = $"Error renaming training run: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Exports the currently selected training run (epochs, images, model card) to a user-chosen folder.
+    /// </summary>
+    private async Task ExportTrainingRunAsync()
+    {
+        if (DialogService is null || SelectedTrainingRun is null) return;
+
+        var result = await DialogService.ShowExportTrainingRunDialogAsync(SelectedTrainingRun);
+        if (!result.Confirmed || (!result.IncludeModelCard && result.EpochPaths.Count == 0 && result.ImagePaths.Count == 0))
+            return;
+
+        var destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
+        if (string.IsNullOrEmpty(destinationPath)) return;
+
+        IsLoading = true;
+        try
+        {
+            var exportRoot = Path.Combine(destinationPath, SelectedTrainingRun.Name);
+            Directory.CreateDirectory(exportRoot);
+
+            var copiedFiles = 0;
+
+            // Copy selected epoch files
+            if (result.EpochPaths.Count > 0)
+            {
+                var epochsDir = Path.Combine(exportRoot, "Epochs");
+                Directory.CreateDirectory(epochsDir);
+                foreach (var epochPath in result.EpochPaths)
+                {
+                    if (!File.Exists(epochPath)) continue;
+                    var destPath = Path.Combine(epochsDir, Path.GetFileName(epochPath));
+                    File.Copy(epochPath, destPath, overwrite: true);
+                    copiedFiles++;
+                }
+            }
+
+            // Copy selected image files
+            if (result.ImagePaths.Count > 0)
+            {
+                var imagesDir = Path.Combine(exportRoot, "Images");
+                Directory.CreateDirectory(imagesDir);
+                foreach (var imagePath in result.ImagePaths)
+                {
+                    if (!File.Exists(imagePath)) continue;
+                    var destPath = Path.Combine(imagesDir, Path.GetFileName(imagePath));
+                    File.Copy(imagePath, destPath, overwrite: true);
+                    copiedFiles++;
+                }
+            }
+
+            // Generate model card
+            if (result.IncludeModelCard)
+            {
+                var modelCard = BuildModelCard(SelectedTrainingRun);
+                var readmePath = Path.Combine(exportRoot, "README.md");
+                await File.WriteAllTextAsync(readmePath, modelCard);
+                copiedFiles++;
+            }
+
+            StatusMessage = $"Exported {copiedFiles} item{(copiedFiles == 1 ? "" : "s")} for '{SelectedTrainingRun.Name}'.";
+
+            // Open the export folder in Explorer
+            // TODO: Linux Implementation for opening export folder
+            OpenFolderInExplorer(exportRoot, isFile: false);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Builds a human-readable Markdown model card from a training run's metadata.
+    /// </summary>
+    private static string BuildModelCard(TrainingRunCardViewModel run)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# {run.Name}");
+        sb.AppendLine();
+
+        // Model Information
+        sb.AppendLine("## Model Information");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(run.ModelDisplayName))
+            sb.AppendLine($"- **Model Display Name:** {run.ModelDisplayName}");
+        if (!string.IsNullOrWhiteSpace(run.SelectedBaseModel))
+            sb.AppendLine($"- **Base Model:** {run.SelectedBaseModel}");
+        if (run.SelectedCategory != CivitaiCategory.Unknown)
+            sb.AppendLine($"- **Category:** {run.SelectedCategory}");
+        if (!string.IsNullOrWhiteSpace(run.VersionName))
+            sb.AppendLine($"- **Version:** {run.VersionName}");
+        sb.AppendLine();
+
+        // Trigger Words
+        if (run.RunInfo.TriggerWords.Count > 0)
+        {
+            sb.AppendLine("## Trigger Words");
+            sb.AppendLine();
+            foreach (var word in run.RunInfo.TriggerWords)
+                sb.AppendLine($"- {word}");
+            sb.AppendLine();
+        }
+
+        // Tags
+        if (run.Tags.Count > 0)
+        {
+            sb.AppendLine("## Tags");
+            sb.AppendLine();
+            foreach (var tag in run.Tags)
+                sb.AppendLine($"- {tag}");
+            sb.AppendLine();
+        }
+
+        // Training Parameters
+        if (run.TrainingEpochs.HasValue || run.TrainingSteps.HasValue)
+        {
+            sb.AppendLine("## Training Parameters");
+            sb.AppendLine();
+            if (run.TrainingEpochs.HasValue)
+                sb.AppendLine($"- **Epochs:** {run.TrainingEpochs.Value}");
+            if (run.TrainingSteps.HasValue)
+                sb.AppendLine($"- **Steps:** {run.TrainingSteps.Value}");
+            sb.AppendLine();
+        }
+
+        // Description
+        if (!string.IsNullOrWhiteSpace(run.UploadDescription))
+        {
+            sb.AppendLine("## Description");
+            sb.AppendLine();
+            sb.AppendLine(run.UploadDescription);
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
     }
 
     #endregion

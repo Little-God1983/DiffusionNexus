@@ -82,7 +82,7 @@
     </ScrollViewer>
     <Grid IsVisible="{Binding IsViewingTrainingRunDetail}" RowDefinitions="Auto,*">
       <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
-        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
           <Button Grid.Column="0" Content="&#8592; Back to Runs" Command="{Binding BackToTrainingRunsCommand}" Padding="10,6" Margin="0,0,12,0"/>
           <TextBlock Grid.Column="1" Text="{Binding SelectedTrainingRun.Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
           <ComboBox Grid.Column="2"
@@ -94,8 +94,9 @@
                     BorderBrush="#555" CornerRadius="4" MinWidth="160"/>
           <TextBox Grid.Column="3" Text="{Binding SelectedTrainingRun.TriggerWordsText, Mode=TwoWay}" Watermark="Trigger words (comma-separated)…" MinWidth="220" Margin="8,0,0,0" Padding="8,5" FontSize="13" VerticalAlignment="Center" Background="#2A2A2A" BorderBrush="#555" CornerRadius="4"/>
           <Border Grid.Column="4"/>
-          <Button Grid.Column="5" Content="Rename" Command="{Binding RenameTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Margin="0,0,4,0"/>
-          <Button Grid.Column="6" Content="Delete" Command="{Binding DeleteTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Background="#80660000" Foreground="#FF6B6B"/>
+          <Button Grid.Column="5" Content="Export" Command="{Binding ExportTrainingRunCommand}" Padding="10,6" Margin="0,0,4,0" Background="#FF6A00" Foreground="White" FontWeight="SemiBold" CornerRadius="4"/>
+          <Button Grid.Column="6" Content="Rename" Command="{Binding RenameTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Margin="0,0,4,0"/>
+          <Button Grid.Column="7" Content="Delete" Command="{Binding DeleteTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Background="#80660000" Foreground="#FF6B6B"/>
         </Grid>
       </Border>
       <TabControl Grid.Row="1" Padding="0" Margin="0" DataContext="{Binding SelectedTrainingRun}">

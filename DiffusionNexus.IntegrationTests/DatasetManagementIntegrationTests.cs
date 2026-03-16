@@ -201,5 +201,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             string modelName, DiffusionNexus.Civitai.Models.CivitaiModelVersion civitaiVersion,
             IReadOnlyList<string> sourceFolders) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
+
+        public Task<ExportTrainingRunResult> ShowExportTrainingRunDialogAsync(TrainingRunCardViewModel trainingRun) =>
+            Task.FromResult(ExportTrainingRunResult.Cancelled());
     }
 }

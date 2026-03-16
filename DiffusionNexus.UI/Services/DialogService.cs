@@ -517,4 +517,13 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
+
+    public async Task<ExportTrainingRunResult> ShowExportTrainingRunDialogAsync(TrainingRunCardViewModel trainingRun)
+    {
+        var dialog = new ExportTrainingRunDialog()
+            .WithTrainingRun(trainingRun);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? ExportTrainingRunResult.Cancelled();
+    }
 }

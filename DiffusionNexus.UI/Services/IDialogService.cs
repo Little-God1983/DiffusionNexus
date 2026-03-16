@@ -302,6 +302,13 @@ public interface IDialogService
         string modelName,
         CivitaiModelVersion civitaiVersion,
         IReadOnlyList<string> sourceFolders);
+
+    /// <summary>
+    /// Shows the export training run dialog for selecting epochs, images, and model card to export.
+    /// </summary>
+    /// <param name="trainingRun">The training run to export from.</param>
+    /// <returns>Export result with selected items, or cancelled result.</returns>
+    Task<ExportTrainingRunResult> ShowExportTrainingRunDialogAsync(TrainingRunCardViewModel trainingRun);
 }
 
 /// <summary>
