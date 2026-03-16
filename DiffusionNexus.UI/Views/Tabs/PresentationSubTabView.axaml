@@ -91,12 +91,13 @@
     </Border>
     
     <!-- Content: Two-panel layout -->
-    <Grid Grid.Row="1" ColumnDefinitions="390,*">
+    <Grid Grid.Row="1" ColumnDefinitions="*,420">
 
-      <!-- ═══ LEFT PANEL: Upload Profile ═══ -->
-      <Border Grid.Column="0" BorderBrush="#333" BorderThickness="0,0,1,0">
-        <ScrollViewer Padding="16">
-          <StackPanel Spacing="20">
+      <!-- ═══ RIGHT PANEL: Upload Profile ═══ -->
+      <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1,0,0,0">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="20" Margin="16">
 
             <!-- Section: Model Info -->
             <StackPanel Spacing="10">
@@ -155,8 +156,13 @@
                 <Grid ColumnDefinitions="*,Auto">
                   <TextBox Grid.Column="0"
                            Text="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).NewTagText, Mode=TwoWay}"
-                           Watermark="Add a tag…"
-                           Background="#2A2A2A" BorderBrush="#555" CornerRadius="4" Padding="8,6"/>
+                           Watermark="Add a tag… (Enter to add, paste semicolon-separated)"
+                           Background="#2A2A2A" BorderBrush="#555" CornerRadius="4" Padding="8,6">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter"
+                                  Command="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).AddTagCommand}"/>
+                    </TextBox.KeyBindings>
+                  </TextBox>
                   <Button Grid.Column="1" Content="+" 
                           Command="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).AddTagCommand}"
                           Padding="10,6" Margin="6,0,0,0" Background="#2196F3" Foreground="White"
@@ -230,8 +236,8 @@
         </ScrollViewer>
       </Border>
 
-      <!-- ═══ RIGHT PANEL: Gallery & Documents ═══ -->
-      <Grid Grid.Column="1">
+      <!-- ═══ LEFT PANEL: Gallery & Documents ═══ -->
+      <Grid Grid.Column="0">
 
         <!-- Loading Overlay -->
         <Border IsVisible="{Binding IsLoading}" Background="#80000000" ZIndex="100">

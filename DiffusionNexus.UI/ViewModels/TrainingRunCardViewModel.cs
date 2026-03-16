@@ -479,15 +479,31 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     }
 
     /// <summary>
-    /// Adds a tag from the NewTagText input field.
+    /// Adds tags from the NewTagText input field.
+    /// Supports semicolon-separated lists (e.g., pasted "tag1;tag2;tag3").
     /// </summary>
     private void AddTag()
     {
-        var tag = NewTagText?.Trim();
-        if (string.IsNullOrWhiteSpace(tag)) return;
-        if (Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return;
+        var raw = NewTagText?.Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return;
 
-        Tags.Add(tag);
+        var entries = raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length > 0);
+
+        var added = false;
+        foreach (var entry in entries)
+        {
+            if (Tags.Contains(entry, StringComparer.OrdinalIgnoreCase)) continue;
+            Tags.Add(entry);
+            added = true;
+        }
+
+        if (!added)
+        {
+            NewTagText = null;
+            return;
+        }
+
         RunInfo.Tags = [.. Tags];
         NewTagText = null;
         OnMetadataChanged?.Invoke();
