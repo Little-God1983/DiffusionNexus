@@ -608,7 +608,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IRelayCommand BackToTrainingRunsCommand { get; }
     public IAsyncRelayCommand<TrainingRunCardViewModel?> DeleteTrainingRunCommand { get; }
     public IAsyncRelayCommand<TrainingRunCardViewModel?> RenameTrainingRunCommand { get; }
-    public IAsyncRelayCommand ExportTrainingRunCommand { get; }
 
     #endregion
 
@@ -693,7 +692,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         BackToTrainingRunsCommand = new RelayCommand(BackToTrainingRuns);
         DeleteTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(DeleteTrainingRunAsync);
         RenameTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(RenameTrainingRunAsync);
-        ExportTrainingRunCommand = new AsyncRelayCommand(ExportTrainingRunAsync);
     }
 
     /// <summary>
@@ -2334,13 +2332,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        if (DatasetImages.Count == 0)
-        {
-            StatusMessage = "No files in dataset to export.";
-            _activityLog?.LogWarning("Export", "No files to export");
-            return;
-        }
-
         // Query AI Toolkit instances from the database via UnitOfWork
         IReadOnlyList<InstallerPackage>? aiToolkitInstances = null;
         try
@@ -2361,85 +2352,148 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             Serilog.Log.Debug(ex, "Failed to query AI Toolkit instances for export dialog");
         }
 
-        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages, aiToolkitInstances);
-        if (!result.Confirmed || result.FilesToExport.Count == 0) return;
+        var result = await DialogService.ShowUnifiedExportDialogAsync(
+            ActiveDataset.Name,
+            ActiveDataset.CurrentVersion,
+            DatasetImages,
+            TrainingRuns,
+            aiToolkitInstances);
 
-        string? destinationPath;
-        if (result.ExportType == ExportType.AIToolkit)
-        {
-            if (string.IsNullOrWhiteSpace(result.AIToolkitInstallationPath))
-            {
-                StatusMessage = "No AI Toolkit instance selected.";
-                return;
-            }
-
-            // Use the user-specified folder name, falling back to the dataset name
-            var folderName = !string.IsNullOrWhiteSpace(result.AIToolkitFolderName)
-                ? result.AIToolkitFolderName.Trim()
-                : ActiveDataset.Name;
-
-            var datasetsDir = ExportDatasetDialogViewModel.ResolveAIToolkitDatasetsPath(
-                result.AIToolkitInstallationPath);
-            destinationPath = Path.Combine(datasetsDir, folderName);
-
-            if (Directory.Exists(destinationPath))
-            {
-                var existingFiles = Directory.GetFiles(destinationPath);
-                if (existingFiles.Length > 0 && result.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
-                {
-                    Directory.Delete(destinationPath, recursive: true);
-                    Directory.CreateDirectory(destinationPath);
-                }
-                // Merge mode: just proceed — ExportAsSingleFiles uses overwrite:true
-            }
-            else
-            {
-                Directory.CreateDirectory(destinationPath);
-            }
-        }
-        else if (result.ExportType == ExportType.Zip)
-        {
-            var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
-            var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
-            destinationPath = await DialogService.ShowSaveFileDialogAsync("Export Dataset as ZIP", defaultFileName, "*.zip");
-        }
-        else
-        {
-            destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
-        }
-
-        if (string.IsNullOrEmpty(destinationPath)) return;
-
-        _activityLog?.LogInfo("Export", $"Exporting '{ActiveDataset.Name}' ({result.FilesToExport.Count} files)");
+        if (!result.Confirmed) return;
 
         IsLoading = true;
         try
         {
-            var exportItems = result.FilesToExport
-                .Select(file => new DatasetExportItem(
-                    file.ImagePath,
-                    file.FullFileName,
-                    file.CaptionFilePath,
-                    Path.GetFileName(file.CaptionFilePath)))
-                .ToList();
+            var totalExported = 0;
 
-            var exportedCount = result.ExportType == ExportType.Zip
-                ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
-                : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
-
-            if (result.ExportType == ExportType.AIToolkit)
+            // ── Dataset export ──
+            if (result.DatasetResult is { } dsResult && dsResult.FilesToExport.Count > 0)
             {
-                StatusMessage = $"Exported {exportedCount} files to AI Toolkit '{result.AIToolkitInstanceName}'.";
-                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}' to AI Toolkit '{result.AIToolkitInstanceName}'");
-            }
-            else
-            {
-                StatusMessage = $"Exported {exportedCount} files successfully.";
-                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+                string? destinationPath;
+                if (dsResult.ExportType == ExportType.AIToolkit)
+                {
+                    if (string.IsNullOrWhiteSpace(dsResult.AIToolkitInstallationPath))
+                    {
+                        StatusMessage = "No AI Toolkit instance selected.";
+                        return;
+                    }
+
+                    var folderName = !string.IsNullOrWhiteSpace(dsResult.AIToolkitFolderName)
+                        ? dsResult.AIToolkitFolderName.Trim()
+                        : ActiveDataset.Name;
+
+                    var datasetsDir = ExportDatasetDialogViewModel.ResolveAIToolkitDatasetsPath(
+                        dsResult.AIToolkitInstallationPath);
+                    destinationPath = Path.Combine(datasetsDir, folderName);
+
+                    if (Directory.Exists(destinationPath))
+                    {
+                        var existingFiles = Directory.GetFiles(destinationPath);
+                        if (existingFiles.Length > 0 && dsResult.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
+                        {
+                            Directory.Delete(destinationPath, recursive: true);
+                            Directory.CreateDirectory(destinationPath);
+                        }
+                    }
+                    else
+                    {
+                        Directory.CreateDirectory(destinationPath);
+                    }
+                }
+                else if (dsResult.ExportType == ExportType.Zip)
+                {
+                    var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
+                    var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
+                    destinationPath = await DialogService.ShowSaveFileDialogAsync("Export Dataset as ZIP", defaultFileName, "*.zip");
+                }
+                else
+                {
+                    destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
+                }
+
+                if (!string.IsNullOrEmpty(destinationPath))
+                {
+                    _activityLog?.LogInfo("Export", $"Exporting '{ActiveDataset.Name}' ({dsResult.FilesToExport.Count} files)");
+
+                    var exportItems = dsResult.FilesToExport
+                        .Select(file => new DatasetExportItem(
+                            file.ImagePath,
+                            file.FullFileName,
+                            file.CaptionFilePath,
+                            Path.GetFileName(file.CaptionFilePath)))
+                        .ToList();
+
+                    var exportedCount = dsResult.ExportType == ExportType.Zip
+                        ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
+                        : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
+
+                    totalExported += exportedCount;
+
+                    if (dsResult.ExportType == ExportType.AIToolkit)
+                    {
+                        _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}' to AI Toolkit '{dsResult.AIToolkitInstanceName}'");
+                    }
+                    else
+                    {
+                        _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+                    }
+
+                    OpenFolderInExplorer(destinationPath, dsResult.ExportType == ExportType.Zip);
+                }
             }
 
-            // Open the export location in Explorer
-            OpenFolderInExplorer(destinationPath, result.ExportType == ExportType.Zip);
+            // ── Training runs export ──
+            if (result.TrainingRunResults.Count > 0)
+            {
+                var runFolder = await DialogService.ShowOpenFolderDialogAsync("Select Training Runs Export Folder");
+                if (!string.IsNullOrEmpty(runFolder))
+                {
+                    foreach (var entry in result.TrainingRunResults)
+                    {
+                        var exportRoot = Path.Combine(runFolder, entry.Source.Name);
+                        Directory.CreateDirectory(exportRoot);
+
+                        if (entry.EpochPaths.Count > 0)
+                        {
+                            var epochsDir = Path.Combine(exportRoot, "Epochs");
+                            Directory.CreateDirectory(epochsDir);
+                            foreach (var epochPath in entry.EpochPaths)
+                            {
+                                if (!File.Exists(epochPath)) continue;
+                                File.Copy(epochPath, Path.Combine(epochsDir, Path.GetFileName(epochPath)), overwrite: true);
+                                totalExported++;
+                            }
+                        }
+
+                        if (entry.ImagePaths.Count > 0)
+                        {
+                            var imagesDir = Path.Combine(exportRoot, "Images");
+                            Directory.CreateDirectory(imagesDir);
+                            foreach (var imagePath in entry.ImagePaths)
+                            {
+                                if (!File.Exists(imagePath)) continue;
+                                File.Copy(imagePath, Path.Combine(imagesDir, Path.GetFileName(imagePath)), overwrite: true);
+                                totalExported++;
+                            }
+                        }
+
+                        if (entry.IncludeModelCard)
+                        {
+                            var modelCard = BuildModelCard(entry.Source);
+                            await File.WriteAllTextAsync(Path.Combine(exportRoot, "README.md"), modelCard);
+                            totalExported++;
+                        }
+                    }
+
+                    var runNames = string.Join(", ", result.TrainingRunResults.Select(r => r.Source.Name));
+                    _activityLog?.LogSuccess("Export", $"Exported {result.TrainingRunResults.Count} training run(s): {runNames}");
+
+                    // TODO: Linux Implementation for opening export folder
+                    OpenFolderInExplorer(runFolder, isFile: false);
+                }
+            }
+
+            StatusMessage = $"Exported {totalExported} item{(totalExported == 1 ? "" : "s")} successfully.";
         }
         catch (Exception ex)
         {
@@ -3098,81 +3152,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         catch (Exception ex)
         {
             StatusMessage = $"Error renaming training run: {ex.Message}";
-        }
-    }
-
-    /// <summary>
-    /// Exports the currently selected training run (epochs, images, model card) to a user-chosen folder.
-    /// </summary>
-    private async Task ExportTrainingRunAsync()
-    {
-        if (DialogService is null || SelectedTrainingRun is null) return;
-
-        var result = await DialogService.ShowExportTrainingRunDialogAsync(SelectedTrainingRun);
-        if (!result.Confirmed || (!result.IncludeModelCard && result.EpochPaths.Count == 0 && result.ImagePaths.Count == 0))
-            return;
-
-        var destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
-        if (string.IsNullOrEmpty(destinationPath)) return;
-
-        IsLoading = true;
-        try
-        {
-            var exportRoot = Path.Combine(destinationPath, SelectedTrainingRun.Name);
-            Directory.CreateDirectory(exportRoot);
-
-            var copiedFiles = 0;
-
-            // Copy selected epoch files
-            if (result.EpochPaths.Count > 0)
-            {
-                var epochsDir = Path.Combine(exportRoot, "Epochs");
-                Directory.CreateDirectory(epochsDir);
-                foreach (var epochPath in result.EpochPaths)
-                {
-                    if (!File.Exists(epochPath)) continue;
-                    var destPath = Path.Combine(epochsDir, Path.GetFileName(epochPath));
-                    File.Copy(epochPath, destPath, overwrite: true);
-                    copiedFiles++;
-                }
-            }
-
-            // Copy selected image files
-            if (result.ImagePaths.Count > 0)
-            {
-                var imagesDir = Path.Combine(exportRoot, "Images");
-                Directory.CreateDirectory(imagesDir);
-                foreach (var imagePath in result.ImagePaths)
-                {
-                    if (!File.Exists(imagePath)) continue;
-                    var destPath = Path.Combine(imagesDir, Path.GetFileName(imagePath));
-                    File.Copy(imagePath, destPath, overwrite: true);
-                    copiedFiles++;
-                }
-            }
-
-            // Generate model card
-            if (result.IncludeModelCard)
-            {
-                var modelCard = BuildModelCard(SelectedTrainingRun);
-                var readmePath = Path.Combine(exportRoot, "README.md");
-                await File.WriteAllTextAsync(readmePath, modelCard);
-                copiedFiles++;
-            }
-
-            StatusMessage = $"Exported {copiedFiles} item{(copiedFiles == 1 ? "" : "s")} for '{SelectedTrainingRun.Name}'.";
-
-            // Open the export folder in Explorer
-            // TODO: Linux Implementation for opening export folder
-            OpenFolderInExplorer(exportRoot, isFile: false);
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Export failed: {ex.Message}";
-        }
-        finally
-        {
-            IsLoading = false;
         }
     }
 
