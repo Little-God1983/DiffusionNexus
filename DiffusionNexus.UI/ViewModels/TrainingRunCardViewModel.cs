@@ -1,7 +1,9 @@
+using System.Collections.ObjectModel;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
@@ -25,6 +27,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     private string? _thumbnailPath;
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
+    private string? _newTagText;
 
     /// <summary>
     /// The training run metadata.
@@ -61,18 +64,54 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     /// </summary>
     public bool HasDescription => !string.IsNullOrWhiteSpace(RunInfo.Description);
 
+    // ── Civitai Upload Profile Properties ────────────────────────
+
     /// <summary>
-    /// Trigger word used to activate this LoRA/model during inference.
-    /// Persists to metadata on change.
+    /// Available base model options for the dropdown, built from Civitai's known base models.
     /// </summary>
-    public string? TriggerWord
+    public static IReadOnlyList<string> AvailableBaseModels { get; } =
+    [
+        CivitaiBaseModel.SD15,
+        CivitaiBaseModel.SD15LCM,
+        CivitaiBaseModel.SD20,
+        CivitaiBaseModel.SD21,
+        CivitaiBaseModel.SDXL10,
+        CivitaiBaseModel.SDXLTurbo,
+        CivitaiBaseModel.SDXLLightning,
+        CivitaiBaseModel.SDXLDistilled,
+        CivitaiBaseModel.SD3,
+        CivitaiBaseModel.SD35,
+        CivitaiBaseModel.SD35Large,
+        CivitaiBaseModel.SD35Medium,
+        CivitaiBaseModel.Flux1D,
+        CivitaiBaseModel.Flux1S,
+        CivitaiBaseModel.Pony,
+        CivitaiBaseModel.Illustrious,
+        CivitaiBaseModel.NoobAI,
+        CivitaiBaseModel.Hunyuan,
+        CivitaiBaseModel.HunyuanVideo,
+        CivitaiBaseModel.WanVideo21,
+        CivitaiBaseModel.WanVideo22,
+        CivitaiBaseModel.Other
+    ];
+
+    /// <summary>
+    /// Available Civitai categories for the dropdown.
+    /// </summary>
+    public static IReadOnlyList<CivitaiCategory> AvailableCategories { get; } =
+        Enum.GetValues<CivitaiCategory>().Where(c => c != CivitaiCategory.Unknown).ToArray();
+
+    /// <summary>
+    /// Display name for the model on Civitai. Persists to metadata on change.
+    /// </summary>
+    public string? ModelDisplayName
     {
-        get => RunInfo.TriggerWord;
+        get => RunInfo.ModelDisplayName;
         set
         {
-            if (!string.Equals(RunInfo.TriggerWord, value, StringComparison.Ordinal))
+            if (!string.Equals(RunInfo.ModelDisplayName, value, StringComparison.Ordinal))
             {
-                RunInfo.TriggerWord = value;
+                RunInfo.ModelDisplayName = value;
                 OnPropertyChanged();
                 OnMetadataChanged?.Invoke();
             }
@@ -80,7 +119,155 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     }
 
     /// <summary>
-    /// Callback invoked when metadata (e.g., trigger word) changes, allowing the parent to persist.
+    /// Selected Civitai category for this training run. Persists to metadata on change.
+    /// </summary>
+    public CivitaiCategory SelectedCategory
+    {
+        get => RunInfo.Category;
+        set
+        {
+            if (RunInfo.Category != value)
+            {
+                RunInfo.Category = value;
+                OnPropertyChanged();
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a category has been selected (not Unknown).
+    /// </summary>
+    public bool HasCategory => RunInfo.Category != CivitaiCategory.Unknown;
+
+    /// <summary>
+    /// Selected base model from the dropdown. Persists to metadata on change.
+    /// </summary>
+    public string? SelectedBaseModel
+    {
+        get => RunInfo.BaseModel;
+        set
+        {
+            if (!string.Equals(RunInfo.BaseModel, value, StringComparison.Ordinal))
+            {
+                RunInfo.BaseModel = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BaseModel));
+                OnPropertyChanged(nameof(HasBaseModel));
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Version label for the upload (e.g., "V1"). Persists to metadata on change.
+    /// </summary>
+    public string VersionName
+    {
+        get => RunInfo.VersionName;
+        set
+        {
+            if (!string.Equals(RunInfo.VersionName, value, StringComparison.Ordinal))
+            {
+                RunInfo.VersionName = value;
+                OnPropertyChanged();
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Trigger words as a comma-separated string for TextBox binding.
+    /// Persists to metadata on change.
+    /// </summary>
+    public string TriggerWordsText
+    {
+        get => string.Join(", ", RunInfo.TriggerWords);
+        set
+        {
+            var words = (value ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(w => w.Length > 0)
+                .ToList();
+
+            if (!RunInfo.TriggerWords.SequenceEqual(words, StringComparer.Ordinal))
+            {
+                RunInfo.TriggerWords = words;
+                OnPropertyChanged();
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Observable collection of tags for chip-style display.
+    /// </summary>
+    public ObservableCollection<string> Tags { get; } = [];
+
+    /// <summary>
+    /// Text for the new tag input field.
+    /// </summary>
+    public string? NewTagText
+    {
+        get => _newTagText;
+        set => SetProperty(ref _newTagText, value);
+    }
+
+    /// <summary>
+    /// Number of training epochs. Persists to metadata on change.
+    /// </summary>
+    public int? TrainingEpochs
+    {
+        get => RunInfo.TrainingEpochs;
+        set
+        {
+            if (RunInfo.TrainingEpochs != value)
+            {
+                RunInfo.TrainingEpochs = value;
+                OnPropertyChanged();
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Number of training steps. Persists to metadata on change.
+    /// </summary>
+    public int? TrainingSteps
+    {
+        get => RunInfo.TrainingSteps;
+        set
+        {
+            if (RunInfo.TrainingSteps != value)
+            {
+                RunInfo.TrainingSteps = value;
+                OnPropertyChanged();
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Upload description (supports markdown). Persists to metadata on change.
+    /// </summary>
+    public string? UploadDescription
+    {
+        get => RunInfo.Description;
+        set
+        {
+            if (!string.Equals(RunInfo.Description, value, StringComparison.Ordinal))
+            {
+                RunInfo.Description = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(Description));
+                OnPropertyChanged(nameof(HasDescription));
+                OnMetadataChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Callback invoked when metadata changes, allowing the parent to persist.
     /// </summary>
     public Action? OnMetadataChanged { get; set; }
 
@@ -226,6 +413,16 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     public IDialogService? DialogService { get; set; }
 
     /// <summary>
+    /// Adds the text from <see cref="NewTagText"/> as a new tag.
+    /// </summary>
+    public IRelayCommand AddTagCommand { get; }
+
+    /// <summary>
+    /// Removes a tag by value.
+    /// </summary>
+    public IRelayCommand<string?> RemoveTagCommand { get; }
+
+    /// <summary>
     /// ViewModel for the Epochs sub-tab within this training run.
     /// </summary>
     public EpochsTabViewModel EpochsTab { get; }
@@ -248,6 +445,25 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
 
         _runFolderPath = runFolderPath;
 
+        // Migrate legacy single TriggerWord → TriggerWords list
+#pragma warning disable CS0618 // Obsolete member access for migration
+        if (!string.IsNullOrWhiteSpace(runInfo.TriggerWord) && runInfo.TriggerWords.Count == 0)
+        {
+            runInfo.TriggerWords.Add(runInfo.TriggerWord.Trim());
+            runInfo.TriggerWord = null;
+        }
+#pragma warning restore CS0618
+
+        // Initialize Tags observable collection from persisted data
+        foreach (var tag in runInfo.Tags)
+        {
+            Tags.Add(tag);
+        }
+
+        // Tag commands
+        AddTagCommand = new RelayCommand(AddTag);
+        RemoveTagCommand = new RelayCommand<string?>(RemoveTag);
+
         // Initialize sub-tab ViewModels
         EpochsTab = new EpochsTabViewModel(_eventAggregator);
         NotesTab = new NotesTabViewModel(_eventAggregator);
@@ -260,6 +476,33 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
 
         // Load counts
         RefreshCounts();
+    }
+
+    /// <summary>
+    /// Adds a tag from the NewTagText input field.
+    /// </summary>
+    private void AddTag()
+    {
+        var tag = NewTagText?.Trim();
+        if (string.IsNullOrWhiteSpace(tag)) return;
+        if (Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return;
+
+        Tags.Add(tag);
+        RunInfo.Tags = [.. Tags];
+        NewTagText = null;
+        OnMetadataChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Removes a tag by value.
+    /// </summary>
+    private void RemoveTag(string? tag)
+    {
+        if (tag is null) return;
+        if (!Tags.Remove(tag)) return;
+
+        RunInfo.Tags = [.. Tags];
+        OnMetadataChanged?.Invoke();
     }
 
     /// <summary>
