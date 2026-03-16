@@ -25,6 +25,11 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
     public IDialogService? DialogService { get; set; }
 
     /// <summary>
+    /// Callback invoked when files are added or removed, allowing the parent to refresh counts and thumbnail.
+    /// </summary>
+    public Action? OnFilesChanged { get; set; }
+
+    /// <summary>
     /// Collection of media files (images/videos) for gallery display.
     /// Reuses DatasetImageViewModel for consistent display with main dataset view.
     /// </summary>
@@ -371,6 +376,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
                 : $"Added {copied} file(s)";
 
             LoadFiles();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -414,9 +420,10 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
 
             MediaFiles.Remove(mediaVm);
             StatusMessage = $"Deleted '{mediaVm.FullFileName}'";
-            
+
             // Refresh document list to remove the deleted caption file entry
             RefreshDocumentList();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -458,7 +465,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
                 var matchingMedia = MediaFiles.FirstOrDefault(m => 
                     Path.GetFileNameWithoutExtension(m.ImagePath)
                         .Equals(baseName, StringComparison.OrdinalIgnoreCase));
-                
+
                 if (matchingMedia is not null)
                 {
                     // Reload the caption (will be empty since file was deleted)
@@ -467,6 +474,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
             }
 
             NotifyCollectionChanged();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {

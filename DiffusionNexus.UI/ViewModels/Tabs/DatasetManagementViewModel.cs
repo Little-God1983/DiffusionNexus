@@ -2904,7 +2904,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runInfo.Name);
             var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
             {
-                DialogService = DialogService
+                DialogService = DialogService,
+                OnMetadataChanged = () => dataset.SaveMetadata()
             };
             TrainingRuns.Add(card);
         }
@@ -2931,14 +2932,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         // Validate the name (filesystem-safe)
         if (runName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
-            StatusMessage = "Run name contains invalid characters.";
+            await DialogService.ShowMessageAsync("Invalid Name", "The run name contains characters that are not allowed in folder names.");
             return;
         }
 
         // Check for duplicates
         if (TrainingRuns.Any(r => string.Equals(r.Name, runName, StringComparison.OrdinalIgnoreCase)))
         {
-            StatusMessage = $"A training run named '{runName}' already exists.";
+            await DialogService.ShowMessageAsync("Duplicate Name", $"A training run named '{runName}' already exists.");
             return;
         }
 
@@ -2965,7 +2966,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runName);
             var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
             {
-                DialogService = DialogService
+                DialogService = DialogService,
+                OnMetadataChanged = () => ActiveDataset?.SaveMetadata()
             };
             TrainingRuns.Add(card);
 
@@ -3062,13 +3064,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
-            StatusMessage = "Run name contains invalid characters.";
+            await DialogService.ShowMessageAsync("Invalid Name", "The run name contains characters that are not allowed in folder names.");
             return;
         }
 
         if (TrainingRuns.Any(r => r != run && string.Equals(r.Name, newName, StringComparison.OrdinalIgnoreCase)))
         {
-            StatusMessage = $"A training run named '{newName}' already exists.";
+            await DialogService.ShowMessageAsync("Duplicate Name", $"A training run named '{newName}' already exists.");
             return;
         }
 

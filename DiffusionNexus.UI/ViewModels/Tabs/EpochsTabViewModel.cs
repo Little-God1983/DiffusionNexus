@@ -23,6 +23,11 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
     public IDialogService? DialogService { get; set; }
 
     /// <summary>
+    /// Callback invoked when files are added or removed, allowing the parent to refresh counts.
+    /// </summary>
+    public Action? OnFilesChanged { get; set; }
+
+    /// <summary>
     /// Collection of epoch files in the current version.
     /// </summary>
     public ObservableCollection<EpochFileViewModel> EpochFiles { get; } = [];
@@ -204,6 +209,7 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
                 : $"Added {copied} epoch file(s)";
 
             LoadEpochFiles();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -238,6 +244,7 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
             EpochFiles.Remove(epochVm);
             StatusMessage = $"Deleted '{epochVm.FileName}'";
             NotifyCollectionChanged();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -281,6 +288,7 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
 
         StatusMessage = $"Deleted {deleted} epoch file(s)";
         NotifyCollectionChanged();
+        OnFilesChanged?.Invoke();
     }
 
     private void SelectAll()

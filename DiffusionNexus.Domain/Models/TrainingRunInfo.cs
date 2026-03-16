@@ -26,4 +26,10 @@ public class TrainingRunInfo
     /// Optional short description or training parameters summary.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Optional trigger word used to activate this LoRA/model during inference.
+    /// Each training run may use a different trigger word.
+    /// </summary>
+    public string? TriggerWord { get; set; }
 }

@@ -25,6 +25,11 @@ public partial class NotesTabViewModel : ObservableObject, IDialogServiceAware
     public IDialogService? DialogService { get; set; }
 
     /// <summary>
+    /// Callback invoked when notes are created or deleted, allowing the parent to refresh counts.
+    /// </summary>
+    public Action? OnFilesChanged { get; set; }
+
+    /// <summary>
     /// Collection of notes in the current version.
     /// </summary>
     public ObservableCollection<NoteViewModel> Notes { get; } = [];
@@ -214,6 +219,7 @@ public partial class NotesTabViewModel : ObservableObject, IDialogServiceAware
 
         StatusMessage = "Created new note";
         NotifyCollectionChanged();
+        OnFilesChanged?.Invoke();
     }
 
     /// <summary>
@@ -245,6 +251,7 @@ public partial class NotesTabViewModel : ObservableObject, IDialogServiceAware
 
             StatusMessage = $"Deleted note";
             NotifyCollectionChanged();
+            OnFilesChanged?.Invoke();
         }
         catch (Exception ex)
         {
