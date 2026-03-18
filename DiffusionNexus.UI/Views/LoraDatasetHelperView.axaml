@@ -35,6 +35,11 @@
         <views:BatchCropScaleView DataContext="{Binding BatchCropScale}"/>
       </TabItem>
 
+      <!-- Batch Upscale Tab -->
+      <TabItem Header="Batch Upscale">
+        <views:BatchUpscaleTabView DataContext="{Binding BatchUpscale}"/>
+      </TabItem>
+
     </TabControl>
 
     <!-- Status Bar -->

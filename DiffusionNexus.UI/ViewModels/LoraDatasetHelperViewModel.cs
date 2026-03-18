@@ -91,6 +91,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// </summary>
     public CaptioningTabViewModel Captioning { get; }
 
+    /// <summary>
+    /// ViewModel for the Batch Upscale tab.
+    /// </summary>
+    public BatchUpscaleTabViewModel BatchUpscale { get; }
+
     #endregion
 
     #region Observable Properties
@@ -188,6 +193,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
+        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -255,6 +261,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             ImageEdit.DialogService = DialogService;
             BatchCropScale.DialogService = DialogService;
             Captioning.DialogService = DialogService;
+            BatchUpscale.DialogService = DialogService;
         }
     }
 
@@ -291,6 +298,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             ImageEdit.Dispose();
             BatchCropScale.Dispose();
             Captioning.Dispose();
+            BatchUpscale.Dispose();
         }
 
         _disposed = true;
