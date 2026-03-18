@@ -172,6 +172,7 @@ public partial class ExportableTrainingRun : ObservableObject
     private bool _isSelected = true;
     private bool _isExpanded;
     private bool _includeModelCard = true;
+    private bool _bakeMetadata;
 
     /// <summary>
     /// The underlying training run card view model.
@@ -222,6 +223,15 @@ public partial class ExportableTrainingRun : ObservableObject
                 SelectionChanged?.Invoke();
             }
         }
+    }
+
+    /// <summary>
+    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
+    /// </summary>
+    public bool BakeMetadata
+    {
+        get => _bakeMetadata;
+        set => SetProperty(ref _bakeMetadata, value);
     }
 
     /// <summary>
@@ -406,4 +416,9 @@ public class TrainingRunExportEntry
     /// Whether to include a model card.
     /// </summary>
     public bool IncludeModelCard { get; init; }
+
+    /// <summary>
+    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
+    /// </summary>
+    public bool BakeMetadata { get; init; }
 }

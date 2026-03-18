@@ -89,7 +89,8 @@ public partial class UnifiedExportDialog : Window
                     Source = run.Source,
                     EpochPaths = run.GetSelectedEpochPaths(),
                     ImagePaths = run.GetSelectedImagePaths(),
-                    IncludeModelCard = run.IncludeModelCard
+                    IncludeModelCard = run.IncludeModelCard,
+                    BakeMetadata = run.BakeMetadata
                 });
             }
         }

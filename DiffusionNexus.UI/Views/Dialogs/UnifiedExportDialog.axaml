@@ -134,7 +134,7 @@
                           BorderBrush="#444" BorderThickness="1">
                     <StackPanel Spacing="6">
                       <!-- Run header: checkbox + name + summary + expand -->
-                      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                         <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center"/>
                         <StackPanel Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center">
                           <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
@@ -145,7 +145,12 @@
                                   ToolTip.Tip="Include model card (README.md)">
                           <TextBlock Text="Model Card" FontSize="11"/>
                         </CheckBox>
-                        <Button Grid.Column="3" Content="Details" Command="{Binding ToggleExpandedCommand}"
+                        <CheckBox Grid.Column="3" IsChecked="{Binding BakeMetadata}"
+                                  VerticalAlignment="Center" Margin="0,0,8,0"
+                                  ToolTip.Tip="Embed captions into PNG metadata (A1111 style), overriding existing image metadata">
+                          <TextBlock Text="Bake Metadata" FontSize="11"/>
+                        </CheckBox>
+                        <Button Grid.Column="4" Content="Details" Command="{Binding ToggleExpandedCommand}"
                                 Padding="6,3" FontSize="11" Background="#80444444" CornerRadius="3"
                                 VerticalAlignment="Center"/>
                       </Grid>

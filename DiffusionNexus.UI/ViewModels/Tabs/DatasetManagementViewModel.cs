@@ -2472,8 +2472,32 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                             foreach (var imagePath in entry.ImagePaths)
                             {
                                 if (!File.Exists(imagePath)) continue;
-                                File.Copy(imagePath, Path.Combine(imagesDir, Path.GetFileName(imagePath)), overwrite: true);
+                                var destPath = Path.Combine(imagesDir, Path.GetFileName(imagePath));
+
+                                // Read companion .txt caption
+                                var captionPath = Path.ChangeExtension(imagePath, ".txt");
+                                var captionText = File.Exists(captionPath) ? await File.ReadAllTextAsync(captionPath) : null;
+
+                                if (entry.BakeMetadata && !string.IsNullOrEmpty(captionText))
+                                {
+                                    // Format caption as A1111-style parameters so Civitai and other tools can parse it
+                                    var formatted = PngMetadataWriter.FormatAsA1111Parameters(captionText, imagePath);
+                                    var metadata = new Dictionary<string, string> { ["parameters"] = formatted };
+                                    PngMetadataWriter.CopyWithMetadata(imagePath, destPath, metadata);
+                                }
+                                else
+                                {
+                                    File.Copy(imagePath, destPath, overwrite: true);
+                                }
+
                                 totalExported++;
+
+                                // Always copy companion .txt if it exists
+                                if (File.Exists(captionPath))
+                                {
+                                    File.Copy(captionPath, Path.Combine(imagesDir, Path.GetFileName(captionPath)), overwrite: true);
+                                    totalExported++;
+                                }
                             }
                         }
 
