@@ -1,0 +1,114 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="700"
+             x:Class="DiffusionNexus.UI.Views.Tabs.TrainingRunsTabView"
+             x:DataType="vmTabs:DatasetManagementViewModel">
+  <Grid>
+    <ScrollViewer IsVisible="{Binding !IsViewingTrainingRunDetail}" Padding="16">
+      <StackPanel Spacing="16">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="Training Runs" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <Button Grid.Column="1" Content="+ Add Training Run" Command="{Binding AddTrainingRunCommand}" Padding="14,8" Background="#FF6A00" Foreground="White" FontWeight="SemiBold" CornerRadius="4"/>
+        </Grid>
+        <Border IsVisible="{Binding !TrainingRuns.Count}" Background="#1A1A1A" BorderThickness="2" BorderBrush="#444" CornerRadius="12" Padding="40" HorizontalAlignment="Stretch">
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+            <TextBlock Text="No Training Runs" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Opacity="0.7"/>
+            <TextBlock Text="Create a training run to organize your epochs, notes, and presentation files." FontSize="13" Foreground="#888" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" TextAlignment="Center"/>
+            <Button Content="+ Add Training Run" Command="{Binding AddTrainingRunCommand}" HorizontalAlignment="Center" Padding="16,10" FontSize="14" Background="#FF6A00" Foreground="White" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Border>
+        <ItemsControl ItemsSource="{Binding TrainingRuns}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel Orientation="Horizontal"/>
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:TrainingRunCardViewModel">
+              <Button Margin="8" Padding="0" Background="Transparent" BorderThickness="0" Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).OpenTrainingRunCommand}" CommandParameter="{Binding}" Cursor="Hand">
+                <Border Width="260" Height="300" Background="#2A2A2A" CornerRadius="8"
+                        ClipToBounds="True" BorderBrush="#444" BorderThickness="1">
+                  <Grid>
+                    <!-- Thumbnail / Placeholder area (full card) -->
+                    <Border Background="#1A1A1A" CornerRadius="8" ClipToBounds="True">
+                      <Grid>
+                        <Border Background="#333" CornerRadius="8" Padding="16"
+                                HorizontalAlignment="Center" VerticalAlignment="Center"
+                                IsVisible="{Binding !HasThumbnail}">
+                          <TextBlock Text="🏋️" FontSize="36" Opacity="0.3" HorizontalAlignment="Center"/>
+                        </Border>
+                        <Image Source="{Binding Thumbnail}"
+                               Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+                        <!-- Presentation badge -->
+                        <Border Background="#FF6A00" CornerRadius="4" Padding="6,3"
+                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                                IsVisible="{Binding HasPresentationFiles}">
+                          <TextBlock Text="{Binding PresentationFileCountText}" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
+                        </Border>
+                      </Grid>
+                    </Border>
+                    <!-- Card info overlay at bottom -->
+                    <Border Padding="10,6" Background="#CC1A1A1A" CornerRadius="0,0,8,8"
+                            VerticalAlignment="Bottom">
+                      <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                        <TextBlock Grid.Row="0" Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxLines="1" Foreground="White"/>
+                        <Border Grid.Row="1" IsVisible="{Binding HasBaseModel}" Background="#335599" CornerRadius="4" Padding="6,2" Margin="0,3,0,0" HorizontalAlignment="Left">
+                          <TextBlock Text="{Binding BaseModel}" FontSize="11" Foreground="White"/>
+                        </Border>
+                        <TextBlock Grid.Row="2" Text="{Binding Description}" FontSize="11" Opacity="0.7" TextTrimming="CharacterEllipsis" MaxLines="1" TextWrapping="NoWrap" IsVisible="{Binding HasDescription}" Margin="0,3,0,0"/>
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+                          <TextBlock Text="{Binding EpochCountText}" FontSize="11" Opacity="0.6"/>
+                          <TextBlock Text="{Binding NoteCountText}" FontSize="11" Opacity="0.6"/>
+                        </StackPanel>
+                        <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto" Margin="0,4,0,0">
+                          <TextBlock Grid.Column="0" Text="{Binding CreatedDateText}" FontSize="11" Opacity="0.5" VerticalAlignment="Center"/>
+                          <Button Grid.Column="1" Content="Rename" Padding="6,3" FontSize="11" Background="#80444444" CornerRadius="3" Margin="0,0,4,0" Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).RenameTrainingRunCommand}" CommandParameter="{Binding}"/>
+                          <Button Grid.Column="2" Content="Delete" Padding="6,3" FontSize="11" Background="#80660000" Foreground="#FF6B6B" CornerRadius="3" Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteTrainingRunCommand}" CommandParameter="{Binding}"/>
+                        </Grid>
+                      </Grid>
+                    </Border>
+                  </Grid>
+                </Border>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+    <Grid IsVisible="{Binding IsViewingTrainingRunDetail}" RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+          <Button Grid.Column="0" Content="&#8592; Back to Runs" Command="{Binding BackToTrainingRunsCommand}" Padding="10,6" Margin="0,0,12,0"/>
+          <TextBlock Grid.Column="1" Text="{Binding SelectedTrainingRun.Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <ComboBox Grid.Column="2"
+                    ItemsSource="{Binding SelectedTrainingRun.AvailableBaseModels}"
+                    SelectedItem="{Binding SelectedTrainingRun.SelectedBaseModel, Mode=TwoWay}"
+                    PlaceholderText="Base model…"
+                    Margin="12,0,0,0" Padding="8,5" FontSize="13"
+                    VerticalAlignment="Center" Background="#2A2A2A"
+                    BorderBrush="#555" CornerRadius="4" MinWidth="160"/>
+          <TextBox Grid.Column="3" Text="{Binding SelectedTrainingRun.TriggerWordsText, Mode=TwoWay}" Watermark="Trigger words (comma-separated)…" MinWidth="220" Margin="8,0,0,0" Padding="8,5" FontSize="13" VerticalAlignment="Center" Background="#2A2A2A" BorderBrush="#555" CornerRadius="4"/>
+          <Border Grid.Column="4"/>
+          <Button Grid.Column="5" Content="Rename" Command="{Binding RenameTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Margin="0,0,4,0"/>
+          <Button Grid.Column="6" Content="Delete" Command="{Binding DeleteTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Background="#80660000" Foreground="#FF6B6B"/>
+        </Grid>
+      </Border>
+      <TabControl Grid.Row="1" Padding="0" Margin="0" DataContext="{Binding SelectedTrainingRun}">
+        <TabItem Header="Epochs">
+          <views:EpochsSubTabView DataContext="{Binding EpochsTab}"/>
+        </TabItem>
+        <TabItem Header="Notes">
+          <views:NotesSubTabView DataContext="{Binding NotesTab}"/>
+        </TabItem>
+        <TabItem Header="Presentation">
+          <views:PresentationSubTabView DataContext="{Binding PresentationTab}"/>
+        </TabItem>
+      </TabControl>
+    </Grid>
+  </Grid>
+</UserControl>

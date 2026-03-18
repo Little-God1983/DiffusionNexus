@@ -2,6 +2,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -27,6 +28,8 @@ public class DatasetCardViewModel : ObservableObject
     private int _totalImageCountAllVersions;
     private int _totalVideoCountAllVersions;
     private int _totalCaptionCountAllVersions;
+    private int _trainingRunCount;
+    private int _totalTrainingRunCountAllVersions;
     private string? _thumbnailPath;
     private bool _isSelected;
     private int? _categoryId;
@@ -41,6 +44,7 @@ public class DatasetCardViewModel : ObservableObject
     private Dictionary<int, string?> _versionDescriptions = new();
     private Dictionary<int, bool> _versionNsfwFlags = new();
     private bool _isNsfw;
+    private Dictionary<int, List<TrainingRunInfo>> _trainingRuns = new();
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private bool _isTemporary;
@@ -590,6 +594,40 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Number of training runs for the current version.
+    /// </summary>
+    public int TrainingRunCount
+    {
+        get => _trainingRunCount;
+        set
+        {
+            if (SetProperty(ref _trainingRunCount, value))
+            {
+                OnPropertyChanged(nameof(DetailedCountText));
+                OnPropertyChanged(nameof(TrainingRunBadgeText));
+                OnPropertyChanged(nameof(ShowTrainingRunBadge));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Total number of training runs across all versions.
+    /// </summary>
+    public int TotalTrainingRunCountAllVersions
+    {
+        get => _totalTrainingRunCountAllVersions;
+        set
+        {
+            if (SetProperty(ref _totalTrainingRunCountAllVersions, value))
+            {
+                OnPropertyChanged(nameof(AllVersionsDetailedCountText));
+                OnPropertyChanged(nameof(TrainingRunBadgeText));
+                OnPropertyChanged(nameof(ShowTrainingRunBadge));
+            }
+        }
+    }
+
+    /// <summary>
     /// Display text showing total images across all versions.
     /// </summary>
     public string TotalImageCountAllVersionsText => _totalImageCountAllVersions == 1 ? "1 image" : $"{_totalImageCountAllVersions} images";
@@ -607,6 +645,7 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Detailed count text showing images, videos, and captions for the current version.
     /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// Training run count is displayed as a separate badge.
     /// </summary>
     public string DetailedCountText
     {
@@ -623,6 +662,7 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Detailed count text showing total images, videos, and captions across all versions.
     /// Format: "X Images; X Videos; X Captions" (omits zero counts).
+    /// Training run count is displayed as a separate badge.
     /// Used in collapsed (non-flattened) view.
     /// </summary>
     public string AllVersionsDetailedCountText
@@ -657,6 +697,22 @@ public class DatasetCardViewModel : ObservableObject
     /// Whether to show the version badge on the card.
     /// </summary>
     public bool ShowVersionBadge => _displayVersion.HasValue || _totalVersions > 1;
+
+    /// <summary>
+    /// Badge text for training runs.
+    /// In flattened view: shows runs for the specific version.
+    /// In collapsed view: shows total runs across all versions.
+    /// </summary>
+    public string TrainingRunBadgeText => _displayVersion.HasValue
+        ? $"{_trainingRunCount} {(_trainingRunCount == 1 ? "Run" : "Runs")}"
+        : $"{_totalTrainingRunCountAllVersions} {(_totalTrainingRunCountAllVersions == 1 ? "Run" : "Runs")}";
+
+    /// <summary>
+    /// Whether to show the training run badge on the card.
+    /// </summary>
+    public bool ShowTrainingRunBadge => _displayVersion.HasValue
+        ? _trainingRunCount > 0
+        : _totalTrainingRunCountAllVersions > 0;
 
     /// <summary>
     /// Whether there are multiple versions.
@@ -703,25 +759,39 @@ public class DatasetCardViewModel : ObservableObject
     /// Path to the Epochs subfolder within the current version folder.
     /// Used to store trained model checkpoints (.safetensors, .pt, .pth, .gguf).
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.EpochsFolderPath instead. Output folders are now per training run.")]
     public string EpochsFolderPath => Path.Combine(CurrentVersionFolderPath, "Epochs");
 
     /// <summary>
     /// Path to the Notes subfolder within the current version folder.
     /// Used to store journal/text notes about training.
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.NotesFolderPath instead. Output folders are now per training run.")]
     public string NotesFolderPath => Path.Combine(CurrentVersionFolderPath, "Notes");
 
     /// <summary>
     /// Path to the Presentation subfolder within the current version folder.
     /// Reserved for future use (showcase images, demos, etc.).
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.PresentationFolderPath instead. Output folders are now per training run.")]
     public string PresentationFolderPath => Path.Combine(CurrentVersionFolderPath, "Presentation");
 
     /// <summary>
     /// Path to the Release subfolder within the current version folder.
     /// Used to store release-ready files.
     /// </summary>
+    [Obsolete("Use TrainingRunCardViewModel.ReleaseFolderPath instead. Output folders are now per training run.")]
     public string ReleaseFolderPath => Path.Combine(CurrentVersionFolderPath, "Release");
+
+    /// <summary>
+    /// Training runs metadata for each version.
+    /// Key is version number, value is list of training run info.
+    /// </summary>
+    public Dictionary<int, List<TrainingRunInfo>> TrainingRuns
+    {
+        get => _trainingRuns;
+        set => SetProperty(ref _trainingRuns, value);
+    }
 
     /// <summary>
     /// Event raised when category changes.
@@ -853,11 +923,13 @@ public class DatasetCardViewModel : ObservableObject
             card.ImageCount = images.Count;
             card.VideoCount = videos.Count;
             card.CaptionCount = captions.Count;
-            
+            card.TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath).Count;
+
             // For version cards, the "all versions" totals are not used (they show current version info)
             card.TotalImageCountAllVersions = images.Count;
             card.TotalVideoCountAllVersions = videos.Count;
             card.TotalCaptionCountAllVersions = captions.Count;
+            card.TotalTrainingRunCountAllVersions = card.TrainingRunCount;
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
             if (images.Count > 0)
@@ -903,9 +975,11 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             TotalImageCountAllVersions = 0;
             TotalVideoCountAllVersions = 0;
             TotalCaptionCountAllVersions = 0;
+            TotalTrainingRunCountAllVersions = 0;
             ThumbnailPath = null;
             return;
         }
@@ -933,16 +1007,19 @@ public class DatasetCardViewModel : ObservableObject
             var totalImages = 0;
             var totalVideos = 0;
             var totalCaptions = 0;
+            var totalTrainingRuns = 0;
             foreach (var versionFolder in versionFolders)
             {
                 var files = Directory.EnumerateFiles(versionFolder).ToList();
                 totalImages += files.Count(f => IsImageFile(f) && !IsVideoThumbnailFile(f));
                 totalVideos += files.Count(f => IsVideoFile(f));
                 totalCaptions += files.Count(f => IsCaptionFile(f));
+                totalTrainingRuns += TrainingRunMigrationUtility.GetTrainingRunNames(versionFolder).Count;
             }
             TotalImageCountAllVersions = totalImages;
             TotalVideoCountAllVersions = totalVideos;
             TotalCaptionCountAllVersions = totalCaptions;
+            TotalTrainingRunCountAllVersions = totalTrainingRuns;
         }
         else
         {
@@ -971,13 +1048,15 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = images.Count;
             VideoCount = videos.Count;
             CaptionCount = captions.Count;
-            
+            TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(mediaPath).Count;
+
             // For non-versioned structure, totals equal current counts
             if (!IsVersionedStructure)
             {
                 TotalImageCountAllVersions = images.Count;
                 TotalVideoCountAllVersions = videos.Count;
                 TotalCaptionCountAllVersions = captions.Count;
+                TotalTrainingRunCountAllVersions = TrainingRunCount;
             }
             
             // Prefer image for thumbnail, fallback to video thumbnail if available
@@ -1002,13 +1081,15 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             ThumbnailPath = null;
-            
+
             if (!IsVersionedStructure)
             {
                 TotalImageCountAllVersions = 0;
                 TotalVideoCountAllVersions = 0;
                 TotalCaptionCountAllVersions = 0;
+                TotalTrainingRunCountAllVersions = 0;
             }
         }
     }
@@ -1054,6 +1135,7 @@ public class DatasetCardViewModel : ObservableObject
                 VersionBranchedFrom = metadata.VersionBranchedFrom ?? new();
                 VersionDescriptions = metadata.VersionDescriptions ?? new();
                 VersionNsfwFlags = metadata.VersionNsfwFlags ?? new();
+                TrainingRuns = metadata.TrainingRuns ?? new();
                 
                 // Migrate old single Description to V1 if present and no version descriptions exist
                 if (!string.IsNullOrWhiteSpace(metadata.Description) && VersionDescriptions.Count == 0)
@@ -1099,7 +1181,8 @@ public class DatasetCardViewModel : ObservableObject
                 CurrentVersion = CurrentVersion,
                 VersionBranchedFrom = VersionBranchedFrom,
                 VersionDescriptions = VersionDescriptions,
-                VersionNsfwFlags = VersionNsfwFlags
+                VersionNsfwFlags = VersionNsfwFlags,
+                TrainingRuns = TrainingRuns
             };
             var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
             {
@@ -1204,6 +1287,7 @@ public class DatasetCardViewModel : ObservableObject
             ImageCount = 0;
             VideoCount = 0;
             CaptionCount = 0;
+            TrainingRunCount = 0;
             ThumbnailPath = null;
             return;
         }
@@ -1217,11 +1301,13 @@ public class DatasetCardViewModel : ObservableObject
         ImageCount = images.Count;
         VideoCount = videos.Count;
         CaptionCount = captions.Count;
-        
+        TrainingRunCount = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath).Count;
+
         // For version cards, the "all versions" totals show the same as current (they display DetailedCountText)
         TotalImageCountAllVersions = images.Count;
         TotalVideoCountAllVersions = videos.Count;
         TotalCaptionCountAllVersions = captions.Count;
+        TotalTrainingRunCountAllVersions = TrainingRunCount;
         
         // Update thumbnail
         if (images.Count > 0)
@@ -1289,6 +1375,7 @@ public class DatasetCardViewModel : ObservableObject
         snapshot.TotalImageCountAllVersions = TotalImageCountAllVersions;
         snapshot.TotalVideoCountAllVersions = TotalVideoCountAllVersions;
         snapshot.TotalCaptionCountAllVersions = TotalCaptionCountAllVersions;
+        snapshot.TotalTrainingRunCountAllVersions = TotalTrainingRunCountAllVersions;
 
         return snapshot;
     }
@@ -1344,6 +1431,12 @@ public class DatasetMetadata
     /// Key is version number, value is whether that version contains NSFW content.
     /// </summary>
     public Dictionary<int, bool> VersionNsfwFlags { get; set; } = new();
+
+    /// <summary>
+    /// Training runs for each version.
+    /// Key is version number, value is list of training run metadata.
+    /// </summary>
+    public Dictionary<int, List<TrainingRunInfo>> TrainingRuns { get; set; } = new();
 
     #region Legacy Properties (for migration)
 

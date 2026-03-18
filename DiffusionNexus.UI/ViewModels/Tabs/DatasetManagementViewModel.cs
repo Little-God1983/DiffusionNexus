@@ -1,11 +1,13 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -75,8 +77,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private bool _selectedNsfw;
 
     // Sub-tab fields
-    private VersionSubTab _selectedSubTab = VersionSubTab.Training;
+    private VersionSubTab _selectedSubTab = VersionSubTab.TrainingData;
     private IDialogService? _dialogService;
+
+    // Training run fields
+    private TrainingRunCardViewModel? _selectedTrainingRun;
+    private bool _isViewingTrainingRunDetail;
 
     #region IThumbnailAware
 
@@ -143,6 +149,40 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Captioning sub-tab.
     /// </summary>
     public CaptioningTabViewModel CaptioningTab { get; }
+
+    /// <summary>
+    /// Collection of training run cards for the current dataset version.
+    /// </summary>
+    public ObservableCollection<TrainingRunCardViewModel> TrainingRuns { get; } = [];
+
+    /// <summary>
+    /// Currently selected training run.
+    /// </summary>
+    public TrainingRunCardViewModel? SelectedTrainingRun
+    {
+        get => _selectedTrainingRun;
+        set
+        {
+            if (SetProperty(ref _selectedTrainingRun, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedTrainingRun));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a training run is currently selected.
+    /// </summary>
+    public bool HasSelectedTrainingRun => _selectedTrainingRun is not null;
+
+    /// <summary>
+    /// Whether we are viewing the detail of a specific training run.
+    /// </summary>
+    public bool IsViewingTrainingRunDetail
+    {
+        get => _isViewingTrainingRunDetail;
+        set => SetProperty(ref _isViewingTrainingRunDetail, value);
+    }
 
     #region Observable Properties (Delegated to State)
 
@@ -562,6 +602,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand DeleteSelectedCommand { get; }
     public IAsyncRelayCommand OpenCaptioningToolCommand { get; } // New Command
 
+    // Training Run commands
+    public IAsyncRelayCommand AddTrainingRunCommand { get; }
+    public IRelayCommand<TrainingRunCardViewModel?> OpenTrainingRunCommand { get; }
+    public IRelayCommand BackToTrainingRunsCommand { get; }
+    public IAsyncRelayCommand<TrainingRunCardViewModel?> DeleteTrainingRunCommand { get; }
+    public IAsyncRelayCommand<TrainingRunCardViewModel?> RenameTrainingRunCommand { get; }
+
     #endregion
 
     #region Constructors
@@ -638,6 +685,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         DeleteSelectedCommand = new AsyncRelayCommand(DeleteSelectedAsync);
         
         OpenCaptioningToolCommand = new AsyncRelayCommand(OpenCaptioningToolAsync);
+
+        // Training Run commands
+        AddTrainingRunCommand = new AsyncRelayCommand(AddTrainingRunAsync);
+        OpenTrainingRunCommand = new RelayCommand<TrainingRunCardViewModel?>(OpenTrainingRun);
+        BackToTrainingRunsCommand = new RelayCommand(BackToTrainingRuns);
+        DeleteTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(DeleteTrainingRunAsync);
+        RenameTrainingRunCommand = new AsyncRelayCommand<TrainingRunCardViewModel?>(RenameTrainingRunAsync);
     }
 
     /// <summary>
@@ -809,11 +863,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _nextBackupTime = lastBackup + interval;
 
             // If next backup is in the past, it's due now - trigger backup
-            if (_nextBackupTime <= DateTimeOffset.UtcNow)
-            {
-                BackupStatusText = "Backup: Due now";
-                _ = ExecuteBackupIfDueAsync();
-            }
+                if (_nextBackupTime <= DateTimeOffset.UtcNow)
+                {
+                    BackupStatusText = "Backup: Due now";
+                    if (!_isBackupInProgress)
+                    {
+                        _ = ExecuteBackupIfDueAsync();
+                    }
+                }
             else
             {
                 UpdateBackupCountdownText();
@@ -837,15 +894,21 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
+        // Set in-progress BEFORE any await to prevent TOCTOU race:
+        // without this, a second caller can pass the _isBackupInProgress check
+        // while the first caller is awaiting IsBackupDueAsync, starting two concurrent backups.
+        _isBackupInProgress = true;
+        BackupNowCommand.NotifyCanExecuteChanged();
+
         var isDue = await _backupService.IsBackupDueAsync();
         if (!isDue)
         {
+            _isBackupInProgress = false;
+            BackupNowCommand.NotifyCanExecuteChanged();
             return;
         }
 
-        _isBackupInProgress = true;
         BackupStatusText = "Backup: Running...";
-        BackupNowCommand.NotifyCanExecuteChanged();
 
         // Start backup progress tracking in the status bar
         _activityLog?.StartBackupProgress("Backing up datasets");
@@ -874,9 +937,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-                
-                // Refresh backup status to show next backup time
+
+                // Refresh backup status to show next backup time.
+                // The backup ran on a separate DI scope, so the main DbContext still has
+                // the old LastBackupAt cached. Force the fresh timestamp to prevent
+                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
                 var settings = await _settingsService.GetSettingsAsync();
+                settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }
             else
@@ -940,9 +1007,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
                 StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-                
-                // Refresh backup status to show next backup time
+
+                // Refresh backup status to show next backup time.
+                // The backup ran on a separate DI scope, so the main DbContext still has
+                // the old LastBackupAt cached. Force the fresh timestamp to prevent
+                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
                 var settings = await _settingsService.GetSettingsAsync();
+                settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }
             else
@@ -1079,7 +1150,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             UpdateBackupCountdownText();
             
             // Check if backup is now due
-            if (_nextBackupTime.HasValue && _nextBackupTime.Value <= DateTimeOffset.UtcNow)
+            if (_nextBackupTime.HasValue && _nextBackupTime.Value <= DateTimeOffset.UtcNow && !_isBackupInProgress)
             {
                 _ = ExecuteBackupIfDueAsync();
             }
@@ -1249,8 +1320,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             DatasetImages.Clear();
 
-            // Reset to Training tab when opening a dataset
-            SelectedSubTab = VersionSubTab.Training;
+            // Reset to Training Data tab when opening a dataset
+            SelectedSubTab = VersionSubTab.TrainingData;
 
             // Populate available versions and default to the latest on fresh open
             AvailableVersions.Clear();
@@ -1278,12 +1349,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _datasetStorageService.CreateDirectory(mediaFolderPath);
 
             // Initialize sub-tab ViewModels with the current version folder
+            // (kept for backward compatibility, but Training Runs now manages these per-run)
             EpochsTab.Initialize(dataset.CurrentVersionFolderPath);
             NotesTab.Initialize(dataset.CurrentVersionFolderPath);
             PresentationTab.Initialize(dataset.CurrentVersionFolderPath);
 
             // Ensure sub-folders exist (Epochs, Notes, Presentation)
             _datasetStorageService.EnsureVersionSubfolders(dataset.CurrentVersionFolderPath);
+
+            // Handle legacy migration and load training runs
+            LoadTrainingRuns(dataset);
 
             // Load media files using the shared MediaFileExtensions utility
             var allFiles = _datasetStorageService.EnumerateFiles(mediaFolderPath).ToList();
@@ -2257,13 +2332,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             return;
         }
 
-        if (DatasetImages.Count == 0)
-        {
-            StatusMessage = "No files in dataset to export.";
-            _activityLog?.LogWarning("Export", "No files to export");
-            return;
-        }
-
         // Query AI Toolkit instances from the database via UnitOfWork
         IReadOnlyList<InstallerPackage>? aiToolkitInstances = null;
         try
@@ -2284,85 +2352,172 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             Serilog.Log.Debug(ex, "Failed to query AI Toolkit instances for export dialog");
         }
 
-        var result = await DialogService.ShowExportDialogAsync(ActiveDataset.Name, DatasetImages, aiToolkitInstances);
-        if (!result.Confirmed || result.FilesToExport.Count == 0) return;
+        var result = await DialogService.ShowUnifiedExportDialogAsync(
+            ActiveDataset.Name,
+            ActiveDataset.CurrentVersion,
+            DatasetImages,
+            TrainingRuns,
+            aiToolkitInstances);
 
-        string? destinationPath;
-        if (result.ExportType == ExportType.AIToolkit)
-        {
-            if (string.IsNullOrWhiteSpace(result.AIToolkitInstallationPath))
-            {
-                StatusMessage = "No AI Toolkit instance selected.";
-                return;
-            }
-
-            // Use the user-specified folder name, falling back to the dataset name
-            var folderName = !string.IsNullOrWhiteSpace(result.AIToolkitFolderName)
-                ? result.AIToolkitFolderName.Trim()
-                : ActiveDataset.Name;
-
-            var datasetsDir = ExportDatasetDialogViewModel.ResolveAIToolkitDatasetsPath(
-                result.AIToolkitInstallationPath);
-            destinationPath = Path.Combine(datasetsDir, folderName);
-
-            if (Directory.Exists(destinationPath))
-            {
-                var existingFiles = Directory.GetFiles(destinationPath);
-                if (existingFiles.Length > 0 && result.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
-                {
-                    Directory.Delete(destinationPath, recursive: true);
-                    Directory.CreateDirectory(destinationPath);
-                }
-                // Merge mode: just proceed — ExportAsSingleFiles uses overwrite:true
-            }
-            else
-            {
-                Directory.CreateDirectory(destinationPath);
-            }
-        }
-        else if (result.ExportType == ExportType.Zip)
-        {
-            var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
-            var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
-            destinationPath = await DialogService.ShowSaveFileDialogAsync("Export Dataset as ZIP", defaultFileName, "*.zip");
-        }
-        else
-        {
-            destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
-        }
-
-        if (string.IsNullOrEmpty(destinationPath)) return;
-
-        _activityLog?.LogInfo("Export", $"Exporting '{ActiveDataset.Name}' ({result.FilesToExport.Count} files)");
+        if (!result.Confirmed) return;
 
         IsLoading = true;
         try
         {
-            var exportItems = result.FilesToExport
-                .Select(file => new DatasetExportItem(
-                    file.ImagePath,
-                    file.FullFileName,
-                    file.CaptionFilePath,
-                    Path.GetFileName(file.CaptionFilePath)))
-                .ToList();
+            var totalExported = 0;
 
-            var exportedCount = result.ExportType == ExportType.Zip
-                ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
-                : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
-
-            if (result.ExportType == ExportType.AIToolkit)
+            // ── Dataset export ──
+            if (result.DatasetResult is { } dsResult && dsResult.FilesToExport.Count > 0)
             {
-                StatusMessage = $"Exported {exportedCount} files to AI Toolkit '{result.AIToolkitInstanceName}'.";
-                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}' to AI Toolkit '{result.AIToolkitInstanceName}'");
-            }
-            else
-            {
-                StatusMessage = $"Exported {exportedCount} files successfully.";
-                _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+                string? destinationPath;
+                if (dsResult.ExportType == ExportType.AIToolkit)
+                {
+                    if (string.IsNullOrWhiteSpace(dsResult.AIToolkitInstallationPath))
+                    {
+                        StatusMessage = "No AI Toolkit instance selected.";
+                        return;
+                    }
+
+                    var folderName = !string.IsNullOrWhiteSpace(dsResult.AIToolkitFolderName)
+                        ? dsResult.AIToolkitFolderName.Trim()
+                        : ActiveDataset.Name;
+
+                    var datasetsDir = ExportDatasetDialogViewModel.ResolveAIToolkitDatasetsPath(
+                        dsResult.AIToolkitInstallationPath);
+                    destinationPath = Path.Combine(datasetsDir, folderName);
+
+                    if (Directory.Exists(destinationPath))
+                    {
+                        var existingFiles = Directory.GetFiles(destinationPath);
+                        if (existingFiles.Length > 0 && dsResult.AIToolkitConflictMode == AIToolkitConflictMode.Overwrite)
+                        {
+                            Directory.Delete(destinationPath, recursive: true);
+                            Directory.CreateDirectory(destinationPath);
+                        }
+                    }
+                    else
+                    {
+                        Directory.CreateDirectory(destinationPath);
+                    }
+                }
+                else if (dsResult.ExportType == ExportType.Zip)
+                {
+                    var dateStr = DateTime.Today.ToString("yyyy-MM-dd");
+                    var defaultFileName = $"{ActiveDataset.Name}_V{ActiveDataset.CurrentVersion}-{dateStr}.zip";
+                    destinationPath = await DialogService.ShowSaveFileDialogAsync("Export Dataset as ZIP", defaultFileName, "*.zip");
+                }
+                else
+                {
+                    destinationPath = await DialogService.ShowOpenFolderDialogAsync("Select Export Destination Folder");
+                }
+
+                if (!string.IsNullOrEmpty(destinationPath))
+                {
+                    _activityLog?.LogInfo("Export", $"Exporting '{ActiveDataset.Name}' ({dsResult.FilesToExport.Count} files)");
+
+                    var exportItems = dsResult.FilesToExport
+                        .Select(file => new DatasetExportItem(
+                            file.ImagePath,
+                            file.FullFileName,
+                            file.CaptionFilePath,
+                            Path.GetFileName(file.CaptionFilePath)))
+                        .ToList();
+
+                    var exportedCount = dsResult.ExportType == ExportType.Zip
+                        ? _datasetStorageService.ExportAsZip(exportItems, destinationPath)
+                        : _datasetStorageService.ExportAsSingleFiles(exportItems, destinationPath);
+
+                    totalExported += exportedCount;
+
+                    if (dsResult.ExportType == ExportType.AIToolkit)
+                    {
+                        _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}' to AI Toolkit '{dsResult.AIToolkitInstanceName}'");
+                    }
+                    else
+                    {
+                        _activityLog?.LogSuccess("Export", $"Exported {exportedCount} files from '{ActiveDataset.Name}'");
+                    }
+
+                    OpenFolderInExplorer(destinationPath, dsResult.ExportType == ExportType.Zip);
+                }
             }
 
-            // Open the export location in Explorer
-            OpenFolderInExplorer(destinationPath, result.ExportType == ExportType.Zip);
+            // ── Training runs export ──
+            if (result.TrainingRunResults.Count > 0)
+            {
+                var runFolder = await DialogService.ShowOpenFolderDialogAsync("Select Training Runs Export Folder");
+                if (!string.IsNullOrEmpty(runFolder))
+                {
+                    foreach (var entry in result.TrainingRunResults)
+                    {
+                        var exportRoot = Path.Combine(runFolder, entry.Source.Name);
+                        Directory.CreateDirectory(exportRoot);
+
+                        if (entry.EpochPaths.Count > 0)
+                        {
+                            var epochsDir = Path.Combine(exportRoot, "Epochs");
+                            Directory.CreateDirectory(epochsDir);
+                            foreach (var epochPath in entry.EpochPaths)
+                            {
+                                if (!File.Exists(epochPath)) continue;
+                                File.Copy(epochPath, Path.Combine(epochsDir, Path.GetFileName(epochPath)), overwrite: true);
+                                totalExported++;
+                            }
+                        }
+
+                        if (entry.ImagePaths.Count > 0)
+                        {
+                            var imagesDir = Path.Combine(exportRoot, "Images");
+                            Directory.CreateDirectory(imagesDir);
+                            foreach (var imagePath in entry.ImagePaths)
+                            {
+                                if (!File.Exists(imagePath)) continue;
+                                var destPath = Path.Combine(imagesDir, Path.GetFileName(imagePath));
+
+                                // Read companion .txt caption
+                                var captionPath = Path.ChangeExtension(imagePath, ".txt");
+                                var captionText = File.Exists(captionPath) ? await File.ReadAllTextAsync(captionPath) : null;
+
+                                if (entry.BakeMetadata && !string.IsNullOrEmpty(captionText))
+                                {
+                                    // Format caption as A1111-style parameters so Civitai and other tools can parse it
+                                    var formatted = PngMetadataWriter.FormatAsA1111Parameters(captionText, imagePath);
+                                    var metadata = new Dictionary<string, string> { ["parameters"] = formatted };
+                                    PngMetadataWriter.CopyWithMetadata(imagePath, destPath, metadata);
+                                }
+                                else
+                                {
+                                    File.Copy(imagePath, destPath, overwrite: true);
+                                }
+
+                                totalExported++;
+
+                                // Always copy companion .txt if it exists
+                                if (File.Exists(captionPath))
+                                {
+                                    File.Copy(captionPath, Path.Combine(imagesDir, Path.GetFileName(captionPath)), overwrite: true);
+                                    totalExported++;
+                                }
+                            }
+                        }
+
+                        if (entry.IncludeModelCard)
+                        {
+                            var modelCard = BuildModelCard(entry.Source);
+                            await File.WriteAllTextAsync(Path.Combine(exportRoot, "README.md"), modelCard);
+                            totalExported++;
+                        }
+                    }
+
+                    var runNames = string.Join(", ", result.TrainingRunResults.Select(r => r.Source.Name));
+                    _activityLog?.LogSuccess("Export", $"Exported {result.TrainingRunResults.Count} training run(s): {runNames}");
+
+                    // TODO: Linux Implementation for opening export folder
+                    OpenFolderInExplorer(runFolder, isFile: false);
+                }
+            }
+
+            StatusMessage = $"Exported {totalExported} item{(totalExported == 1 ? "" : "s")} successfully.";
         }
         catch (Exception ex)
         {
@@ -2774,6 +2929,320 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             StatusMessage = $"Error opening captioning tool: {ex.Message}";
             _activityLog?.LogError("Captioning", "Failed to open captioning tool", ex);
         }
+    }
+
+    #endregion
+
+    #region Training Run Methods
+
+    /// <summary>
+    /// Loads training runs for the current dataset version.
+    /// Handles legacy migration if needed.
+    /// </summary>
+    private void LoadTrainingRuns(DatasetCardViewModel dataset)
+    {
+        TrainingRuns.Clear();
+        SelectedTrainingRun = null;
+        IsViewingTrainingRunDetail = false;
+
+        var versionPath = dataset.CurrentVersionFolderPath;
+
+        // Check for legacy layout and migrate if needed
+        if (TrainingRunMigrationUtility.IsLegacyLayout(versionPath))
+        {
+            var migrated = TrainingRunMigrationUtility.MigrateLegacyLayout(versionPath);
+            if (migrated is not null)
+            {
+                if (!dataset.TrainingRuns.ContainsKey(dataset.CurrentVersion))
+                {
+                    dataset.TrainingRuns[dataset.CurrentVersion] = [];
+                }
+                dataset.TrainingRuns[dataset.CurrentVersion].Add(migrated);
+                dataset.SaveMetadata();
+            }
+        }
+
+        // Load runs from metadata
+        var runs = dataset.TrainingRuns.GetValueOrDefault(dataset.CurrentVersion) ?? [];
+
+        // Also discover runs from filesystem that may not be in metadata
+        var diskRunNames = TrainingRunMigrationUtility.GetTrainingRunNames(versionPath);
+        foreach (var diskRunName in diskRunNames)
+        {
+            if (!runs.Any(r => string.Equals(r.Name, diskRunName, StringComparison.OrdinalIgnoreCase)))
+            {
+                runs.Add(new TrainingRunInfo
+                {
+                    Name = diskRunName,
+                    CreatedAt = DateTimeOffset.Now,
+                    Description = "Discovered from filesystem"
+                });
+            }
+        }
+
+        foreach (var runInfo in runs)
+        {
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runInfo.Name);
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            {
+                DialogService = DialogService,
+                OnMetadataChanged = () => dataset.SaveMetadata()
+            };
+            TrainingRuns.Add(card);
+        }
+
+        OnPropertyChanged(nameof(TrainingRuns));
+    }
+
+    /// <summary>
+    /// Creates a new training run for the current dataset version.
+    /// </summary>
+    private async Task AddTrainingRunAsync()
+    {
+        if (DialogService is null || ActiveDataset is null) return;
+
+        var runName = await DialogService.ShowInputAsync(
+            "New Training Run",
+            "Enter a name for the training run (used as folder name):",
+            "SDXL_MyLoRA");
+
+        if (string.IsNullOrWhiteSpace(runName)) return;
+
+        runName = runName.Trim();
+
+        // Validate the name (filesystem-safe)
+        if (runName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            await DialogService.ShowMessageAsync("Invalid Name", "The run name contains characters that are not allowed in folder names.");
+            return;
+        }
+
+        // Check for duplicates
+        if (TrainingRuns.Any(r => string.Equals(r.Name, runName, StringComparison.OrdinalIgnoreCase)))
+        {
+            await DialogService.ShowMessageAsync("Duplicate Name", $"A training run named '{runName}' already exists.");
+            return;
+        }
+
+        try
+        {
+            var versionPath = ActiveDataset.CurrentVersionFolderPath;
+            TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, runName);
+
+            var runInfo = new TrainingRunInfo
+            {
+                Name = runName,
+                CreatedAt = DateTimeOffset.Now
+            };
+
+            // Save to metadata
+            if (!ActiveDataset.TrainingRuns.ContainsKey(ActiveDataset.CurrentVersion))
+            {
+                ActiveDataset.TrainingRuns[ActiveDataset.CurrentVersion] = [];
+            }
+            ActiveDataset.TrainingRuns[ActiveDataset.CurrentVersion].Add(runInfo);
+            ActiveDataset.SaveMetadata();
+
+            // Add to UI
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runName);
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            {
+                DialogService = DialogService,
+                OnMetadataChanged = () => ActiveDataset?.SaveMetadata()
+            };
+            TrainingRuns.Add(card);
+
+            StatusMessage = $"Created training run '{runName}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error creating training run: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Opens the detail view for a training run.
+    /// </summary>
+    private void OpenTrainingRun(TrainingRunCardViewModel? run)
+    {
+        if (run is null) return;
+
+        SelectedTrainingRun = run;
+        IsViewingTrainingRunDetail = true;
+
+        // Initialize sub-tab ViewModels for this specific run
+        run.InitializeSubTabs();
+    }
+
+    /// <summary>
+    /// Returns from the training run detail view to the run list.
+    /// </summary>
+    private void BackToTrainingRuns()
+    {
+        IsViewingTrainingRunDetail = false;
+        SelectedTrainingRun = null;
+    }
+
+    /// <summary>
+    /// Deletes a training run.
+    /// </summary>
+    private async Task DeleteTrainingRunAsync(TrainingRunCardViewModel? run)
+    {
+        if (run is null || DialogService is null || ActiveDataset is null) return;
+
+        var confirm = await DialogService.ShowConfirmAsync(
+            "Delete Training Run",
+            $"Are you sure you want to delete training run '{run.Name}'? This will permanently delete all epochs, notes, and presentation files in this run.");
+
+        if (!confirm) return;
+
+        try
+        {
+            // Delete the folder
+            if (Directory.Exists(run.RunFolderPath))
+            {
+                Directory.Delete(run.RunFolderPath, recursive: true);
+            }
+
+            // Remove from metadata
+            var runs = ActiveDataset.TrainingRuns.GetValueOrDefault(ActiveDataset.CurrentVersion);
+            runs?.RemoveAll(r => string.Equals(r.Name, run.Name, StringComparison.OrdinalIgnoreCase));
+            ActiveDataset.SaveMetadata();
+
+            // Remove from UI
+            TrainingRuns.Remove(run);
+
+            if (SelectedTrainingRun == run)
+            {
+                BackToTrainingRuns();
+            }
+
+            StatusMessage = $"Deleted training run '{run.Name}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error deleting training run: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Renames a training run.
+    /// </summary>
+    private async Task RenameTrainingRunAsync(TrainingRunCardViewModel? run)
+    {
+        if (run is null || DialogService is null || ActiveDataset is null) return;
+
+        var newName = await DialogService.ShowInputAsync(
+            "Rename Training Run",
+            "Enter a new name for the training run:",
+            run.Name);
+
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        newName = newName.Trim();
+
+        if (string.Equals(newName, run.Name, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            await DialogService.ShowMessageAsync("Invalid Name", "The run name contains characters that are not allowed in folder names.");
+            return;
+        }
+
+        if (TrainingRuns.Any(r => r != run && string.Equals(r.Name, newName, StringComparison.OrdinalIgnoreCase)))
+        {
+            await DialogService.ShowMessageAsync("Duplicate Name", $"A training run named '{newName}' already exists.");
+            return;
+        }
+
+        try
+        {
+            var versionPath = ActiveDataset.CurrentVersionFolderPath;
+            var oldPath = run.RunFolderPath;
+            var newPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, newName);
+
+            // Rename folder
+            Directory.Move(oldPath, newPath);
+
+            // Update metadata
+            run.RunInfo.Name = newName;
+            ActiveDataset.SaveMetadata();
+
+            // Reload to update all paths
+            LoadTrainingRuns(ActiveDataset);
+
+            StatusMessage = $"Renamed training run to '{newName}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error renaming training run: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Builds a human-readable Markdown model card from a training run's metadata.
+    /// </summary>
+    private static string BuildModelCard(TrainingRunCardViewModel run)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# {run.Name}");
+        sb.AppendLine();
+
+        // Model Information
+        sb.AppendLine("## Model Information");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(run.ModelDisplayName))
+            sb.AppendLine($"- **Model Display Name:** {run.ModelDisplayName}");
+        if (!string.IsNullOrWhiteSpace(run.SelectedBaseModel))
+            sb.AppendLine($"- **Base Model:** {run.SelectedBaseModel}");
+        if (run.SelectedCategory != CivitaiCategory.Unknown)
+            sb.AppendLine($"- **Category:** {run.SelectedCategory}");
+        if (!string.IsNullOrWhiteSpace(run.VersionName))
+            sb.AppendLine($"- **Version:** {run.VersionName}");
+        sb.AppendLine();
+
+        // Trigger Words
+        if (run.RunInfo.TriggerWords.Count > 0)
+        {
+            sb.AppendLine("## Trigger Words");
+            sb.AppendLine();
+            foreach (var word in run.RunInfo.TriggerWords)
+                sb.AppendLine($"- {word}");
+            sb.AppendLine();
+        }
+
+        // Tags
+        if (run.Tags.Count > 0)
+        {
+            sb.AppendLine("## Tags");
+            sb.AppendLine();
+            foreach (var tag in run.Tags)
+                sb.AppendLine($"- {tag}");
+            sb.AppendLine();
+        }
+
+        // Training Parameters
+        if (run.TrainingEpochs.HasValue || run.TrainingSteps.HasValue)
+        {
+            sb.AppendLine("## Training Parameters");
+            sb.AppendLine();
+            if (run.TrainingEpochs.HasValue)
+                sb.AppendLine($"- **Epochs:** {run.TrainingEpochs.Value}");
+            if (run.TrainingSteps.HasValue)
+                sb.AppendLine($"- **Steps:** {run.TrainingSteps.Value}");
+            sb.AppendLine();
+        }
+
+        // Description
+        if (!string.IsNullOrWhiteSpace(run.UploadDescription))
+        {
+            sb.AppendLine("## Description");
+            sb.AppendLine();
+            sb.AppendLine(run.UploadDescription);
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
     }
 
     #endregion

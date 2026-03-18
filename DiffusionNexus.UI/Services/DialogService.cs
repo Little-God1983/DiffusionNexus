@@ -202,6 +202,20 @@ public class DialogService : IDialogService
         return dialog.Result ?? ExportDatasetResult.Cancelled();
     }
 
+    public async Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+        string datasetName,
+        int datasetVersion,
+        IEnumerable<DatasetImageViewModel> mediaFiles,
+        IEnumerable<TrainingRunCardViewModel> trainingRuns,
+        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
+    {
+        var dialog = new UnifiedExportDialog()
+            .WithData(datasetName, datasetVersion, mediaFiles, trainingRuns, aiToolkitInstances);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? UnifiedExportResult.Cancelled();
+    }
+
     public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)
     {
         var dialog = new CreateDatasetDialog()
@@ -517,4 +531,5 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
-}
+
+    }
