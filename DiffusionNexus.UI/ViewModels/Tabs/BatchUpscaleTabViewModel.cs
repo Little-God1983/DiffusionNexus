@@ -54,6 +54,7 @@ public partial class UpscaleImageItemViewModel : ObservableObject
 {
     private string _fileName = string.Empty;
     private string _originalPath = string.Empty;
+    private string _upscaledPath = string.Empty;
     private Bitmap? _originalThumbnail;
     private Bitmap? _upscaledThumbnail;
     private bool _isProcessed;
@@ -76,6 +77,15 @@ public partial class UpscaleImageItemViewModel : ObservableObject
     {
         get => _originalPath;
         set => SetProperty(ref _originalPath, value);
+    }
+
+    /// <summary>
+    /// Full path to the upscaled image (populated after processing).
+    /// </summary>
+    public string UpscaledPath
+    {
+        get => _upscaledPath;
+        set => SetProperty(ref _upscaledPath, value);
     }
 
     /// <summary>
@@ -674,6 +684,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     // 6. Save based on save mode
                     var outputPath = GetOutputPath(item.OriginalPath, newVersionPath);
                     await File.WriteAllBytesAsync(outputPath, imageBytes, ct);
+
+                    item.UpscaledPath = outputPath;
 
                     // Copy caption files when creating a new version
                     if (SaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)

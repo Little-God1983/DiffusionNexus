@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.BatchUpscaleTabView"
              x:DataType="vm:BatchUpscaleTabViewModel">
@@ -157,46 +158,29 @@
       </ScrollViewer>
     </Border>
 
-    <!-- Right Panel: Before / After Compare + Image List -->
+    <!-- Right Panel: Overlay Compare + Image Gallery -->
     <Grid Grid.Column="1" RowDefinitions="*,Auto">
 
-      <!-- Before / After Compare Area -->
-      <Grid Grid.Row="0" ColumnDefinitions="*,*" Margin="16">
-        <Border Grid.Column="0" Background="#1A1A1A" CornerRadius="8" Margin="0,0,8,0" Padding="8">
-          <Grid RowDefinitions="Auto,*">
-            <TextBlock Grid.Row="0" Text="Before / After Compare" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <Grid Grid.Row="1" ColumnDefinitions="*,*">
-              <Border Grid.Column="0" Background="#222" CornerRadius="4" Margin="0,0,4,0">
-                <Panel>
-                  <Image Source="{Binding SelectedCompareItem.OriginalThumbnail}"
-                         Stretch="Uniform"
-                         IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                              IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNull}}">
-                    <TextBlock Text="&#x1F5BC;" FontSize="48" Opacity="0.3" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Original" Opacity="0.4" HorizontalAlignment="Center"/>
-                  </StackPanel>
-                </Panel>
-              </Border>
-              <Border Grid.Column="1" Background="#222" CornerRadius="4" Margin="4,0,0,0">
-                <Panel>
-                  <Image Source="{Binding SelectedCompareItem.UpscaledThumbnail}"
-                         Stretch="Uniform"
-                         IsVisible="{Binding SelectedCompareItem.IsProcessed, FallbackValue=False}"/>
-                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                              IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNull}}">
-                    <TextBlock Text="&#x1F5BC;" FontSize="48" Opacity="0.3" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Upscaled" Opacity="0.4" HorizontalAlignment="Center"/>
-                  </StackPanel>
-                </Panel>
-              </Border>
-            </Grid>
-          </Grid>
-        </Border>
-      </Grid>
+      <!-- Before / After Overlay Compare using ImageCompareControl -->
+      <Panel Grid.Row="0">
+        <controls:ImageCompareControl
+            LeftImagePath="{Binding SelectedCompareItem.OriginalPath}"
+            RightImagePath="{Binding SelectedCompareItem.UpscaledPath}"
+            SliderValue="50"
+            IsVisible="{Binding SelectedCompareItem.IsProcessed, FallbackValue=False}"/>
 
-      <!-- Image List -->
-      <Border Grid.Row="1" Background="#1E1E1E" Padding="8" MaxHeight="200" BorderBrush="#333" BorderThickness="0,1,0,0">
+        <!-- Placeholder when no processed image is selected -->
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                    IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNull}}">
+          <TextBlock Text="&#x1F5BC;" FontSize="64" Opacity="0.2" HorizontalAlignment="Center"/>
+          <TextBlock Text="Select a processed image to compare" Opacity="0.3"
+                     HorizontalAlignment="Center" FontSize="14" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Panel>
+
+      <!-- Image Gallery -->
+      <Border Grid.Row="1" Background="#1E1E1E" Padding="8" MaxHeight="200"
+              BorderBrush="#333" BorderThickness="0,1,0,0">
         <Grid RowDefinitions="Auto,*">
           <TextBlock Grid.Row="0" Text="Images" FontWeight="SemiBold" Margin="8,0,0,8"/>
           <ListBox Grid.Row="1"
@@ -210,11 +194,27 @@
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <Border Background="#333" CornerRadius="4" Padding="4" Margin="2" Width="80" Height="80">
+                <Border Background="#333" CornerRadius="4" Padding="4" Margin="2"
+                        Width="80" Height="80"
+                        BorderThickness="2"
+                        Classes.processing="{Binding IsProcessing}"
+                        Classes.processed="{Binding IsProcessed}">
+                  <Border.Styles>
+                    <Style Selector="Border">
+                      <Setter Property="BorderBrush" Value="Transparent"/>
+                    </Style>
+                    <Style Selector="Border.processing">
+                      <Setter Property="BorderBrush" Value="#FF9800"/>
+                    </Style>
+                    <Style Selector="Border.processed">
+                      <Setter Property="BorderBrush" Value="#4CAF50"/>
+                    </Style>
+                  </Border.Styles>
                   <Grid RowDefinitions="*,Auto">
                     <Image Grid.Row="0" Source="{Binding OriginalThumbnail}" Stretch="Uniform"/>
                     <TextBlock Grid.Row="1" Text="{Binding FileName}" FontSize="9"
-                               TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Opacity="0.7"/>
+                               TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"
+                               Opacity="0.7"/>
                   </Grid>
                 </Border>
               </DataTemplate>
@@ -222,12 +222,6 @@
           </ListBox>
         </Grid>
       </Border>
-
-      <!-- Hint -->
-      <TextBlock Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center"
-                 Text="Select an image from the list to compare before and after upscaling."
-                 Opacity="0.4" FontSize="11" Margin="0,0,0,4"
-                 IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNull}}"/>
     </Grid>
 
   </Grid>
