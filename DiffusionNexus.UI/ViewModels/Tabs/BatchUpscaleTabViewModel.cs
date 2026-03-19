@@ -4,7 +4,9 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using Serilog;
 
@@ -38,6 +40,19 @@ public enum UpscalePromptMode
     /// Uses the Z-Image-Turbo-Upscale workflow.
     /// </summary>
     ManualPrompt,
+
+    /// <summary>
+    /// Reads the positive prompt from each image's caption sidecar file (.txt / .caption).
+    /// Uses the Z-Image-Turbo-Upscale workflow.
+    /// </summary>
+    FromCaptions,
+
+    /// <summary>
+    /// Extracts the positive prompt from each image's embedded PNG metadata
+    /// (ComfyUI / A1111 / Forge generation parameters).
+    /// Uses the Z-Image-Turbo-Upscale workflow.
+    /// </summary>
+    FromMetadata,
 
     /// <summary>
     /// A vision model (Qwen3-VL) analyses each image and generates the prompt automatically.
@@ -397,6 +412,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     public string PromptModeDescription => PromptMode switch
     {
         UpscalePromptMode.ManualPrompt => "Your prompt is sent to every image. Good when all images share a theme.",
+        UpscalePromptMode.FromCaptions => "Uses each image's caption file (.txt) as the positive prompt.",
+        UpscalePromptMode.FromMetadata => "Extracts the positive prompt from each image's embedded generation metadata.",
         UpscalePromptMode.VisionAutoPrompt => "A vision model (Qwen3-VL) analyses each image and writes the prompt for you.",
         _ => string.Empty
     };
@@ -500,6 +517,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             if (SetProperty(ref _datasetImageCount, value))
             {
                 OnPropertyChanged(nameof(HasDatasetStats));
+                OnPropertyChanged(nameof(IsSelectedVersionEmpty));
+                StartUpscaleCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -508,6 +527,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Whether dataset statistics are available.
     /// </summary>
     public bool HasDatasetStats => DatasetImageCount > 0;
+
+    /// <summary>
+    /// Whether the selected version exists but contains no images.
+    /// </summary>
+    public bool IsSelectedVersionEmpty => SelectedDataset is not null && SelectedDatasetVersion.HasValue && DatasetImageCount == 0;
 
     #endregion
 
@@ -582,7 +606,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // Resolve the workflow file
+        // Resolve the workflow file.
+        // Only VisionAutoPrompt uses the vision workflow; all other modes set the
+        // prompt text explicitly on node 17, so they use the manual workflow.
         var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
         var workflowRelPath = isVision ? VisionUpscaleWorkflowPath : ManualUpscaleWorkflowPath;
         var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, workflowRelPath);
@@ -604,6 +630,21 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             CurrentProcessingStatus = "No images found in the selected version.";
             return;
+        }
+
+        // Warn when overwriting originals — this is destructive and cannot be undone.
+        if (SaveMode == UpscaleSaveMode.OverwriteInPlace && DialogService is not null)
+        {
+            var confirmed = await DialogService.ShowConfirmAsync(
+                "Overwrite Original Images?",
+                $"This will permanently replace {imageFiles.Count} original image(s) with their upscaled versions. " +
+                "This action cannot be undone.\n\nDo you want to continue?");
+
+            if (!confirmed)
+            {
+                CurrentProcessingStatus = "Upscale cancelled by user.";
+                return;
+            }
         }
 
         // Prepare output folder for NewVersion save mode
@@ -666,15 +707,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 // 1. Upload image to ComfyUI
                 var uploadedFilename = await _comfyUiService.UploadImageAsync(item.OriginalPath, ct);
 
-                // 2. Build node modifiers
-                var seed = (long)(_random.NextDouble() * long.MaxValue);
-                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, isVision);
+                // 2. Resolve the positive prompt for this image
+                var imagePositivePrompt = ResolvePositivePrompt(item.OriginalPath);
 
-                // 3. Queue the workflow
+                // 3. Build node modifiers
+                var seed = (long)(_random.NextDouble() * long.MaxValue);
+                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, isVision, imagePositivePrompt);
+
+                // 4. Queue the workflow
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Queuing workflow for {item.FileName}…";
                 var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath, nodeModifiers, ct);
 
-                // 4. Wait for completion with progress
+                // 5. Wait for completion with progress
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] {FunProgressMessages[_random.Next(FunProgressMessages.Length)]}";
                 var progress = new Progress<string>(msg =>
                 {
@@ -682,7 +726,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 });
                 await _comfyUiService.WaitForCompletionAsync(promptId, progress, ct);
 
-                // 5. Download result
+                // 6. Download result
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Downloading result…";
                 var result = await _comfyUiService.GetResultAsync(promptId, ct);
 
@@ -690,7 +734,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0], ct);
 
-                    // 6. Save based on save mode
+                    // 7. Save based on save mode
                     var outputPath = GetOutputPath(item.OriginalPath, newVersionPath);
 
                     // Preserve the original in a temp dir before overwriting so
@@ -760,7 +804,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         }
     }
 
-    private Dictionary<string, Action<JsonNode>> BuildNodeModifiers(string uploadedFilename, long seed, bool isVision)
+    private Dictionary<string, Action<JsonNode>> BuildNodeModifiers(
+        string uploadedFilename, long seed, bool isVision, string positivePrompt)
     {
         var modifiers = new Dictionary<string, Action<JsonNode>>
         {
@@ -784,13 +829,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             }
         };
 
-        // In manual mode, set the user's positive prompt on node 17.
         // In vision mode, node 17 is wired to the Qwen3_VQA output chain, so we leave it alone.
+        // All other modes set the prompt text explicitly on node 17.
         if (!isVision)
         {
             modifiers[PositivePromptNodeId] = node =>
             {
-                node["inputs"]!["text"] = _positivePrompt;
+                node["inputs"]!["text"] = positivePrompt;
             };
         }
 
@@ -877,6 +922,102 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _compareOriginalsTempDir = null;
     }
 
+    /// <summary>
+    /// Resolves the positive prompt for a single image based on the current <see cref="PromptMode"/>.
+    /// </summary>
+    private string ResolvePositivePrompt(string imagePath)
+    {
+        return PromptMode switch
+        {
+            UpscalePromptMode.ManualPrompt => _positivePrompt,
+            UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _positivePrompt,
+            UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _positivePrompt,
+            _ => string.Empty // VisionAutoPrompt — prompt is generated by the vision model node
+        };
+    }
+
+    /// <summary>
+    /// Reads the first non-empty caption sidecar (.txt, .caption) that matches the image base name.
+    /// </summary>
+    private static string? ReadCaptionForImage(string imagePath)
+    {
+        var dir = Path.GetDirectoryName(imagePath);
+        if (dir is null) return null;
+
+        var baseName = Path.GetFileNameWithoutExtension(imagePath);
+        foreach (var ext in SupportedMediaTypes.CaptionExtensions)
+        {
+            var captionPath = Path.Combine(dir, baseName + ext);
+            if (!File.Exists(captionPath)) continue;
+
+            try
+            {
+                var text = File.ReadAllText(captionPath).Trim();
+                if (!string.IsNullOrEmpty(text))
+                    return text;
+            }
+            catch (IOException ex)
+            {
+                Logger.Warning(ex, "Failed to read caption file {Path}", captionPath);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts the positive prompt from embedded PNG generation metadata.
+    /// </summary>
+    private static string? ReadMetadataPrompt(string imagePath)
+    {
+        try
+        {
+            var parser = new ImageMetadataParser();
+            var data = parser.Parse(imagePath);
+            return data.HasData && !string.IsNullOrWhiteSpace(data.PositivePrompt)
+                ? data.PositivePrompt
+                : null;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to read metadata prompt from {Path}", imagePath);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Scans the first few images in a version folder and picks the best prompt mode:
+    /// captions > metadata > vision auto-prompt.
+    /// </summary>
+    private void DetectBestPromptMode(string versionPath)
+    {
+        var imageFiles = Directory.EnumerateFiles(versionPath)
+            .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
+            .Take(5)
+            .ToList();
+
+        if (imageFiles.Count == 0)
+            return;
+
+        // Check if any image has a caption file
+        var hasCaptions = imageFiles.Any(f => ReadCaptionForImage(f) is not null);
+        if (hasCaptions)
+        {
+            PromptMode = UpscalePromptMode.FromCaptions;
+            return;
+        }
+
+        // Check if any image has metadata with a positive prompt
+        var hasMetadata = imageFiles.Any(f => ReadMetadataPrompt(f) is not null);
+        if (hasMetadata)
+        {
+            PromptMode = UpscalePromptMode.FromMetadata;
+            return;
+        }
+
+        PromptMode = UpscalePromptMode.VisionAutoPrompt;
+    }
+
     private void SelectCompareItem(UpscaleImageItemViewModel? item)
     {
         if (SelectedCompareItem is not null)
@@ -912,6 +1053,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         DatasetImageCount = System.IO.Directory.EnumerateFiles(versionPath)
             .Count(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f));
+
+        if (DatasetImageCount > 0)
+        {
+            DetectBestPromptMode(versionPath);
+        }
     }
 
     private void OnRefreshDatasetsRequested(object? sender, RefreshDatasetsRequestedEventArgs e)
