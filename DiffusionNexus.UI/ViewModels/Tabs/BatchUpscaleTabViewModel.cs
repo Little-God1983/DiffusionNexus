@@ -153,6 +153,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private readonly IComfyUIWrapperService? _comfyUiService;
     private CancellationTokenSource? _cts;
     private bool _disposed;
+    private string? _compareOriginalsTempDir;
 
     // Workflow paths (relative to AppDomain.CurrentDomain.BaseDirectory)
     private const string ManualUpscaleWorkflowPath = "Assets/Workflows/Z-Image-Turbo-Upscale.json";
@@ -623,6 +624,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             Directory.CreateDirectory(newVersionPath);
         }
 
+        // Clean up any previous temp originals and prepare for OverwriteInPlace comparison
+        CleanupCompareOriginalsTempDir();
+        if (SaveMode == UpscaleSaveMode.OverwriteInPlace)
+        {
+            _compareOriginalsTempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "upscale-compare", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_compareOriginalsTempDir);
+        }
+
         // Build the item list for the UI
         UpscaleItems.Clear();
         foreach (var imgPath in imageFiles)
@@ -683,6 +692,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                     // 6. Save based on save mode
                     var outputPath = GetOutputPath(item.OriginalPath, newVersionPath);
+
+                    // Preserve the original in a temp dir before overwriting so
+                    // ImageCompareControl can still show a before/after comparison.
+                    if (SaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
+                    {
+                        var tempOriginal = Path.Combine(_compareOriginalsTempDir, item.FileName);
+                        File.Copy(item.OriginalPath, tempOriginal, overwrite: true);
+                        item.OriginalPath = tempOriginal;
+                    }
+
                     await File.WriteAllBytesAsync(outputPath, imageBytes, ct);
 
                     item.UpscaledPath = outputPath;
@@ -837,6 +856,27 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         CurrentProcessingStatus = "Cancelling…";
     }
 
+    /// <summary>
+    /// Deletes the temporary directory used to store originals for comparison in OverwriteInPlace mode.
+    /// </summary>
+    private void CleanupCompareOriginalsTempDir()
+    {
+        if (_compareOriginalsTempDir is null || !Directory.Exists(_compareOriginalsTempDir))
+            return;
+
+        try
+        {
+            Directory.Delete(_compareOriginalsTempDir, recursive: true);
+            Logger.Debug("Cleaned up compare-originals temp dir {Dir}", _compareOriginalsTempDir);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to clean up compare-originals temp dir {Dir}", _compareOriginalsTempDir);
+        }
+
+        _compareOriginalsTempDir = null;
+    }
+
     private void SelectCompareItem(UpscaleImageItemViewModel? item)
     {
         if (SelectedCompareItem is not null)
@@ -891,6 +931,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         _cts?.Cancel();
         _cts?.Dispose();
+        CleanupCompareOriginalsTempDir();
         _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
         GC.SuppressFinalize(this);
     }

@@ -58,22 +58,26 @@
             <TextBlock Text="Upscale Settings" FontWeight="Bold" FontSize="16"/>
             <TextBlock Text="{Binding DenoisingStrength, StringFormat='Denoising Strength (Change): {0:F2}'}"
                        Opacity="0.8"/>
-            <Grid ColumnDefinitions="*,Auto,Auto">
-              <Slider Grid.Column="0" Minimum="0" Maximum="1"
-                      Value="{Binding DenoisingStrength}"
-                      TickFrequency="0.05" IsSnapToTickEnabled="True"/>
-              <TextBlock Grid.Column="1" Text="Preserve Detail" Opacity="0.5" FontSize="10" Margin="4,0"/>
-              <TextBlock Grid.Column="2" Text="More Creative" Opacity="0.5" FontSize="10"/>
+            <Slider Minimum="0" Maximum="1"
+                    Value="{Binding DenoisingStrength}"
+                    TickFrequency="0.05" IsSnapToTickEnabled="True"/>
+            <Grid ColumnDefinitions="*,*">
+              <TextBlock Grid.Column="0" Text="Preserve Detail" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Left"/>
+              <TextBlock Grid.Column="1" Text="More Creative" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Right"/>
             </Grid>
 
             <TextBlock Text="{Binding UpscaleFactor, StringFormat='Upscale Factor: {0:F1}x'}"
                        Opacity="0.8" Margin="0,8,0,0"/>
-            <Grid ColumnDefinitions="*,Auto,Auto">
-              <Slider Grid.Column="0" Minimum="1.1" Maximum="4.0"
-                      Value="{Binding UpscaleFactor}"
-                      TickFrequency="0.1" IsSnapToTickEnabled="True"/>
-              <TextBlock Grid.Column="1" Text="1.1x" Opacity="0.5" FontSize="10" Margin="4,0"/>
-              <TextBlock Grid.Column="2" Text="4.0x" Opacity="0.5" FontSize="10"/>
+            <Slider Minimum="1.1" Maximum="4.0"
+                    Value="{Binding UpscaleFactor}"
+                    TickFrequency="0.1" IsSnapToTickEnabled="True"/>
+            <Grid ColumnDefinitions="*,*">
+              <TextBlock Grid.Column="0" Text="1.1x" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Left"/>
+              <TextBlock Grid.Column="1" Text="4.0x" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Right"/>
             </Grid>
           </StackPanel>
 
