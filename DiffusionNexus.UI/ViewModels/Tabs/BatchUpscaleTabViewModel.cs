@@ -62,6 +62,40 @@ public enum UpscalePromptMode
 }
 
 /// <summary>
+/// Extension methods for <see cref="UpscaleSaveMode"/>.
+/// </summary>
+public static class UpscaleSaveModeExtensions
+{
+    /// <summary>
+    /// Gets a user-friendly display name for the save mode.
+    /// </summary>
+    public static string GetDisplayName(this UpscaleSaveMode mode) => mode switch
+    {
+        UpscaleSaveMode.NewVersion => "New Version",
+        UpscaleSaveMode.OverwriteInPlace => "Overwrite In Place",
+        _ => mode.ToString()
+    };
+}
+
+/// <summary>
+/// Extension methods for <see cref="UpscalePromptMode"/>.
+/// </summary>
+public static class UpscalePromptModeExtensions
+{
+    /// <summary>
+    /// Gets a user-friendly display name for the prompt mode.
+    /// </summary>
+    public static string GetDisplayName(this UpscalePromptMode mode) => mode switch
+    {
+        UpscalePromptMode.ManualPrompt => "Manual Prompt",
+        UpscalePromptMode.FromCaptions => "From Captions",
+        UpscalePromptMode.FromMetadata => "From Metadata",
+        UpscalePromptMode.VisionAutoPrompt => "Vision Auto-Prompt",
+        _ => mode.ToString()
+    };
+}
+
+/// <summary>
 /// Represents a single image entry for the batch upscale queue,
 /// holding before/after state for comparison.
 /// </summary>
@@ -314,6 +348,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                 StartUpscaleCommand.NotifyCanExecuteChanged();
                 RefreshDatasetStats();
+                OnPropertyChanged(nameof(IsSelectedVersionEmpty));
             }
         }
     }
