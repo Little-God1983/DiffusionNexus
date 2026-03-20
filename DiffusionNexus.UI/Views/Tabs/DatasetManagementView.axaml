@@ -536,7 +536,7 @@
         <TabItem Header="Training Runs">
           <views:TrainingRunsTabView/>
         </TabItem>
-        
+
       </TabControl>
     </Grid>
   </Grid>

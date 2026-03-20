@@ -1,0 +1,249 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.Tabs.BatchUpscaleTabView"
+             x:DataType="vm:BatchUpscaleTabViewModel">
+
+  <Grid ColumnDefinitions="400,*">
+
+    <!-- Left Settings Panel -->
+    <Border Grid.Column="0" Background="#1E1E1E" Padding="16" BorderBrush="#333" BorderThickness="0,0,1,0">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="20">
+
+          <!-- Input Source -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="Input Source" FontWeight="Bold" FontSize="16"/>
+            <TextBlock Text="Select Dataset" Opacity="0.7" FontSize="12"/>
+            <Grid ColumnDefinitions="*,Auto,Auto">
+              <ComboBox Grid.Column="0"
+                        ItemsSource="{Binding AvailableDatasets}"
+                        SelectedItem="{Binding SelectedDataset}"
+                        PlaceholderText="Choose a dataset..."
+                        HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Name}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <ComboBox Grid.Column="1"
+                        ItemsSource="{Binding AvailableDatasetVersions}"
+                        SelectedItem="{Binding SelectedDatasetVersion}"
+                        MinWidth="60" Margin="8,0,0,0">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StringFormat='V{0}'}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Button Grid.Column="2"
+                      Content="&#x21BB;"
+                      Command="{Binding RefreshDatasetsCommand}"
+                      Margin="4,0,0,0"
+                      ToolTip.Tip="Refresh dataset list"
+                      Padding="8,6"/>
+            </Grid>
+            <TextBlock Text="{Binding DatasetImageCount, StringFormat='{}{0} images'}"
+                       IsVisible="{Binding HasDatasetStats}"
+                       Opacity="0.6" FontSize="12"/>
+            <TextBlock Text="No images in selected version – select a different one."
+                       IsVisible="{Binding IsSelectedVersionEmpty}"
+                       Foreground="#FF5722" FontSize="12"
+                       TextWrapping="Wrap"/>
+          </StackPanel>
+
+          <!-- Upscale Settings -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="Upscale Settings" FontWeight="Bold" FontSize="16"/>
+            <TextBlock Text="{Binding DenoisingStrength, StringFormat='Denoising Strength (Change): {0:F2}'}"
+                       Opacity="0.8"/>
+            <Slider Minimum="0" Maximum="1"
+                    Value="{Binding DenoisingStrength}"
+                    TickFrequency="0.05" IsSnapToTickEnabled="True"/>
+            <Grid ColumnDefinitions="*,*">
+              <TextBlock Grid.Column="0" Text="Preserve Detail" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Left"/>
+              <TextBlock Grid.Column="1" Text="More Creative" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Right"/>
+            </Grid>
+
+            <TextBlock Text="{Binding UpscaleFactor, StringFormat='Upscale Factor: {0:F1}x'}"
+                       Opacity="0.8" Margin="0,8,0,0"/>
+            <Slider Minimum="1.1" Maximum="4.0"
+                    Value="{Binding UpscaleFactor}"
+                    TickFrequency="0.1" IsSnapToTickEnabled="True"/>
+            <Grid ColumnDefinitions="*,*">
+              <TextBlock Grid.Column="0" Text="1.1x" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Left"/>
+              <TextBlock Grid.Column="1" Text="4.0x" Opacity="0.5" FontSize="10"
+                         HorizontalAlignment="Right"/>
+            </Grid>
+          </StackPanel>
+
+          <!-- Prompt Settings -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="Prompt Mode" FontWeight="Bold" FontSize="16"/>
+            <ComboBox ItemsSource="{Binding AvailablePromptModes}"
+                      SelectedItem="{Binding PromptMode}"
+                      HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Converter={x:Static converters:UpscaleEnumDisplayConverter.Instance}}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="{Binding PromptModeDescription}"
+                       TextWrapping="Wrap"
+                       Opacity="0.5" FontSize="11" Margin="0,2,0,0"/>
+
+            <!-- Manual prompt fields (visible only in ManualPrompt mode) -->
+            <StackPanel Spacing="6" IsVisible="{Binding IsManualPromptMode}">
+              <TextBlock Text="Positive Prompt" Opacity="0.7" FontSize="12"/>
+              <TextBox Text="{Binding PositivePrompt}"
+                       Watermark="Describe the desired image quality..."
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       MinHeight="60"
+                       MaxHeight="120"/>
+            </StackPanel>
+
+            <TextBlock Text="Negative Prompt" Opacity="0.7" FontSize="12"/>
+            <TextBox Text="{Binding NegativePrompt}"
+                     Watermark="Things to avoid..."
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     MinHeight="40"
+                     MaxHeight="80"/>
+          </StackPanel>
+
+          <!-- Save Settings -->
+          <StackPanel Spacing="8">
+            <TextBlock Text="Save Settings" FontWeight="Bold" FontSize="16"/>
+            <ComboBox ItemsSource="{Binding AvailableSaveModes}"
+                      SelectedItem="{Binding SaveMode}"
+                      HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Converter={x:Static converters:UpscaleEnumDisplayConverter.Instance}}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="{Binding SaveModeDescription}"
+                       TextWrapping="Wrap"
+                       Opacity="0.5" FontSize="11" Margin="0,2,0,0"/>
+          </StackPanel>
+
+          <!-- Action Buttons -->
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto">
+              <Button Grid.Column="0"
+                      Content="Start Upscale"
+                      Command="{Binding StartUpscaleCommand}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      Padding="12,8"
+                      FontWeight="SemiBold"
+                      Background="#4CAF50"
+                      Foreground="White"/>
+              <Button Grid.Column="1"
+                      Content="Cancel"
+                      Command="{Binding CancelUpscaleCommand}"
+                      Margin="8,0,0,0"
+                      Padding="12,8"
+                      IsVisible="{Binding IsProcessing}"/>
+            </Grid>
+
+            <!-- Progress -->
+            <ProgressBar Minimum="0" Maximum="100"
+                         Value="{Binding TotalProgress}"
+                         IsVisible="{Binding IsProcessing}"
+                         Height="6"/>
+            <TextBlock Text="{Binding CurrentProcessingStatus}"
+                       Foreground="#4CAF50" FontSize="13"
+                       TextWrapping="Wrap"/>
+
+            <!-- ComfyUI unavailable warning -->
+            <TextBlock Text="ComfyUI service is not connected. Check your ComfyUI settings."
+                       Foreground="#FF5722" FontSize="12"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding !IsComfyUIAvailable}"/>
+          </StackPanel>
+
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Right Panel: Overlay Compare + Image Gallery -->
+    <Grid Grid.Column="1" RowDefinitions="*,Auto">
+
+      <!-- Before / After Overlay Compare using ImageCompareControl -->
+      <Panel Grid.Row="0">
+        <controls:ImageCompareControl
+            LeftImagePath="{Binding SelectedCompareItem.OriginalPath}"
+            RightImagePath="{Binding SelectedCompareItem.UpscaledPath}"
+            SliderValue="50"
+            IsVisible="{Binding SelectedCompareItem.IsProcessed, FallbackValue=False}"/>
+
+        <!-- Placeholder when no processed image is selected -->
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                    IsVisible="{Binding SelectedCompareItem, Converter={x:Static ObjectConverters.IsNull}}">
+          <TextBlock Text="&#x1F5BC;" FontSize="64" Opacity="0.2" HorizontalAlignment="Center"/>
+          <TextBlock Text="Select a processed image to compare" Opacity="0.3"
+                     HorizontalAlignment="Center" FontSize="14" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Panel>
+
+      <!-- Image Gallery -->
+      <Border Grid.Row="1" Background="#1E1E1E" Padding="8" MaxHeight="200"
+              BorderBrush="#333" BorderThickness="0,1,0,0">
+        <Grid RowDefinitions="Auto,*">
+          <TextBlock Grid.Row="0" Text="Images" FontWeight="SemiBold" Margin="8,0,0,8"/>
+          <ListBox Grid.Row="1"
+                   ItemsSource="{Binding UpscaleItems}"
+                   SelectedItem="{Binding SelectedCompareItem}"
+                   Background="Transparent">
+            <ListBox.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#333" CornerRadius="4" Padding="4" Margin="2"
+                        Width="80" Height="80"
+                        BorderThickness="2"
+                        Classes.processing="{Binding IsProcessing}"
+                        Classes.processed="{Binding IsProcessed}">
+                  <Border.Styles>
+                    <Style Selector="Border">
+                      <Setter Property="BorderBrush" Value="Transparent"/>
+                    </Style>
+                    <Style Selector="Border.processing">
+                      <Setter Property="BorderBrush" Value="#FF9800"/>
+                    </Style>
+                    <Style Selector="Border.processed">
+                      <Setter Property="BorderBrush" Value="#4CAF50"/>
+                    </Style>
+                  </Border.Styles>
+                  <Grid RowDefinitions="*,Auto">
+                    <Image Grid.Row="0" Source="{Binding OriginalThumbnail}" Stretch="Uniform"/>
+                    <TextBlock Grid.Row="1" Text="{Binding FileName}" FontSize="9"
+                               TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"
+                               Opacity="0.7"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+    </Grid>
+
+  </Grid>
+</UserControl>
