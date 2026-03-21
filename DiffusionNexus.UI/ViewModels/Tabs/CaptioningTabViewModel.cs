@@ -20,6 +20,38 @@ public record CaptionPresetPrompt(string Name, string Prompt)
 }
 
 /// <summary>
+/// Represents how generated captions should be saved relative to the dataset.
+/// </summary>
+public enum CaptionSaveMode
+{
+    /// <summary>
+    /// Write caption files into the current version folder alongside the images.
+    /// </summary>
+    CurrentVersion,
+
+    /// <summary>
+    /// Create a new dataset version, copy images and existing captions, then write new captions there.
+    /// </summary>
+    NewVersion
+}
+
+/// <summary>
+/// Extension methods for <see cref="CaptionSaveMode"/>.
+/// </summary>
+public static class CaptionSaveModeExtensions
+{
+    /// <summary>
+    /// Gets a user-friendly display name for the save mode.
+    /// </summary>
+    public static string GetDisplayName(this CaptionSaveMode mode) => mode switch
+    {
+        CaptionSaveMode.CurrentVersion => "Caption This Version",
+        CaptionSaveMode.NewVersion => "New Version",
+        _ => mode.ToString()
+    };
+}
+
+/// <summary>
 /// ViewModel for the Captioning tab in the LoRA Dataset Helper.
 /// Manages model selection/download, dataset input, captioning settings, and batch caption generation.
 /// </summary>
@@ -53,6 +85,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _blacklistedWords;
     private float _temperature = 0.7f;
     private bool _overrideExisting;
+    private CaptionSaveMode _captionSaveMode = CaptionSaveMode.CurrentVersion;
 
     // Prompt Mode
     private bool _isCustomPromptMode;
@@ -82,6 +115,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private int _totalImageCount;
     private Bitmap? _currentImagePreview;
     private CaptionHistoryItemViewModel? _selectedHistoryItem;
+    private Bitmap? _selectedGalleryPreview;
+    private CaptionHistoryItemViewModel? _currentProcessingItem;
 
     /// <summary>
     /// Creates a new instance of CaptioningTabViewModel.
@@ -478,6 +513,42 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         set => SetProperty(ref _overrideExisting, value);
     }
 
+    /// <summary>
+    /// How generated captions should be saved relative to the dataset.
+    /// </summary>
+    public CaptionSaveMode SaveMode
+    {
+        get => _captionSaveMode;
+        set
+        {
+            if (SetProperty(ref _captionSaveMode, value))
+            {
+                OnPropertyChanged(nameof(SaveModeDescription));
+                OnPropertyChanged(nameof(IsNewVersionMode));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Human-readable description of the selected save mode.
+    /// </summary>
+    public string SaveModeDescription => SaveMode switch
+    {
+        CaptionSaveMode.CurrentVersion => "Writes captions into the current version folder.",
+        CaptionSaveMode.NewVersion => "Creates a new version and copies captions. Original images are untouched.",
+        _ => string.Empty
+    };
+
+    /// <summary>
+    /// Available save modes for the ComboBox.
+    /// </summary>
+    public IReadOnlyList<CaptionSaveMode> AvailableSaveModes { get; } = Enum.GetValues<CaptionSaveMode>();
+
+    /// <summary>
+    /// Whether the user selected 'New Version' save mode (used for AXAML visibility bindings).
+    /// </summary>
+    public bool IsNewVersionMode => SaveMode == CaptionSaveMode.NewVersion;
+
     #endregion
 
     #region Dataset Statistics
@@ -703,8 +774,30 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             if (SetProperty(ref _selectedHistoryItem, value))
             {
                 OnPropertyChanged(nameof(DisplayCaption));
+
+                var old = _selectedGalleryPreview;
+                SelectedGalleryPreview = LoadPreviewBitmap(value?.ImagePath);
+                old?.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// Large preview bitmap for the selected gallery item.
+    /// </summary>
+    public Bitmap? SelectedGalleryPreview
+    {
+        get => _selectedGalleryPreview;
+        private set => SetProperty(ref _selectedGalleryPreview, value);
+    }
+
+    /// <summary>
+    /// The history item currently being processed (for highlighting in the gallery).
+    /// </summary>
+    public CaptionHistoryItemViewModel? CurrentProcessingItem
+    {
+        get => _currentProcessingItem;
+        private set => SetProperty(ref _currentProcessingItem, value);
     }
 
     /// <summary>
@@ -994,13 +1087,40 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             // Force OverrideExisting when in compare mode so the backend does not skip the image
             var effectiveOverride = compareModeActive || OverrideExisting;
 
+            // Determine dataset path: create a new version folder when requested
+            string? datasetPath = SelectedDataset?.CurrentVersionFolderPath;
+            if (!IsSingleImageMode && SaveMode == CaptionSaveMode.NewVersion && SelectedDataset is not null)
+            {
+                datasetPath = PrepareNewVersionFolder(SelectedDataset, !effectiveOverride);
+                // New version has fresh caption files (or copies), so always override into that folder
+                effectiveOverride = true;
+            }
+
+            // Pre-populate gallery with all images (like Batch Upscale)
+            var imagePaths = GetImagePaths().ToList();
+            foreach (var imgPath in imagePaths)
+            {
+                var thumbnail = LoadPreviewBitmap(imgPath, 120);
+                var existingCaptionText = ReadExistingCaption(imgPath);
+                var alreadyCaptioned = !effectiveOverride && existingCaptionText.Length > 0;
+
+                var item = new CaptionHistoryItemViewModel(
+                    imgPath,
+                    alreadyCaptioned ? existingCaptionText : string.Empty,
+                    thumbnail)
+                {
+                    IsCaptionCompleted = alreadyCaptioned
+                };
+                CaptionHistory.Add(item);
+            }
+
             var config = new CaptioningJobConfig(
-                ImagePaths: GetImagePaths(),
+                ImagePaths: imagePaths,
                 SelectedModel: SelectedModelType,
                 SystemPrompt: SystemPrompt,
                 TriggerWord: TriggerWord,
                 BlacklistedWords: blackList,
-                DatasetPath: SelectedDataset?.CurrentVersionFolderPath,
+                DatasetPath: datasetPath,
                 OverrideExisting: effectiveOverride,
                 Temperature: Temperature
             );
@@ -1022,17 +1142,34 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CompletedCount = p.CompletedCount;
                 CurrentImagePath = p.CurrentImagePath;
 
+                // Mark previous processing item as no longer processing
+                if (CurrentProcessingItem is not null && CurrentProcessingItem.ImagePath != p.CurrentImagePath)
+                {
+                    CurrentProcessingItem.IsProcessing = false;
+                }
+
+                // Highlight the currently processing image with orange border
+                if (p.CurrentImagePath is not null)
+                {
+                    var processingItem = CaptionHistory.FirstOrDefault(
+                        h => h.ImagePath == p.CurrentImagePath);
+                    if (processingItem is not null && !processingItem.IsCaptionCompleted)
+                    {
+                        processingItem.IsProcessing = true;
+                        CurrentProcessingItem = processingItem;
+                    }
+                }
+
+                // Update the completed item with its caption
                 if (p.LastResult is { Success: true, WasSkipped: false, Caption: not null })
                 {
                     LastCompletedCaption = p.LastResult.Caption;
                     OnPropertyChanged(nameof(DisplayCaption));
 
-                    var thumbnail = LoadPreviewBitmap(p.LastResult.ImagePath, 120);
-                    var item = new CaptionHistoryItemViewModel(
-                        p.LastResult.ImagePath, p.LastResult.Caption, thumbnail);
-                    CaptionHistory.Insert(0, item);
+                    var existing = CaptionHistory.FirstOrDefault(
+                        h => h.ImagePath == p.LastResult.ImagePath);
+                    existing?.SetCompletedCaption(p.LastResult.Caption);
 
-                    // Update dataset overview stats as captions are written to disk
                     RefreshDatasetStats();
                 }
             });
@@ -1079,6 +1216,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
         finally
         {
+            if (CurrentProcessingItem is not null)
+            {
+                CurrentProcessingItem.IsProcessing = false;
+            }
+            CurrentProcessingItem = null;
             _captioningCts?.Dispose();
             _captioningCts = null;
             IsProcessing = false;
@@ -1106,6 +1248,48 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         {
             StatusMessage = "Compare cancelled — the newly generated caption remains on disk.";
         }
+    }
+
+    /// <summary>
+    /// Creates a new version folder for the dataset, copies all images from the current version,
+    /// and optionally copies existing caption (.txt) files when preserving captions.
+    /// </summary>
+    /// <returns>The absolute path of the newly created version folder.</returns>
+    private static string PrepareNewVersionFolder(DatasetCardViewModel dataset, bool copyExistingCaptions)
+    {
+        string newVersionPath;
+
+        if (dataset.IsVersionedStructure)
+        {
+            var maxVersion = dataset.GetAllVersionNumbers().DefaultIfEmpty(1).Max();
+            newVersionPath = dataset.GetVersionFolderPath(maxVersion + 1);
+        }
+        else
+        {
+            newVersionPath = Path.Combine(
+                Path.GetDirectoryName(dataset.FolderPath)!,
+                Path.GetFileName(dataset.FolderPath) + "_captioned");
+        }
+
+        Directory.CreateDirectory(newVersionPath);
+
+        // Copy all images from the source version into the new folder
+        var sourcePath = dataset.CurrentVersionFolderPath;
+        string[] imageExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath))
+        {
+            var ext = Path.GetExtension(file).ToLowerInvariant();
+            var isImage = imageExtensions.Contains(ext);
+            var isCaption = DatasetCardViewModel.IsCaptionFile(file);
+
+            if (isImage || (isCaption && copyExistingCaptions))
+            {
+                File.Copy(file, Path.Combine(newVersionPath, Path.GetFileName(file)), overwrite: true);
+            }
+        }
+
+        return newVersionPath;
     }
 
     private IEnumerable<string> GetImagePaths()
@@ -1304,6 +1488,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         _currentImagePreview?.Dispose();
         _currentImagePreview = null;
+        _selectedGalleryPreview?.Dispose();
+        _selectedGalleryPreview = null;
         ClearHistory();
     }
 

@@ -5,8 +5,8 @@ using System.Globalization;
 namespace DiffusionNexus.UI.Converters;
 
 /// <summary>
-/// Converter to display <see cref="UpscalePromptMode"/> and <see cref="UpscaleSaveMode"/>
-/// enum values as user-friendly strings.
+/// Converter to display <see cref="UpscalePromptMode"/>, <see cref="UpscaleSaveMode"/>,
+/// and <see cref="CaptionSaveMode"/> enum values as user-friendly strings.
 /// </summary>
 public class UpscaleEnumDisplayConverter : IValueConverter
 {
@@ -21,6 +21,7 @@ public class UpscaleEnumDisplayConverter : IValueConverter
         {
             UpscalePromptMode promptMode => promptMode.GetDisplayName(),
             UpscaleSaveMode saveMode => saveMode.GetDisplayName(),
+            CaptionSaveMode captionSaveMode => captionSaveMode.GetDisplayName(),
             _ => value?.ToString()
         };
     }

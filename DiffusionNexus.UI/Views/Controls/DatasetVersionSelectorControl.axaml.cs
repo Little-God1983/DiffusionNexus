@@ -135,6 +135,12 @@ public partial class DatasetVersionSelectorControl : UserControl
 
     private bool _autoSelectScheduled;
 
+    // Tracks the last non-null selections so they can be restored after a visual-tree
+    // detach/reattach cycle (editable ComboBoxes clear their selection on detach).
+    private DatasetCardViewModel? _lastValidDataset;
+    private EditorVersionItem? _lastValidVersion;
+    private bool _wasDetached;
+
     public DatasetVersionSelectorControl()
     {
         InitializeComponent();
@@ -144,6 +150,16 @@ public partial class DatasetVersionSelectorControl : UserControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+
+        // Track last valid (non-null) selections for restore-on-reattach
+        if (change.Property == SelectedDatasetProperty && change.NewValue is DatasetCardViewModel ds)
+        {
+            _lastValidDataset = ds;
+        }
+        else if (change.Property == SelectedVersionProperty && change.NewValue is EditorVersionItem ver)
+        {
+            _lastValidVersion = ver;
+        }
 
         if (change.Property == VersionItemsProperty)
         {
@@ -159,6 +175,71 @@ public partial class DatasetVersionSelectorControl : UserControl
                 newCollection.CollectionChanged += OnVersionItemsCollectionChanged;
             }
         }
+    }
+
+    /// <inheritdoc />
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _wasDetached = true;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    /// <inheritdoc />
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        if (_wasDetached)
+        {
+            _wasDetached = false;
+            RestoreSelectionsIfNeeded();
+        }
+    }
+
+    /// <summary>
+    /// Restores dataset and version selections that were lost when editable ComboBoxes
+    /// cleared their SelectedItem during a visual-tree detach/reattach cycle.
+    /// </summary>
+    private void RestoreSelectionsIfNeeded()
+    {
+        var dataset = _lastValidDataset;
+        var version = _lastValidVersion;
+
+        if (dataset is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            // Temporarily disable auto-select so the version restore is not overridden
+            var wasAutoSelect = AutoSelectLastVersion;
+            AutoSelectLastVersion = false;
+
+            try
+            {
+                if (SelectedDataset is null)
+                {
+                    SelectedDataset = dataset;
+                }
+
+                if (version is not null && VersionItems is not null)
+                {
+                    foreach (var item in VersionItems)
+                    {
+                        if (item is EditorVersionItem evi && evi.Version == version.Version)
+                        {
+                            SelectedVersion = evi;
+                            break;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                AutoSelectLastVersion = wasAutoSelect;
+            }
+        }, DispatcherPriority.Background);
     }
 
     private void OnVersionItemsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
