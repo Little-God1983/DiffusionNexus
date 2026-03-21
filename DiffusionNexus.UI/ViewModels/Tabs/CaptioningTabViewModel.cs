@@ -530,9 +530,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                     IsSingleImageMode = false;
 
                     PopulateVersionItems(value, AvailableDatasetVersions);
-
-                    SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault(
-                        v => v.Version == value.CurrentVersion);
                 }
 
                 GenerateCommand.NotifyCanExecuteChanged();

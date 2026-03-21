@@ -332,9 +332,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 if (value is not null)
                 {
                     PopulateVersionItems(value, AvailableDatasetVersions);
-
-                    // Always pick the latest (highest) version
-                    SelectedDatasetVersion = AvailableDatasetVersions.LastOrDefault();
                 }
 
                 StartUpscaleCommand.NotifyCanExecuteChanged();

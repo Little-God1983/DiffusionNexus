@@ -680,12 +680,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         try
         {
             await PopulateVersionItemsAsync(_selectedEditorDataset, EditorVersionItems);
-
-            // Auto-select the first version if available
-            if (EditorVersionItems.Count > 0)
-            {
-                SelectedEditorVersion = EditorVersionItems[0];
-            }
         }
         catch (Exception ex)
         {

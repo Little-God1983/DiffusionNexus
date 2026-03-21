@@ -487,7 +487,6 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         }
 
         LoadVersionsForDataset(value, LeftVersionOptions);
-        SelectedLeftVersion = LeftVersionOptions.FirstOrDefault();
         RefreshLeftImages();
         OnPropertyChanged(nameof(LeftLabel));
 
@@ -529,7 +528,6 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         }
 
         LoadVersionsForDataset(value, RightVersionOptions);
-        SelectedRightVersion = RightVersionOptions.FirstOrDefault();
         RefreshRightImages();
         OnPropertyChanged(nameof(RightLabel));
     }
