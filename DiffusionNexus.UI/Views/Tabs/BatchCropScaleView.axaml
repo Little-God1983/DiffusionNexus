@@ -5,6 +5,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:vms="using:DiffusionNexus.UI.ViewModels"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
              x:Class="DiffusionNexus.UI.Views.Tabs.BatchCropScaleView"
              x:DataType="vm:BatchCropScaleTabViewModel">
@@ -77,32 +78,16 @@
                     <!-- Dataset Selection -->
                     <StackPanel Spacing="8">
                         <TextBlock Text="Select Dataset" FontWeight="SemiBold"/>
-                        <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="8">
-                            <ComboBox Grid.Column="0"
-                                      ItemsSource="{Binding Datasets}"
-                                      SelectedItem="{Binding SelectedDataset}"
-                                      IsEnabled="{Binding !IsProcessing}"
-                                      PlaceholderText="Select a dataset..."
-                                      HorizontalAlignment="Stretch">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate DataType="vms:DatasetCardViewModel">
-                                        <TextBlock Text="{Binding Name}"/>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                            <ComboBox Grid.Column="1"
-                                      ItemsSource="{Binding VersionItems}"
-                                      SelectedItem="{Binding SelectedVersion}"
-                                      IsEnabled="{Binding !IsProcessing}"
-                                      IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"
-                                      MinWidth="140">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate DataType="vms:EditorVersionItem">
-                                        <TextBlock Text="{Binding DisplayText}"/>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                            <Button Grid.Column="3"
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <controls:DatasetVersionSelectorControl Grid.Column="0"
+                                Datasets="{Binding Datasets}"
+                                SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                                VersionItems="{Binding VersionItems}"
+                                SelectedVersion="{Binding SelectedVersion, Mode=TwoWay}"
+                                IsEnabled="{Binding !IsProcessing}"
+                                IsDatasetSearchable="True"
+                                DatasetPlaceholderText="Select a dataset..."/>
+                            <Button Grid.Column="1"
                                     Content="Clear"
                                     Command="{Binding ClearDatasetSelectionCommand}"
                                     IsEnabled="{Binding !IsProcessing}"

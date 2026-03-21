@@ -10,6 +10,7 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 - Before any Database Entity classes, IEntityTypeConfigurations or the database migrations are modified execute the publish.ps1 script to make sure there is a last backup of the app with a working database.
 - When A Keyboard Shortcut is Added make sure its documented in a file called DiffusionNexus.UI\\Doc\\Shortcuts.md
 - When fixing a failing Unit test, check thoroughly if its the unit test that is in need of fixing or if its the code that has a bug.
+- Every time new UI elements are added or UI is built from the ground up, always look first for reusable components in the project before creating new ones.
 
 ## Database Management
 - There are TWO separate databases in the DiffusionNexus project:

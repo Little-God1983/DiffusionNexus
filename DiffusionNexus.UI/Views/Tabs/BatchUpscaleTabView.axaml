@@ -20,29 +20,15 @@
           <StackPanel Spacing="8">
             <TextBlock Text="Input Source" FontWeight="Bold" FontSize="16"/>
             <TextBlock Text="Select Dataset" Opacity="0.7" FontSize="12"/>
-            <Grid ColumnDefinitions="*,Auto,Auto">
-              <ComboBox Grid.Column="0"
-                        ItemsSource="{Binding AvailableDatasets}"
-                        SelectedItem="{Binding SelectedDataset}"
-                        PlaceholderText="Choose a dataset..."
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Name}"/>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <ComboBox Grid.Column="1"
-                        ItemsSource="{Binding AvailableDatasetVersions}"
-                        SelectedItem="{Binding SelectedDatasetVersion}"
-                        MinWidth="60" Margin="8,0,0,0">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding StringFormat='V{0}'}"/>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <Button Grid.Column="2"
+            <Grid ColumnDefinitions="*,Auto">
+              <controls:DatasetVersionSelectorControl Grid.Column="0"
+                  Datasets="{Binding AvailableDatasets}"
+                  SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                  VersionItems="{Binding AvailableDatasetVersions}"
+                  SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
+                  IsDatasetSearchable="False"
+                  DatasetPlaceholderText="Choose a dataset..."/>
+              <Button Grid.Column="1"
                       Content="&#x21BB;"
                       Command="{Binding RefreshDatasetsCommand}"
                       Margin="4,0,0,0"

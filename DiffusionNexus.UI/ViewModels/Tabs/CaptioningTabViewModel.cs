@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -59,7 +60,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     // Input Selection
     private DatasetCardViewModel? _selectedDataset;
-    private int? _selectedDatasetVersion;
+    private EditorVersionItem? _selectedDatasetVersion;
     private string? _singleImagePath;
     private bool _isSingleImageMode;
     private bool _isCompareMode;
@@ -252,7 +253,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// <summary>
     /// Available versions for the selected dataset.
     /// </summary>
-    public ObservableCollection<int> AvailableDatasetVersions { get; }
+    public ObservableCollection<EditorVersionItem> AvailableDatasetVersions { get; }
 
     /// <summary>
     /// The selected captioning model type.
@@ -528,19 +529,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 {
                     IsSingleImageMode = false;
 
-                    if (value.IsVersionedStructure)
-                    {
-                        foreach (var v in value.GetAllVersionNumbers())
-                        {
-                            AvailableDatasetVersions.Add(v);
-                        }
-                    }
-                    else
-                    {
-                        AvailableDatasetVersions.Add(1);
-                    }
+                    PopulateVersionItems(value, AvailableDatasetVersions);
 
-                    SelectedDatasetVersion = value.CurrentVersion;
+                    SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault(
+                        v => v.Version == value.CurrentVersion);
                 }
 
                 GenerateCommand.NotifyCanExecuteChanged();
@@ -552,16 +544,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// <summary>
     /// The selected dataset version to caption.
     /// </summary>
-    public int? SelectedDatasetVersion
+    public EditorVersionItem? SelectedDatasetVersion
     {
         get => _selectedDatasetVersion;
         set
         {
             if (SetProperty(ref _selectedDatasetVersion, value))
             {
-                if (SelectedDataset is not null && value.HasValue && SelectedDataset.CurrentVersion != value.Value)
+                if (SelectedDataset is not null && value is not null && SelectedDataset.CurrentVersion != value.Version)
                 {
-                    SelectedDataset.CurrentVersion = value.Value;
+                    SelectedDataset.CurrentVersion = value.Version;
                 }
 
                 RefreshDatasetStats();
@@ -1202,19 +1194,45 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             return;
         }
 
-        var previousVersion = SelectedDatasetVersion;
-        var versions = SelectedDataset.GetAllVersionNumbers();
+        var previousVersionNum = SelectedDatasetVersion?.Version;
 
         AvailableDatasetVersions.Clear();
-        foreach (var v in versions)
-        {
-            AvailableDatasetVersions.Add(v);
-        }
+        PopulateVersionItems(SelectedDataset, AvailableDatasetVersions);
 
         // Keep the previous selection if still valid, otherwise pick the latest
-        SelectedDatasetVersion = versions.Contains(previousVersion ?? 0)
-            ? previousVersion
-            : versions[^1];
+        SelectedDatasetVersion = previousVersionNum.HasValue
+            ? AvailableDatasetVersions.FirstOrDefault(v => v.Version == previousVersionNum.Value)
+              ?? AvailableDatasetVersions.LastOrDefault()
+            : AvailableDatasetVersions.LastOrDefault();
+    }
+
+    /// <summary>
+    /// Populates an EditorVersionItem collection from a dataset's version folders.
+    /// </summary>
+    private static void PopulateVersionItems(
+        DatasetCardViewModel dataset,
+        ObservableCollection<EditorVersionItem> versionItems)
+    {
+        if (dataset.IsVersionedStructure)
+        {
+            foreach (var v in dataset.GetAllVersionNumbers())
+            {
+                var versionPath = dataset.GetVersionFolderPath(v);
+                var imageCount = Directory.Exists(versionPath)
+                    ? Directory.EnumerateFiles(versionPath)
+                        .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                    : 0;
+                versionItems.Add(EditorVersionItem.Create(v, imageCount));
+            }
+        }
+        else
+        {
+            var imageCount = Directory.Exists(dataset.FolderPath)
+                ? Directory.EnumerateFiles(dataset.FolderPath)
+                    .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                : 0;
+            versionItems.Add(EditorVersionItem.Create(1, imageCount));
+        }
     }
 
     private void RefreshDatasetStats()

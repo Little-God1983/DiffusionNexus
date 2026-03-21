@@ -6,6 +6,7 @@
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
              xmlns:svc="using:DiffusionNexus.Domain.Services"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.Tabs.CaptioningTabView"
              x:DataType="vm:CaptioningTabViewModel">
@@ -192,33 +193,16 @@
               <!-- Dataset Input -->
               <StackPanel IsVisible="{Binding !IsSingleImageMode}">
                 <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
-                <Grid ColumnDefinitions="*,12,Auto,4,Auto">
-                  <ComboBox Grid.Column="0"
-                            ItemsSource="{Binding AvailableDatasets}"
-                            SelectedItem="{Binding SelectedDataset}"
-                            PlaceholderText="Choose a dataset..."
-                            HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Name}"/>
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
+                <Grid ColumnDefinitions="*,4,Auto">
+                  <controls:DatasetVersionSelectorControl Grid.Column="0"
+                      Datasets="{Binding AvailableDatasets}"
+                      SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                      VersionItems="{Binding AvailableDatasetVersions}"
+                      SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
+                      IsDatasetSearchable="True"
+                      DatasetPlaceholderText="Choose a dataset..."/>
 
-                  <ComboBox Grid.Column="2"
-                            ItemsSource="{Binding AvailableDatasetVersions}"
-                            SelectedItem="{Binding SelectedDatasetVersion}"
-                            MinWidth="80"
-                            ToolTip.Tip="Select Version"
-                            IsEnabled="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding StringFormat='V{0}'}"/>
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-
-                  <Button Grid.Column="4" Content="&#x21BB;"
+                  <Button Grid.Column="2" Content="&#x21BB;"
                           Command="{Binding RefreshDatasetsCommand}"
                           Padding="8,6"
                           ToolTip.Tip="Refresh dataset list"/>

@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -235,7 +236,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     // Dataset selection
     private DatasetCardViewModel? _selectedDataset;
-    private int? _selectedDatasetVersion;
+    private EditorVersionItem? _selectedDatasetVersion;
 
     // Upscale settings
     private double _denoisingStrength = 0.2;
@@ -310,7 +311,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Available versions for the selected dataset.
     /// </summary>
-    public ObservableCollection<int> AvailableDatasetVersions { get; }
+    public ObservableCollection<EditorVersionItem> AvailableDatasetVersions { get; }
 
     /// <summary>
     /// Available save mode options.
@@ -330,20 +331,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 AvailableDatasetVersions.Clear();
                 if (value is not null)
                 {
-                    if (value.IsVersionedStructure)
-                    {
-                        foreach (var v in value.GetAllVersionNumbers())
-                        {
-                            AvailableDatasetVersions.Add(v);
-                        }
-                    }
-                    else
-                    {
-                        AvailableDatasetVersions.Add(1);
-                    }
+                    PopulateVersionItems(value, AvailableDatasetVersions);
 
                     // Always pick the latest (highest) version
-                    SelectedDatasetVersion = AvailableDatasetVersions.Max();
+                    SelectedDatasetVersion = AvailableDatasetVersions.LastOrDefault();
                 }
 
                 StartUpscaleCommand.NotifyCanExecuteChanged();
@@ -356,16 +347,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// The selected dataset version to upscale.
     /// </summary>
-    public int? SelectedDatasetVersion
+    public EditorVersionItem? SelectedDatasetVersion
     {
         get => _selectedDatasetVersion;
         set
         {
             if (SetProperty(ref _selectedDatasetVersion, value))
             {
-                if (SelectedDataset is not null && value.HasValue && SelectedDataset.CurrentVersion != value.Value)
+                if (SelectedDataset is not null && value is not null && SelectedDataset.CurrentVersion != value.Version)
                 {
-                    SelectedDataset.CurrentVersion = value.Value;
+                    SelectedDataset.CurrentVersion = value.Version;
                 }
 
                 RefreshDatasetStats();
@@ -566,7 +557,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Whether the selected version exists but contains no images.
     /// </summary>
-    public bool IsSelectedVersionEmpty => SelectedDataset is not null && SelectedDatasetVersion.HasValue && DatasetImageCount == 0;
+    public bool IsSelectedVersionEmpty => SelectedDataset is not null && SelectedDatasetVersion is not null && DatasetImageCount == 0;
 
     #endregion
 
@@ -625,14 +616,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        if (SelectedDataset is null || !SelectedDatasetVersion.HasValue)
+        if (SelectedDataset is null || SelectedDatasetVersion is null)
         {
             CurrentProcessingStatus = "No dataset selected.";
             return;
         }
 
         var versionPath = SelectedDataset.IsVersionedStructure
-            ? SelectedDataset.GetVersionFolderPath(SelectedDatasetVersion.Value)
+            ? SelectedDataset.GetVersionFolderPath(SelectedDatasetVersion.Version)
             : SelectedDataset.FolderPath;
 
         if (!Directory.Exists(versionPath))
@@ -1070,14 +1061,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private void RefreshDatasetStats()
     {
-        if (SelectedDataset is null || !SelectedDatasetVersion.HasValue)
+        if (SelectedDataset is null || SelectedDatasetVersion is null)
         {
             DatasetImageCount = 0;
             return;
         }
 
         var versionPath = SelectedDataset.IsVersionedStructure
-            ? SelectedDataset.GetVersionFolderPath(SelectedDatasetVersion.Value)
+            ? SelectedDataset.GetVersionFolderPath(SelectedDatasetVersion.Version)
             : SelectedDataset.FolderPath;
 
         if (!System.IO.Directory.Exists(versionPath))
@@ -1098,6 +1089,35 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private void OnRefreshDatasetsRequested(object? sender, RefreshDatasetsRequestedEventArgs e)
     {
         OnPropertyChanged(nameof(AvailableDatasets));
+    }
+
+    /// <summary>
+    /// Populates an EditorVersionItem collection from a dataset's version folders.
+    /// </summary>
+    private static void PopulateVersionItems(
+        DatasetCardViewModel dataset,
+        ObservableCollection<EditorVersionItem> versionItems)
+    {
+        if (dataset.IsVersionedStructure)
+        {
+            foreach (var v in dataset.GetAllVersionNumbers())
+            {
+                var versionPath = dataset.GetVersionFolderPath(v);
+                var imageCount = Directory.Exists(versionPath)
+                    ? Directory.EnumerateFiles(versionPath)
+                        .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                    : 0;
+                versionItems.Add(EditorVersionItem.Create(v, imageCount));
+            }
+        }
+        else
+        {
+            var imageCount = Directory.Exists(dataset.FolderPath)
+                ? Directory.EnumerateFiles(dataset.FolderPath)
+                    .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                : 0;
+            versionItems.Add(EditorVersionItem.Create(1, imageCount));
+        }
     }
 
     #endregion
