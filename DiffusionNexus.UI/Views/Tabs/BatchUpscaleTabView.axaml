@@ -9,17 +9,17 @@
              x:Class="DiffusionNexus.UI.Views.Tabs.BatchUpscaleTabView"
              x:DataType="vm:BatchUpscaleTabViewModel">
 
-  <Grid ColumnDefinitions="400,*">
+  <Grid ColumnDefinitions="Auto,*">
 
     <!-- Left Settings Panel -->
-    <Border Grid.Column="0" Background="#1E1E1E" Padding="16" BorderBrush="#333" BorderThickness="0,0,1,0">
-      <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Spacing="20">
+    <ScrollViewer Grid.Column="0" Padding="16" Width="480">
+      <StackPanel Spacing="16">
 
-          <!-- Input Source -->
-          <StackPanel Spacing="8">
-            <TextBlock Text="Input Source" FontWeight="Bold" FontSize="16"/>
-            <TextBlock Text="Select Dataset" Opacity="0.7" FontSize="12"/>
+        <!-- Input Source -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Input Source" FontWeight="SemiBold" FontSize="14"/>
+            <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
             <Grid ColumnDefinitions="*,Auto">
               <controls:DatasetVersionSelectorControl Grid.Column="0"
                   Datasets="{Binding AvailableDatasets}"
@@ -43,10 +43,12 @@
                        Foreground="#FF5722" FontSize="12"
                        TextWrapping="Wrap"/>
           </StackPanel>
+        </Border>
 
-          <!-- Upscale Settings -->
-          <StackPanel Spacing="8">
-            <TextBlock Text="Upscale Settings" FontWeight="Bold" FontSize="16"/>
+        <!-- Upscale Settings -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Upscale Settings" FontWeight="SemiBold" FontSize="14"/>
             <TextBlock Text="{Binding DenoisingStrength, StringFormat='Denoising Strength (Change): {0:F2}'}"
                        Opacity="0.8"/>
             <Slider Minimum="0" Maximum="1"
@@ -71,10 +73,12 @@
                          HorizontalAlignment="Right"/>
             </Grid>
           </StackPanel>
+        </Border>
 
-          <!-- Prompt Settings -->
-          <StackPanel Spacing="8">
-            <TextBlock Text="Prompt Mode" FontWeight="Bold" FontSize="16"/>
+        <!-- Prompt Settings -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Prompt Mode" FontWeight="SemiBold" FontSize="14"/>
             <ComboBox ItemsSource="{Binding AvailablePromptModes}"
                       SelectedItem="{Binding PromptMode}"
                       HorizontalAlignment="Stretch">
@@ -90,7 +94,7 @@
 
             <!-- Manual prompt fields (visible only in ManualPrompt mode) -->
             <StackPanel Spacing="6" IsVisible="{Binding IsManualPromptMode}">
-              <TextBlock Text="Positive Prompt" Opacity="0.7" FontSize="12"/>
+              <TextBlock Text="Positive Prompt" Margin="0,0,0,4"/>
               <TextBox Text="{Binding PositivePrompt}"
                        Watermark="Describe the desired image quality..."
                        AcceptsReturn="True"
@@ -99,7 +103,7 @@
                        MaxHeight="120"/>
             </StackPanel>
 
-            <TextBlock Text="Negative Prompt" Opacity="0.7" FontSize="12"/>
+            <TextBlock Text="Negative Prompt" Margin="0,0,0,4"/>
             <TextBox Text="{Binding NegativePrompt}"
                      Watermark="Things to avoid..."
                      AcceptsReturn="True"
@@ -107,10 +111,12 @@
                      MinHeight="40"
                      MaxHeight="80"/>
           </StackPanel>
+        </Border>
 
-          <!-- Save Settings -->
-          <StackPanel Spacing="8">
-            <TextBlock Text="Save Settings" FontWeight="Bold" FontSize="16"/>
+        <!-- Save Settings -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Save Settings" FontWeight="SemiBold" FontSize="14"/>
             <ComboBox ItemsSource="{Binding AvailableSaveModes}"
                       SelectedItem="{Binding SaveMode}"
                       HorizontalAlignment="Stretch">
@@ -124,9 +130,11 @@
                        TextWrapping="Wrap"
                        Opacity="0.5" FontSize="11" Margin="0,2,0,0"/>
           </StackPanel>
+        </Border>
 
-          <!-- Action Buttons -->
-          <StackPanel Spacing="8">
+        <!-- Action & Status -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
             <Grid ColumnDefinitions="*,Auto">
               <Button Grid.Column="0"
                       Content="Start Upscale"
@@ -160,10 +168,10 @@
                        TextWrapping="Wrap"
                        IsVisible="{Binding !IsComfyUIAvailable}"/>
           </StackPanel>
+        </Border>
 
-        </StackPanel>
-      </ScrollViewer>
-    </Border>
+      </StackPanel>
+    </ScrollViewer>
 
     <!-- Right Panel: Overlay Compare + Image Gallery -->
     <Grid Grid.Column="1" RowDefinitions="*,Auto">
