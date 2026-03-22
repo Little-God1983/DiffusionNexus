@@ -3,7 +3,6 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
-        xmlns:spellcheck="using:DiffusionNexus.UI.Controls"
         x:Class="DiffusionNexus.UI.Views.Dialogs.ImageViewerDialog"
         x:DataType="vm:ImageViewerViewModel"
         WindowState="Maximized"
@@ -262,99 +261,18 @@
         <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" IsVisible="{Binding ShowRatingControls}">
           
           <!-- Caption editor (editable) -->
-          <Grid Grid.Row="0" Grid.ColumnSpan="2"
-                ColumnDefinitions="*,Auto"
+          <controls:CaptionEditorControl Grid.Row="0" Grid.ColumnSpan="2"
                 Margin="0,0,0,12"
-                IsVisible="{Binding HasCurrentImage}">
-            
-            <!-- Caption TextBox -->
-            <Border Grid.Column="0"
-                    Background="#80333333"
-                    CornerRadius="6"
-                    Padding="4">
-              <spellcheck:SpellCheckTextBox x:Name="CaptionTextBox"
-                       Text="{Binding CurrentImage.Caption, Mode=TwoWay}"
-                       AcceptsReturn="True"
-                       TextWrapping="Wrap"
-                       MinHeight="60"
-                       MaxHeight="100"
-                       FontSize="13"
-                       Foreground="#CCC"
-                       Background="Transparent"
-                       BorderThickness="0"
-                       Watermark="Enter caption..."/>
-            </Border>
-            
-            <!-- Save/Revert buttons -->
-            <StackPanel Grid.Column="1" 
-                        Orientation="Vertical" 
-                        Spacing="4"
-                        Margin="8,0,0,0"
-                        VerticalAlignment="Top">
-              
-              <!-- Unsaved indicator + Save button -->
-              <Button Command="{Binding CurrentImage.SaveCaptionCommand}"
-                      Padding="12,8"
-                      FontSize="13"
-                      Background="{Binding CurrentImage.HasUnsavedChanges, Converter={x:Static converters:BoolConverters.BoolToUnsavedBackground}}"
-                      Foreground="White"
-                      CornerRadius="4"
-                      HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Center"
-                      ToolTip.Placement="Left"
-                      ToolTip.Tip="Save caption (Ctrl+S)">
-                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
-                  <TextBlock Text="*" 
-                             FontWeight="Bold" 
-                             Foreground="#FFD700"
-                             IsVisible="{Binding CurrentImage.HasUnsavedChanges}"/>
-                  <TextBlock Text="Save"/>
-                </StackPanel>
-              </Button>
-              
-              <!-- Revert button -->
-              <Button Content="Reset"
-                      Command="{Binding CurrentImage.RevertCaptionCommand}"
-                      Padding="12,8"
-                      FontSize="13"
-                      Background="#80444444"
-                      Foreground="White"
-                      CornerRadius="4"
-                      HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Center"
-                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
-                      ToolTip.Placement="Left"
-                      ToolTip.Tip="Reset changes"/>
-                      
-              <!-- Undo button -->
-              <Button Content="Undo"
-                      Command="{Binding CurrentImage.UndoCaptionCommand}"
-                      Padding="12,8"
-                      FontSize="13"
-                      Background="#80444444"
-                      Foreground="White"
-                      CornerRadius="4"
-                      HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Center"
-                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
-                      ToolTip.Placement="Left"
-                      ToolTip.Tip="Undo changes"/>
-                      
-              <!-- Redo button -->
-              <Button Content="Redo"
-                      Command="{Binding CurrentImage.RedoCaptionCommand}"
-                      Padding="12,8"
-                      FontSize="13"
-                      Background="#80444444"
-                      Foreground="White"
-                      CornerRadius="4"
-                      HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Center"
-                      IsVisible="{Binding CurrentImage.HasUnsavedChanges}"
-                      ToolTip.Placement="Left"
-                      ToolTip.Tip="Redo changes"/>
-            </StackPanel>
-          </Grid>
+                IsVisible="{Binding HasCurrentImage}"
+                IsVerticalLayout="True"
+                Text="{Binding CurrentImage.Caption, Mode=TwoWay}"
+                HasUnsavedChanges="{Binding CurrentImage.HasUnsavedChanges}"
+                UndoCommand="{Binding CurrentImage.UndoCaptionCommand}"
+                RedoCommand="{Binding CurrentImage.RedoCaptionCommand}"
+                ResetCommand="{Binding CurrentImage.RevertCaptionCommand}"
+                SaveCommand="{Binding CurrentImage.SaveCaptionCommand}"
+                Watermark="Enter caption..."
+                TextMinHeight="60" TextMaxHeight="100"/>
           
           <!-- Left side: Rating buttons -->
           <StackPanel Grid.Row="1" Grid.Column="0" 

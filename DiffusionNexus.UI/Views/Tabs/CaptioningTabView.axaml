@@ -480,25 +480,15 @@
               <Binding Path="SelectedHistoryItem.IsCaptionCompleted"/>
             </MultiBinding>
           </Border.IsVisible>
-          <Grid RowDefinitions="*,Auto" DataContext="{Binding SelectedHistoryItem}">
-            <TextBox Grid.Row="0" Text="{Binding EditableCaption, Mode=TwoWay}"
-                     Watermark="Caption text..."
-                     TextWrapping="Wrap" AcceptsReturn="True"
-                     FontSize="13" MinHeight="50" MaxHeight="100"/>
-            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                        Margin="0,6,0,0">
-              <Button Content="Undo" Command="{Binding UndoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,4,0"
-                      IsVisible="{Binding HasUnsavedChanges}"/>
-              <Button Content="Redo" Command="{Binding RedoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
-                      IsVisible="{Binding HasUnsavedChanges}"/>
-              <Button Content="Reset" Command="{Binding RevertCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
-                      IsVisible="{Binding HasUnsavedChanges}"/>
-              <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"
-                         IsVisible="{Binding HasUnsavedChanges}"/>
-              <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"
-                      IsVisible="{Binding HasUnsavedChanges}"/>
-            </StackPanel>
-          </Grid>
+          <controls:CaptionEditorControl DataContext="{Binding SelectedHistoryItem}"
+                Text="{Binding EditableCaption, Mode=TwoWay}"
+                HasUnsavedChanges="{Binding HasUnsavedChanges}"
+                UndoCommand="{Binding UndoCaptionCommand}"
+                RedoCommand="{Binding RedoCaptionCommand}"
+                ResetCommand="{Binding RevertCaptionCommand}"
+                SaveCommand="{Binding SaveCaptionCommand}"
+                Watermark="Caption text..."
+                TextMinHeight="50" TextMaxHeight="100"/>
         </Border>
 
         <!-- Bottom Image Gallery -->
