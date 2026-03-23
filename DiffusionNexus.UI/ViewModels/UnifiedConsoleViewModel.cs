@@ -566,12 +566,6 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     private async Task UpdateInstanceAsync(InstanceTabItem? tab)
     {
         if (tab is null || _serviceProvider is null) return;
-        if (tab.IsRunning)
-        {
-            _logger.Log(LogLevel.Warning, LogCategory.InstanceManagement, tab.Name,
-                "Cannot update while instance is running. Stop it first.");
-            return;
-        }
 
         var updateService = ResolveUpdateService(tab.Type);
         if (updateService is null)
@@ -581,7 +575,25 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Auto-stop the running instance before updating
+        if (tab.IsRunning)
+        {
+            _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name,
+                "Stopping running instance before update...");
+            if (_processManager is not null)
+                await _processManager.StopAsync(tab.PackageId);
+
+            // Brief wait to let the process exit cleanly
+            await Task.Delay(1000);
+        }
+
+        // Open the panel so the user can follow progress
+        IsPanelOpen = true;
+        PanelOpenRequested?.Invoke(this, EventArgs.Empty);
+
         tab.IsUpdating = true;
+        _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name, "Starting update...");
+
         var progress = new Progress<string>(msg =>
             _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name, msg));
 

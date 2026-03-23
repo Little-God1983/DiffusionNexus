@@ -3,6 +3,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -71,7 +72,8 @@ public class InstallerManagerViewModelTests
             mockConfigRepo.Object,
             mockCheckerService.Object,
             mockInstallService.Object,
-            Enumerable.Empty<IInstallerUpdateService>());
+            Enumerable.Empty<IInstallerUpdateService>(),
+            new Mock<IUnifiedLogger>().Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -121,7 +123,8 @@ public class InstallerManagerViewModelTests
             mockConfigRepo.Object,
             mockCheckerService.Object,
             mockInstallService.Object,
-            Enumerable.Empty<IInstallerUpdateService>());
+            Enumerable.Empty<IInstallerUpdateService>(),
+            new Mock<IUnifiedLogger>().Object);
 
         // Act
         await vm.AddExistingInstallationCommand.ExecuteAsync(null);
@@ -180,7 +183,8 @@ public class InstallerManagerViewModelTests
             mockConfigRepo.Object,
             mockCheckerService.Object,
             mockInstallService.Object,
-            Enumerable.Empty<IInstallerUpdateService>());
+            Enumerable.Empty<IInstallerUpdateService>(),
+            new Mock<IUnifiedLogger>().Object);
 
         // Load cards
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
