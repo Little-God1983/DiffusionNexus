@@ -21,5 +21,10 @@ public enum VersionSubTab
     /// <summary>
     /// Training runs tab - groups of training outputs (Epochs, Notes, Presentation per run).
     /// </summary>
-    TrainingRuns = 1
+    TrainingRuns = 1,
+
+    /// <summary>
+    /// Dataset quality analysis tab - checks caption consistency, trigger words, and more.
+    /// </summary>
+    DatasetQuality = 2
 }

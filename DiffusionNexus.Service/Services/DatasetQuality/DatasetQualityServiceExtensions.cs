@@ -24,6 +24,7 @@ public static class DatasetQualityServiceExtensions
         services.AddSingleton<IDatasetCheck, TriggerWordCheck>();
         services.AddSingleton<IDatasetCheck, SynonymConsistencyCheck>();
         services.AddSingleton<IDatasetCheck, FeatureConsistencyCheck>();
+        services.AddSingleton<IDatasetCheck, TypeSpecificCheck>();
 
         return services;
     }

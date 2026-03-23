@@ -1,0 +1,329 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:models="using:DiffusionNexus.Domain.Models"
+             xmlns:enums="using:DiffusionNexus.Domain.Enums"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.Tabs.DatasetQualityTabView"
+             x:DataType="vmTabs:DatasetQualityTabViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.severity-critical">
+      <Setter Property="Foreground" Value="#FF6B6B"/>
+    </Style>
+    <Style Selector="TextBlock.severity-warning">
+      <Setter Property="Foreground" Value="#FFA726"/>
+    </Style>
+    <Style Selector="TextBlock.severity-info">
+      <Setter Property="Foreground" Value="#4CAF50"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- TOP BAR -->
+    <Border Grid.Row="0"
+            Background="#1E1E1E"
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+
+        <!-- Folder Path + Browse -->
+        <Grid Grid.Column="0" ColumnDefinitions="*,Auto" Margin="0,0,12,0">
+          <TextBox Grid.Column="0"
+                   Text="{Binding FolderPath, Mode=TwoWay}"
+                   Watermark="Dataset folder path..."
+                   Padding="8,6"
+                   Background="#333"
+                   BorderBrush="#444"
+                   BorderThickness="1"
+                   CornerRadius="4"
+                   VerticalAlignment="Center"/>
+          <Button Grid.Column="1"
+                  Content="Browse..."
+                  Command="{Binding BrowseFolderCommand}"
+                  Padding="12,6"
+                  Margin="6,0,0,0"
+                  Background="#444"
+                  CornerRadius="4"/>
+        </Grid>
+
+        <!-- Trigger Word -->
+        <TextBox Grid.Column="1"
+                 Text="{Binding TriggerWord, Mode=TwoWay}"
+                 Watermark="Trigger word..."
+                 Width="140"
+                 Padding="8,6"
+                 Margin="0,0,12,0"
+                 Background="#333"
+                 BorderBrush="#444"
+                 BorderThickness="1"
+                 CornerRadius="4"
+                 VerticalAlignment="Center"/>
+
+        <!-- LoRA Type Dropdown -->
+        <ComboBox Grid.Column="2"
+                  ItemsSource="{Binding AvailableLoraTypes}"
+                  SelectedItem="{Binding SelectedLoraType, Mode=TwoWay}"
+                  MinWidth="120"
+                  Margin="0,0,12,0"
+                  VerticalAlignment="Center"/>
+
+        <!-- Analyze Button -->
+        <Button Grid.Column="3"
+                Content="Analyze"
+                Command="{Binding AnalyzeCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"/>
+
+        <!-- Backup Button -->
+        <Button Grid.Column="4"
+                Content="Backup"
+                Command="{Binding BackupCaptionsCommand}"
+                Padding="14,8"
+                Background="#444"
+                CornerRadius="4"/>
+
+        <!-- Spinner -->
+        <StackPanel Grid.Column="5"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Center"
+                    Margin="12,0,0,0"
+                    IsVisible="{Binding IsAnalyzing}">
+          <TextBlock Text="Analyzing..." FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- MAIN CONTENT (Left + Right) -->
+    <Grid Grid.Row="1" ColumnDefinitions="350,*">
+
+      <!-- LEFT PANEL: Issue List -->
+      <Border Grid.Column="0"
+              Background="#1A1A1A"
+              BorderBrush="#333"
+              BorderThickness="0,0,1,0">
+        <Grid RowDefinitions="Auto,*">
+
+          <Border Grid.Row="0" Padding="12,10" Background="#222" BorderBrush="#333" BorderThickness="0,0,0,1">
+            <TextBlock Text="Issues" FontSize="14" FontWeight="SemiBold" Opacity="0.9"/>
+          </Border>
+
+          <!-- Empty state -->
+          <StackPanel Grid.Row="1"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center"
+                      Spacing="8"
+                      IsVisible="{Binding !HasResults}">
+            <TextBlock Text="No analysis results yet"
+                       FontSize="14" Opacity="0.5"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="Configure a dataset folder and click Analyze"
+                       FontSize="12" Opacity="0.3"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       MaxWidth="280"/>
+          </StackPanel>
+
+          <!-- Issue list -->
+          <ListBox Grid.Row="1"
+                   ItemsSource="{Binding Issues}"
+                   SelectedItem="{Binding SelectedIssue, Mode=TwoWay}"
+                   Background="Transparent"
+                   IsVisible="{Binding HasResults}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="models:Issue">
+                <Border Padding="10,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+                  <Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Severity, Converter={x:Static vmTabs:SeverityIconConverter.Instance}}"
+                               FontSize="16"
+                               VerticalAlignment="Top"
+                               Margin="0,2,10,0"
+                               Classes.severity-critical="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.CriticalInstance}}"
+                               Classes.severity-warning="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.WarningInstance}}"
+                               Classes.severity-info="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.InfoInstance}}"/>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                      <TextBlock Text="{Binding CheckName}"
+                                 FontSize="11"
+                                 Opacity="0.5"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Message}"
+                                 FontSize="13"
+                                 TextWrapping="Wrap"
+                                 MaxLines="3"/>
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+
+      <!-- RIGHT PANEL: Issue Detail -->
+      <Border Grid.Column="1" Background="#1E1E1E">
+        <Grid RowDefinitions="*">
+
+          <StackPanel VerticalAlignment="Center"
+                      HorizontalAlignment="Center"
+                      Spacing="8"
+                      IsVisible="{Binding !HasSelectedIssue}">
+            <TextBlock Text="Select an issue to see details"
+                       FontSize="14" Opacity="0.4"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <ScrollViewer IsVisible="{Binding HasSelectedIssue}" Padding="20">
+            <StackPanel Spacing="16"
+                        DataContext="{Binding}"
+                        x:CompileBindings="True"
+                        x:DataType="vmTabs:DatasetQualityTabViewModel">
+
+              <!-- Severity badge + Check Name -->
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Border Padding="8,4" CornerRadius="4"
+                        Background="{Binding SelectedIssue.Severity, Converter={x:Static vmTabs:SeverityBackgroundConverter.Instance}}">
+                  <TextBlock Text="{Binding SelectedIssue.Severity}"
+                             FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                </Border>
+                <TextBlock Text="{Binding SelectedIssue.CheckName}"
+                           FontSize="14" Opacity="0.7"
+                           VerticalAlignment="Center"/>
+              </StackPanel>
+
+              <TextBlock Text="{Binding SelectedIssue.Message}"
+                         FontSize="16" FontWeight="SemiBold"
+                         TextWrapping="Wrap"/>
+
+              <TextBlock Text="{Binding SelectedIssue.Details}"
+                         FontSize="13" Opacity="0.8"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding SelectedIssue.Details, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+              <!-- Affected Files -->
+              <Border IsVisible="{Binding SelectedIssue.AffectedFiles.Count}"
+                      Background="#222" CornerRadius="8" Padding="12" Margin="0,4,0,0">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Affected Files" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+                  <ItemsControl ItemsSource="{Binding SelectedIssue.AffectedFiles}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="x:String">
+                        <TextBlock Text="{Binding}"
+                                   FontSize="12"
+                                   FontFamily="Consolas,Courier New,monospace"
+                                   Opacity="0.7"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="0,1"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+
+              <!-- Fix Suggestions -->
+              <Border IsVisible="{Binding SelectedIssue.FixSuggestions.Count}"
+                      Background="#222" CornerRadius="8" Padding="12" Margin="0,4,0,0">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="Fix Suggestions" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+                  <ItemsControl ItemsSource="{Binding SelectedIssue.FixSuggestions}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="models:FixSuggestion">
+                        <Border Background="#2A2A2A" CornerRadius="6" Padding="12" Margin="0,4">
+                          <Grid RowDefinitions="Auto,Auto,Auto">
+                            <TextBlock Grid.Row="0"
+                                       Text="{Binding Description}"
+                                       FontSize="13"
+                                       TextWrapping="Wrap"
+                                       Margin="0,0,0,8"/>
+
+                            <ItemsControl Grid.Row="1"
+                                          ItemsSource="{Binding Edits}"
+                                          Margin="0,0,0,8">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:FileEdit">
+                                  <Border Background="#1A1A1A" CornerRadius="4" Padding="8" Margin="0,2">
+                                    <StackPanel Spacing="2">
+                                      <TextBlock Text="{Binding FilePath}"
+                                                 FontSize="11"
+                                                 FontFamily="Consolas,Courier New,monospace"
+                                                 Opacity="0.5"
+                                                 TextTrimming="CharacterEllipsis"/>
+                                      <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <TextBlock Text="&#8722;"
+                                                   FontSize="12"
+                                                   Foreground="#FF6B6B"
+                                                   FontFamily="Consolas,Courier New,monospace"/>
+                                        <TextBlock Text="{Binding OriginalText}"
+                                                   FontSize="12"
+                                                   Foreground="#FF6B6B"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxWidth="500"/>
+                                      </StackPanel>
+                                      <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <TextBlock Text="+"
+                                                   FontSize="12"
+                                                   Foreground="#4CAF50"
+                                                   FontFamily="Consolas,Courier New,monospace"/>
+                                        <TextBlock Text="{Binding NewText}"
+                                                   FontSize="12"
+                                                   Foreground="#4CAF50"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxWidth="500"/>
+                                      </StackPanel>
+                                    </StackPanel>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Button Grid.Row="2"
+                                    Content="Apply Fix"
+                                    Command="{Binding $parent[UserControl].((vmTabs:DatasetQualityTabViewModel)DataContext).ApplyFixCommand}"
+                                    CommandParameter="{Binding}"
+                                    Padding="12,6"
+                                    Background="#4CAF50"
+                                    Foreground="White"
+                                    FontWeight="SemiBold"
+                                    CornerRadius="4"
+                                    HorizontalAlignment="Left"/>
+                          </Grid>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- BOTTOM STATUS BAR -->
+    <Border Grid.Row="2"
+            Background="#1A1A1A"
+            Padding="16,8"
+            BorderBrush="#333"
+            BorderThickness="0,1,0,0"
+            IsVisible="{Binding HasResults}">
+      <TextBlock Text="{Binding SummaryText}"
+                 FontSize="13"
+                 Opacity="0.7"
+                 VerticalAlignment="Center"/>
+    </Border>
+
+  </Grid>
+</UserControl>

@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -127,6 +128,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             NotesTab.DialogService = value;
             PresentationTab.DialogService = value;
             CaptioningTab.DialogService = value;
+            DatasetQualityTab.DialogService = value;
         }
     }
 
@@ -149,6 +151,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Captioning sub-tab.
     /// </summary>
     public CaptioningTabViewModel CaptioningTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Dataset Quality sub-tab.
+    /// </summary>
+    public DatasetQualityTabViewModel DatasetQualityTab { get; }
 
     /// <summary>
     /// Collection of training run cards for the current dataset version.
@@ -625,7 +632,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IVideoThumbnailService? videoThumbnailService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
-        IThumbnailOrchestrator? thumbnailOrchestrator = null)
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        AnalysisPipeline? analysisPipeline = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -642,6 +650,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         NotesTab = new NotesTabViewModel(_eventAggregator);
         PresentationTab = new PresentationTabViewModel(_eventAggregator);
         CaptioningTab = new CaptioningTabViewModel(_eventAggregator, _state, _captioningService);
+        DatasetQualityTab = analysisPipeline is not null
+            ? new DatasetQualityTabViewModel(analysisPipeline)
+            : new DatasetQualityTabViewModel();
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -697,7 +708,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null)
     {
     }
 
