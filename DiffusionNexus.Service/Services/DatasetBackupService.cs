@@ -88,9 +88,6 @@ public class DatasetBackupService : IDatasetBackupService
             var backupPath = Path.Combine(settings.AutoBackupLocation, backupFileName);
 
             Log.Information("Starting dataset backup to {BackupPath}", backupPath);
-            
-            // Start tracked operation for progress display
-            using var operation = _activityLog?.StartOperation("Backing up datasets", "Backup", isCancellable: false);
 
             progress?.Report(new BackupProgress
             {
@@ -109,7 +106,6 @@ public class DatasetBackupService : IDatasetBackupService
                 long totalSize = 0;
 
                 _activityLog?.LogInfo("Backup", $"Found {totalFiles} files to backup");
-                operation?.ReportProgress(5, $"Found {totalFiles} files");
 
                 progress?.Report(new BackupProgress
                 {
@@ -137,7 +133,6 @@ public class DatasetBackupService : IDatasetBackupService
                             if (processedFiles % 10 == 0 || processedFiles == totalFiles)
                             {
                                 var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
-                                operation?.ReportProgress(percent, $"Backing up file {processedFiles} of {totalFiles}");
                                 progress?.Report(new BackupProgress
                                 {
                                     Phase = "Creating backup",
@@ -160,7 +155,6 @@ public class DatasetBackupService : IDatasetBackupService
                 // Update only the LastBackupAt timestamp
                 await _settingsService.UpdateLastBackupAtAsync(DateTimeOffset.UtcNow, cancellationToken);
 
-                operation?.ReportProgress(98, "Cleaning up old backups");
                 progress?.Report(new BackupProgress
                 {
                     Phase = "Cleaning up old backups",

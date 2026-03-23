@@ -654,12 +654,6 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
                 VersionItems.Add(EditorVersionItem.Create(version, imageCount));
             }
-
-            // Auto-select the first version if available
-            if (VersionItems.Count > 0)
-            {
-                SelectedVersion = VersionItems[0];
-            }
         }
         catch (Exception ex)
         {

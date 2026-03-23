@@ -87,48 +87,28 @@
       </Border>
 
         <WrapPanel Grid.Row="1" Orientation="Horizontal">
-          <StackPanel MinWidth="220" Margin="0,0,12,0">
+          <StackPanel MinWidth="300" Margin="0,0,12,0">
             <TextBlock Text="Left dataset" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedLeftDataset}" Width="200">
-              <ComboBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:DatasetCardViewModel">
-                  <TextBlock Text="{Binding Name}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </StackPanel>
-          <StackPanel MinWidth="80" Margin="0,0,24,0">
-            <TextBlock Text="Version" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding LeftVersionOptions}" SelectedItem="{Binding SelectedLeftVersion}" Width="70">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding ., StringFormat='V{0}'}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+            <controls:DatasetVersionSelectorControl
+                Datasets="{Binding DatasetOptions}"
+                SelectedDataset="{Binding SelectedLeftDataset, Mode=TwoWay}"
+                VersionItems="{Binding LeftVersionOptions}"
+                SelectedVersion="{Binding SelectedLeftVersion, Mode=TwoWay}"
+                IsDatasetSearchable="False"
+                DatasetPlaceholderText="Choose a dataset..."/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" Margin="0,0,24,0" VerticalAlignment="Bottom">
             <ToggleSwitch IsChecked="{Binding IsSingleDatasetMode}" OnContent="Same dataset" OffContent="Different datasets" Margin="0,0,0,0"/>
           </StackPanel>
-          <StackPanel MinWidth="220" Margin="0,0,12,0" IsVisible="{Binding !IsSingleDatasetMode}">
+          <StackPanel MinWidth="300" IsVisible="{Binding !IsSingleDatasetMode}">
             <TextBlock Text="Right dataset" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding DatasetOptions}" SelectedItem="{Binding SelectedRightDataset}" Width="200">
-              <ComboBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:DatasetCardViewModel">
-                  <TextBlock Text="{Binding Name}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </StackPanel>
-          <StackPanel MinWidth="80" IsVisible="{Binding !IsSingleDatasetMode}">
-            <TextBlock Text="Version" FontSize="11" Opacity="0.7"/>
-            <ComboBox ItemsSource="{Binding RightVersionOptions}" SelectedItem="{Binding SelectedRightVersion}" Width="70">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding ., StringFormat='V{0}'}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+            <controls:DatasetVersionSelectorControl
+                Datasets="{Binding DatasetOptions}"
+                SelectedDataset="{Binding SelectedRightDataset, Mode=TwoWay}"
+                VersionItems="{Binding RightVersionOptions}"
+                SelectedVersion="{Binding SelectedRightVersion, Mode=TwoWay}"
+                IsDatasetSearchable="False"
+                DatasetPlaceholderText="Choose a dataset..."/>
           </StackPanel>
         </WrapPanel>
 

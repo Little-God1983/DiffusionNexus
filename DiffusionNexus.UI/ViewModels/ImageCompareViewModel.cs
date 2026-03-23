@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -63,9 +64,9 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
 
     public ObservableCollection<DatasetCardViewModel> DatasetOptions { get; }
 
-    public ObservableCollection<int> LeftVersionOptions { get; }
+    public ObservableCollection<EditorVersionItem> LeftVersionOptions { get; }
 
-    public ObservableCollection<int> RightVersionOptions { get; }
+    public ObservableCollection<EditorVersionItem> RightVersionOptions { get; }
 
     public ObservableCollection<ImageCompareItem> FilmstripItems { get; }
 
@@ -81,13 +82,13 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     private DatasetCardViewModel? _selectedLeftDataset;
 
     [ObservableProperty]
-    private int? _selectedLeftVersion = 1;
+    private EditorVersionItem? _selectedLeftVersion;
 
     [ObservableProperty]
     private DatasetCardViewModel? _selectedRightDataset;
 
     [ObservableProperty]
-    private int? _selectedRightVersion = 1;
+    private EditorVersionItem? _selectedRightVersion;
 
     [ObservableProperty]
     private CompareAssignSide _assignSide;
@@ -148,9 +149,9 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
 
     public string? RightImagePath => SelectedRightImage?.ImagePath;
 
-    public string LeftLabel => BuildLabel(SelectedLeftDataset?.Name, SelectedLeftVersion, SelectedLeftImage?.DisplayName, "Left");
+    public string LeftLabel => BuildLabel(SelectedLeftDataset?.Name, SelectedLeftVersion?.Version, SelectedLeftImage?.DisplayName, "Left");
 
-    public string RightLabel => BuildLabel(EffectiveRightDataset?.Name, EffectiveRightVersion, SelectedRightImage?.DisplayName, "Right");
+    public string RightLabel => BuildLabel(EffectiveRightDataset?.Name, EffectiveRightVersion?.Version, SelectedRightImage?.DisplayName, "Right");
 
     public double TrayHeight => 260d;
 
@@ -185,7 +186,7 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     /// <summary>
     /// Gets the effective Right version (same as Left when in single dataset mode).
     /// </summary>
-    public int? EffectiveRightVersion => IsSingleDatasetMode ? SelectedLeftVersion : SelectedRightVersion;
+    public EditorVersionItem? EffectiveRightVersion => IsSingleDatasetMode ? SelectedLeftVersion : SelectedRightVersion;
 
     public bool IsAssigningLeft
     {
@@ -393,39 +394,54 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     /// <summary>
     /// Loads available versions for a dataset.
     /// </summary>
-    private void LoadVersionsForDataset(DatasetCardViewModel? dataset, ObservableCollection<int> versionOptions)
+    private void LoadVersionsForDataset(DatasetCardViewModel? dataset, ObservableCollection<EditorVersionItem> versionOptions)
     {
         versionOptions.Clear();
 
         if (dataset is null)
         {
-            versionOptions.Add(1);
+            versionOptions.Add(EditorVersionItem.Create(1, 0));
             return;
         }
 
         // Temporary datasets always have version 1 only
         if (dataset.IsTemporary)
         {
-            versionOptions.Add(1);
+            versionOptions.Add(EditorVersionItem.Create(1, dataset.ImageCount));
             return;
         }
 
-        var versions = dataset.GetAllVersionNumbers();
-        foreach (var version in versions)
+        if (dataset.IsVersionedStructure)
         {
-            versionOptions.Add(version);
+            foreach (var v in dataset.GetAllVersionNumbers())
+            {
+                var versionPath = dataset.GetVersionFolderPath(v);
+                var imageCount = Directory.Exists(versionPath)
+                    ? Directory.EnumerateFiles(versionPath)
+                        .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                    : 0;
+                versionOptions.Add(EditorVersionItem.Create(v, imageCount));
+            }
+        }
+        else
+        {
+            var imageCount = Directory.Exists(dataset.FolderPath)
+                ? Directory.EnumerateFiles(dataset.FolderPath)
+                    .Count(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+                : 0;
+            versionOptions.Add(EditorVersionItem.Create(1, imageCount));
         }
 
         if (versionOptions.Count == 0)
         {
-            versionOptions.Add(1);
+            versionOptions.Add(EditorVersionItem.Create(1, 0));
         }
     }
 
     /// <summary>
     /// Loads images from a dataset version folder.
     /// </summary>
-    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, int? version)
+    private List<ImageCompareItem> LoadImagesFromDataset(DatasetCardViewModel? dataset, EditorVersionItem? version)
     {
         var items = new List<ImageCompareItem>();
 
@@ -434,7 +450,7 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
             return items;
         }
 
-        var versionNum = version ?? 1;
+        var versionNum = version?.Version ?? 1;
         var versionPath = dataset.IsVersionedStructure
             ? dataset.GetVersionFolderPath(versionNum)
             : dataset.FolderPath;
@@ -471,7 +487,6 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         }
 
         LoadVersionsForDataset(value, LeftVersionOptions);
-        SelectedLeftVersion = LeftVersionOptions.FirstOrDefault();
         RefreshLeftImages();
         OnPropertyChanged(nameof(LeftLabel));
 
@@ -485,7 +500,7 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         }
     }
 
-    partial void OnSelectedLeftVersionChanged(int? value)
+    partial void OnSelectedLeftVersionChanged(EditorVersionItem? value)
     {
         RefreshLeftImages();
         OnPropertyChanged(nameof(LeftLabel));
@@ -513,12 +528,11 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         }
 
         LoadVersionsForDataset(value, RightVersionOptions);
-        SelectedRightVersion = RightVersionOptions.FirstOrDefault();
         RefreshRightImages();
         OnPropertyChanged(nameof(RightLabel));
     }
 
-    partial void OnSelectedRightVersionChanged(int? value)
+    partial void OnSelectedRightVersionChanged(EditorVersionItem? value)
     {
         RefreshRightImages();
         OnPropertyChanged(nameof(RightLabel));

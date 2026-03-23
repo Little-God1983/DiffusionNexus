@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 
@@ -15,6 +16,7 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
 
     private readonly IUnifiedLogger _logger;
     private readonly ITaskTracker _taskTracker;
+    private readonly ConcurrentDictionary<Guid, ITrackedTaskHandle> _trackedHandles = new();
     private readonly object _statusLock = new();
     private readonly object _backupLock = new();
 
@@ -144,8 +146,10 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
     {
         var operation = new ProgressOperation(name, source, isCancellable, OnOperationCompleted);
 
-        // Also create a tracked task so it appears in the unified console
-        _taskTracker.BeginTask(name, LogCategory.General);
+        // Create a tracked task so it appears in the unified console and store the
+        // handle so we can complete it when the ProgressOperation is disposed.
+        var handle = _taskTracker.BeginTask(name, LogCategory.General);
+        _trackedHandles[operation.Id] = handle;
 
         OperationStarted?.Invoke(this, operation);
         return operation;
@@ -161,6 +165,11 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
 
     private void OnOperationCompleted(ProgressOperation operation)
     {
+        if (_trackedHandles.TryRemove(operation.Id, out var handle))
+        {
+            handle.Complete();
+        }
+
         OperationCompleted?.Invoke(this, operation);
     }
 

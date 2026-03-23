@@ -1,0 +1,73 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:controls="using:DiffusionNexus.UI.Controls"
+             x:Class="DiffusionNexus.UI.Views.Controls.CaptionEditorControl"
+             x:DataType="local:CaptionEditorControl">
+  <Panel>
+    <Grid x:Name="HorizontalLayout" RowDefinitions="*,Auto"
+          IsVisible="{Binding !IsVerticalLayout, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}">
+      <controls:SpellCheckTextBox Grid.Row="0"
+          Text="{Binding Text, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}, Mode=TwoWay}"
+          Watermark="{Binding Watermark, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+          MinHeight="{Binding TextMinHeight, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+          MaxHeight="{Binding TextMaxHeight, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+          FontSize="{Binding TextFontSize, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+          TextWrapping="Wrap" AcceptsReturn="True"/>
+      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                  Margin="0,6,0,0"
+                  IsVisible="{Binding HasUnsavedChanges, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}">
+        <Button Content="Undo" Command="{Binding UndoCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                FontSize="12" Padding="8,4" Margin="0,0,4,0"/>
+        <Button Content="Redo" Command="{Binding RedoCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                FontSize="12" Padding="8,4" Margin="0,0,8,0"/>
+        <Button Content="Reset" Command="{Binding ResetCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                FontSize="12" Padding="8,4" Margin="0,0,8,0"/>
+        <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+        <Button Content="Save" Command="{Binding SaveCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                FontSize="12" Padding="10,4"/>
+      </StackPanel>
+    </Grid>
+    <Grid x:Name="VerticalLayout" ColumnDefinitions="*,Auto"
+          IsVisible="{Binding IsVerticalLayout, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}">
+      <Border Grid.Column="0" Background="#80333333" CornerRadius="6" Padding="4">
+        <controls:SpellCheckTextBox
+            Text="{Binding Text, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}, Mode=TwoWay}"
+            Watermark="{Binding Watermark, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+            MinHeight="{Binding TextMinHeight, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+            MaxHeight="{Binding TextMaxHeight, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+            FontSize="{Binding TextFontSize, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+            Foreground="#CCC" Background="Transparent" BorderThickness="0"
+            TextWrapping="Wrap" AcceptsReturn="True"/>
+      </Border>
+      <StackPanel Grid.Column="1" Orientation="Vertical" Spacing="4"
+                  Margin="8,0,0,0" VerticalAlignment="Top">
+        <Button Command="{Binding SaveCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                Padding="12,8" FontSize="13" Background="#80444444" Foreground="White" CornerRadius="4"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                ToolTip.Placement="Left" ToolTip.Tip="Save caption (Ctrl+S)">
+          <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+            <TextBlock Text="*" FontWeight="Bold" Foreground="#FFD700"
+                       IsVisible="{Binding HasUnsavedChanges, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"/>
+            <TextBlock Text="Save"/>
+          </StackPanel>
+        </Button>
+        <Button Content="Reset" Command="{Binding ResetCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                Padding="12,8" FontSize="13" Background="#80444444" Foreground="White" CornerRadius="4"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsVisible="{Binding HasUnsavedChanges, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                ToolTip.Placement="Left" ToolTip.Tip="Reset changes"/>
+        <Button Content="Undo" Command="{Binding UndoCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                Padding="12,8" FontSize="13" Background="#80444444" Foreground="White" CornerRadius="4"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsVisible="{Binding HasUnsavedChanges, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                ToolTip.Placement="Left" ToolTip.Tip="Undo changes"/>
+        <Button Content="Redo" Command="{Binding RedoCommand, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                Padding="12,8" FontSize="13" Background="#80444444" Foreground="White" CornerRadius="4"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsVisible="{Binding HasUnsavedChanges, RelativeSource={RelativeSource AncestorType=local:CaptionEditorControl}}"
+                ToolTip.Placement="Left" ToolTip.Tip="Redo changes"/>
+      </StackPanel>
+    </Grid>
+  </Panel>
+</UserControl>

@@ -6,7 +6,7 @@
              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
-             xmlns:controls="using:DiffusionNexus.UI.Controls"
+             xmlns:viewControls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetManagementView"
              x:DataType="vmTabs:DatasetManagementViewModel">
@@ -503,24 +503,15 @@
                             <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.7" TextTrimming="CharacterEllipsis"/>
                           </Border>
                           <Border Grid.Row="2" Padding="10">
-                            <Grid RowDefinitions="*,Auto">
-                              <controls:SpellCheckTextBox Grid.Row="0" Text="{Binding Caption, Mode=TwoWay}" Watermark="Enter caption..."
-                                       TextWrapping="Wrap" AcceptsReturn="True" FontSize="13" MinHeight="80" MaxHeight="120"/>
-                              <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                                      Margin="0,6,0,0">
-                                <Button Content="Undo" Command="{Binding UndoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,4,0"
-                                        IsVisible="{Binding HasUnsavedChanges}"/>
-                                <Button Content="Redo" Command="{Binding RedoCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
-                                        IsVisible="{Binding HasUnsavedChanges}"/>
-                                
-                                <Button Content="Reset" Command="{Binding RevertCaptionCommand}" FontSize="12" Padding="8,4" Margin="0,0,8,0"
-                                        IsVisible="{Binding HasUnsavedChanges}"/>
-                                <TextBlock Text="Modified" Foreground="Orange" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"
-                                           IsVisible="{Binding HasUnsavedChanges}"/>
-                                <Button Content="Save" Command="{Binding SaveCaptionCommand}" FontSize="12" Padding="10,4"
-                                        IsVisible="{Binding HasUnsavedChanges}"/>
-                              </StackPanel>
-                            </Grid>
+                            <viewControls:CaptionEditorControl
+                                Text="{Binding Caption, Mode=TwoWay}"
+                                HasUnsavedChanges="{Binding HasUnsavedChanges}"
+                                UndoCommand="{Binding UndoCaptionCommand}"
+                                RedoCommand="{Binding RedoCaptionCommand}"
+                                ResetCommand="{Binding RevertCaptionCommand}"
+                                SaveCommand="{Binding SaveCaptionCommand}"
+                                Watermark="Enter caption..."
+                                TextMinHeight="80" TextMaxHeight="120"/>
                           </Border>
                         </Grid>
                       </Border>

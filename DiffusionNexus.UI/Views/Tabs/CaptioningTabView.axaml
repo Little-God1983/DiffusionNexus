@@ -6,6 +6,7 @@
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
              xmlns:svc="using:DiffusionNexus.Domain.Services"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.Tabs.CaptioningTabView"
              x:DataType="vm:CaptioningTabViewModel">
@@ -14,7 +15,7 @@
     <vm:CaptioningTabViewModel/>
   </Design.DataContext>
 
-  <Grid RowDefinitions="*,Auto">
+  <Grid RowDefinitions="*">
 
     <!-- Service Unavailable Warning -->
     <Border IsVisible="{Binding IsServiceAvailable, Converter={x:Static converters:BoolConverters.Not}}"
@@ -192,33 +193,16 @@
               <!-- Dataset Input -->
               <StackPanel IsVisible="{Binding !IsSingleImageMode}">
                 <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
-                <Grid ColumnDefinitions="*,12,Auto,4,Auto">
-                  <ComboBox Grid.Column="0"
-                            ItemsSource="{Binding AvailableDatasets}"
-                            SelectedItem="{Binding SelectedDataset}"
-                            PlaceholderText="Choose a dataset..."
-                            HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Name}"/>
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
+                <Grid ColumnDefinitions="*,4,Auto">
+                  <controls:DatasetVersionSelectorControl Grid.Column="0"
+                      Datasets="{Binding AvailableDatasets}"
+                      SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                      VersionItems="{Binding AvailableDatasetVersions}"
+                      SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
+                      IsDatasetSearchable="True"
+                      DatasetPlaceholderText="Choose a dataset..."/>
 
-                  <ComboBox Grid.Column="2"
-                            ItemsSource="{Binding AvailableDatasetVersions}"
-                            SelectedItem="{Binding SelectedDatasetVersion}"
-                            MinWidth="80"
-                            ToolTip.Tip="Select Version"
-                            IsEnabled="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding StringFormat='V{0}'}"/>
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-
-                  <Button Grid.Column="4" Content="&#x21BB;"
+                  <Button Grid.Column="2" Content="&#x21BB;"
                           Command="{Binding RefreshDatasetsCommand}"
                           Padding="8,6"
                           ToolTip.Tip="Refresh dataset list"/>
@@ -348,6 +332,26 @@
             </StackPanel>
           </Border>
 
+          <!-- Save Settings (dataset mode only) -->
+          <Border Background="#333333" CornerRadius="8" Padding="16"
+                  IsVisible="{Binding !IsSingleImageMode}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Save Settings" FontWeight="SemiBold" FontSize="14"/>
+              <ComboBox ItemsSource="{Binding AvailableSaveModes}"
+                        SelectedItem="{Binding SaveMode}"
+                        HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Converter={x:Static converters:UpscaleEnumDisplayConverter.Instance}}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Text="{Binding SaveModeDescription}"
+                         TextWrapping="Wrap"
+                         Opacity="0.5" FontSize="11" Margin="0,2,0,0"/>
+            </StackPanel>
+          </Border>
+
           <!-- Dataset Statistics -->
           <Border Background="#333333" CornerRadius="8" Padding="16"
                   IsVisible="{Binding HasDatasetStats}">
@@ -379,153 +383,160 @@
             </StackPanel>
           </Border>
 
-          <!-- Status Message -->
-          <TextBlock Text="{Binding StatusMessage}"
-                     Foreground="#D4A574"
-                     TextWrapping="Wrap"
-                     IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+          <!-- Action & Status -->
+          <Border Background="#333333" CornerRadius="8" Padding="16">
+            <StackPanel Spacing="12">
+              <Grid ColumnDefinitions="*,Auto">
+                <Button Grid.Column="0"
+                        Content="Generate Captions"
+                        Command="{Binding GenerateCommand}"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Padding="12,8"
+                        FontWeight="SemiBold"
+                        Background="#4CAF50"
+                        Foreground="White"/>
+                <Button Grid.Column="1"
+                        Content="Pause"
+                        Command="{Binding PauseCommand}"
+                        Margin="8,0,0,0"
+                        Padding="12,8"
+                        IsVisible="{Binding IsProcessing}"/>
+              </Grid>
+
+              <!-- Progress -->
+              <ProgressBar Minimum="0" Maximum="100"
+                           Value="{Binding TotalProgress}"
+                           IsVisible="{Binding IsProcessing}"
+                           Height="6"/>
+              <TextBlock Text="{Binding CurrentProcessingStatus}"
+                         Foreground="#4CAF50" FontSize="13"
+                         TextWrapping="Wrap"/>
+
+              <!-- Status Message -->
+              <TextBlock Text="{Binding StatusMessage}"
+                         Foreground="#D4A574"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+            </StackPanel>
+          </Border>
         </StackPanel>
       </ScrollViewer>
 
-      <!-- RIGHT: Live Preview Panel -->
-      <Border Grid.Column="1" Margin="0,16,16,16" Background="#1A1A1A" CornerRadius="8"
-              IsVisible="{Binding IsServiceAvailable}">
-        <Grid RowDefinitions="Auto,*,Auto">
-
-          <!-- Header: Progress bar and counter -->
-          <StackPanel Grid.Row="0" Margin="16,16,16,8" Spacing="8">
-            <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Grid.Column="0" Text="{Binding CurrentProcessingStatus}" FontWeight="SemiBold" FontSize="14"/>
-              <TextBlock Grid.Column="1" Opacity="0.7" FontSize="13"
-                         IsVisible="{Binding IsProcessing}">
-                <TextBlock.Text>
-                  <MultiBinding StringFormat="{}{0} / {1}">
-                    <Binding Path="CompletedCount"/>
-                    <Binding Path="TotalImageCount"/>
-                  </MultiBinding>
-                </TextBlock.Text>
-              </TextBlock>
-            </Grid>
-            <ProgressBar Value="{Binding TotalProgress}" Maximum="100" Height="4"
-                         IsVisible="{Binding IsProcessing}"/>
-          </StackPanel>
-
-          <!-- Content Area: Current Image + History -->
-          <Grid Grid.Row="1" Margin="16,0" ColumnDefinitions="*,12,240">
-
-            <!-- Main: Currently Processing Image -->
-            <Border Grid.Column="0" Background="#111111" CornerRadius="6"
-                    BorderBrush="#333" BorderThickness="1">
-              <Grid>
-                <!-- Placeholder when no image -->
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                            IsVisible="{Binding CurrentImagePath, Converter={x:Static ObjectConverters.IsNull}}">
-                  <TextBlock Text="&#x1F5BC;" FontSize="48" HorizontalAlignment="Center" Opacity="0.2"/>
-                  <TextBlock Text="Currently Processing" FontSize="13" Opacity="0.3" HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                </StackPanel>
-
-                <!-- Current image -->
-                <Image Source="{Binding CurrentImagePreview}"
-                       Stretch="Uniform"
-                       IsVisible="{Binding CurrentImagePath, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-
-                <!-- Label overlay -->
-                <Border Background="#88000000" CornerRadius="4" Padding="8,4"
-                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
-                        IsVisible="{Binding CurrentImagePath, Converter={x:Static ObjectConverters.IsNotNull}}">
-                  <TextBlock Text="Currently Processing" FontSize="11" Opacity="0.9"/>
-                </Border>
-              </Grid>
-            </Border>
-
-            <!-- Right Side: Scrollable History List -->
-            <Border Grid.Column="2" Background="#111111" CornerRadius="6"
-                    BorderBrush="#333" BorderThickness="1">
-              <Grid RowDefinitions="Auto,*">
-                <TextBlock Grid.Row="0" Text="History" FontWeight="SemiBold" FontSize="12"
-                           Opacity="0.6" Margin="10,8,10,4"/>
-                <ScrollViewer Grid.Row="1" Padding="4,0">
-                  <ItemsControl ItemsSource="{Binding CaptionHistory}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:CaptionHistoryItemViewModel">
-                        <Button Background="Transparent" Padding="0" Margin="0,0,0,2"
-                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                                BorderThickness="0" CornerRadius="4"
-                                Command="{Binding $parent[ItemsControl].((vm:CaptioningTabViewModel)DataContext).ToggleHistoryItemCommand}"
-                                CommandParameter="{Binding}">
-                          <Border Background="#1A1A1A" CornerRadius="4" Padding="6" Margin="2">
-                            <Grid ColumnDefinitions="56,8,*" RowDefinitions="Auto,Auto">
-                              <!-- Thumbnail -->
-                              <Border Grid.Column="0" Grid.RowSpan="2" CornerRadius="3"
-                                      Width="56" Height="56" ClipToBounds="True"
-                                      Background="#222">
-                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
-                              </Border>
-
-                              <!-- File name -->
-                              <TextBlock Grid.Column="2" Grid.Row="0"
-                                         Text="{Binding FileName}"
-                                         FontSize="11" FontWeight="SemiBold"
-                                         TextTrimming="CharacterEllipsis"
-                                         Margin="0,0,0,2"/>
-
-                              <!-- Caption preview / full caption -->
-                              <TextBlock Grid.Column="2" Grid.Row="1"
-                                         Text="{Binding DisplayCaption}"
-                                         FontSize="10" Opacity="0.6"
-                                         TextWrapping="Wrap"
-                                         MaxLines="{Binding IsExpanded, Converter={x:Static converters:BoolConverters.BoolToMaxLines}}"/>
-                            </Grid>
-                          </Border>
-                        </Button>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </ScrollViewer>
-              </Grid>
-            </Border>
-          </Grid>
-
-          <!-- Caption Output -->
-          <Border Grid.Row="2" Margin="16,8,16,16" Background="#222222" CornerRadius="6" Padding="12"
-                  MinHeight="60" MaxHeight="120">
-            <ScrollViewer>
-              <Grid>
-                <!-- Placeholder -->
-                <TextBlock Text="Generated caption will appear here..."
-                           Opacity="0.3" FontStyle="Italic"
-                           IsVisible="{Binding DisplayCaption, Converter={x:Static ObjectConverters.IsNull}}"/>
-                <!-- Caption text -->
-                <TextBlock Text="{Binding DisplayCaption}"
-                           TextWrapping="Wrap" FontSize="13" LineHeight="20"
-                           IsVisible="{Binding DisplayCaption, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-              </Grid>
-            </ScrollViewer>
-          </Border>
-        </Grid>
-      </Border>
-    </Grid>
-
-    <!-- Footer -->
-    <Border Grid.Row="1" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,1,0,0"
+      <!-- RIGHT: Preview Panel + Gallery -->
+      <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto"
             IsVisible="{Binding IsServiceAvailable}">
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-        <Button Content="Generate Captions"
-                Command="{Binding GenerateCommand}"
-                Background="#2D7D46"
-                Foreground="White"
-                FontWeight="Bold"
-                Padding="16,8"
-                IsVisible="{Binding !IsProcessing}"/>
-        <Button Content="⏸️ Pause After Current"
-                Command="{Binding PauseCommand}"
-                Background="#E67E22"
-                Foreground="White"
-                FontWeight="Bold"
-                Padding="16,8"
-                IsVisible="{Binding IsProcessing}"/>
-      </StackPanel>
-    </Border>
+
+        <!-- Main Image Preview -->
+        <Panel Grid.Row="0">
+          <!-- Selected image large preview -->
+          <Image Source="{Binding SelectedGalleryPreview}"
+                 Stretch="Uniform"
+                 IsVisible="{Binding SelectedHistoryItem, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+          <!-- Currently processing image (shown when no selection) -->
+          <Image Source="{Binding CurrentImagePreview}"
+                 Stretch="Uniform">
+            <Image.IsVisible>
+              <MultiBinding Converter="{x:Static BoolConverters.And}">
+                <Binding Path="SelectedHistoryItem" Converter="{x:Static ObjectConverters.IsNull}"/>
+                <Binding Path="CurrentImagePath" Converter="{x:Static ObjectConverters.IsNotNull}"/>
+              </MultiBinding>
+            </Image.IsVisible>
+          </Image>
+
+          <!-- Label overlay for currently processing -->
+          <Border Background="#88000000" CornerRadius="4" Padding="8,4"
+                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8">
+            <Border.IsVisible>
+              <MultiBinding Converter="{x:Static BoolConverters.And}">
+                <Binding Path="SelectedHistoryItem" Converter="{x:Static ObjectConverters.IsNull}"/>
+                <Binding Path="CurrentImagePath" Converter="{x:Static ObjectConverters.IsNotNull}"/>
+              </MultiBinding>
+            </Border.IsVisible>
+            <TextBlock Text="Currently Processing" FontSize="11" Opacity="0.9"/>
+          </Border>
+
+          <!-- Placeholder when no image at all -->
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <StackPanel.IsVisible>
+              <MultiBinding Converter="{x:Static BoolConverters.And}">
+                <Binding Path="SelectedHistoryItem" Converter="{x:Static ObjectConverters.IsNull}"/>
+                <Binding Path="CurrentImagePath" Converter="{x:Static ObjectConverters.IsNull}"/>
+              </MultiBinding>
+            </StackPanel.IsVisible>
+            <TextBlock Text="&#x1F5BC;" FontSize="64" Opacity="0.2" HorizontalAlignment="Center"/>
+            <TextBlock Text="Select an image to preview" Opacity="0.3"
+                       HorizontalAlignment="Center" FontSize="14" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Panel>
+
+        <!-- Caption Editor (visible when a completed item is selected) -->
+        <Border Grid.Row="1" Margin="16,8,16,0" Padding="12" Background="#222222" CornerRadius="6"
+                MinHeight="60" MaxHeight="160">
+          <Border.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="SelectedHistoryItem" Converter="{x:Static ObjectConverters.IsNotNull}"/>
+              <Binding Path="SelectedHistoryItem.IsCaptionCompleted"/>
+            </MultiBinding>
+          </Border.IsVisible>
+          <controls:CaptionEditorControl DataContext="{Binding SelectedHistoryItem}"
+                Text="{Binding EditableCaption, Mode=TwoWay}"
+                HasUnsavedChanges="{Binding HasUnsavedChanges}"
+                UndoCommand="{Binding UndoCaptionCommand}"
+                RedoCommand="{Binding RedoCaptionCommand}"
+                ResetCommand="{Binding RevertCaptionCommand}"
+                SaveCommand="{Binding SaveCaptionCommand}"
+                Watermark="Caption text..."
+                TextMinHeight="50" TextMaxHeight="100"/>
+        </Border>
+
+        <!-- Bottom Image Gallery -->
+        <Border Grid.Row="2" Background="#1E1E1E" Padding="8" MaxHeight="200"
+                BorderBrush="#333" BorderThickness="0,1,0,0">
+          <Grid RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="Images" FontWeight="SemiBold" Margin="8,0,0,8"/>
+            <ListBox Grid.Row="1"
+                     ItemsSource="{Binding CaptionHistory}"
+                     SelectedItem="{Binding SelectedHistoryItem}"
+                     Background="Transparent">
+              <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ListBox.ItemsPanel>
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:CaptionHistoryItemViewModel">
+                  <Border Background="#333" CornerRadius="4" Padding="4" Margin="2"
+                          Width="80" Height="80"
+                          BorderThickness="2"
+                          Classes.processing="{Binding IsProcessing}"
+                          Classes.completed="{Binding IsCaptionCompleted}">
+                    <Border.Styles>
+                      <Style Selector="Border">
+                        <Setter Property="BorderBrush" Value="Transparent"/>
+                      </Style>
+                      <Style Selector="Border.processing">
+                        <Setter Property="BorderBrush" Value="#FF9800"/>
+                      </Style>
+                      <Style Selector="Border.completed">
+                        <Setter Property="BorderBrush" Value="#4CAF50"/>
+                      </Style>
+                    </Border.Styles>
+                    <Grid RowDefinitions="*,Auto">
+                      <Image Grid.Row="0" Source="{Binding Thumbnail}" Stretch="Uniform"/>
+                      <TextBlock Grid.Row="1" Text="{Binding FileName}" FontSize="9"
+                                 TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"
+                                 Opacity="0.7"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+      </Grid>
+    </Grid>
 
   </Grid>
 </UserControl>
