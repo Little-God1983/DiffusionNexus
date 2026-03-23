@@ -21,6 +21,7 @@ public static class DatasetQualityServiceExtensions
 
         // Built-in checks — each registered as IDatasetCheck so the pipeline discovers them
         services.AddSingleton<IDatasetCheck, FormatConsistencyCheck>();
+        services.AddSingleton<IDatasetCheck, TriggerWordCheck>();
 
         return services;
     }
