@@ -551,10 +551,14 @@ public partial class InstallerManagerViewModel : ViewModelBase
         UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
         card.IsUpdating = true;
+        card.UpdateStatusMessage = "Starting update...";
         _unifiedLogger.Info(LogCategory.Installation, card.Name, "Starting update...");
 
         var progress = new Progress<string>(msg =>
-            _unifiedLogger.Info(LogCategory.Installation, card.Name, msg));
+        {
+            card.UpdateStatusMessage = msg;
+            _unifiedLogger.Info(LogCategory.Installation, card.Name, msg);
+        });
 
         try
         {
@@ -600,6 +604,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         finally
         {
             card.IsUpdating = false;
+            card.UpdateStatusMessage = null;
         }
     }
 

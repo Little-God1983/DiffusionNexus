@@ -273,12 +273,18 @@
                                                     <TextBlock Text="Update Available" FontSize="12" VerticalAlignment="Center"/>
                                                 </StackPanel>
                                             </Button>
-                                            <TextBlock Text="Updating..."
-                                                       FontSize="12"
-                                                       Foreground="#FF8C00"
-                                                       FontWeight="SemiBold"
-                                                       VerticalAlignment="Center"
-                                                       IsVisible="{Binding IsUpdating}"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6"
+                                                        IsVisible="{Binding IsUpdating}">
+                                                <ProgressBar IsIndeterminate="True"
+                                                             Width="60" Height="4"
+                                                             VerticalAlignment="Center"
+                                                             Foreground="#FF8C00"/>
+                                                <TextBlock Text="Updating..."
+                                                           FontSize="12"
+                                                           Foreground="#FF8C00"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
                                             <TextBlock Text="&#x2B50;"
                                                        FontSize="16"
                                                        VerticalAlignment="Center"
@@ -290,6 +296,17 @@
                                                 <TextBlock Text="&#x2699;" FontSize="16"/>
                                             </Button>
                                         </StackPanel>
+
+                                        <!-- Update status message (live progress) -->
+                                        <TextBlock Grid.Row="4"
+                                                   Text="{Binding UpdateStatusMessage}"
+                                                   FontSize="11"
+                                                   Foreground="#FF8C00"
+                                                   Opacity="0.8"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding UpdateStatusMessage}"
+                                                   Margin="0,2,0,0"
+                                                   IsVisible="{Binding IsUpdating}"/>
 
                                         <!-- Stop / Restart when running -->
                                         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6"

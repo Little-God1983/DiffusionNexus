@@ -47,6 +47,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isUpdating;
 
+    /// <summary>
+    /// Live status message shown on the card during an update (e.g. "Fetching latest changes...").
+    /// </summary>
+    [ObservableProperty]
+    private string? _updateStatusMessage;
+
     [ObservableProperty]
     private bool _isDefault;
 
