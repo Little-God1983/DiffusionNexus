@@ -1400,6 +1400,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _selectedNsfw = dataset.IsNsfw;
             OnPropertyChanged(nameof(SelectedNsfw));
 
+            // Update dataset quality tab with the active version context
+            DatasetQualityTab.RefreshContext(
+                dataset.CurrentVersionFolderPath,
+                dataset.Name,
+                dataset.CurrentVersion,
+                _selectedCategory?.Name);
+
             HasUnsavedChanges = false;
 
             var imageCount = DatasetImages.Count(m => m.IsImage);

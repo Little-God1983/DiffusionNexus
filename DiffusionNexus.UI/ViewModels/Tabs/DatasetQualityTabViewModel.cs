@@ -10,14 +10,15 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 
 /// <summary>
 /// ViewModel for the Dataset Quality tab within the dataset version detail view.
-/// Drives folder picking, analysis via <see cref="AnalysisPipeline"/>, issue
-/// navigation, and one-click fix application via <see cref="FixApplier"/>.
+/// Analyzes the currently active dataset version via <see cref="AnalysisPipeline"/>
+/// and applies one-click fixes via <see cref="FixApplier"/>.
 /// </summary>
 public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly AnalysisPipeline? _pipeline;
 
-    private string _folderPath = string.Empty;
+    private string _datasetFolderPath = string.Empty;
+    private string _datasetLabel = string.Empty;
     private string _triggerWord = string.Empty;
     private LoraType _selectedLoraType = LoraType.Character;
     private bool _isAnalyzing;
@@ -34,7 +35,6 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ArgumentNullException.ThrowIfNull(pipeline);
         _pipeline = pipeline;
 
-        BrowseFolderCommand = new AsyncRelayCommand(BrowseFolderAsync);
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
@@ -45,7 +45,6 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// </summary>
     public DatasetQualityTabViewModel()
     {
-        BrowseFolderCommand = new AsyncRelayCommand(BrowseFolderAsync);
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
@@ -61,20 +60,18 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region Observable Properties
 
     /// <summary>
-    /// Absolute path to the dataset folder to analyze.
+    /// Display label showing the active dataset name and version (e.g. "Ahkasha — V8").
     /// </summary>
-    public string FolderPath
+    public string DatasetLabel
     {
-        get => _folderPath;
-        set
-        {
-            if (SetProperty(ref _folderPath, value))
-            {
-                OnPropertyChanged(nameof(CanAnalyze));
-                AnalyzeCommand.NotifyCanExecuteChanged();
-            }
-        }
+        get => _datasetLabel;
+        private set => SetProperty(ref _datasetLabel, value);
     }
+
+    /// <summary>
+    /// Whether the tab has a valid dataset context to analyze.
+    /// </summary>
+    public bool HasDatasetContext => !string.IsNullOrWhiteSpace(_datasetFolderPath);
 
     /// <summary>
     /// Trigger word / token configured for training.
@@ -111,9 +108,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     }
 
     /// <summary>
-    /// Whether the Analyze command can execute (folder set and not already running).
+    /// Whether the Analyze command can execute (dataset context set and not already running).
     /// </summary>
-    public bool CanAnalyze => !string.IsNullOrWhiteSpace(FolderPath) && !IsAnalyzing;
+    public bool CanAnalyze => HasDatasetContext && !IsAnalyzing;
 
     /// <summary>
     /// Human-readable summary line for the bottom status bar.
@@ -168,12 +165,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region Commands
 
     /// <summary>
-    /// Opens a folder picker and sets <see cref="FolderPath"/>.
-    /// </summary>
-    public IAsyncRelayCommand BrowseFolderCommand { get; }
-
-    /// <summary>
-    /// Runs the quality analysis pipeline on the configured dataset.
+    /// Runs the quality analysis pipeline on the active dataset version.
     /// </summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
 
@@ -191,30 +183,14 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
     #region Command Implementations
 
-    private async Task BrowseFolderAsync()
-    {
-        if (DialogService is null) return;
-
-        var path = await DialogService.ShowOpenFolderDialogAsync("Select Dataset Folder");
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            FolderPath = path;
-        }
-    }
-
     private async Task AnalyzeAsync()
     {
-        if (_pipeline is null) return;
+        if (_pipeline is null || !HasDatasetContext) return;
 
         IsAnalyzing = true;
         try
         {
-            var config = new DatasetConfig
-            {
-                FolderPath = FolderPath,
-                TriggerWord = string.IsNullOrWhiteSpace(TriggerWord) ? null : TriggerWord.Trim(),
-                LoraType = SelectedLoraType
-            };
+            var config = BuildConfig();
 
             // Run analysis on a background thread to keep the UI responsive
             var report = await Task.Run(() => _pipeline.Analyze(config));
@@ -228,7 +204,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
     private async Task ApplyFixAsync(FixSuggestion? suggestion)
     {
-        if (suggestion is null || _pipeline is null) return;
+        if (suggestion is null || _pipeline is null || !HasDatasetContext) return;
 
         IsAnalyzing = true;
         try
@@ -236,13 +212,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             await Task.Run(() => FixApplier.Apply(suggestion, createBackup: true));
 
             // Re-run analysis to refresh the issue list
-            var config = new DatasetConfig
-            {
-                FolderPath = FolderPath,
-                TriggerWord = string.IsNullOrWhiteSpace(TriggerWord) ? null : TriggerWord.Trim(),
-                LoraType = SelectedLoraType
-            };
-
+            var config = BuildConfig();
             var report = await Task.Run(() => _pipeline.Analyze(config));
             ApplyReport(report);
         }
@@ -254,21 +224,21 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
     private async Task BackupCaptionsAsync()
     {
-        if (string.IsNullOrWhiteSpace(FolderPath) || !Directory.Exists(FolderPath))
+        if (!HasDatasetContext || !Directory.Exists(_datasetFolderPath))
             return;
 
         await Task.Run(() =>
         {
-            var backupDir = Path.Combine(FolderPath, $".quality-backup-{DateTime.Now:yyyyMMdd-HHmmss}");
+            var backupDir = Path.Combine(_datasetFolderPath, $".quality-backup-{DateTime.Now:yyyyMMdd-HHmmss}");
             Directory.CreateDirectory(backupDir);
 
-            foreach (var txtFile in Directory.EnumerateFiles(FolderPath, "*.txt"))
+            foreach (var txtFile in Directory.EnumerateFiles(_datasetFolderPath, "*.txt"))
             {
                 var dest = Path.Combine(backupDir, Path.GetFileName(txtFile));
                 File.Copy(txtFile, dest, overwrite: true);
             }
 
-            foreach (var captionFile in Directory.EnumerateFiles(FolderPath, "*.caption"))
+            foreach (var captionFile in Directory.EnumerateFiles(_datasetFolderPath, "*.caption"))
             {
                 var dest = Path.Combine(backupDir, Path.GetFileName(captionFile));
                 File.Copy(captionFile, dest, overwrite: true);
@@ -281,6 +251,13 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 "All caption files have been backed up.");
         }
     }
+
+    private DatasetConfig BuildConfig() => new()
+    {
+        FolderPath = _datasetFolderPath,
+        TriggerWord = string.IsNullOrWhiteSpace(TriggerWord) ? null : TriggerWord.Trim(),
+        LoraType = SelectedLoraType
+    };
 
     #endregion
 
@@ -333,23 +310,49 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     }
 
     /// <summary>
-    /// Pre-fills the folder path from the currently active dataset, if available.
-    /// Called by the parent ViewModel when the dataset quality tab is activated.
+    /// Updates the analysis context from the currently active dataset and version.
+    /// Called by the parent ViewModel when the dataset is opened or the version changes.
     /// </summary>
-    /// <param name="folderPath">The folder path to pre-fill.</param>
-    /// <param name="loraType">Optional LoRA type to pre-select.</param>
-    public void SetDatasetContext(string? folderPath, LoraType? loraType = null)
+    /// <param name="folderPath">Absolute path to the version folder.</param>
+    /// <param name="datasetName">Display name of the dataset.</param>
+    /// <param name="version">Currently selected version number.</param>
+    /// <param name="categoryName">Category name ("Character", "Concept", "Style") for LoRA type mapping.</param>
+    public void RefreshContext(string? folderPath, string? datasetName, int version, string? categoryName)
     {
-        if (!string.IsNullOrWhiteSpace(folderPath))
+        _datasetFolderPath = folderPath ?? string.Empty;
+        DatasetLabel = string.IsNullOrWhiteSpace(datasetName)
+            ? string.Empty
+            : $"{datasetName} — V{version}";
+
+        // Auto-map category name to LoRA type when a recognized category is set
+        if (!string.IsNullOrWhiteSpace(categoryName))
         {
-            FolderPath = folderPath;
+            SelectedLoraType = MapCategoryToLoraType(categoryName);
         }
 
-        if (loraType.HasValue)
-        {
-            SelectedLoraType = loraType.Value;
-        }
+        // Clear stale results when the context changes
+        _lastReport = null;
+        Issues.Clear();
+        SelectedIssue = null;
+        SummaryText = string.Empty;
+
+        OnPropertyChanged(nameof(HasDatasetContext));
+        OnPropertyChanged(nameof(HasResults));
+        OnPropertyChanged(nameof(CanAnalyze));
+        AnalyzeCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>
+    /// Maps a dataset category name to the corresponding <see cref="LoraType"/>.
+    /// Falls back to <see cref="LoraType.Character"/> when the category is not recognized.
+    /// </summary>
+    private static LoraType MapCategoryToLoraType(string categoryName) => categoryName.Trim().ToLowerInvariant() switch
+    {
+        "character" => LoraType.Character,
+        "concept" => LoraType.Concept,
+        "style" => LoraType.Style,
+        _ => LoraType.Character
+    };
 
     #endregion
 }

@@ -29,33 +29,25 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
 
-        <!-- Folder Path + Browse -->
-        <Grid Grid.Column="0" ColumnDefinitions="*,Auto" Margin="0,0,12,0">
-          <TextBox Grid.Column="0"
-                   Text="{Binding FolderPath, Mode=TwoWay}"
-                   Watermark="Dataset folder path..."
-                   Padding="8,6"
-                   Background="#333"
-                   BorderBrush="#444"
-                   BorderThickness="1"
-                   CornerRadius="4"
-                   VerticalAlignment="Center"/>
-          <Button Grid.Column="1"
-                  Content="Browse..."
-                  Command="{Binding BrowseFolderCommand}"
-                  Padding="12,6"
-                  Margin="6,0,0,0"
-                  Background="#444"
-                  CornerRadius="4"/>
-        </Grid>
+        <!-- Dataset context label -->
+        <TextBlock Grid.Column="0"
+                   Text="{Binding DatasetLabel}"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Opacity="0.8"
+                   VerticalAlignment="Center"
+                   Margin="0,0,16,0"/>
+
+        <!-- Spacer -->
+        <Border Grid.Column="1"/>
 
         <!-- Trigger Word -->
-        <TextBox Grid.Column="1"
+        <TextBox Grid.Column="2"
                  Text="{Binding TriggerWord, Mode=TwoWay}"
                  Watermark="Trigger word..."
-                 Width="140"
+                 Width="160"
                  Padding="8,6"
                  Margin="0,0,12,0"
                  Background="#333"
@@ -65,7 +57,7 @@
                  VerticalAlignment="Center"/>
 
         <!-- LoRA Type Dropdown -->
-        <ComboBox Grid.Column="2"
+        <ComboBox Grid.Column="3"
                   ItemsSource="{Binding AvailableLoraTypes}"
                   SelectedItem="{Binding SelectedLoraType, Mode=TwoWay}"
                   MinWidth="120"
@@ -73,7 +65,7 @@
                   VerticalAlignment="Center"/>
 
         <!-- Analyze Button -->
-        <Button Grid.Column="3"
+        <Button Grid.Column="4"
                 Content="Analyze"
                 Command="{Binding AnalyzeCommand}"
                 Padding="14,8"
@@ -84,7 +76,7 @@
                 CornerRadius="4"/>
 
         <!-- Backup Button -->
-        <Button Grid.Column="4"
+        <Button Grid.Column="5"
                 Content="Backup"
                 Command="{Binding BackupCaptionsCommand}"
                 Padding="14,8"
@@ -92,7 +84,7 @@
                 CornerRadius="4"/>
 
         <!-- Spinner -->
-        <StackPanel Grid.Column="5"
+        <StackPanel Grid.Column="6"
                     Orientation="Horizontal"
                     Spacing="8"
                     VerticalAlignment="Center"
@@ -126,7 +118,7 @@
             <TextBlock Text="No analysis results yet"
                        FontSize="14" Opacity="0.5"
                        HorizontalAlignment="Center"/>
-            <TextBlock Text="Configure a dataset folder and click Analyze"
+            <TextBlock Text="Click Analyze to check this dataset"
                        FontSize="12" Opacity="0.3"
                        HorizontalAlignment="Center"
                        TextWrapping="Wrap"
