@@ -10,6 +10,7 @@ using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -28,6 +29,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
+    private readonly IUnifiedLogger _unifiedLogger;
+
+    /// <summary>
+    /// Raised when the unified console panel should be opened (e.g., during an update).
+    /// </summary>
+    public event EventHandler? UnifiedConsolePanelRequested;
 
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
@@ -59,7 +66,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IConfigurationRepository configurationRepository,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
-        IEnumerable<IInstallerUpdateService> updateServices)
+        IEnumerable<IInstallerUpdateService> updateServices,
+        IUnifiedLogger unifiedLogger)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -69,6 +77,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _checkerService = checkerService;
         _installService = installService;
         _updateServices = updateServices;
+        _unifiedLogger = unifiedLogger;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -520,12 +529,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
     {
-        if (card.IsRunning)
-        {
-            await _dialogService.ShowMessageAsync("Cannot Update", "Please stop the running process before updating.");
-            return;
-        }
-
         var service = _updateServices.FirstOrDefault(s => s.SupportedTypes.Contains(card.Type));
         if (service is null)
         {
@@ -533,10 +536,29 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        // Auto-stop the running instance before updating
+        if (card.IsRunning)
+        {
+            _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                "Stopping running instance before update...");
+            await _processManager.StopAsync(card.Id);
+
+            // Brief wait to let the process exit cleanly
+            await Task.Delay(1000);
+        }
+
+        // Open the unified console panel so the user can follow progress
+        UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
+
         card.IsUpdating = true;
+        _unifiedLogger.Info(LogCategory.Installation, card.Name, "Starting update...");
+
+        var progress = new Progress<string>(msg =>
+            _unifiedLogger.Info(LogCategory.Installation, card.Name, msg));
+
         try
         {
-            var result = await service.UpdateAsync(card.InstallationPath);
+            var result = await service.UpdateAsync(card.InstallationPath, progress);
             if (result.Success)
             {
                 card.IsUpdateAvailable = false;
@@ -557,16 +579,22 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     }
                 }
 
+                _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                    $"Update complete: {result.Message}");
                 await _dialogService.ShowMessageAsync("Update Complete", result.Message);
             }
             else
             {
+                _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                    $"Update failed: {result.Message}");
                 await _dialogService.ShowMessageAsync("Update Failed", result.Message);
             }
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to update installation {Name}", card.Name);
+            _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                $"Update error: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Update failed: {ex.Message}");
         }
         finally

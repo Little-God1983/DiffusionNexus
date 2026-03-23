@@ -49,34 +49,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         var localHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", ct);
 
         // Detect the tracked branch — handle detached HEAD and missing tracking
-        var branchResult = await RunGitAsync(backendDir, "rev-parse --abbrev-ref HEAD", ct);
-        var branch = branchResult.Success ? branchResult.Output.Trim() : null;
-
-        // "HEAD" means detached HEAD — try to find the default remote branch
-        if (string.IsNullOrEmpty(branch) || branch == "HEAD")
-        {
-            Logger.Debug("Detached HEAD in {Dir}, trying to find default remote branch", backendDir);
-
-            // Try origin/HEAD symbolic ref first
-            var symbolicRef = await RunGitAsync(backendDir, "symbolic-ref refs/remotes/origin/HEAD --short", ct);
-            if (symbolicRef.Success)
-            {
-                // Returns "origin/main" or "origin/master" — strip "origin/"
-                branch = symbolicRef.Output.Trim().Replace("origin/", "");
-            }
-            else
-            {
-                // Fallback: try common branch names
-                foreach (var candidate in new[] { "main", "master" })
-                {
-                    var check = await RunGitAsync(backendDir, $"rev-parse --verify origin/{candidate}", ct);
-                    if (check.Success) { branch = candidate; break; }
-                }
-            }
-
-            branch ??= "main";
-            Logger.Debug("Resolved remote branch to {Branch} for {Dir}", branch, backendDir);
-        }
+        var (branch, isDetached) = await ResolveBranchAsync(backendDir, ct);
 
         // Verify the remote branch exists
         var remoteHash = await RunGitAsync(backendDir, $"rev-parse --short origin/{branch}", ct);
@@ -125,12 +98,9 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         progress?.Report("Updating ComfyUI backend...");
         Logger.Information("Updating ComfyUI backend at {Path}", backendDir);
 
-        var backendResult = await RunGitAsync(backendDir, "pull --ff-only", ct);
-        if (!backendResult.Success)
-        {
-            Logger.Error("Backend update failed: {Output}", backendResult.Output);
-            return new UpdateResult(false, null, $"Backend update failed: {backendResult.Output}");
-        }
+        var backendPullResult = await PullDirectoryAsync(backendDir, progress, "Backend", ct);
+        if (!backendPullResult.Success)
+            return new UpdateResult(false, null, $"Backend update failed: {backendPullResult.Output}");
 
         progress?.Report("Backend updated successfully.");
 
@@ -141,11 +111,11 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             progress?.Report("Updating ComfyUI frontend...");
             Logger.Information("Updating ComfyUI frontend at {Path}", frontendDir);
 
-            var frontendResult = await RunGitAsync(frontendDir, "pull --ff-only", ct);
-            if (!frontendResult.Success)
+            var frontendPullResult = await PullDirectoryAsync(frontendDir, progress, "Frontend", ct);
+            if (!frontendPullResult.Success)
             {
-                Logger.Warning("Frontend update failed (non-fatal): {Output}", frontendResult.Output);
-                progress?.Report($"Frontend update failed: {frontendResult.Output}");
+                Logger.Warning("Frontend update failed (non-fatal): {Output}", frontendPullResult.Output);
+                progress?.Report($"Frontend update failed: {frontendPullResult.Output}");
                 // Non-fatal — the backend was already updated
             }
             else
@@ -164,6 +134,81 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             Success: true,
             NewHash: hash,
             Message: "Update completed successfully");
+    }
+
+    /// <summary>
+    /// Detects the current branch for a git directory. If in detached HEAD state,
+    /// resolves the default remote branch (origin/HEAD → origin/main → origin/master).
+    /// </summary>
+    /// <returns>The resolved branch name and whether the repo was in detached HEAD state.</returns>
+    private static async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
+        string dir, CancellationToken ct)
+    {
+        var branchResult = await RunGitAsync(dir, "rev-parse --abbrev-ref HEAD", ct);
+        var branch = branchResult.Success ? branchResult.Output.Trim() : null;
+
+        if (!string.IsNullOrEmpty(branch) && branch != "HEAD")
+            return (branch, IsDetached: false);
+
+        Logger.Debug("Detached HEAD in {Dir}, trying to find default remote branch", dir);
+
+        // Try origin/HEAD symbolic ref first
+        var symbolicRef = await RunGitAsync(dir, "symbolic-ref refs/remotes/origin/HEAD --short", ct);
+        if (symbolicRef.Success)
+        {
+            // Returns "origin/main" or "origin/master" — strip "origin/"
+            branch = symbolicRef.Output.Trim().Replace("origin/", "");
+        }
+        else
+        {
+            // Fallback: try common branch names
+            branch = null;
+            foreach (var candidate in new[] { "main", "master" })
+            {
+                var check = await RunGitAsync(dir, $"rev-parse --verify origin/{candidate}", ct);
+                if (check.Success) { branch = candidate; break; }
+            }
+        }
+
+        branch ??= "main";
+        Logger.Debug("Resolved remote branch to {Branch} for {Dir}", branch, dir);
+        return (branch, IsDetached: true);
+    }
+
+    /// <summary>
+    /// Pulls updates for a git directory, handling detached HEAD by checking out the resolved branch first.
+    /// </summary>
+    private static async Task<GitResult> PullDirectoryAsync(
+        string dir, IProgress<string>? progress, string label, CancellationToken ct)
+    {
+        // Fetch latest refs first so we have up-to-date remote tracking
+        var fetchResult = await RunGitAsync(dir, "fetch --all", ct);
+        if (!fetchResult.Success)
+        {
+            Logger.Warning("{Label} git fetch failed in {Dir}: {Output}", label, dir, fetchResult.Output);
+            return fetchResult;
+        }
+
+        var (branch, isDetached) = await ResolveBranchAsync(dir, ct);
+
+        if (isDetached)
+        {
+            Logger.Information("{Label} is in detached HEAD state, checking out branch {Branch}", label, branch);
+            progress?.Report($"{label}: detached HEAD detected, checking out {branch}...");
+
+            var checkoutResult = await RunGitAsync(dir, $"checkout {branch}", ct);
+            if (!checkoutResult.Success)
+            {
+                Logger.Error("{Label} checkout of {Branch} failed: {Output}", label, branch, checkoutResult.Output);
+                return checkoutResult;
+            }
+        }
+
+        var pullResult = await RunGitAsync(dir, $"pull --ff-only origin {branch}", ct);
+        if (!pullResult.Success)
+            Logger.Error("{Label} update failed: {Output}", label, pullResult.Output);
+
+        return pullResult;
     }
 
     /// <summary>

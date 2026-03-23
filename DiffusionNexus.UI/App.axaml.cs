@@ -654,7 +654,8 @@ public partial class App : Application
             sp.GetRequiredService<IConfigurationRepository>(),
             sp.GetRequiredService<IConfigurationCheckerService>(),
             sp.GetRequiredService<IWorkloadInstallService>(),
-            sp.GetServices<Domain.Services.IInstallerUpdateService>()));
+            sp.GetServices<Domain.Services.IInstallerUpdateService>(),
+            sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -694,6 +695,20 @@ public partial class App : Application
         };
 
         mainViewModel.RegisterModule(installerManagerModule);
+
+        // Open the unified console panel when the installer manager requests it (e.g., during updates)
+        installerManagerVm.UnifiedConsolePanelRequested += (_, _) =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (mainViewModel.StatusBar is { } statusBar)
+                {
+                    statusBar.IsLogPanelOpen = true;
+                    if (statusBar.UnifiedConsole is not null)
+                        statusBar.UnifiedConsole.IsPanelOpen = true;
+                }
+            });
+        };
 
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
