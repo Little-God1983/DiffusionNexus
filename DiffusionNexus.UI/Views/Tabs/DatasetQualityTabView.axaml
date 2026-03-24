@@ -29,7 +29,7 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
 
         <!-- Dataset context label -->
         <TextBlock Grid.Column="0"
@@ -43,21 +43,8 @@
         <!-- Spacer -->
         <Border Grid.Column="1"/>
 
-        <!-- Trigger Word -->
-        <TextBox Grid.Column="2"
-                 Text="{Binding TriggerWord, Mode=TwoWay}"
-                 Watermark="Trigger word..."
-                 Width="160"
-                 Padding="8,6"
-                 Margin="0,0,12,0"
-                 Background="#333"
-                 BorderBrush="#444"
-                 BorderThickness="1"
-                 CornerRadius="4"
-                 VerticalAlignment="Center"/>
-
         <!-- LoRA Type Dropdown -->
-        <ComboBox Grid.Column="3"
+        <ComboBox Grid.Column="2"
                   ItemsSource="{Binding AvailableLoraTypes}"
                   SelectedItem="{Binding SelectedLoraType, Mode=TwoWay}"
                   MinWidth="120"
@@ -65,7 +52,7 @@
                   VerticalAlignment="Center"/>
 
         <!-- Analyze Button -->
-        <Button Grid.Column="4"
+        <Button Grid.Column="3"
                 Content="Analyze"
                 Command="{Binding AnalyzeCommand}"
                 Padding="14,8"
@@ -76,7 +63,7 @@
                 CornerRadius="4"/>
 
         <!-- Backup Button -->
-        <Button Grid.Column="5"
+        <Button Grid.Column="4"
                 Content="Backup"
                 Command="{Binding BackupCaptionsCommand}"
                 Padding="14,8"
@@ -84,7 +71,7 @@
                 CornerRadius="4"/>
 
         <!-- Spinner -->
-        <StackPanel Grid.Column="6"
+        <StackPanel Grid.Column="5"
                     Orientation="Horizontal"
                     Spacing="8"
                     VerticalAlignment="Center"
@@ -202,20 +189,92 @@
                          TextWrapping="Wrap"
                          IsVisible="{Binding SelectedIssue.Details, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
-              <!-- Affected Files -->
-              <Border IsVisible="{Binding SelectedIssue.AffectedFiles.Count}"
+              <!-- Affected Files with Inline Editing -->
+              <Border IsVisible="{Binding EditableAffectedFiles.Count}"
                       Background="#222" CornerRadius="8" Padding="12" Margin="0,4,0,0">
                 <StackPanel Spacing="8">
                   <TextBlock Text="Affected Files" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
-                  <ItemsControl ItemsSource="{Binding SelectedIssue.AffectedFiles}">
+                  <ItemsControl ItemsSource="{Binding EditableAffectedFiles}">
                     <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="x:String">
-                        <TextBlock Text="{Binding}"
-                                   FontSize="12"
-                                   FontFamily="Consolas,Courier New,monospace"
-                                   Opacity="0.7"
-                                   TextTrimming="CharacterEllipsis"
-                                   Margin="0,1"/>
+                      <DataTemplate x:DataType="vmTabs:EditableAffectedFile">
+                        <Border Background="#1A1A1A" CornerRadius="4" Padding="0" Margin="0,2">
+                          <StackPanel>
+                            <!-- Clickable file header -->
+                            <Button Command="{Binding ToggleExpandCommand}"
+                                    Padding="10,6"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    CornerRadius="4"
+                                    Cursor="Hand">
+                              <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding IsExpanded, Converter={x:Static vmTabs:ExpandCollapseIconConverter.Instance}}"
+                                           FontSize="10"
+                                           Opacity="0.5"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding FileName}"
+                                           FontSize="12"
+                                           FontFamily="Consolas,Courier New,monospace"
+                                           Opacity="0.7"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           ToolTip.Tip="{Binding FilePath}"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="●"
+                                           FontSize="10"
+                                           Foreground="#FFA726"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,0,0"
+                                           IsVisible="{Binding HasUnsavedChanges}"/>
+                              </Grid>
+                            </Button>
+
+                            <!-- Expandable editor -->
+                            <Border IsVisible="{Binding IsExpanded}"
+                                    Padding="10,4,10,10"
+                                    BorderBrush="#333"
+                                    BorderThickness="0,1,0,0">
+                              <StackPanel Spacing="6">
+                                <TextBox Text="{Binding CaptionText, Mode=TwoWay}"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         MinHeight="60"
+                                         MaxHeight="160"
+                                         FontSize="12"
+                                         FontFamily="Consolas,Courier New,monospace"
+                                         Background="#2A2A2A"
+                                         BorderBrush="#444"
+                                         BorderThickness="1"
+                                         CornerRadius="4"
+                                         Padding="8,6"
+                                         Foreground="#CCC"/>
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="6"
+                                            HorizontalAlignment="Right"
+                                            IsVisible="{Binding HasUnsavedChanges}">
+                                  <Button Content="Reset"
+                                          Command="{Binding ResetCommand}"
+                                          Padding="10,4"
+                                          FontSize="12"
+                                          Background="#444"
+                                          Foreground="White"
+                                          CornerRadius="4"/>
+                                  <Button Content="Save"
+                                          Command="{Binding SaveCommand}"
+                                          Padding="10,4"
+                                          FontSize="12"
+                                          Background="#4CAF50"
+                                          Foreground="White"
+                                          FontWeight="SemiBold"
+                                          CornerRadius="4"/>
+                                </StackPanel>
+                              </StackPanel>
+                            </Border>
+                          </StackPanel>
+                        </Border>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>

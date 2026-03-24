@@ -137,6 +137,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             if (SetProperty(ref _selectedIssue, value))
             {
                 OnPropertyChanged(nameof(HasSelectedIssue));
+                PopulateEditableFiles(value);
             }
         }
     }
@@ -159,6 +160,12 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// All issues from the last analysis run, sorted by severity (Critical first).
     /// </summary>
     public ObservableCollection<Issue> Issues { get; } = [];
+
+    /// <summary>
+    /// Editable wrappers for the currently selected issue's affected files.
+    /// Each item supports inline caption editing with save/reset.
+    /// </summary>
+    public ObservableCollection<EditableAffectedFile> EditableAffectedFiles { get; } = [];
 
     #endregion
 
@@ -353,6 +360,48 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         "style" => LoraType.Style,
         _ => LoraType.Character
     };
+
+    /// <summary>
+    /// Populates <see cref="EditableAffectedFiles"/> from the given issue's affected file paths.
+    /// Only includes .txt/.caption files that exist on disk.
+    /// </summary>
+    private void PopulateEditableFiles(Issue? issue)
+    {
+        EditableAffectedFiles.Clear();
+
+        if (issue?.AffectedFiles is not { Count: > 0 })
+            return;
+
+        foreach (var filePath in issue.AffectedFiles)
+        {
+            var ext = Path.GetExtension(filePath);
+            if (string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(ext, ".caption", StringComparison.OrdinalIgnoreCase))
+            {
+                EditableAffectedFiles.Add(new EditableAffectedFile(filePath, OnCaptionSavedAsync));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Callback invoked after a caption file is saved. Re-runs analysis to refresh results.
+    /// </summary>
+    private async Task OnCaptionSavedAsync(EditableAffectedFile _)
+    {
+        if (_pipeline is null || !HasDatasetContext) return;
+
+        IsAnalyzing = true;
+        try
+        {
+            var config = BuildConfig();
+            var report = await Task.Run(() => _pipeline.Analyze(config)).ConfigureAwait(false);
+            ApplyReport(report);
+        }
+        finally
+        {
+            IsAnalyzing = false;
+        }
+    }
 
     #endregion
 }

@@ -109,3 +109,22 @@ public sealed class SeverityBackgroundConverter : IValueConverter
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotImplementedException();
 }
+
+/// <summary>
+/// Converts a boolean <c>IsExpanded</c> value to a chevron icon for expand/collapse toggles.
+/// </summary>
+public sealed class ExpandCollapseIconConverter : IValueConverter
+{
+    /// <summary>
+    /// Singleton instance for XAML static binding.
+    /// </summary>
+    public static readonly ExpandCollapseIconConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true ? "▼" : "▶";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
