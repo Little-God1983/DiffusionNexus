@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -9,11 +10,14 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// </summary>
 public class EditableAffectedFile : ObservableObject
 {
+    private readonly Stack<string> _undoStack = new();
+    private readonly Stack<string> _redoStack = new();
     private string _captionText = string.Empty;
     private string _originalText = string.Empty;
     private bool _isExpanded;
     private bool _isLoaded;
     private bool _isSaving;
+    private bool _isUndoingOrRedoing;
 
     /// <summary>
     /// Creates a new <see cref="EditableAffectedFile"/> for the given file path.
@@ -25,11 +29,14 @@ public class EditableAffectedFile : ObservableObject
         ArgumentNullException.ThrowIfNull(filePath);
         FilePath = filePath;
         FileName = Path.GetFileName(filePath);
+        ImagePath = ResolveCorrespondingImage(filePath);
         _onSaved = onSaved;
 
         ToggleExpandCommand = new RelayCommand(ToggleExpand);
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => HasUnsavedChanges && !_isSaving);
         ResetCommand = new RelayCommand(Reset, () => HasUnsavedChanges);
+        UndoCommand = new RelayCommand(Undo, () => _undoStack.Count > 0);
+        RedoCommand = new RelayCommand(Redo, () => _redoStack.Count > 0);
     }
 
     private readonly Func<EditableAffectedFile, Task>? _onSaved;
@@ -45,6 +52,11 @@ public class EditableAffectedFile : ObservableObject
     public string FileName { get; }
 
     /// <summary>
+    /// Absolute path to the corresponding image file, or <c>null</c> if none found.
+    /// </summary>
+    public string? ImagePath { get; }
+
+    /// <summary>
     /// The editable caption text.
     /// </summary>
     public string CaptionText
@@ -52,6 +64,14 @@ public class EditableAffectedFile : ObservableObject
         get => _captionText;
         set
         {
+            if (_captionText != value && !_isUndoingOrRedoing)
+            {
+                _undoStack.Push(_captionText);
+                _redoStack.Clear();
+                UndoCommand.NotifyCanExecuteChanged();
+                RedoCommand.NotifyCanExecuteChanged();
+            }
+
             if (SetProperty(ref _captionText, value))
             {
                 OnPropertyChanged(nameof(HasUnsavedChanges));
@@ -89,6 +109,16 @@ public class EditableAffectedFile : ObservableObject
     /// Resets the caption text to its original on-disk content.
     /// </summary>
     public IRelayCommand ResetCommand { get; }
+
+    /// <summary>
+    /// Undoes the last caption edit.
+    /// </summary>
+    public IRelayCommand UndoCommand { get; }
+
+    /// <summary>
+    /// Redoes a previously undone caption edit.
+    /// </summary>
+    public IRelayCommand RedoCommand { get; }
 
     private void ToggleExpand()
     {
@@ -150,5 +180,78 @@ public class EditableAffectedFile : ObservableObject
     private void Reset()
     {
         CaptionText = _originalText;
+        _undoStack.Clear();
+        _redoStack.Clear();
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
+    private void Undo()
+    {
+        if (_undoStack.Count == 0) return;
+
+        _isUndoingOrRedoing = true;
+        try
+        {
+            var previous = _undoStack.Pop();
+            _redoStack.Push(_captionText);
+            if (SetProperty(ref _captionText, previous, nameof(CaptionText)))
+            {
+                OnPropertyChanged(nameof(HasUnsavedChanges));
+                SaveCommand.NotifyCanExecuteChanged();
+                ResetCommand.NotifyCanExecuteChanged();
+            }
+        }
+        finally
+        {
+            _isUndoingOrRedoing = false;
+            UndoCommand.NotifyCanExecuteChanged();
+            RedoCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void Redo()
+    {
+        if (_redoStack.Count == 0) return;
+
+        _isUndoingOrRedoing = true;
+        try
+        {
+            var next = _redoStack.Pop();
+            _undoStack.Push(_captionText);
+            if (SetProperty(ref _captionText, next, nameof(CaptionText)))
+            {
+                OnPropertyChanged(nameof(HasUnsavedChanges));
+                SaveCommand.NotifyCanExecuteChanged();
+                ResetCommand.NotifyCanExecuteChanged();
+            }
+        }
+        finally
+        {
+            _isUndoingOrRedoing = false;
+            UndoCommand.NotifyCanExecuteChanged();
+            RedoCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    /// <summary>
+    /// Finds the image file that corresponds to a caption file (same base name, image extension).
+    /// </summary>
+    private static string? ResolveCorrespondingImage(string captionPath)
+    {
+        var directory = Path.GetDirectoryName(captionPath);
+        if (string.IsNullOrEmpty(directory))
+            return null;
+
+        var baseName = Path.GetFileNameWithoutExtension(captionPath);
+
+        foreach (var ext in SupportedMediaTypes.ImageExtensions)
+        {
+            var candidate = Path.Combine(directory, baseName + ext);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
     }
 }

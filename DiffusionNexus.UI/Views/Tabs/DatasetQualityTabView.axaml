@@ -5,6 +5,8 @@
              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:models="using:DiffusionNexus.Domain.Models"
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetQualityTabView"
              x:DataType="vmTabs:DatasetQualityTabViewModel">
@@ -232,46 +234,38 @@
                               </Grid>
                             </Button>
 
-                            <!-- Expandable editor -->
+                            <!-- Expandable editor with image preview -->
                             <Border IsVisible="{Binding IsExpanded}"
                                     Padding="10,4,10,10"
                                     BorderBrush="#333"
                                     BorderThickness="0,1,0,0">
-                              <StackPanel Spacing="6">
-                                <TextBox Text="{Binding CaptionText, Mode=TwoWay}"
-                                         TextWrapping="Wrap"
-                                         AcceptsReturn="True"
-                                         MinHeight="60"
-                                         MaxHeight="160"
-                                         FontSize="12"
-                                         FontFamily="Consolas,Courier New,monospace"
-                                         Background="#2A2A2A"
-                                         BorderBrush="#444"
-                                         BorderThickness="1"
-                                         CornerRadius="4"
-                                         Padding="8,6"
-                                         Foreground="#CCC"/>
-                                <StackPanel Orientation="Horizontal"
-                                            Spacing="6"
-                                            HorizontalAlignment="Right"
-                                            IsVisible="{Binding HasUnsavedChanges}">
-                                  <Button Content="Reset"
-                                          Command="{Binding ResetCommand}"
-                                          Padding="10,4"
-                                          FontSize="12"
-                                          Background="#444"
-                                          Foreground="White"
-                                          CornerRadius="4"/>
-                                  <Button Content="Save"
-                                          Command="{Binding SaveCommand}"
-                                          Padding="10,4"
-                                          FontSize="12"
-                                          Background="#4CAF50"
-                                          Foreground="White"
-                                          FontWeight="SemiBold"
-                                          CornerRadius="4"/>
-                                </StackPanel>
-                              </StackPanel>
+                              <Grid ColumnDefinitions="Auto,*">
+                                <!-- Image preview -->
+                                <Border Grid.Column="0"
+                                        IsVisible="{Binding ImagePath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                        CornerRadius="4"
+                                        ClipToBounds="True"
+                                        Margin="0,4,10,4"
+                                        MaxWidth="240"
+                                        MaxHeight="200"
+                                        VerticalAlignment="Top">
+                                  <Image Source="{Binding ImagePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                                         Stretch="Uniform"/>
+                                </Border>
+                                <!-- Caption editor -->
+                                <controls:CaptionEditorControl
+                                    Grid.Column="1"
+                                    Text="{Binding CaptionText, Mode=TwoWay}"
+                                    HasUnsavedChanges="{Binding HasUnsavedChanges}"
+                                    SaveCommand="{Binding SaveCommand}"
+                                    ResetCommand="{Binding ResetCommand}"
+                                    UndoCommand="{Binding UndoCommand}"
+                                    RedoCommand="{Binding RedoCommand}"
+                                    TextMinHeight="60"
+                                    TextMaxHeight="160"
+                                    TextFontSize="12"
+                                    Watermark="Edit caption..."/>
+                              </Grid>
                             </Border>
                           </StackPanel>
                         </Border>
