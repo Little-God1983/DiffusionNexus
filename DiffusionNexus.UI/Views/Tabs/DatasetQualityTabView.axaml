@@ -7,6 +7,7 @@
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetQualityTabView"
              x:DataType="vmTabs:DatasetQualityTabViewModel">
@@ -23,7 +24,7 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid RowDefinitions="Auto,*">
 
     <!-- TOP BAR -->
     <Border Grid.Row="0"
@@ -31,61 +32,77 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
-
-        <!-- Dataset context label -->
-        <TextBlock Grid.Column="0"
-                   Text="{Binding DatasetLabel}"
-                   FontSize="14"
-                   FontWeight="SemiBold"
-                   Opacity="0.8"
-                   VerticalAlignment="Center"
-                   Margin="0,0,16,0"/>
-
-        <!-- Spacer -->
-        <Border Grid.Column="1"/>
-
-        <!-- LoRA Type Dropdown -->
-        <ComboBox Grid.Column="2"
-                  ItemsSource="{Binding AvailableLoraTypes}"
-                  SelectedItem="{Binding SelectedLoraType, Mode=TwoWay}"
-                  MinWidth="120"
-                  Margin="0,0,12,0"
-                  VerticalAlignment="Center"/>
-
-        <!-- Analyze Button -->
-        <Button Grid.Column="3"
-                Content="Analyze"
-                Command="{Binding AnalyzeCommand}"
-                Padding="14,8"
-                Margin="0,0,8,0"
-                Background="#4CAF50"
-                Foreground="White"
-                FontWeight="SemiBold"
-                CornerRadius="4"/>
-
-        <!-- Backup Button -->
-        <Button Grid.Column="4"
-                Content="Backup"
-                Command="{Binding BackupCaptionsCommand}"
-                Padding="14,8"
-                Background="#444"
-                CornerRadius="4"/>
-
-        <!-- Spinner -->
-        <StackPanel Grid.Column="5"
-                    Orientation="Horizontal"
-                    Spacing="8"
-                    VerticalAlignment="Center"
-                    Margin="12,0,0,0"
-                    IsVisible="{Binding IsAnalyzing}">
-          <TextBlock Text="Analyzing..." FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
-        </StackPanel>
-      </Grid>
+      <TextBlock Text="{Binding DatasetLabel}"
+                 FontSize="14"
+                 FontWeight="SemiBold"
+                 Opacity="0.8"
+                 VerticalAlignment="Center"/>
     </Border>
 
+    <!-- TABBED CONTENT -->
+    <TabControl Grid.Row="1" Padding="0">
+
+      <!-- ═══════════ TAB 1: Bucket Analysis ═══════════ -->
+      <TabItem Header="Bucket Analysis">
+        <views:BucketAnalysisView DataContext="{Binding BucketAnalysisTab}"/>
+      </TabItem>
+
+      <!-- ═══════════ TAB 2: Caption Quality ═══════════ -->
+      <TabItem Header="Caption Quality">
+        <Grid RowDefinitions="Auto,*,Auto">
+
+          <!-- Caption Quality top bar -->
+          <Border Grid.Row="0"
+                  Background="#1E1E1E"
+                  Padding="16,12"
+                  BorderBrush="#333"
+                  BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+
+              <!-- Spacer -->
+              <Border Grid.Column="0"/>
+
+              <!-- LoRA Type Dropdown -->
+              <ComboBox Grid.Column="1"
+                        ItemsSource="{Binding AvailableLoraTypes}"
+                        SelectedItem="{Binding SelectedLoraType, Mode=TwoWay}"
+                        MinWidth="120"
+                        Margin="0,0,12,0"
+                        VerticalAlignment="Center"/>
+
+              <!-- Analyze Button -->
+              <Button Grid.Column="2"
+                      Content="Analyze"
+                      Command="{Binding AnalyzeCommand}"
+                      Padding="14,8"
+                      Margin="0,0,8,0"
+                      Background="#4CAF50"
+                      Foreground="White"
+                      FontWeight="SemiBold"
+                      CornerRadius="4"/>
+
+              <!-- Backup Button -->
+              <Button Grid.Column="3"
+                      Content="Backup"
+                      Command="{Binding BackupCaptionsCommand}"
+                      Padding="14,8"
+                      Background="#444"
+                      CornerRadius="4"/>
+
+              <!-- Spinner -->
+              <StackPanel Grid.Column="4"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          VerticalAlignment="Center"
+                          Margin="12,0,0,0"
+                          IsVisible="{Binding IsAnalyzing}">
+                <TextBlock Text="Analyzing..." FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
     <!-- MAIN CONTENT (Left + Right) -->
-    <Grid Grid.Row="1" ColumnDefinitions="350,*">
+          <Grid Grid.Row="1" ColumnDefinitions="350,*">
 
       <!-- LEFT PANEL: Issue List -->
       <Border Grid.Column="0"
@@ -433,6 +450,11 @@
                  Opacity="0.7"
                  VerticalAlignment="Center"/>
     </Border>
+
+        </Grid>
+      </TabItem>
+
+    </TabControl>
 
   </Grid>
 </UserControl>

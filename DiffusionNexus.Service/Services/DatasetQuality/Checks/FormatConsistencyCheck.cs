@@ -213,8 +213,9 @@ public class FormatConsistencyCheck : IDatasetCheck
             {
                 Severity = IssueSeverity.Warning,
                 Message = $"{outlierFiles.Count} caption(s) have unusual length (>{OutlierStdDevFactor}σ from mean of {mean:F0} words).",
-                Details = $"Large length variations across captions can hurt training stability. "
-                        + $"Very short captions under-describe an image; very long ones may introduce noise. "
+                Details = $"Inconsistent caption lengths cause training instability by confusing the AI about word weight. "
+                        + $"Very short captions cause 'concept bleed' (binding untagged background elements to your subject). "
+                        + $"Very long captions introduce 'noise', forcing the AI to divide its attention and diluting the core subject. "
                         + $"Recommended range: {minWords}–{maxWords} words (mean {mean:F0} ± {OutlierStdDevFactor}σ).",
                 Domain = CheckDomain.Caption,
                 CheckName = Name,

@@ -19,6 +19,10 @@ public static class DatasetQualityServiceExtensions
         services.AddSingleton<CaptionLoader>();
         services.AddSingleton<AnalysisPipeline>();
 
+        // Bucket analysis services
+        services.AddSingleton<IImageDimensionReader, ImageHeaderReader>();
+        services.AddSingleton<BucketAnalyzer>();
+
         // Built-in checks — each registered as IDatasetCheck so the pipeline discovers them
         services.AddSingleton<IDatasetCheck, FormatConsistencyCheck>();
         services.AddSingleton<IDatasetCheck, TriggerWordCheck>();

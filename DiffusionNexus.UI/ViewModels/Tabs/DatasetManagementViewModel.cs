@@ -633,7 +633,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        AnalysisPipeline? analysisPipeline = null)
+        AnalysisPipeline? analysisPipeline = null,
+        BucketAnalyzer? bucketAnalyzer = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -651,7 +652,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         PresentationTab = new PresentationTabViewModel(_eventAggregator);
         CaptioningTab = new CaptioningTabViewModel(_eventAggregator, _state, _captioningService);
         DatasetQualityTab = analysisPipeline is not null
-            ? new DatasetQualityTabViewModel(analysisPipeline)
+            ? new DatasetQualityTabViewModel(analysisPipeline, bucketAnalyzer)
             : new DatasetQualityTabViewModel();
 
         // Subscribe to state changes

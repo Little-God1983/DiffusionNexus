@@ -171,7 +171,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IActivityLogService? activityLog = null,
         IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        AnalysisPipeline? analysisPipeline = null)
+        AnalysisPipeline? analysisPipeline = null,
+        BucketAnalyzer? bucketAnalyzer = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -192,7 +193,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             backupService,
             activityLog,
             thumbnailOrchestrator,
-            analysisPipeline);
+            analysisPipeline,
+            bucketAnalyzer);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);

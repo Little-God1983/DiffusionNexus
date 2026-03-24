@@ -683,7 +683,8 @@ public partial class App : Application
             sp.GetService<IActivityLogService>(),
             sp.GetService<IComfyUIWrapperService>(),
             sp.GetService<IThumbnailOrchestrator>(),
-            sp.GetService<AnalysisPipeline>()));
+            sp.GetService<AnalysisPipeline>(),
+            sp.GetService<BucketAnalyzer>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

@@ -30,10 +30,15 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// Creates a new <see cref="DatasetQualityTabViewModel"/>.
     /// </summary>
     /// <param name="pipeline">The analysis pipeline for running quality checks.</param>
-    public DatasetQualityTabViewModel(AnalysisPipeline pipeline)
+    /// <param name="bucketAnalyzer">Optional bucket analyzer for image bucketing analysis.</param>
+    public DatasetQualityTabViewModel(AnalysisPipeline pipeline, BucketAnalyzer? bucketAnalyzer = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         _pipeline = pipeline;
+
+        BucketAnalysisTab = bucketAnalyzer is not null
+            ? new BucketAnalysisTabViewModel(bucketAnalyzer)
+            : new BucketAnalysisTabViewModel();
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
@@ -47,6 +52,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// </summary>
     public DatasetQualityTabViewModel()
     {
+        BucketAnalysisTab = new BucketAnalysisTabViewModel();
+
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
@@ -60,6 +67,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public IDialogService? DialogService { get; set; }
 
     #endregion
+
+    /// <summary>
+    /// ViewModel for the embedded bucket analysis sub-tab.
+    /// </summary>
+    public BucketAnalysisTabViewModel BucketAnalysisTab { get; }
 
     #region Observable Properties
 
@@ -361,6 +373,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         OnPropertyChanged(nameof(HasResults));
         OnPropertyChanged(nameof(CanAnalyze));
         AnalyzeCommand.NotifyCanExecuteChanged();
+
+        // Forward folder context to bucket analysis sub-tab
+        BucketAnalysisTab.RefreshContext(_datasetFolderPath);
     }
 
     /// <summary>
