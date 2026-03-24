@@ -38,6 +38,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
+        ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
+        CollapseAllFilesCommand = new RelayCommand(CollapseAllFiles, () => EditableAffectedFiles.Count > 0);
     }
 
     /// <summary>
@@ -48,6 +50,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
+        ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
+        CollapseAllFilesCommand = new RelayCommand(CollapseAllFiles, () => EditableAffectedFiles.Count > 0);
     }
 
     #region IDialogServiceAware
@@ -185,6 +189,16 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// Creates a timestamped backup of caption files in the dataset folder.
     /// </summary>
     public IAsyncRelayCommand BackupCaptionsCommand { get; }
+
+    /// <summary>
+    /// Expands all affected file editors for the current issue.
+    /// </summary>
+    public IRelayCommand ExpandAllFilesCommand { get; }
+
+    /// <summary>
+    /// Collapses all affected file editors for the current issue.
+    /// </summary>
+    public IRelayCommand CollapseAllFilesCommand { get; }
 
     #endregion
 
@@ -370,7 +384,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         EditableAffectedFiles.Clear();
 
         if (issue?.AffectedFiles is not { Count: > 0 })
+        {
+            ExpandAllFilesCommand.NotifyCanExecuteChanged();
+            CollapseAllFilesCommand.NotifyCanExecuteChanged();
             return;
+        }
 
         foreach (var filePath in issue.AffectedFiles)
         {
@@ -380,6 +398,25 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             {
                 EditableAffectedFiles.Add(new EditableAffectedFile(filePath, OnCaptionSavedAsync));
             }
+        }
+
+        ExpandAllFilesCommand.NotifyCanExecuteChanged();
+        CollapseAllFilesCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ExpandAllFiles()
+    {
+        foreach (var file in EditableAffectedFiles)
+        {
+            file.Expand();
+        }
+    }
+
+    private void CollapseAllFiles()
+    {
+        foreach (var file in EditableAffectedFiles)
+        {
+            file.Collapse();
         }
     }
 

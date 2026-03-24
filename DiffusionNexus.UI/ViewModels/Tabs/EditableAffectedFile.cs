@@ -120,6 +120,27 @@ public class EditableAffectedFile : ObservableObject
     /// </summary>
     public IRelayCommand RedoCommand { get; }
 
+    /// <summary>
+    /// Expands this file's editor, lazy-loading content on first access.
+    /// </summary>
+    public void Expand()
+    {
+        if (!_isLoaded)
+        {
+            LoadFromDisk();
+        }
+
+        IsExpanded = true;
+    }
+
+    /// <summary>
+    /// Collapses this file's editor.
+    /// </summary>
+    public void Collapse()
+    {
+        IsExpanded = false;
+    }
+
     private void ToggleExpand()
     {
         if (!IsExpanded && !_isLoaded)

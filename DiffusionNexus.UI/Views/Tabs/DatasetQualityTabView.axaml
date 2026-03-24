@@ -195,7 +195,30 @@
               <Border IsVisible="{Binding EditableAffectedFiles.Count}"
                       Background="#222" CornerRadius="8" Padding="12" Margin="0,4,0,0">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="Affected Files" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+                  <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBlock Grid.Column="0"
+                               Text="Affected Files" FontSize="13" FontWeight="SemiBold" Opacity="0.8"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="1"
+                            Content="Expand All"
+                            Command="{Binding ExpandAllFilesCommand}"
+                            Padding="8,3"
+                            FontSize="11"
+                            Background="#333"
+                            Foreground="#AAA"
+                            CornerRadius="3"
+                            Margin="0,0,4,0"
+                            VerticalAlignment="Center"/>
+                    <Button Grid.Column="2"
+                            Content="Collapse All"
+                            Command="{Binding CollapseAllFilesCommand}"
+                            Padding="8,3"
+                            FontSize="11"
+                            Background="#333"
+                            Foreground="#AAA"
+                            CornerRadius="3"
+                            VerticalAlignment="Center"/>
+                  </Grid>
                   <ItemsControl ItemsSource="{Binding EditableAffectedFiles}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vmTabs:EditableAffectedFile">
@@ -203,7 +226,8 @@
                           <StackPanel>
                             <!-- Clickable file header -->
                             <Button Command="{Binding ToggleExpandCommand}"
-                                    Padding="10,6"
+                                    Padding="12,10"
+                                    MinHeight="40"
                                     Background="Transparent"
                                     HorizontalAlignment="Stretch"
                                     HorizontalContentAlignment="Stretch"
