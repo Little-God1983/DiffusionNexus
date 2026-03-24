@@ -390,13 +390,20 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             return;
         }
 
+        // Extract recommended word range from metadata if present
+        int? recMin = issue.Metadata.TryGetValue("RecommendedMinWords", out var minStr)
+            && int.TryParse(minStr, out var minVal) ? minVal : null;
+        int? recMax = issue.Metadata.TryGetValue("RecommendedMaxWords", out var maxStr)
+            && int.TryParse(maxStr, out var maxVal) ? maxVal : null;
+
         foreach (var filePath in issue.AffectedFiles)
         {
             var ext = Path.GetExtension(filePath);
             if (string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(ext, ".caption", StringComparison.OrdinalIgnoreCase))
             {
-                EditableAffectedFiles.Add(new EditableAffectedFile(filePath, OnCaptionSavedAsync));
+                EditableAffectedFiles.Add(
+                    new EditableAffectedFile(filePath, OnCaptionSavedAsync, recMin, recMax));
             }
         }
 

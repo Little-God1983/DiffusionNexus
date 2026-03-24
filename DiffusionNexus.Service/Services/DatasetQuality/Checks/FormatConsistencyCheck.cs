@@ -206,16 +206,25 @@ public class FormatConsistencyCheck : IDatasetCheck
 
         if (outlierFiles.Count > 0)
         {
+            var minWords = (int)Math.Max(0, Math.Ceiling(lowerBound));
+            var maxWords = (int)Math.Floor(upperBound);
+
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Warning,
                 Message = $"{outlierFiles.Count} caption(s) have unusual length (>{OutlierStdDevFactor}σ from mean of {mean:F0} words).",
-                Details = "Large length variations across captions can hurt training stability. "
-                        + "Very short captions under-describe an image; very long ones may introduce noise. "
-                        + "Consider normalizing caption lengths to a similar range.",
+                Details = $"Large length variations across captions can hurt training stability. "
+                        + $"Very short captions under-describe an image; very long ones may introduce noise. "
+                        + $"Recommended range: {minWords}–{maxWords} words (mean {mean:F0} ± {OutlierStdDevFactor}σ).",
                 Domain = CheckDomain.Caption,
                 CheckName = Name,
-                AffectedFiles = outlierFiles
+                AffectedFiles = outlierFiles,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["RecommendedMinWords"] = minWords.ToString(),
+                    ["RecommendedMaxWords"] = maxWords.ToString(),
+                    ["MeanWords"] = ((int)Math.Round(mean)).ToString()
+                }
             });
         }
     }

@@ -135,6 +135,13 @@ public record Issue
     /// Optional suggested fixes the user can preview and apply.
     /// </summary>
     public IReadOnlyList<FixSuggestion> FixSuggestions { get; init; } = [];
+
+    /// <summary>
+    /// Optional check-specific metadata (e.g. recommended word range for length outliers).
+    /// Keys are well-known constants; values are strings for serialisation safety.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } =
+        new Dictionary<string, string>();
 }
 
 /// <summary>

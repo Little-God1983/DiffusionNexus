@@ -233,7 +233,7 @@
                                     HorizontalContentAlignment="Stretch"
                                     CornerRadius="4"
                                     Cursor="Hand">
-                              <Grid ColumnDefinitions="Auto,*,Auto">
+                              <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
                                 <TextBlock Grid.Column="0"
                                            Text="{Binding IsExpanded, Converter={x:Static vmTabs:ExpandCollapseIconConverter.Instance}}"
                                            FontSize="10"
@@ -248,7 +248,47 @@
                                            TextTrimming="CharacterEllipsis"
                                            VerticalAlignment="Center"
                                            ToolTip.Tip="{Binding FilePath}"/>
-                                <TextBlock Grid.Column="2"
+                                <!-- Word count badge -->
+                                <Border Grid.Column="2"
+                                        IsVisible="{Binding HasRecommendedRange}"
+                                        Padding="6,2"
+                                        CornerRadius="3"
+                                        Background="#2A2A2A"
+                                        VerticalAlignment="Center"
+                                        Margin="8,0,0,0"
+                                        ToolTip.Tip="{Binding RecommendedRangeDisplay, StringFormat='Recommended: {0} words'}">
+                                  <TextBlock FontSize="11"
+                                             FontFamily="Consolas,Courier New,monospace"
+                                             Opacity="0.7"
+                                             VerticalAlignment="Center">
+                                    <TextBlock.Text>
+                                      <MultiBinding StringFormat="{}{0}w">
+                                        <Binding Path="WordCount"/>
+                                      </MultiBinding>
+                                    </TextBlock.Text>
+                                  </TextBlock>
+                                </Border>
+                                <!-- Direction arrow: ← shorter, → longer, ✓ in range -->
+                                <Panel Grid.Column="3"
+                                       IsVisible="{Binding HasRecommendedRange}"
+                                       Margin="6,0,0,0">
+                                  <TextBlock Text="✓"
+                                             FontSize="13"
+                                             Foreground="#4CAF50"
+                                             FontWeight="Bold"
+                                             VerticalAlignment="Center"
+                                             IsVisible="{Binding IsWithinRecommendedRange}"
+                                             ToolTip.Tip="Word count is within the recommended range"/>
+                                  <TextBlock Text="{Binding LengthDirectionIndicator}"
+                                             FontSize="13"
+                                             FontWeight="Bold"
+                                             Foreground="#FFA726"
+                                             VerticalAlignment="Center"
+                                             IsVisible="{Binding !IsWithinRecommendedRange}"
+                                             ToolTip.Tip="{Binding RecommendedRangeDisplay, StringFormat='Target: {0} words'}"/>
+                                </Panel>
+                                <!-- Unsaved changes indicator -->
+                                <TextBlock Grid.Column="4"
                                            Text="●"
                                            FontSize="10"
                                            Foreground="#FFA726"

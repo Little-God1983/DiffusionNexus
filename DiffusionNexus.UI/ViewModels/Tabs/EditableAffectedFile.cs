@@ -12,6 +12,9 @@ public class EditableAffectedFile : ObservableObject
 {
     private readonly Stack<string> _undoStack = new();
     private readonly Stack<string> _redoStack = new();
+    private readonly int? _recommendedMinWords;
+    private readonly int? _recommendedMaxWords;
+    private readonly int _initialWordCount;
     private string _captionText = string.Empty;
     private string _originalText = string.Empty;
     private bool _isExpanded;
@@ -24,13 +27,22 @@ public class EditableAffectedFile : ObservableObject
     /// </summary>
     /// <param name="filePath">Absolute path to the caption file.</param>
     /// <param name="onSaved">Callback invoked after a caption is saved to disk.</param>
-    public EditableAffectedFile(string filePath, Func<EditableAffectedFile, Task>? onSaved = null)
+    /// <param name="recommendedMinWords">Optional lower bound of the recommended word count range.</param>
+    /// <param name="recommendedMaxWords">Optional upper bound of the recommended word count range.</param>
+    public EditableAffectedFile(
+        string filePath,
+        Func<EditableAffectedFile, Task>? onSaved = null,
+        int? recommendedMinWords = null,
+        int? recommendedMaxWords = null)
     {
         ArgumentNullException.ThrowIfNull(filePath);
         FilePath = filePath;
         FileName = Path.GetFileName(filePath);
         ImagePath = ResolveCorrespondingImage(filePath);
         _onSaved = onSaved;
+        _recommendedMinWords = recommendedMinWords;
+        _recommendedMaxWords = recommendedMaxWords;
+        _initialWordCount = PreCountWords(filePath);
 
         ToggleExpandCommand = new RelayCommand(ToggleExpand);
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => HasUnsavedChanges && !_isSaving);
@@ -75,6 +87,9 @@ public class EditableAffectedFile : ObservableObject
             if (SetProperty(ref _captionText, value))
             {
                 OnPropertyChanged(nameof(HasUnsavedChanges));
+                OnPropertyChanged(nameof(WordCount));
+                OnPropertyChanged(nameof(IsWithinRecommendedRange));
+                OnPropertyChanged(nameof(LengthDirectionIndicator));
                 SaveCommand.NotifyCanExecuteChanged();
                 ResetCommand.NotifyCanExecuteChanged();
             }
@@ -85,6 +100,49 @@ public class EditableAffectedFile : ObservableObject
     /// Whether the caption has been modified from its on-disk version.
     /// </summary>
     public bool HasUnsavedChanges => _isLoaded && _captionText != _originalText;
+
+    /// <summary>
+    /// Current word count of the caption text.
+    /// Uses a pre-computed value from disk before the file is fully loaded for editing.
+    /// </summary>
+    public int WordCount => _isLoaded ? CountWords(_captionText) : _initialWordCount;
+
+    /// <summary>
+    /// Whether a recommended word count range was provided for this file.
+    /// </summary>
+    public bool HasRecommendedRange => _recommendedMinWords.HasValue && _recommendedMaxWords.HasValue;
+
+    /// <summary>
+    /// Whether the current word count falls within the recommended range.
+    /// Always <c>false</c> when no recommended range is set.
+    /// </summary>
+    public bool IsWithinRecommendedRange =>
+        HasRecommendedRange
+        && WordCount >= _recommendedMinWords!.Value
+        && WordCount <= _recommendedMaxWords!.Value;
+
+    /// <summary>
+    /// Visual direction indicator: "←" when the caption is too long,
+    /// "→" when too short, or empty when within range or no range is set.
+    /// </summary>
+    public string LengthDirectionIndicator
+    {
+        get
+        {
+            if (!HasRecommendedRange || IsWithinRecommendedRange)
+                return string.Empty;
+
+            return WordCount > _recommendedMaxWords!.Value ? "←" : "→";
+        }
+    }
+
+    /// <summary>
+    /// Display string for the recommended word range (e.g. "72–204"), or empty when no range is set.
+    /// </summary>
+    public string RecommendedRangeDisplay =>
+        HasRecommendedRange
+            ? $"{_recommendedMinWords}–{_recommendedMaxWords}"
+            : string.Empty;
 
     /// <summary>
     /// Whether the editor for this file is expanded/visible.
@@ -159,6 +217,9 @@ public class EditableAffectedFile : ObservableObject
             _captionText = string.Empty;
             _isLoaded = true;
             OnPropertyChanged(nameof(CaptionText));
+            OnPropertyChanged(nameof(WordCount));
+            OnPropertyChanged(nameof(IsWithinRecommendedRange));
+            OnPropertyChanged(nameof(LengthDirectionIndicator));
             return;
         }
 
@@ -168,6 +229,9 @@ public class EditableAffectedFile : ObservableObject
         _isLoaded = true;
         OnPropertyChanged(nameof(CaptionText));
         OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(WordCount));
+        OnPropertyChanged(nameof(IsWithinRecommendedRange));
+        OnPropertyChanged(nameof(LengthDirectionIndicator));
     }
 
     private async Task SaveAsync()
@@ -219,6 +283,9 @@ public class EditableAffectedFile : ObservableObject
             if (SetProperty(ref _captionText, previous, nameof(CaptionText)))
             {
                 OnPropertyChanged(nameof(HasUnsavedChanges));
+                OnPropertyChanged(nameof(WordCount));
+                OnPropertyChanged(nameof(IsWithinRecommendedRange));
+                OnPropertyChanged(nameof(LengthDirectionIndicator));
                 SaveCommand.NotifyCanExecuteChanged();
                 ResetCommand.NotifyCanExecuteChanged();
             }
@@ -243,6 +310,9 @@ public class EditableAffectedFile : ObservableObject
             if (SetProperty(ref _captionText, next, nameof(CaptionText)))
             {
                 OnPropertyChanged(nameof(HasUnsavedChanges));
+                OnPropertyChanged(nameof(WordCount));
+                OnPropertyChanged(nameof(IsWithinRecommendedRange));
+                OnPropertyChanged(nameof(LengthDirectionIndicator));
                 SaveCommand.NotifyCanExecuteChanged();
                 ResetCommand.NotifyCanExecuteChanged();
             }
@@ -253,6 +323,29 @@ public class EditableAffectedFile : ObservableObject
             UndoCommand.NotifyCanExecuteChanged();
             RedoCommand.NotifyCanExecuteChanged();
         }
+    }
+
+    /// <summary>
+    /// Reads a caption file from disk and returns the word count without loading editing state.
+    /// </summary>
+    private static int PreCountWords(string filePath)
+    {
+        if (!File.Exists(filePath))
+            return 0;
+
+        var text = File.ReadAllText(filePath);
+        return CountWords(text);
+    }
+
+    /// <summary>
+    /// Counts whitespace-delimited words in a text string.
+    /// </summary>
+    private static int CountWords(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+
+        return text.Split((char[])[' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
     /// <summary>
