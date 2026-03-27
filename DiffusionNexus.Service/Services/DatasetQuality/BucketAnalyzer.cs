@@ -158,12 +158,22 @@ public sealed class BucketAnalyzer
     #region Distribution Score
 
     /// <summary>
-    /// Calculates the Shannon Evenness Index for the bucket distribution (0–100).
-    /// A score of 100 means images are perfectly evenly distributed across buckets.
-    /// A score of 0 means all images are in a single bucket.
+    /// Calculates a distribution quality score (0–100) by blending Shannon Evenness
+    /// with a dominance penalty. Pure Shannon Evenness is too lenient when one bucket
+    /// holds a large proportion of images (e.g., 50% in 1024×1024) because having many
+    /// other small buckets inflates the entropy.
+    ///
+    /// The final score blends:
+    /// <list type="bullet">
+    ///   <item><description>Shannon Evenness (70% weight) — measures overall spread across buckets.</description></item>
+    ///   <item><description>Dominance penalty (30% weight) — penalises max bucket proportion vs. the ideal 1/n share.</description></item>
+    /// </list>
+    ///
+    /// A score of 100 means images are perfectly evenly distributed.
+    /// A score near 0 means extreme concentration in one bucket.
     /// </summary>
     /// <param name="distribution">Non-empty distribution entries.</param>
-    /// <returns>Evenness score 0–100.</returns>
+    /// <returns>Distribution quality score 0–100.</returns>
     public static double CalculateDistributionScore(IReadOnlyList<BucketDistributionEntry> distribution)
     {
         ArgumentNullException.ThrowIfNull(distribution);
@@ -172,12 +182,18 @@ public sealed class BucketAnalyzer
             return 0;
 
         int total = 0;
+        int maxCount = 0;
         for (int i = 0; i < distribution.Count; i++)
+        {
             total += distribution[i].ImageCount;
+            if (distribution[i].ImageCount > maxCount)
+                maxCount = distribution[i].ImageCount;
+        }
 
         if (total == 0)
             return 0;
 
+        // Shannon Evenness component (0–1)
         double h = 0;
         for (int i = 0; i < distribution.Count; i++)
         {
@@ -189,10 +205,24 @@ public sealed class BucketAnalyzer
         }
 
         double hMax = Math.Log(distribution.Count);
-        if (hMax <= 0)
-            return 0;
+        double shannonEvenness = hMax > 0 ? h / hMax : 0;
 
-        return Math.Round(h / hMax * 100.0, 1);
+        // Dominance penalty (quadratic): how far the largest bucket's share is from ideal (1/n).
+        // Linear penalty is too lenient for heavy skew, so we square it.
+        // When pMax == ideal the score is 1.0; when pMax == 1.0 the score is 0.0.
+        double pMax = (double)maxCount / total;
+        double ideal = 1.0 / distribution.Count;
+        double linearDominance = pMax <= ideal
+            ? 1.0
+            : Math.Max(0, 1.0 - (pMax - ideal) / (1.0 - ideal));
+        double dominanceScore = linearDominance * linearDominance;
+
+        // Weighted blend: 70% Shannon, 30% dominance penalty
+        const double shannonWeight = 0.7;
+        const double dominanceWeight = 0.3;
+        double combined = shannonEvenness * shannonWeight + dominanceScore * dominanceWeight;
+
+        return Math.Round(combined * 100.0, 1);
     }
 
     /// <summary>
@@ -200,8 +230,8 @@ public sealed class BucketAnalyzer
     /// </summary>
     public static string GetScoreLabel(double score) => score switch
     {
-        >= 80 => "Excellent",
-        >= 60 => "Good",
+        >= 85 => "Excellent",
+        >= 65 => "Good",
         >= 40 => "Fair",
         _ => "Poor"
     };

@@ -468,6 +468,29 @@ public class BucketAnalyzerTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    [Fact]
+    public void WhenHeavilySkewedDistributionThenScoreIsFairOrBelow()
+    {
+        // Real-world case: ~50% of images in one bucket (1024×1024 = 24),
+        // remaining spread across 7 other buckets with 1–6 images each.
+        var distribution = new List<BucketDistributionEntry>
+        {
+            new() { Bucket = new BucketResolution(768, 1280), ImageCount = 6, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(768, 1344), ImageCount = 2, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(832, 1216), ImageCount = 1, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(896, 1152), ImageCount = 4, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1024, 1024), ImageCount = 24, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1152, 896), ImageCount = 2, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1280, 768), ImageCount = 6, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1344, 768), ImageCount = 4, ImagePaths = [] },
+        };
+
+        var score = BucketAnalyzer.CalculateDistributionScore(distribution);
+
+        // With ~50% in one bucket this should NOT be labeled "Good" (must be < 65)
+        score.Should().BeLessThan(65, "~50% concentration in one bucket is not a good distribution");
+    }
+
     #endregion
 
     #region Full Analysis
@@ -607,9 +630,10 @@ public class BucketAnalyzerTests
     public void WhenScoreLabelThenMatchesRange()
     {
         BucketAnalyzer.GetScoreLabel(90).Should().Be("Excellent");
-        BucketAnalyzer.GetScoreLabel(80).Should().Be("Excellent");
+        BucketAnalyzer.GetScoreLabel(85).Should().Be("Excellent");
+        BucketAnalyzer.GetScoreLabel(80).Should().Be("Good");
         BucketAnalyzer.GetScoreLabel(70).Should().Be("Good");
-        BucketAnalyzer.GetScoreLabel(60).Should().Be("Good");
+        BucketAnalyzer.GetScoreLabel(65).Should().Be("Good");
         BucketAnalyzer.GetScoreLabel(50).Should().Be("Fair");
         BucketAnalyzer.GetScoreLabel(40).Should().Be("Fair");
         BucketAnalyzer.GetScoreLabel(30).Should().Be("Poor");

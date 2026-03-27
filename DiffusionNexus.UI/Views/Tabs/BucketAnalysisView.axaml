@@ -39,6 +39,14 @@
 
       <TextBlock Text="Bucket Configuration" Classes="section-header"/>
 
+      <TextBlock TextWrapping="Wrap"
+                 FontSize="13"
+                 Opacity="0.7"
+                 Margin="0,0,0,8"
+                 MaxWidth="900"
+                 HorizontalAlignment="Left"
+                 Text="LoRA training resizes and crops your images into fixed-size buckets. Poorly distributed buckets mean some resolutions are over-represented while others have too few samples, leading to uneven learning and artifacts. Use this analysis to verify your images spread evenly across buckets, catch outliers that would be heavily cropped, and tune resolution settings before you start training."/>
+
       <WrapPanel Orientation="Horizontal">
         <StackPanel Margin="0,0,16,8">
           <TextBlock Text="Base Resolution" Margin="0,0,0,4"/>
