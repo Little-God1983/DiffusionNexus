@@ -4,8 +4,10 @@ on: [push, pull_request]
 
 jobs:
   build:
-
     runs-on: windows-latest
+    permissions:
+      packages: read
+      contents: read
 
     steps:
     - name: Checkout code
@@ -19,7 +21,7 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
       env:
-        GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
 
     - name: Build
       run: dotnet build --no-restore --configuration Release
