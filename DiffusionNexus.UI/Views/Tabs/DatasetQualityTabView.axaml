@@ -296,7 +296,7 @@
                                                      FontSize="12"
                                                      Foreground="#FF6B6B"
                                                      FontFamily="Consolas,Courier New,monospace"/>
-                                          <TextBlock Text="{Binding Edit.OriginalText}"
+                                          <TextBlock Text="{Binding DiffOriginalSnippet}"
                                                      FontSize="12"
                                                      Foreground="#FF6B6B"
                                                      FontFamily="Consolas,Courier New,monospace"
@@ -308,7 +308,7 @@
                                                      FontSize="12"
                                                      Foreground="#4CAF50"
                                                      FontFamily="Consolas,Courier New,monospace"/>
-                                          <TextBlock Text="{Binding Edit.NewText}"
+                                          <TextBlock Text="{Binding DiffNewSnippet}"
                                                      FontSize="12"
                                                      Foreground="#4CAF50"
                                                      FontFamily="Consolas,Courier New,monospace"
