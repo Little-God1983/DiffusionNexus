@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -169,7 +170,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
         IComfyUIWrapperService? comfyUiService = null,
-        IThumbnailOrchestrator? thumbnailOrchestrator = null)
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        AnalysisPipeline? analysisPipeline = null,
+        BucketAnalyzer? bucketAnalyzer = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -189,7 +192,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             videoThumbnailService,
             backupService,
             activityLog,
-            thumbnailOrchestrator);
+            thumbnailOrchestrator,
+            analysisPipeline,
+            bucketAnalyzer);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
@@ -206,7 +211,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null)
     {
     }
 

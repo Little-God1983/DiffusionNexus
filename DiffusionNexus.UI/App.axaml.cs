@@ -13,6 +13,7 @@ using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
@@ -507,6 +508,9 @@ public partial class App : Application
         // Database + Repositories + Unit of Work
         services.AddDataAccessLayer();
 
+        // Dataset quality analysis pipeline and checks
+        services.AddDatasetQualityServices();
+
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
 
@@ -678,7 +682,9 @@ public partial class App : Application
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<IComfyUIWrapperService>(),
-            sp.GetService<IThumbnailOrchestrator>()));
+            sp.GetService<IThumbnailOrchestrator>(),
+            sp.GetService<AnalysisPipeline>(),
+            sp.GetService<BucketAnalyzer>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

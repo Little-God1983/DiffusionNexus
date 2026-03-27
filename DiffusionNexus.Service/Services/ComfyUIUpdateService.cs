@@ -8,8 +8,9 @@ namespace DiffusionNexus.Service.Services;
 
 /// <summary>
 /// Update service for ComfyUI installations.
-/// ComfyUI has a backend (main repo) and may have a separate frontend repo (web/).
-/// The backend MUST be updated before the frontend.
+/// ComfyUI has a backend (main repo) and may have a pip-based frontend package or
+/// a separate frontend git repo (web/). Update order: backend git pull → pip requirements
+/// (updates the frontend package) → git-based frontend pull (legacy fallback).
 /// </summary>
 public sealed class ComfyUIUpdateService : IInstallerUpdateService
 {
@@ -104,23 +105,26 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
 
         progress?.Report("Backend updated successfully.");
 
-        // ── Step 2: Update frontend (web/ subfolder, if it has its own repo) ──
+        // ── Step 2: Update pip requirements (includes the frontend package) ──
+        await UpdatePipRequirementsAsync(installationPath, backendDir, progress, ct);
+
+        // ── Step 3: Update git-based frontend (legacy fallback for older setups) ──
         var frontendDir = ResolveFrontendDir(backendDir);
         if (frontendDir is not null)
         {
-            progress?.Report("Updating ComfyUI frontend...");
+            progress?.Report("Updating ComfyUI frontend (git)...");
             Logger.Information("Updating ComfyUI frontend at {Path}", frontendDir);
 
             var frontendPullResult = await PullDirectoryAsync(frontendDir, progress, "Frontend", ct);
             if (!frontendPullResult.Success)
             {
-                Logger.Warning("Frontend update failed (non-fatal): {Output}", frontendPullResult.Output);
-                progress?.Report($"Frontend update failed: {frontendPullResult.Output}");
-                // Non-fatal — the backend was already updated
+                Logger.Warning("Frontend git update failed (non-fatal): {Output}", frontendPullResult.Output);
+                progress?.Report($"Frontend git update failed: {frontendPullResult.Output}");
+                // Non-fatal — pip may have already updated the frontend package
             }
             else
             {
-                progress?.Report("Frontend updated successfully.");
+                progress?.Report("Frontend (git) updated successfully.");
             }
         }
 
@@ -178,7 +182,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     /// <summary>
     /// Pulls updates for a git directory, handling detached HEAD by checking out the resolved branch first.
     /// </summary>
-    private static async Task<GitResult> PullDirectoryAsync(
+    private static async Task<ProcessResult> PullDirectoryAsync(
         string dir, IProgress<string>? progress, string label, CancellationToken ct)
     {
         // Fetch latest refs first so we have up-to-date remote tracking
@@ -270,13 +274,112 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     }
 
     /// <summary>
+    /// Known folder names for the embedded Python in ComfyUI portable installs.
+    /// The portable package historically ships <c>python_embeded</c> (typo); newer
+    /// builds may use <c>python_embedded</c>. We check both.
+    /// </summary>
+    private static readonly string[] PortablePythonFolders =
+        ["python_embeded", "python_embedded", "python"];
+
+    /// <summary>
+    /// Finds the Python executable for the ComfyUI installation.
+    /// <list type="bullet">
+    ///   <item><b>Portable</b>: <c>{installationPath}/python_embeded/python.exe</c></item>
+    ///   <item><b>Manual / venv</b>: <c>{backendDir}/venv/Scripts/python.exe</c> (Windows)
+    ///     or <c>{backendDir}/venv/bin/python</c> (Linux).</item>
+    /// </list>
+    /// </summary>
+    private static string? ResolvePythonExecutable(string installationPath, string backendDir)
+    {
+        // Portable: embedded Python lives next to the ComfyUI/ subfolder
+        foreach (var folder in PortablePythonFolders)
+        {
+            var candidate = Path.Combine(installationPath, folder, "python.exe");
+            if (File.Exists(candidate))
+            {
+                Logger.Debug("Found portable Python at {Path}", candidate);
+                return candidate;
+            }
+        }
+
+        // Manual / venv on Windows
+        var venvScripts = Path.Combine(backendDir, "venv", "Scripts", "python.exe");
+        if (File.Exists(venvScripts))
+        {
+            Logger.Debug("Found venv Python at {Path}", venvScripts);
+            return venvScripts;
+        }
+
+        // TODO: Linux Implementation - use venv/bin/python on Linux
+        var venvBin = Path.Combine(backendDir, "venv", "bin", "python");
+        if (File.Exists(venvBin))
+        {
+            Logger.Debug("Found venv Python at {Path}", venvBin);
+            return venvBin;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Runs <c>pip install -r requirements.txt</c> in the backend directory to update
+    /// pip-managed dependencies including the frontend package (<c>comfyui-frontend-package</c>).
+    /// </summary>
+    private static async Task UpdatePipRequirementsAsync(
+        string installationPath, string backendDir,
+        IProgress<string>? progress, CancellationToken ct)
+    {
+        var requirementsPath = Path.Combine(backendDir, "requirements.txt");
+        if (!File.Exists(requirementsPath))
+        {
+            Logger.Debug("No requirements.txt found at {Path}, skipping pip update", requirementsPath);
+            return;
+        }
+
+        var pythonExe = ResolvePythonExecutable(installationPath, backendDir);
+        if (pythonExe is null)
+        {
+            Logger.Warning("Could not find Python executable for {Path} — pip requirements will not be updated", installationPath);
+            progress?.Report("Python not found — skipping pip requirements update");
+            return;
+        }
+
+        progress?.Report("Updating pip requirements (includes frontend package)...");
+        Logger.Information("Running pip install -r requirements.txt using {Python}", pythonExe);
+
+        var pipResult = await RunProcessAsync(
+            pythonExe,
+            $"-m pip install -r \"{requirementsPath}\"",
+            backendDir,
+            ct);
+
+        if (pipResult.Success)
+        {
+            Logger.Information("pip requirements updated successfully");
+            progress?.Report("Pip requirements updated successfully.");
+        }
+        else
+        {
+            Logger.Warning("pip install failed (non-fatal): {Output}", pipResult.Output);
+            progress?.Report($"pip install failed (non-fatal): {pipResult.Output}");
+        }
+    }
+
+    /// <summary>
     /// Runs a git command in the specified directory and returns the output.
     /// </summary>
-    private static async Task<GitResult> RunGitAsync(string workingDir, string arguments, CancellationToken ct)
+    private static Task<ProcessResult> RunGitAsync(string workingDir, string arguments, CancellationToken ct)
+        => RunProcessAsync("git", arguments, workingDir, ct);
+
+    /// <summary>
+    /// Runs an external process and captures stdout/stderr.
+    /// </summary>
+    private static async Task<ProcessResult> RunProcessAsync(
+        string fileName, string arguments, string workingDir, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = fileName,
             Arguments = arguments,
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
@@ -289,7 +392,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         {
             using var process = Process.Start(psi);
             if (process is null)
-                return new GitResult(false, "Failed to start git process");
+                return new ProcessResult(false, $"Failed to start {fileName}");
 
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
@@ -306,19 +409,19 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             var output = stdout.ToString().TrimEnd();
             var error = stderr.ToString().TrimEnd();
 
-            Logger.Debug("git {Args} in {Dir} → exit {Code}, stdout: {Out}, stderr: {Err}",
-                arguments, workingDir, exitCode, output, error);
+            Logger.Debug("{Exe} {Args} in {Dir} → exit {Code}, stdout: {Out}, stderr: {Err}",
+                fileName, arguments, workingDir, exitCode, output, error);
 
             return exitCode == 0
-                ? new GitResult(true, output)
-                : new GitResult(false, string.IsNullOrEmpty(error) ? output : error);
+                ? new ProcessResult(true, output)
+                : new ProcessResult(false, string.IsNullOrEmpty(error) ? output : error);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.Error(ex, "Failed to run git {Args} in {Dir}", arguments, workingDir);
-            return new GitResult(false, ex.Message);
+            Logger.Error(ex, "Failed to run {Exe} {Args} in {Dir}", fileName, arguments, workingDir);
+            return new ProcessResult(false, ex.Message);
         }
     }
 
-    private sealed record GitResult(bool Success, string Output);
+    private sealed record ProcessResult(bool Success, string Output);
 }

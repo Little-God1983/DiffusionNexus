@@ -112,7 +112,7 @@ public class DialogService : IDialogService
 
     public async Task ShowMessageAsync(string title, string message)
     {
-        var dialog = new ConfirmDialog
+        var dialog = new MessageDialog
         {
             Message = message
         };

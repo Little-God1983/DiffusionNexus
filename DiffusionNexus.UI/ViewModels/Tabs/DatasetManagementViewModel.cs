@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -73,7 +74,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     // Filter fields
     private string _filterText = string.Empty;
     private DatasetType? _filterType;
-    private bool _showNsfw = true;
+    private bool _showNsfw;
     private bool _selectedNsfw;
 
     // Sub-tab fields
@@ -127,6 +128,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             NotesTab.DialogService = value;
             PresentationTab.DialogService = value;
             CaptioningTab.DialogService = value;
+            DatasetQualityTab.DialogService = value;
         }
     }
 
@@ -149,6 +151,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// ViewModel for the Captioning sub-tab.
     /// </summary>
     public CaptioningTabViewModel CaptioningTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Dataset Quality sub-tab.
+    /// </summary>
+    public DatasetQualityTabViewModel DatasetQualityTab { get; }
 
     /// <summary>
     /// Collection of training run cards for the current dataset version.
@@ -625,7 +632,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IVideoThumbnailService? videoThumbnailService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
-        IThumbnailOrchestrator? thumbnailOrchestrator = null)
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        AnalysisPipeline? analysisPipeline = null,
+        BucketAnalyzer? bucketAnalyzer = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -642,6 +651,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         NotesTab = new NotesTabViewModel(_eventAggregator);
         PresentationTab = new PresentationTabViewModel(_eventAggregator);
         CaptioningTab = new CaptioningTabViewModel(_eventAggregator, _state, _captioningService);
+        DatasetQualityTab = analysisPipeline is not null
+            ? new DatasetQualityTabViewModel(analysisPipeline, bucketAnalyzer)
+            : new DatasetQualityTabViewModel();
+        DatasetQualityTab.FixDistributionRequested += OnFixDistributionRequested;
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -697,7 +710,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null)
     {
     }
 
@@ -1389,6 +1402,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             _selectedNsfw = dataset.IsNsfw;
             OnPropertyChanged(nameof(SelectedNsfw));
 
+            // Update dataset quality tab with the active version context
+            DatasetQualityTab.RefreshContext(
+                dataset.CurrentVersionFolderPath,
+                dataset.Name,
+                dataset.CurrentVersion,
+                _selectedCategory?.Name);
+
             HasUnsavedChanges = false;
 
             var imageCount = DatasetImages.Count(m => m.IsImage);
@@ -1759,6 +1779,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         });
 
         StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Batch Crop/Scale";
+    }
+
+    /// <summary>
+    /// Handles the fix distribution request from the Dataset Quality / Bucket Analysis tab.
+    /// Navigates to the Batch Crop/Scale tab with the active dataset preselected.
+    /// </summary>
+    private void OnFixDistributionRequested()
+    {
+        SendToBatchCropScale();
     }
 
     private async Task OpenImageViewerAsync(DatasetImageViewModel? image)

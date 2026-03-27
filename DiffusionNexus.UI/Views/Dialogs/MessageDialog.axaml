@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.MessageDialog"
+        x:DataType="local:MessageDialog"
+        Width="420"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <Grid Margin="20" RowDefinitions="Auto,Auto">
+
+    <!-- Message -->
+    <TextBlock Grid.Row="0"
+               Text="{Binding Message}"
+               TextWrapping="Wrap"
+               FontSize="14"
+               Foreground="White"
+               Margin="0,0,0,20"/>
+
+    <!-- Single OK button -->
+    <StackPanel Grid.Row="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right">
+      <Button Content="OK"
+              Width="80"
+              IsDefault="True"
+              Background="#0088CC"
+              Foreground="White"
+              Click="OnOkClick"/>
+    </StackPanel>
+
+  </Grid>
+</Window>

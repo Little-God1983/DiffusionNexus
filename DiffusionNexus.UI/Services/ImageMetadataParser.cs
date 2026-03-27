@@ -631,6 +631,7 @@ internal sealed partial class ImageMetadataParser
     /// <summary>
     /// Reads width and height from the IHDR chunk of a PNG file without decoding pixels.
     /// </summary>
+    [Obsolete("Use ImageHeaderReader.ReadDimensions for multi-format header-only dimension reading.")]
     private static (int Width, int Height) ReadPngDimensions(string filePath)
     {
         try

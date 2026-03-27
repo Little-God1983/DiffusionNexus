@@ -528,6 +528,11 @@
           <views:TrainingRunsTabView/>
         </TabItem>
 
+        <!-- Tab 3: Dataset Quality -->
+        <TabItem Header="Dataset Quality">
+          <views:DatasetQualityTabView DataContext="{Binding DatasetQualityTab}"/>
+        </TabItem>
+
       </TabControl>
     </Grid>
   </Grid>

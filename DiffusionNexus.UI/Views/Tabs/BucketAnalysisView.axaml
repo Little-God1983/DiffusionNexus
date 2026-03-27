@@ -1,0 +1,238 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:models="using:DiffusionNexus.Domain.Models"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+             x:Class="DiffusionNexus.UI.Views.Tabs.BucketAnalysisView"
+             x:DataType="vmTabs:BucketAnalysisTabViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="NumericUpDown">
+      <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox">
+      <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox:focus">
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+    </Style>
+    <Style Selector="TextBlock.severity-critical">
+      <Setter Property="Foreground" Value="#FF6B6B"/>
+    </Style>
+    <Style Selector="TextBlock.severity-warning">
+      <Setter Property="Foreground" Value="#FFA726"/>
+    </Style>
+    <Style Selector="TextBlock.severity-info">
+      <Setter Property="Foreground" Value="#4CAF50"/>
+    </Style>
+    <Style Selector="TextBlock.section-header">
+      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Margin" Value="0,16,0,8"/>
+    </Style>
+  </UserControl.Styles>
+
+  <ScrollViewer>
+    <StackPanel Margin="16" Spacing="12">
+
+      <TextBlock Text="Bucket Configuration" Classes="section-header"/>
+
+      <TextBlock TextWrapping="Wrap"
+                 FontSize="13"
+                 Opacity="0.7"
+                 Margin="0,0,0,8"
+                 MaxWidth="900"
+                 HorizontalAlignment="Left"
+                 Text="LoRA training resizes and crops your images into fixed-size buckets. Poorly distributed buckets mean some resolutions are over-represented while others have too few samples, leading to uneven learning and artifacts. Use this analysis to verify your images spread evenly across buckets, catch outliers that would be heavily cropped, and tune resolution settings before you start training."/>
+
+      <WrapPanel Orientation="Horizontal">
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Base Resolution" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding BaseResolution}"
+                         Minimum="256" Maximum="4096" Increment="64"
+                         Width="120" FormatString="0"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Step Size" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding StepSize}"
+                         Minimum="8" Maximum="256" Increment="8"
+                         Width="120" FormatString="0"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Min Dimension" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding MinDimension}"
+                         Minimum="64" Maximum="2048" Increment="64"
+                         Width="120" FormatString="0"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Max Dimension" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding MaxDimension}"
+                         Minimum="512" Maximum="8192" Increment="64"
+                         Width="120" FormatString="0"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Max Aspect Ratio" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding MaxAspectRatio}"
+                         Minimum="1.0" Maximum="4.0" Increment="0.1"
+                         Width="120" FormatString="0.0"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,16,8">
+          <TextBlock Text="Batch Size" Margin="0,0,0,4"/>
+          <NumericUpDown Value="{Binding BatchSize}"
+                         Minimum="1" Maximum="64" Increment="1"
+                         Width="120" FormatString="0"/>
+        </StackPanel>
+      </WrapPanel>
+
+      <Button Content="Analyze Buckets"
+              Command="{Binding AnalyzeCommand}"
+              HorizontalAlignment="Left"
+              Padding="16,8"/>
+
+      <ProgressBar IsIndeterminate="True"
+                   IsVisible="{Binding IsAnalyzing}"
+                   Margin="0,8"/>
+
+      <StackPanel IsVisible="{Binding HasResults}" Spacing="12">
+
+        <TextBlock Text="Bucket Distribution" Classes="section-header"/>
+
+        <ItemsControl ItemsSource="{Binding UsedBuckets}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vmTabs:BucketBarViewModel">
+              <DockPanel Margin="0,2" Height="24">
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding Label}"
+                           Width="120"
+                           VerticalAlignment="Center"
+                           FontFamily="Consolas"
+                           FontSize="12"/>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="&#x26A0;"
+                           IsVisible="{Binding IsSingleImage}"
+                           Foreground="#FFA726"
+                           VerticalAlignment="Center"
+                           Margin="0,0,4,0"
+                           ToolTip.Tip="Only 1 image in this bucket"/>
+                <Border DockPanel.Dock="Left"
+                        Width="{Binding BarWidth}"
+                        Height="16"
+                        Background="#4488FF"
+                        CornerRadius="2"
+                        VerticalAlignment="Center"
+                        Margin="4,0"/>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding ImageCount}"
+                           VerticalAlignment="Center"
+                           Margin="4,0"
+                           FontSize="12"/>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding SingleImageFileName, StringFormat='— {0}'}"
+                           IsVisible="{Binding IsSingleImage}"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           FontFamily="Consolas"
+                           Opacity="0.5"
+                           Margin="6,0,0,0"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding SingleImageFileName}"/>
+              </DockPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <StackPanel Orientation="Horizontal" Margin="0,8">
+          <TextBlock Text="Distribution Score: " FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding DistributionScore, StringFormat={}{0:F1}}"/>
+          <TextBlock Text=" / 100 &#x2014; "/>
+          <TextBlock Text="{Binding ScoreLabel}" FontWeight="Bold"/>
+        </StackPanel>
+
+        <!-- Recommendations panel — visible when score is below threshold -->
+        <Border IsVisible="{Binding HasRecommendations}"
+                Background="#2A1A1A2E"
+                BorderBrush="#FFA726"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="16"
+                Margin="0,8">
+          <StackPanel Spacing="10">
+            <TextBlock Text="&#x1F4CB; Recommendations"
+                       FontSize="15" FontWeight="SemiBold"
+                       Foreground="#FFA726"/>
+
+            <ItemsControl ItemsSource="{Binding Recommendations}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}"
+                             TextWrapping="Wrap"
+                             FontSize="13"
+                             Margin="0,2"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Button Content="&#x1F527; Open in Batch Crop/Scale"
+                    Command="{Binding FixDistributionCommand}"
+                    HorizontalAlignment="Left"
+                    Padding="16,8"
+                    Margin="0,4,0,0"
+                    FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+
+        <TextBlock Text="Per-Image Assignments" Classes="section-header"/>
+
+        <Grid ColumnDefinitions="200,130,130,80,80" Margin="0,0,0,4">
+          <TextBlock Grid.Column="0" Text="File Name" FontWeight="SemiBold" FontSize="12"/>
+          <TextBlock Grid.Column="1" Text="Original" FontWeight="SemiBold" FontSize="12"/>
+          <TextBlock Grid.Column="2" Text="Bucket" FontWeight="SemiBold" FontSize="12"/>
+          <TextBlock Grid.Column="3" Text="Crop %" FontWeight="SemiBold" FontSize="12"/>
+          <TextBlock Grid.Column="4" Text="Scale" FontWeight="SemiBold" FontSize="12"/>
+        </Grid>
+
+        <ScrollViewer MaxHeight="300">
+          <ItemsControl ItemsSource="{Binding ImageAssignments}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vmTabs:ImageAssignmentRowViewModel">
+                <Grid ColumnDefinitions="200,130,130,80,80" Margin="0,1">
+                  <TextBlock Grid.Column="0" Text="{Binding FileName}"
+                             TextTrimming="CharacterEllipsis" FontSize="12"
+                             ToolTip.Tip="{Binding FileName}"/>
+                  <TextBlock Grid.Column="1" Text="{Binding OriginalResolution}" FontSize="12"/>
+                  <TextBlock Grid.Column="2" Text="{Binding BucketResolution}" FontSize="12"/>
+                  <TextBlock Grid.Column="3" Text="{Binding CropPercentage}" FontSize="12"
+                             />
+                  <TextBlock Grid.Column="4" Text="{Binding ScaleFactor}" FontSize="12"
+                             />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+
+        <ItemsControl ItemsSource="{Binding Issues}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="models:Issue">
+              <StackPanel Orientation="Horizontal" Margin="0,2" Spacing="8">
+                <TextBlock Text="{Binding Message}"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center"/>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock Text="{Binding SummaryText}"
+                   FontStyle="Italic"
+                   Opacity="0.7"
+                   Margin="0,8"/>
+
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+
+</UserControl>
