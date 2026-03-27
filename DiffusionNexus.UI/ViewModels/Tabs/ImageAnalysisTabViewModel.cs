@@ -80,6 +80,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
 
         BucketAnalysisTab = new BucketAnalysisTabViewModel(bucketAnalyzer);
         BucketAnalysisTab.AnalysisCompleted += OnBucketAnalysisCompleted;
+        BucketAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
 
@@ -134,6 +135,12 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
 
     /// <summary>Command to select a dashboard card.</summary>
     public IRelayCommand<AnalysisSectionCardViewModel?> SelectCardCommand { get; }
+
+    /// <summary>
+    /// Raised when a child analysis tab requests navigation to Batch Crop/Scale.
+    /// Bubbles up to <see cref="DatasetQualityTabViewModel"/>.
+    /// </summary>
+    public event Action? FixDistributionRequested;
 
     /// <summary>
     /// Updates the dataset folder path and refreshes all child analysis VMs.
@@ -213,5 +220,10 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     private void OnBucketAnalysisCompleted(double score, int issueCount, string scoreLabel)
     {
         UpdateBucketAnalysisSummary(score, issueCount, scoreLabel);
+    }
+
+    private void OnFixDistributionRequested()
+    {
+        FixDistributionRequested?.Invoke();
     }
 }

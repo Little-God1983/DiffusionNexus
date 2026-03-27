@@ -654,6 +654,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         DatasetQualityTab = analysisPipeline is not null
             ? new DatasetQualityTabViewModel(analysisPipeline, bucketAnalyzer)
             : new DatasetQualityTabViewModel();
+        DatasetQualityTab.FixDistributionRequested += OnFixDistributionRequested;
 
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
@@ -1778,6 +1779,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         });
 
         StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Batch Crop/Scale";
+    }
+
+    /// <summary>
+    /// Handles the fix distribution request from the Dataset Quality / Bucket Analysis tab.
+    /// Navigates to the Batch Crop/Scale tab with the active dataset preselected.
+    /// </summary>
+    private void OnFixDistributionRequested()
+    {
+        SendToBatchCropScale();
     }
 
     private async Task OpenImageViewerAsync(DatasetImageViewModel? image)

@@ -54,10 +54,18 @@ public class ImageAssignmentRowViewModel
 /// <summary>
 /// ViewModel for the Bucket Analysis tab.
 /// Simulates kohya_ss-style bucketing and shows distribution, per-image details, and issues.
+/// When the distribution score is below <see cref="RecommendationThreshold"/>,
+/// contextual recommendations are generated and a button to navigate to the
+/// Batch Crop/Scale tab is surfaced.
 /// </summary>
 public class BucketAnalysisTabViewModel : ObservableObject
 {
     private const double MaxBarPixels = 300.0;
+
+    /// <summary>
+    /// Distribution score below which recommendations are generated.
+    /// </summary>
+    private const double RecommendationThreshold = 65.0;
 
     private readonly BucketAnalyzer? _analyzer;
 
@@ -70,6 +78,7 @@ public class BucketAnalysisTabViewModel : ObservableObject
     private int _batchSize = 1;
     private bool _isAnalyzing;
     private bool _hasResults;
+    private bool _hasRecommendations;
     private double _distributionScore;
     private string _scoreLabel = string.Empty;
     private string _summaryText = string.Empty;
@@ -83,6 +92,7 @@ public class BucketAnalysisTabViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(analyzer);
         _analyzer = analyzer;
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        FixDistributionCommand = new RelayCommand(OnFixDistribution);
     }
 
     /// <summary>
@@ -91,6 +101,7 @@ public class BucketAnalysisTabViewModel : ObservableObject
     public BucketAnalysisTabViewModel()
     {
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        FixDistributionCommand = new RelayCommand(OnFixDistribution);
     }
 
     #region Observable Properties
@@ -178,6 +189,13 @@ public class BucketAnalysisTabViewModel : ObservableObject
         private set => SetProperty(ref _summaryText, value);
     }
 
+    /// <summary>True when the distribution score is below the recommendation threshold.</summary>
+    public bool HasRecommendations
+    {
+        get => _hasRecommendations;
+        private set => SetProperty(ref _hasRecommendations, value);
+    }
+
     #endregion
 
     #region Collections
@@ -191,6 +209,9 @@ public class BucketAnalysisTabViewModel : ObservableObject
     /// <summary>Issues detected during analysis.</summary>
     public ObservableCollection<Issue> Issues { get; } = [];
 
+    /// <summary>Contextual recommendations for improving the distribution score.</summary>
+    public ObservableCollection<string> Recommendations { get; } = [];
+
     #endregion
 
     #region Commands
@@ -199,10 +220,22 @@ public class BucketAnalysisTabViewModel : ObservableObject
     public AsyncRelayCommand AnalyzeCommand { get; }
 
     /// <summary>
+    /// Command to navigate to the Batch Crop/Scale tab to fix the distribution.
+    /// Visible only when <see cref="HasRecommendations"/> is true.
+    /// </summary>
+    public RelayCommand FixDistributionCommand { get; }
+
+    /// <summary>
     /// Raised after analysis completes with the score, issue count, and label.
     /// Used by the parent dashboard to update its summary card.
     /// </summary>
     public event Action<double, int, string>? AnalysisCompleted;
+
+    /// <summary>
+    /// Raised when the user clicks the "Open in Batch Crop/Scale" button.
+    /// The parent ViewModel chain handles navigation.
+    /// </summary>
+    public event Action? FixDistributionRequested;
 
     private bool CanAnalyze => !IsAnalyzing && !string.IsNullOrWhiteSpace(_folderPath);
 
@@ -308,7 +341,87 @@ public class BucketAnalysisTabViewModel : ObservableObject
 
         HasResults = result.Assignments.Count > 0;
 
+        // Generate recommendations when score is below threshold
+        GenerateRecommendations(result);
+
         AnalysisCompleted?.Invoke(result.DistributionScore, result.Issues.Count, result.ScoreLabel);
+    }
+
+    /// <summary>
+    /// Generates contextual recommendations when the distribution score is below
+    /// <see cref="RecommendationThreshold"/>. Recommendations guide the user towards
+    /// using the Batch Crop/Scale tab to rebalance their dataset.
+    /// </summary>
+    private void GenerateRecommendations(BucketAnalysisResult result)
+    {
+        Recommendations.Clear();
+
+        if (result.DistributionScore >= RecommendationThreshold)
+        {
+            HasRecommendations = false;
+            return;
+        }
+
+        // Dominant bucket tip
+        if (result.Distribution.Count > 0)
+        {
+            var dominant = result.Distribution.OrderByDescending(d => d.ImageCount).First();
+            var total = result.Assignments.Count;
+            var pct = total > 0 ? (double)dominant.ImageCount / total * 100.0 : 0;
+
+            if (pct > 40)
+            {
+                Recommendations.Add(
+                    $"\u26A0 {pct:F0}% of images land in the {dominant.Bucket.Label} bucket. " +
+                    "Use Batch Crop/Scale to crop or pad images to different aspect ratios.");
+            }
+        }
+
+        // Single-image buckets
+        var singleBuckets = result.Distribution.Count(d => d.ImageCount == 1);
+        if (singleBuckets > 0)
+        {
+            Recommendations.Add(
+                $"\u26A0 {singleBuckets} bucket(s) contain only 1 image. " +
+                "Consider cropping those images to a more common aspect ratio.");
+        }
+
+        // High crop images
+        var highCropCount = result.Assignments.Count(
+            a => a.CropPercentage >= BucketAnalyzer.CropWarningThreshold);
+        if (highCropCount > 0)
+        {
+            Recommendations.Add(
+                $"\u2702 {highCropCount} image(s) lose \u2265 {BucketAnalyzer.CropWarningThreshold}% " +
+                "of pixels during bucketing. Pre-cropping to a standard ratio in " +
+                "Batch Crop/Scale reduces waste.");
+        }
+
+        // Heavy upscale images
+        var upscaleCount = result.Assignments.Count(
+            a => a.ScaleFactor >= BucketAnalyzer.UpscaleCriticalThreshold);
+        if (upscaleCount > 0)
+        {
+            Recommendations.Add(
+                $"\uD83D\uDD0D {upscaleCount} image(s) require \u2265 " +
+                $"{BucketAnalyzer.UpscaleCriticalThreshold:F1}\u00D7 upscaling. " +
+                "Scaling these down to match the base resolution avoids blurry training data.");
+        }
+
+        // General tip when no specific recommendations were triggered
+        if (Recommendations.Count == 0)
+        {
+            Recommendations.Add(
+                "\uD83D\uDCA1 The distribution is uneven. Use Batch Crop/Scale to pre-process images " +
+                "to standard aspect ratios before training.");
+        }
+
+        HasRecommendations = Recommendations.Count > 0;
+    }
+
+    private void OnFixDistribution()
+    {
+        FixDistributionRequested?.Invoke();
     }
 
     private void ClearResults()
@@ -316,10 +429,12 @@ public class BucketAnalysisTabViewModel : ObservableObject
         UsedBuckets.Clear();
         ImageAssignments.Clear();
         Issues.Clear();
+        Recommendations.Clear();
         DistributionScore = 0;
         ScoreLabel = string.Empty;
         SummaryText = string.Empty;
         HasResults = false;
+        HasRecommendations = false;
     }
 
     #endregion

@@ -140,6 +140,39 @@
           <TextBlock Text="{Binding ScoreLabel}" FontWeight="Bold"/>
         </StackPanel>
 
+        <!-- Recommendations panel — visible when score is below threshold -->
+        <Border IsVisible="{Binding HasRecommendations}"
+                Background="#2A1A1A2E"
+                BorderBrush="#FFA726"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="16"
+                Margin="0,8">
+          <StackPanel Spacing="10">
+            <TextBlock Text="&#x1F4CB; Recommendations"
+                       FontSize="15" FontWeight="SemiBold"
+                       Foreground="#FFA726"/>
+
+            <ItemsControl ItemsSource="{Binding Recommendations}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}"
+                             TextWrapping="Wrap"
+                             FontSize="13"
+                             Margin="0,2"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Button Content="&#x1F527; Open in Batch Crop/Scale"
+                    Command="{Binding FixDistributionCommand}"
+                    HorizontalAlignment="Left"
+                    Padding="16,8"
+                    Margin="0,4,0,0"
+                    FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+
         <TextBlock Text="Per-Image Assignments" Classes="section-header"/>
 
         <Grid ColumnDefinitions="200,130,130,80,80" Margin="0,0,0,4">
@@ -186,6 +219,7 @@
                    FontStyle="Italic"
                    Opacity="0.7"
                    Margin="0,8"/>
+
       </StackPanel>
 
     </StackPanel>

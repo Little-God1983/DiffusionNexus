@@ -39,6 +39,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ImageAnalysisTab = bucketAnalyzer is not null
             ? new ImageAnalysisTabViewModel(bucketAnalyzer)
             : new ImageAnalysisTabViewModel();
+        ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
@@ -53,6 +54,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public DatasetQualityTabViewModel()
     {
         ImageAnalysisTab = new ImageAnalysisTabViewModel();
+        ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
@@ -72,6 +74,12 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// ViewModel for the embedded Image Analysis dashboard tab.
     /// </summary>
     public ImageAnalysisTabViewModel ImageAnalysisTab { get; }
+
+    /// <summary>
+    /// Raised when a child analysis tab requests navigation to Batch Crop/Scale.
+    /// Bubbles up to <see cref="DatasetManagementViewModel"/>.
+    /// </summary>
+    public event Action? FixDistributionRequested;
 
     #region Observable Properties
 
@@ -460,6 +468,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         {
             IsAnalyzing = false;
         }
+    }
+
+    private void OnFixDistributionRequested()
+    {
+        FixDistributionRequested?.Invoke();
     }
 
     #endregion
