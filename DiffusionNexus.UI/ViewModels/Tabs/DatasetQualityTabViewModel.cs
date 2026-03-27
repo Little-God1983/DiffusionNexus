@@ -36,9 +36,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ArgumentNullException.ThrowIfNull(pipeline);
         _pipeline = pipeline;
 
-        BucketAnalysisTab = bucketAnalyzer is not null
-            ? new BucketAnalysisTabViewModel(bucketAnalyzer)
-            : new BucketAnalysisTabViewModel();
+        ImageAnalysisTab = bucketAnalyzer is not null
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer)
+            : new ImageAnalysisTabViewModel();
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
@@ -52,7 +52,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// </summary>
     public DatasetQualityTabViewModel()
     {
-        BucketAnalysisTab = new BucketAnalysisTabViewModel();
+        ImageAnalysisTab = new ImageAnalysisTabViewModel();
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
@@ -69,9 +69,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #endregion
 
     /// <summary>
-    /// ViewModel for the embedded bucket analysis sub-tab.
+    /// ViewModel for the embedded Image Analysis dashboard tab.
     /// </summary>
-    public BucketAnalysisTabViewModel BucketAnalysisTab { get; }
+    public ImageAnalysisTabViewModel ImageAnalysisTab { get; }
 
     #region Observable Properties
 
@@ -374,8 +374,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         OnPropertyChanged(nameof(CanAnalyze));
         AnalyzeCommand.NotifyCanExecuteChanged();
 
-        // Forward folder context to bucket analysis sub-tab
-        BucketAnalysisTab.RefreshContext(_datasetFolderPath);
+        // Forward folder context to image analysis dashboard
+        ImageAnalysisTab.RefreshContext(_datasetFolderPath);
     }
 
     /// <summary>

@@ -9,6 +9,15 @@
              x:DataType="vmTabs:BucketAnalysisTabViewModel">
 
   <UserControl.Styles>
+    <Style Selector="NumericUpDown">
+      <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox">
+      <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox:focus">
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+    </Style>
     <Style Selector="TextBlock.severity-critical">
       <Setter Property="Foreground" Value="#FF6B6B"/>
     </Style>
@@ -41,7 +50,7 @@
           <TextBlock Text="Step Size" Margin="0,0,0,4"/>
           <NumericUpDown Value="{Binding StepSize}"
                          Minimum="8" Maximum="256" Increment="8"
-                         Width="100" FormatString="0"/>
+                         Width="120" FormatString="0"/>
         </StackPanel>
         <StackPanel Margin="0,0,16,8">
           <TextBlock Text="Min Dimension" Margin="0,0,0,4"/>
@@ -59,13 +68,13 @@
           <TextBlock Text="Max Aspect Ratio" Margin="0,0,0,4"/>
           <NumericUpDown Value="{Binding MaxAspectRatio}"
                          Minimum="1.0" Maximum="4.0" Increment="0.1"
-                         Width="100" FormatString="0.0"/>
+                         Width="120" FormatString="0.0"/>
         </StackPanel>
         <StackPanel Margin="0,0,16,8">
           <TextBlock Text="Batch Size" Margin="0,0,0,4"/>
           <NumericUpDown Value="{Binding BatchSize}"
                          Minimum="1" Maximum="64" Increment="1"
-                         Width="80" FormatString="0"/>
+                         Width="120" FormatString="0"/>
         </StackPanel>
       </WrapPanel>
 

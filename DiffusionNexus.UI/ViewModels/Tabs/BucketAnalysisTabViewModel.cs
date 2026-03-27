@@ -198,6 +198,12 @@ public class BucketAnalysisTabViewModel : ObservableObject
     /// <summary>Command to start the bucket analysis.</summary>
     public AsyncRelayCommand AnalyzeCommand { get; }
 
+    /// <summary>
+    /// Raised after analysis completes with the score, issue count, and label.
+    /// Used by the parent dashboard to update its summary card.
+    /// </summary>
+    public event Action<double, int, string>? AnalysisCompleted;
+
     private bool CanAnalyze => !IsAnalyzing && !string.IsNullOrWhiteSpace(_folderPath);
 
     #endregion
@@ -301,6 +307,8 @@ public class BucketAnalysisTabViewModel : ObservableObject
                     + $"Distribution score: {result.DistributionScore:F1} ({result.ScoreLabel}).";
 
         HasResults = result.Assignments.Count > 0;
+
+        AnalysisCompleted?.Invoke(result.DistributionScore, result.Issues.Count, result.ScoreLabel);
     }
 
     private void ClearResults()

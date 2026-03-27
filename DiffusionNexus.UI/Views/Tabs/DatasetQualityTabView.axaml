@@ -42,9 +42,9 @@
     <!-- TABBED CONTENT -->
     <TabControl Grid.Row="1" Padding="0">
 
-      <!-- ═══════════ TAB 1: Bucket Analysis ═══════════ -->
-      <TabItem Header="Bucket Analysis">
-        <views:BucketAnalysisView DataContext="{Binding BucketAnalysisTab}"/>
+      <!-- ═══════════ TAB 1: Image Analysis ═══════════ -->
+      <TabItem Header="Image Analysis">
+        <views:ImageAnalysisView DataContext="{Binding ImageAnalysisTab}"/>
       </TabItem>
 
       <!-- ═══════════ TAB 2: Caption Quality ═══════════ -->
