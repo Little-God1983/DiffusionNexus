@@ -419,11 +419,23 @@ public class BucketAnalyzerTests
     #region Distribution Score
 
     [Fact]
-    public void WhenSingleBucketThenScoreIsZero()
+    public void WhenSingleBucketThenScoreIsHundred()
     {
         var distribution = new List<BucketDistributionEntry>
         {
             new() { Bucket = new BucketResolution(1024, 1024), ImageCount = 10, ImagePaths = [] }
+        };
+
+        // A homogeneous dataset (all images in one bucket) is ideal for training.
+        BucketAnalyzer.CalculateDistributionScore(distribution).Should().Be(100);
+    }
+
+    [Fact]
+    public void WhenSingleBucketWithZeroImagesThenScoreIsZero()
+    {
+        var distribution = new List<BucketDistributionEntry>
+        {
+            new() { Bucket = new BucketResolution(1024, 1024), ImageCount = 0, ImagePaths = [] }
         };
 
         BucketAnalyzer.CalculateDistributionScore(distribution).Should().Be(0);

@@ -158,19 +158,25 @@ public sealed class BucketAnalyzer
     #region Distribution Score
 
     /// <summary>
-    /// Calculates a distribution quality score (0–100) by blending Shannon Evenness
-    /// with a dominance penalty. Pure Shannon Evenness is too lenient when one bucket
-    /// holds a large proportion of images (e.g., 50% in 1024×1024) because having many
-    /// other small buckets inflates the entropy.
+    /// Calculates a distribution quality score (0–100) that measures how well images
+    /// are distributed across their assigned buckets.
     ///
-    /// The final score blends:
+    /// <para>
+    /// A homogeneous dataset where all images share the same aspect ratio lands in a
+    /// single bucket — this is <b>ideal</b> for training (zero crop, no wasted pixels)
+    /// and scores 100.
+    /// </para>
+    ///
+    /// <para>
+    /// When images span multiple buckets the score blends:
+    /// </para>
     /// <list type="bullet">
     ///   <item><description>Shannon Evenness (70% weight) — measures overall spread across buckets.</description></item>
     ///   <item><description>Dominance penalty (30% weight) — penalises max bucket proportion vs. the ideal 1/n share.</description></item>
     /// </list>
     ///
-    /// A score of 100 means images are perfectly evenly distributed.
-    /// A score near 0 means extreme concentration in one bucket.
+    /// A score of 100 means images are perfectly evenly distributed (or all in one bucket).
+    /// A score near 0 means extreme concentration in one bucket while other buckets exist.
     /// </summary>
     /// <param name="distribution">Non-empty distribution entries.</param>
     /// <returns>Distribution quality score 0–100.</returns>
@@ -178,8 +184,13 @@ public sealed class BucketAnalyzer
     {
         ArgumentNullException.ThrowIfNull(distribution);
 
-        if (distribution.Count <= 1)
+        if (distribution.Count == 0)
             return 0;
+
+        // A single bucket means all images share the same aspect ratio —
+        // this is the ideal case for LoRA training: zero crop, no wasted pixels.
+        if (distribution.Count == 1)
+            return distribution[0].ImageCount > 0 ? 100 : 0;
 
         int total = 0;
         int maxCount = 0;
