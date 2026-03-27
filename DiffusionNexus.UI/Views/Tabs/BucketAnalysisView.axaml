@@ -128,6 +128,16 @@
                            VerticalAlignment="Center"
                            Margin="4,0"
                            FontSize="12"/>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding SingleImageFileName, StringFormat='— {0}'}"
+                           IsVisible="{Binding IsSingleImage}"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           FontFamily="Consolas"
+                           Opacity="0.5"
+                           Margin="6,0,0,0"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding SingleImageFileName}"/>
               </DockPanel>
             </DataTemplate>
           </ItemsControl.ItemTemplate>

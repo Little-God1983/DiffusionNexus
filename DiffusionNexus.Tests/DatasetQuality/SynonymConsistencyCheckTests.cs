@@ -429,8 +429,7 @@ public class SynonymConsistencyCheckTests
         var result = SynonymConsistencyCheck.ReplaceTerm(
             "A car on the road.", "car", "automobile", CaptionStyle.NaturalLanguage);
 
-        result.Should().Contain("automobile");
-        result.Should().NotContain("car");
+        result.Should().Be("An automobile on the road.");
     }
 
     [Fact]
@@ -449,6 +448,53 @@ public class SynonymConsistencyCheckTests
             "", "car", "automobile", CaptionStyle.NaturalLanguage);
 
         result.Should().Be("automobile");
+    }
+
+    [Fact]
+    public void WhenReplacingInNlTextThenReplacesInPlace()
+    {
+        var result = SynonymConsistencyCheck.ReplaceTerm(
+            "A bustling city alley at night.", "city", "urban", CaptionStyle.NaturalLanguage);
+
+        result.Should().Be("A bustling urban alley at night.");
+    }
+
+    [Fact]
+    public void WhenReplacingWordPrecededByAnThenCorrectsToa()
+    {
+        var result = SynonymConsistencyCheck.ReplaceTerm(
+            "She wore an elegant dress.", "elegant", "beautiful", CaptionStyle.NaturalLanguage);
+
+        result.Should().Be("She wore a beautiful dress.");
+    }
+
+    [Fact]
+    public void WhenReplacingWordPrecededByAThenCorrectsToAn()
+    {
+        var result = SynonymConsistencyCheck.ReplaceTerm(
+            "He held a beautiful ornament.", "beautiful", "elegant", CaptionStyle.NaturalLanguage);
+
+        result.Should().Be("He held an elegant ornament.");
+    }
+
+    [Fact]
+    public void WhenReplacingWordPrecededByTheThenArticleIsUnchanged()
+    {
+        var result = SynonymConsistencyCheck.ReplaceTerm(
+            "The car was fast.", "car", "automobile", CaptionStyle.NaturalLanguage);
+
+        result.Should().Contain("automobile");
+        result.Should().NotContain("car");
+        result.Should().StartWith("The automobile");
+    }
+
+    [Fact]
+    public void WhenReplacingCapitalisedWordThenPreservesLeadingCase()
+    {
+        var result = SynonymConsistencyCheck.ReplaceTerm(
+            "City lights at dusk.", "City", "urban", CaptionStyle.NaturalLanguage);
+
+        result.Should().Be("Urban lights at dusk.");
     }
 
     #endregion

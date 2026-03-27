@@ -199,15 +199,21 @@ public class SynonymConsistencyCheck : IDatasetCheck
             }
             else
             {
-                // NL / Mixed: remove each non-target term, then append target only if missing
+                // NL / Mixed: replace the first non-target term in-place, remove the rest
+                var hasTarget = TextHelpers.ContainsFeature(newText, targetTerm, caption.DetectedStyle);
+                var replacedInPlace = false;
+
                 foreach (var term in termsToRemove)
                 {
-                    newText = TextHelpers.RemovePhrase(newText, term, caption.DetectedStyle);
-                }
-
-                if (!TextHelpers.ContainsFeature(newText, targetTerm, caption.DetectedStyle))
-                {
-                    newText = TextHelpers.AppendPhrase(newText, targetTerm, caption.DetectedStyle);
+                    if (!hasTarget && !replacedInPlace)
+                    {
+                        newText = TextHelpers.ReplacePhrase(newText, term, targetTerm, caption.DetectedStyle);
+                        replacedInPlace = true;
+                    }
+                    else
+                    {
+                        newText = TextHelpers.RemovePhrase(newText, term, caption.DetectedStyle);
+                    }
                 }
             }
 
@@ -240,9 +246,8 @@ public class SynonymConsistencyCheck : IDatasetCheck
             return string.Join(", ", replaced);
         }
 
-        // NL / Mixed / Unknown — word-boundary replacement (case-insensitive, first-match preserving)
-        var removed = TextHelpers.RemovePhrase(rawText, oldTerm, style);
-        return TextHelpers.AppendPhrase(removed, newTerm, style);
+        // NL / Mixed / Unknown — in-place word-boundary replacement
+        return TextHelpers.ReplacePhrase(rawText, oldTerm, newTerm, style);
     }
 
     /// <summary>

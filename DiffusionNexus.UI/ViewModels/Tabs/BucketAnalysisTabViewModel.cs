@@ -22,6 +22,9 @@ public class BucketBarViewModel
 
     /// <summary>True if this bucket contains only 1 image (visual warning hint).</summary>
     public required bool IsSingleImage { get; init; }
+
+    /// <summary>File name of the single image when <see cref="IsSingleImage"/> is true; otherwise empty.</summary>
+    public string SingleImageFileName { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -307,7 +310,10 @@ public class BucketAnalysisTabViewModel : ObservableObject
                 Label = entry.Bucket.Label,
                 ImageCount = entry.ImageCount,
                 BarWidth = Math.Max(barWidth, 2), // minimum visible bar
-                IsSingleImage = entry.ImageCount == 1
+                IsSingleImage = entry.ImageCount == 1,
+                SingleImageFileName = entry.ImageCount == 1 && entry.ImagePaths.Count > 0
+                    ? Path.GetFileName(entry.ImagePaths[0])
+                    : string.Empty
             });
         }
 

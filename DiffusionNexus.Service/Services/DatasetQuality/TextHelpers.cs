@@ -213,6 +213,54 @@ public static class TextHelpers
     }
 
     /// <summary>
+    /// Replaces a phrase with another in a caption, in-place and style-aware.
+    /// <list type="bullet">
+    /// <item><b>BooruTags</b>: replaces the exact tag.</item>
+    /// <item><b>NaturalLanguage / other</b>: word-boundary replacement with
+    ///   optional a/an article correction and leading-case preservation.</item>
+    /// </list>
+    /// </summary>
+    public static string ReplacePhrase(string caption, string oldPhrase, string newPhrase, CaptionStyle style)
+    {
+        if (string.IsNullOrEmpty(caption) || string.IsNullOrEmpty(oldPhrase))
+            return caption ?? string.Empty;
+
+        if (string.IsNullOrEmpty(newPhrase))
+            return RemovePhrase(caption, oldPhrase, style);
+
+        if (style == CaptionStyle.BooruTags)
+        {
+            var tags = SplitTags(caption);
+            var replaced = tags.Select(t =>
+                t.Equals(oldPhrase, StringComparison.OrdinalIgnoreCase) ? newPhrase : t);
+            return string.Join(", ", replaced);
+        }
+
+        // NL / Mixed / Unknown — in-place word-boundary replacement
+        var escapedOld = Regex.Escape(oldPhrase);
+        var pattern = $@"(?<article>\b(?:a|an)\s+)?\b(?<phrase>{escapedOld})\b";
+
+        var result = Regex.Replace(caption, pattern, match =>
+        {
+            var matchedPhrase = match.Groups["phrase"].Value;
+            var replacement = PreserveLeadingCase(matchedPhrase, newPhrase);
+
+            var article = match.Groups["article"].Value;
+            if (string.IsNullOrEmpty(article))
+                return replacement;
+
+            // Fix a ↔ an based on the replacement word's leading sound
+            var corrected = StartsWithVowelSound(replacement) ? "an" : "a";
+            if (char.IsUpper(article.TrimStart()[0]))
+                corrected = char.ToUpperInvariant(corrected[0]) + corrected[1..];
+
+            return $"{corrected} {replacement}";
+        }, RegexOptions.IgnoreCase);
+
+        return CollapseWhitespace(result);
+    }
+
+    /// <summary>
     /// Appends a phrase to a caption in a style-aware manner.
     /// <list type="bullet">
     /// <item><b>BooruTags</b>: appends as a new comma-separated tag.</item>
@@ -280,6 +328,29 @@ public static class TextHelpers
     /// </summary>
     private static Regex WordBoundaryRegex(string escapedPattern) =>
         new($@"\b{escapedPattern}\b", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Transfers the leading case (upper/lower) of <paramref name="source"/> to <paramref name="target"/>.
+    /// </summary>
+    private static string PreserveLeadingCase(string source, string target)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(target))
+            return target ?? string.Empty;
+
+        if (char.IsUpper(source[0]) && char.IsLower(target[0]))
+            return char.ToUpperInvariant(target[0]) + target[1..];
+
+        if (char.IsLower(source[0]) && char.IsUpper(target[0]))
+            return char.ToLowerInvariant(target[0]) + target[1..];
+
+        return target;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the word starts with a vowel sound (simple heuristic).
+    /// </summary>
+    private static bool StartsWithVowelSound(string word) =>
+        !string.IsNullOrEmpty(word) && "aeiouAEIOU".Contains(word[0]);
 
     private static readonly Regex UnderscorePattern = new(@"_", RegexOptions.Compiled);
     private static readonly Regex NonWordPattern = new(@"[^\w\s]", RegexOptions.Compiled);
