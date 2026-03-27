@@ -453,6 +453,107 @@ public class SynonymConsistencyCheckTests
 
     #endregion
 
+    #region Multi-Synonym Captions
+
+    [Fact]
+    public void WhenNlCaptionContainsTwoSynonymsThenEachSuggestionProducesOneEditPerFile()
+    {
+        // "car" and "automobile" both appear in the same caption
+        var captions = MakeCaptionsNl(
+            ("a.txt", "A car parked near an automobile."),
+            ("b.txt", "A car on the road."));
+
+        var issues = _sut.Run(captions, MakeConfig());
+
+        var conflict = issues.Single(i =>
+            i.Message.Contains("car", StringComparison.OrdinalIgnoreCase)
+            && i.Message.Contains("automobile", StringComparison.OrdinalIgnoreCase));
+
+        // "Replace all with car" — a.txt has "automobile" to remove, b.txt already uses "car"
+        var carFix = conflict.FixSuggestions
+            .Single(f => f.Description.Contains("\"car\""));
+
+        carFix.Edits.Should().ContainSingle("a.txt already has 'car', just remove 'automobile'");
+        carFix.Edits[0].FilePath.Should().Contain("a.txt");
+        carFix.Edits[0].NewText.Should().NotContain("automobile");
+
+        // "Replace all with automobile" — a.txt has "car" to remove, b.txt needs car→automobile
+        var autoFix = conflict.FixSuggestions
+            .Single(f => f.Description.Contains("\"automobile\""));
+
+        autoFix.Edits.Should().HaveCount(2);
+        autoFix.Edits.Select(e => e.FilePath).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void WhenNlCaptionContainsTargetAlreadyThenTargetIsNotDuplicated()
+    {
+        var captions = MakeCaptionsNl(
+            ("a.txt", "A car parked near an automobile."));
+
+        var issues = _sut.Run(captions, MakeConfig());
+
+        var conflict = issues.Single(i =>
+            i.Message.Contains("car", StringComparison.OrdinalIgnoreCase));
+
+        var carFix = conflict.FixSuggestions
+            .Single(f => f.Description.Contains("\"car\""));
+
+        // Should remove "automobile" without appending a second "car"
+        var newText = carFix.Edits.Single().NewText;
+        var carCount = System.Text.RegularExpressions.Regex.Matches(
+            newText, @"\bcar\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+
+        carCount.Should().Be(1, "the target term should appear only once");
+    }
+
+    [Fact]
+    public void WhenBooruCaptionContainsTwoSynonymTagsThenDeduplicatedInEdit()
+    {
+        var captions = MakeCaptions(
+            ("a.txt", "1girl, car, automobile, blue sky", CaptionStyle.BooruTags));
+
+        var issues = _sut.Run(captions, MakeConfig());
+
+        var conflict = issues.Single(i =>
+            i.Message.Contains("car", StringComparison.OrdinalIgnoreCase)
+            && i.Message.Contains("automobile", StringComparison.OrdinalIgnoreCase));
+
+        var carFix = conflict.FixSuggestions
+            .Single(f => f.Description.Contains("\"car\""));
+
+        carFix.Edits.Should().ContainSingle();
+        carFix.Edits[0].NewText.Should().Be("1girl, car, blue sky");
+    }
+
+    [Fact]
+    public void WhenThreeWayConflictAndCaptionHasTwoSynonymsThenOneEditPerFile()
+    {
+        var captions = MakeCaptionsNl(
+            ("a.txt", "A car near a vehicle."),
+            ("b.txt", "An automobile nearby."));
+
+        var issues = _sut.Run(captions, MakeConfig());
+
+        var conflict = issues.Single(i =>
+            i.Message.Contains("car", StringComparison.OrdinalIgnoreCase)
+            && i.Message.Contains("vehicle", StringComparison.OrdinalIgnoreCase));
+
+        // "Replace all with car" — a.txt has "car" + "vehicle", b.txt has "automobile"
+        var carFix = conflict.FixSuggestions
+            .Single(f => f.Description.Contains("\"car\""));
+
+        // a.txt: remove "vehicle" (already has "car"), b.txt: replace "automobile"→"car" = 2 edits
+        carFix.Edits.Should().HaveCount(2);
+        carFix.Edits.Select(e => e.FilePath).Should().OnlyHaveUniqueItems();
+
+        // Verify a.txt edit removes "vehicle" but keeps one "car"
+        var aEdit = carFix.Edits.Single(e => e.FilePath.Contains("a.txt"));
+        aEdit.NewText.Should().NotContain("vehicle");
+    }
+
+    #endregion
+
     #region AnalyzeGroup Helper
 
     [Fact]

@@ -150,32 +150,73 @@ public class SynonymConsistencyCheck : IDatasetCheck
     /// <summary>
     /// For a given target term, builds <see cref="FileEdit"/>s that replace every
     /// other synonym with the target in affected captions.
+    /// Hits are grouped by caption index so each file produces at most one edit,
+    /// even when the caption contains multiple non-target synonyms.
     /// </summary>
     private static List<FileEdit> BuildEditsForTarget(
         string targetTerm,
         SynonymConflict conflict,
         IReadOnlyList<CaptionFile> captions)
     {
-        var edits = new List<FileEdit>();
+        // Group all non-target term hits by caption index → one edit per file
+        var termsByCaptionIndex = new Dictionary<int, List<string>>();
 
         foreach (var (term, hits) in conflict.HitsByTerm)
         {
-            // Skip the target — it already uses the right word
             if (term.Equals(targetTerm, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             foreach (var hit in hits)
             {
-                var caption = captions[hit.CaptionIndex];
-                var newText = ReplaceTerm(caption.RawText, term, targetTerm, caption.DetectedStyle);
-
-                edits.Add(new FileEdit
+                if (!termsByCaptionIndex.TryGetValue(hit.CaptionIndex, out var terms))
                 {
-                    FilePath = caption.FilePath,
-                    OriginalText = caption.RawText,
-                    NewText = newText
-                });
+                    terms = [];
+                    termsByCaptionIndex[hit.CaptionIndex] = terms;
+                }
+
+                terms.Add(term);
             }
+        }
+
+        var edits = new List<FileEdit>();
+
+        foreach (var (captionIndex, termsToRemove) in termsByCaptionIndex)
+        {
+            var caption = captions[captionIndex];
+            var newText = caption.RawText;
+
+            if (caption.DetectedStyle == CaptionStyle.BooruTags)
+            {
+                // BooruTags: replace all non-target synonym tags in one pass
+                var tags = TextHelpers.SplitTags(newText);
+                var replaced = tags.Select(t =>
+                    termsToRemove.Any(r => r.Equals(t, StringComparison.OrdinalIgnoreCase))
+                        ? targetTerm
+                        : t);
+
+                // Deduplicate consecutive target terms that may result from multiple replacements
+                newText = string.Join(", ", replaced.Distinct(StringComparer.OrdinalIgnoreCase));
+            }
+            else
+            {
+                // NL / Mixed: remove each non-target term, then append target only if missing
+                foreach (var term in termsToRemove)
+                {
+                    newText = TextHelpers.RemovePhrase(newText, term, caption.DetectedStyle);
+                }
+
+                if (!TextHelpers.ContainsFeature(newText, targetTerm, caption.DetectedStyle))
+                {
+                    newText = TextHelpers.AppendPhrase(newText, targetTerm, caption.DetectedStyle);
+                }
+            }
+
+            edits.Add(new FileEdit
+            {
+                FilePath = caption.FilePath,
+                OriginalText = caption.RawText,
+                NewText = newText
+            });
         }
 
         return edits;

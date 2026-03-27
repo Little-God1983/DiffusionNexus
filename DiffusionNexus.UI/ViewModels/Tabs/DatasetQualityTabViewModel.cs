@@ -188,8 +188,26 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// <summary>
     /// Editable wrappers for the currently selected issue's affected files.
     /// Each item supports inline caption editing with save/reset.
+    /// Used as a fallback when the issue has no fix suggestions.
     /// </summary>
     public ObservableCollection<EditableAffectedFile> EditableAffectedFiles { get; } = [];
+
+    /// <summary>
+    /// Fix suggestions with inline file editors attached.
+    /// Each suggestion directly shows its affected files with editing capabilities.
+    /// </summary>
+    public ObservableCollection<FixSuggestionViewModel> MergedFixSuggestions { get; } = [];
+
+    /// <summary>
+    /// Whether the selected issue has fix suggestions with merged file editors.
+    /// </summary>
+    public bool HasFixSuggestions => MergedFixSuggestions.Count > 0;
+
+    /// <summary>
+    /// Whether the selected issue has affected files but no fix suggestions.
+    /// Controls the fallback "Affected Files" display.
+    /// </summary>
+    public bool HasAffectedFilesOnly => EditableAffectedFiles.Count > 0 && MergedFixSuggestions.Count == 0;
 
     #endregion
 
@@ -399,15 +417,20 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     };
 
     /// <summary>
-    /// Populates <see cref="EditableAffectedFiles"/> from the given issue's affected file paths.
-    /// Only includes .txt/.caption files that exist on disk.
+    /// Populates <see cref="EditableAffectedFiles"/> and <see cref="MergedFixSuggestions"/>
+    /// from the given issue. When the issue has fix suggestions, each suggestion is wrapped
+    /// with inline file editors so the user sees affected files directly within the fix.
     /// </summary>
     private void PopulateEditableFiles(Issue? issue)
     {
         EditableAffectedFiles.Clear();
+        MergedFixSuggestions.Clear();
 
-        if (issue?.AffectedFiles is not { Count: > 0 })
+        if (issue is null ||
+            (issue.AffectedFiles is not { Count: > 0 } && issue.FixSuggestions is not { Count: > 0 }))
         {
+            OnPropertyChanged(nameof(HasFixSuggestions));
+            OnPropertyChanged(nameof(HasAffectedFilesOnly));
             ExpandAllFilesCommand.NotifyCanExecuteChanged();
             CollapseAllFilesCommand.NotifyCanExecuteChanged();
             return;
@@ -419,17 +442,60 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         int? recMax = issue.Metadata.TryGetValue("RecommendedMaxWords", out var maxStr)
             && int.TryParse(maxStr, out var maxVal) ? maxVal : null;
 
-        foreach (var filePath in issue.AffectedFiles)
+        // Create a shared lookup so the same file reuses one EditableAffectedFile instance
+        var fileLookup = new Dictionary<string, EditableAffectedFile>(StringComparer.OrdinalIgnoreCase);
+
+        EditableAffectedFile GetOrCreateEditor(string filePath)
         {
-            var ext = Path.GetExtension(filePath);
-            if (string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(ext, ".caption", StringComparison.OrdinalIgnoreCase))
+            if (fileLookup.TryGetValue(filePath, out var existing))
+                return existing;
+
+            var editor = new EditableAffectedFile(filePath, OnCaptionSavedAsync, recMin, recMax);
+            fileLookup[filePath] = editor;
+            return editor;
+        }
+
+        // Populate editable file list from affected files
+        if (issue.AffectedFiles is { Count: > 0 })
+        {
+            foreach (var filePath in issue.AffectedFiles)
             {
-                EditableAffectedFiles.Add(
-                    new EditableAffectedFile(filePath, OnCaptionSavedAsync, recMin, recMax));
+                var ext = Path.GetExtension(filePath);
+                if (string.Equals(ext, ".txt", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(ext, ".caption", StringComparison.OrdinalIgnoreCase))
+                {
+                    EditableAffectedFiles.Add(GetOrCreateEditor(filePath));
+                }
             }
         }
 
+        // Wrap fix suggestions with inline editors — each suggestion gets its own
+        // EditableAffectedFile instances so expand/collapse state is independent.
+        if (issue.FixSuggestions is { Count: > 0 })
+        {
+            foreach (var suggestion in issue.FixSuggestions)
+            {
+                var vm = new FixSuggestionViewModel
+                {
+                    Description = suggestion.Description,
+                    Suggestion = suggestion
+                };
+
+                foreach (var edit in suggestion.Edits)
+                {
+                    vm.Edits.Add(new FixEditWithEditor
+                    {
+                        Edit = edit,
+                        Editor = new EditableAffectedFile(edit.FilePath, OnCaptionSavedAsync, recMin, recMax)
+                    });
+                }
+
+                MergedFixSuggestions.Add(vm);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasFixSuggestions));
+        OnPropertyChanged(nameof(HasAffectedFilesOnly));
         ExpandAllFilesCommand.NotifyCanExecuteChanged();
         CollapseAllFilesCommand.NotifyCanExecuteChanged();
     }
