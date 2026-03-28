@@ -204,7 +204,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private string? _compareOriginalsTempDir;
-    private List<string>? _temporaryImagePaths;
+    private DatasetCardViewModel? _tempDataset;
+    private List<string>? _tempImagePaths;
 
     // Workflow paths (relative to AppDomain.CurrentDomain.BaseDirectory)
     private const string ManualUpscaleWorkflowPath = "Assets/Workflows/Z-Image-Turbo-Upscale.json";
@@ -389,8 +390,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 if (value is not null)
                 {
                     IsSingleImageMode = false;
-                    ClearTemporaryImages();
-                    PopulateVersionItems(value, AvailableDatasetVersions);
+                    if (!value.IsTemporary)
+                    {
+                        ClearGallerySelection();
+                    }
+                    PopulateVersionItems(value, AvailableDatasetVersions, _tempImagePaths);
                 }
 
                 StartUpscaleCommand.NotifyCanExecuteChanged();
@@ -675,9 +679,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         if (IsProcessing || _comfyUiService is null) return false;
 
-        if (IsTemporaryBatchMode)
-            return true;
-
         if (IsSingleImageMode)
             return !string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath);
 
@@ -708,17 +709,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // --- Temporary Batch Mode (sent from Gallery etc.) ---
-        if (IsTemporaryBatchMode)
-        {
-            await RunUpscaleLoopAsync(_temporaryImagePaths!, newVersionPath: null, singleImageOutputPath: null);
-            return;
-        }
-
         // --- Dataset Mode ---
         if (SelectedDataset is null || SelectedDatasetVersion is null)
         {
             CurrentProcessingStatus = "No dataset selected.";
+            return;
+        }
+
+        // Gallery Selection (temp dataset): use the stored image paths directly
+        if (SelectedDataset.IsTemporary && _tempImagePaths is { Count: > 0 })
+        {
+            await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, singleImageOutputPath: null);
             return;
         }
 
@@ -1188,6 +1189,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
+        // Temp dataset: use stored count, skip disk scan
+        if (SelectedDataset.IsTemporary)
+        {
+            DatasetImageCount = _tempImagePaths?.Count ?? 0;
+            return;
+        }
+
         var versionPath = SelectedDataset.IsVersionedStructure
             ? SelectedDataset.GetVersionFolderPath(SelectedDatasetVersion.Version)
             : SelectedDataset.FolderPath;
@@ -1214,11 +1222,19 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     /// <summary>
     /// Populates an EditorVersionItem collection from a dataset's version folders.
+    /// For temporary datasets (Gallery Selection), uses the stored image count.
     /// </summary>
     private static void PopulateVersionItems(
         DatasetCardViewModel dataset,
-        ObservableCollection<EditorVersionItem> versionItems)
+        ObservableCollection<EditorVersionItem> versionItems,
+        List<string>? tempImagePaths = null)
     {
+        if (dataset.IsTemporary)
+        {
+            versionItems.Add(EditorVersionItem.Create(1, tempImagePaths?.Count ?? dataset.ImageCount));
+            return;
+        }
+
         if (dataset.IsVersionedStructure)
         {
             foreach (var v in dataset.GetAllVersionNumbers())
@@ -1265,13 +1281,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        ClearTemporaryImages();
+        ClearGallerySelection();
         SingleImagePath = imagePath;
     }
 
     /// <summary>
     /// Loads multiple images as a temporary batch for upscaling.
-    /// Sent from the Generation Gallery or other sources.
+    /// Injects a "Gallery Selection" dataset into the combo box, matching the Image Comparer pattern.
     /// </summary>
     public void LoadTemporaryImages(IReadOnlyList<string> imagePaths)
     {
@@ -1280,26 +1296,47 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         var validPaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToList();
         if (validPaths.Count == 0) return;
 
-        _temporaryImagePaths = validPaths;
-        SelectedDataset = null;
+        _tempImagePaths = validPaths;
         SingleImagePath = null;
         IsSingleImageMode = false;
-        DatasetImageCount = validPaths.Count;
+
+        // Create a temporary dataset entry for the combo box
+        _tempDataset = new DatasetCardViewModel
+        {
+            Name = "Gallery Selection",
+            FolderPath = "TEMP://BatchUpscale",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = validPaths.Count,
+            TotalImageCountAllVersions = validPaths.Count,
+            IsTemporary = true
+        };
+
+        // Remove any existing temp dataset and insert at the top
+        var existingTemp = AvailableDatasets.FirstOrDefault(d => d.IsTemporary);
+        if (existingTemp is not null)
+        {
+            AvailableDatasets.Remove(existingTemp);
+        }
+        AvailableDatasets.Insert(0, _tempDataset);
+
+        // Select it (triggers PopulateVersionItems + RefreshDatasetStats)
+        SelectedDataset = _tempDataset;
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault();
         CurrentProcessingStatus = $"Gallery Selection: {validPaths.Count} image(s) ready.";
-        StartUpscaleCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(IsTemporaryBatchMode));
     }
 
     /// <summary>
-    /// Whether the tab is loaded with temporary images from an external source.
+    /// Removes the temporary "Gallery Selection" dataset from the combo box.
     /// </summary>
-    public bool IsTemporaryBatchMode => _temporaryImagePaths is { Count: > 0 };
-
-    private void ClearTemporaryImages()
+    private void ClearGallerySelection()
     {
-        if (_temporaryImagePaths is null) return;
-        _temporaryImagePaths = null;
-        OnPropertyChanged(nameof(IsTemporaryBatchMode));
+        if (_tempDataset is null) return;
+
+        AvailableDatasets.Remove(_tempDataset);
+        _tempDataset = null;
+        _tempImagePaths = null;
     }
 
     /// <summary>
@@ -1327,6 +1364,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _cts?.Cancel();
         _cts?.Dispose();
         CleanupCompareOriginalsTempDir();
+        ClearGallerySelection();
         _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
         GC.SuppressFinalize(this);
     }
