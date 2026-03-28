@@ -2,10 +2,12 @@ using System.IO;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Entities; // Assuming for some enums if needed, check imports later if failed
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -82,34 +84,34 @@ public partial class ReplaceImageDialogViewModel : ObservableObject
 
     private async void LoadOriginalInfo()
     {
-        // Thumbnail
-        // Accessing underlying property if possible or trigger load
-        // Assuming originalImage has logic to provide bitmap or we load it ourselves
         if (System.IO.File.Exists(_originalImage.ImagePath))
         {
              var info = new FileInfo(_originalImage.ImagePath);
              OriginalFileSize = $"Size: {FormatFileSize(info.Length)}";
              OriginalDate = $"Date: {info.CreationTime.ToShortDateString()} {info.CreationTime.ToShortTimeString()}";
-             
+
              if (_originalImage.IsImage)
              {
                  try
                  {
-                     // Load bitmap for resolution and display
-                     using var stream = System.IO.File.OpenRead(_originalImage.ImagePath);
-                     var bitmap = Bitmap.DecodeToWidth(stream, 400); // Decode smaller for UI
+                     // Read resolution without full decode
+                     var resolution = await Task.Run(() => GetImageDimensions(_originalImage.ImagePath));
+                     if (resolution.HasValue)
+                         OriginalResolution = $"Resolution: {resolution.Value.Width} x {resolution.Value.Height}";
+                     else
+                         OriginalResolution = "Resolution: Unknown";
+
+                     var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(_originalImage.ImagePath, 400));
                      OriginalThumbnail = bitmap;
-                     OriginalResolution = $"Resolution: {bitmap.Size.Width} x {bitmap.Size.Height}";
                  }
                  catch { OriginalResolution = "Resolution: Unknown"; }
              }
              else if (_originalImage.IsVideo)
              {
-                 // For video, we might use the thumbnail path if generated
                  if (!string.IsNullOrEmpty(_originalImage.ThumbnailPath) && File.Exists(_originalImage.ThumbnailPath))
                  {
-                      using var stream = System.IO.File.OpenRead(_originalImage.ThumbnailPath);
-                      OriginalThumbnail = new Bitmap(stream);
+                      var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(_originalImage.ThumbnailPath, 400));
+                      OriginalThumbnail = bitmap;
                  }
                  OriginalResolution = "Resolution: Video"; 
              }
@@ -119,10 +121,10 @@ public partial class ReplaceImageDialogViewModel : ObservableObject
     public async Task SetNewFileAsync(string filePath)
     {
         if (!File.Exists(filePath)) return;
-        
+
         NewFilePath = filePath;
         NewFileName = Path.GetFileName(filePath);
-        
+
         var info = new FileInfo(filePath);
         NewFileSize = $"Size: {FormatFileSize(info.Length)}";
         NewDate = $"Date: {info.CreationTime.ToShortDateString()} {info.CreationTime.ToShortTimeString()}";
@@ -135,10 +137,15 @@ public partial class ReplaceImageDialogViewModel : ObservableObject
         {
              try
              {
-                 using var stream = File.OpenRead(filePath);
-                 var bitmap = Bitmap.DecodeToWidth(stream, 400);
+                 // Read resolution without full decode
+                 var resolution = await Task.Run(() => GetImageDimensions(filePath));
+                 if (resolution.HasValue)
+                     NewResolution = $"Resolution: {resolution.Value.Width} x {resolution.Value.Height}";
+                 else
+                     NewResolution = "Resolution: Unknown";
+
+                 var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(filePath, 400));
                  NewThumbnail = bitmap;
-                 NewResolution = $"Resolution: {bitmap.Size.Width} x {bitmap.Size.Height}";
              }
              catch { 
                 NewResolution = "Resolution: Unknown"; 
@@ -169,6 +176,24 @@ public partial class ReplaceImageDialogViewModel : ObservableObject
             len = len / 1024;
         }
         return $"{len:0.##} {sizes[order]}";
+    }
+
+    /// <summary>
+    /// Reads the original image dimensions using SKCodec without decoding the full pixel data.
+    /// </summary>
+    private static (int Width, int Height)? GetImageDimensions(string filePath)
+    {
+        try
+        {
+            using var stream = System.IO.File.OpenRead(filePath);
+            using var codec = SKCodec.Create(stream);
+            if (codec is null) return null;
+            return (codec.Info.Width, codec.Info.Height);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanConfirm))]

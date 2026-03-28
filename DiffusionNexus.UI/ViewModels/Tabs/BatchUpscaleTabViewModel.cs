@@ -1006,20 +1006,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     /// <summary>
     /// Loads a thumbnail bitmap for the given item on the UI thread.
+    /// Uses <see cref="EfficientImageDecoder"/> to avoid full-resolution decode for large images.
     /// </summary>
     private static async Task LoadThumbnailAsync(UpscaleImageItemViewModel item, string imagePath, bool isOriginal)
     {
         try
         {
-            await using var stream = File.OpenRead(imagePath);
-            var bitmap = await Task.Run(() => Bitmap.DecodeToWidth(stream, 120));
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(imagePath, 120));
+            if (bitmap is not null)
             {
-                if (isOriginal)
-                    item.OriginalThumbnail = bitmap;
-                else
-                    item.UpscaledThumbnail = bitmap;
-            });
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (isOriginal)
+                        item.OriginalThumbnail = bitmap;
+                    else
+                        item.UpscaledThumbnail = bitmap;
+                });
+            }
         }
         catch (Exception ex)
         {
