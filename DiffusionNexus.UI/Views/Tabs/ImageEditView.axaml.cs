@@ -209,7 +209,6 @@ public partial class ImageEditView : UserControl
         WireColorToolEvents(imageEditor);
         WireBackgroundRemovalEvents(imageEditor);
         WireBackgroundFillEvents(imageEditor);
-        WireUpscalingEvents(imageEditor);
         WireDrawingEvents(imageEditor);
         WireTextToolEvents(imageEditor);
         WireInpaintingEvents(imageEditor);
@@ -531,39 +530,6 @@ public partial class ImageEditView : UserControl
         };
         imageEditor.BackgroundFill.ApplyRequested += onApply;
         _eventCleanup.Add(() => imageEditor.BackgroundFill.ApplyRequested -= onApply);
-    }
-
-    private void WireUpscalingEvents(ImageEditorViewModel imageEditor)
-    {
-        EventHandler onUpscale = async (_, _) =>
-        {
-            var imageData = _imageEditorCanvas!.EditorCore.GetWorkingBitmapData();
-            if (imageData is null) { imageEditor.StatusMessage = "No image loaded"; return; }
-
-            await imageEditor.Upscaling.ProcessUpscalingAsync(
-                imageData.Value.Data, imageData.Value.Width, imageData.Value.Height);
-        };
-        imageEditor.Upscaling.UpscaleRequested += onUpscale;
-        _eventCleanup.Add(() => imageEditor.Upscaling.UpscaleRequested -= onUpscale);
-
-        EventHandler<ImageUpscalingResult> onUpscaleCompleted = (_, result) =>
-        {
-            if (result.Success && result.ImageData is not null)
-            {
-                if (_imageEditorCanvas!.EditorCore.LoadImage(result.ImageData))
-                {
-                    imageEditor.Upscaling.OnUpscalingApplied();
-                    imageEditor.UpdateDimensions(
-                        _imageEditorCanvas.ImageWidth, _imageEditorCanvas.ImageHeight);
-                }
-                else
-                {
-                    imageEditor.StatusMessage = "Failed to load upscaled image";
-                }
-            }
-        };
-        imageEditor.Upscaling.UpscalingCompleted += onUpscaleCompleted;
-        _eventCleanup.Add(() => imageEditor.Upscaling.UpscalingCompleted -= onUpscaleCompleted);
     }
 
     private void WireDrawingEvents(ImageEditorViewModel imageEditor)

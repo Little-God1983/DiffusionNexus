@@ -163,7 +163,6 @@ public class ThumbnailAwareViewModelTests
         return new ImageEditTabViewModel(
             new Mock<IDatasetEventAggregator>().Object,
             mockState.Object,
-            null, null, null,
             thumbnailOrchestrator: _mockOrchestrator.Object);
     }
 

@@ -153,7 +153,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="captioningBackends">Available captioning backends (local inference, ComfyUI, etc.).</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service.</param>
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
-    /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
     /// <param name="backupService">Optional dataset backup service for automatic backups.</param>
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
@@ -166,7 +165,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IReadOnlyList<ICaptioningBackend>? captioningBackends = null,
         IVideoThumbnailService? videoThumbnailService = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IImageUpscalingService? upscalingService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
         IComfyUIWrapperService? comfyUiService = null,
@@ -195,7 +193,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             thumbnailOrchestrator,
             analysisPipeline,
             bucketAnalyzer);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService);

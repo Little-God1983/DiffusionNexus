@@ -678,7 +678,6 @@ public partial class App : Application
             sp.GetServices<ICaptioningBackend>().ToList(),
             sp.GetService<IVideoThumbnailService>(),
             sp.GetService<IBackgroundRemovalService>(),
-            sp.GetService<IImageUpscalingService>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<IComfyUIWrapperService>(),
