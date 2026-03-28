@@ -794,6 +794,11 @@ public partial class App : Application
             mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
         };
 
+        eventAggregator.NavigateToBatchUpscaleRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+        };
+
         eventAggregator.NavigateToSettingsRequested += (_, _) =>
         {
             mainViewModel.NavigateToModuleCommand.Execute(settingsModule);

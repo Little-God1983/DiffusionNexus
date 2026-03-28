@@ -206,6 +206,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Subscribe to navigation events to switch tabs
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
         _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
+        _eventAggregator.NavigateToBatchUpscaleRequested += OnNavigateToBatchUpscale;
     }
 
     /// <summary>
@@ -246,9 +247,18 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     {
         // Preselect the dataset and version in BatchCropScale tab
         BatchCropScale.PreselectDataset(e.Dataset, e.Version);
-        
+
         // Switch to Batch Crop/Scale tab (index 3)
         SelectedTabIndex = 3;
+    }
+
+    private void OnNavigateToBatchUpscale(object? sender, NavigateToBatchUpscaleEventArgs e)
+    {
+        // Load the image as a single image in the Batch Upscale tab
+        BatchUpscale.LoadSingleImage(e.ImagePath);
+
+        // Switch to Batch Upscale tab (index 4)
+        SelectedTabIndex = 4;
     }
 
     #endregion
@@ -297,6 +307,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
             _eventAggregator.NavigateToBatchCropScaleRequested -= OnNavigateToBatchCropScale;
+            _eventAggregator.NavigateToBatchUpscaleRequested -= OnNavigateToBatchUpscale;
 
             // Dispose child ViewModels
             DatasetManagement.Dispose();

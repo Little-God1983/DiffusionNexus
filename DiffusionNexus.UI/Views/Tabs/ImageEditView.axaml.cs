@@ -11,6 +11,8 @@ using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.Tabs;
 using DiffusionNexus.Domain.Services;
 
+#pragma warning disable CS0618 // UpscalingViewModel is deprecated but still referenced until full removal
+
 namespace DiffusionNexus.UI.Views.Tabs;
 
 /// <summary>

@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -8,13 +9,16 @@ namespace DiffusionNexus.UI.ViewModels;
 /// Sub-ViewModel managing AI upscaling tool state, model download, and processing.
 /// Extracted from <see cref="ImageEditorViewModel"/> to reduce its size.
 /// </summary>
+[Obsolete("The built-in upscaler is deprecated. Use the Batch Upscale tab for ComfyUI-powered upscaling.")]
 public partial class UpscalingViewModel : ObservableObject
 {
     private readonly Func<bool> _hasImage;
     private readonly Func<int> _getImageWidth;
     private readonly Func<int> _getImageHeight;
+    private readonly Func<string?> _getImagePath;
     private readonly Action<string> _deactivateOtherTools;
     private readonly IImageUpscalingService? _service;
+    private readonly IDatasetEventAggregator? _eventAggregator;
 
     private bool _isPanelOpen;
     private bool _isBusy;
@@ -26,21 +30,27 @@ public partial class UpscalingViewModel : ObservableObject
         Func<bool> hasImage,
         Func<int> getImageWidth,
         Func<int> getImageHeight,
+        Func<string?> getImagePath,
         Action<string> deactivateOtherTools,
-        IImageUpscalingService? service)
+        IImageUpscalingService? service,
+        IDatasetEventAggregator? eventAggregator)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(getImageWidth);
         ArgumentNullException.ThrowIfNull(getImageHeight);
+        ArgumentNullException.ThrowIfNull(getImagePath);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
         _hasImage = hasImage;
         _getImageWidth = getImageWidth;
         _getImageHeight = getImageHeight;
+        _getImagePath = getImagePath;
         _deactivateOtherTools = deactivateOtherTools;
         _service = service;
+        _eventAggregator = eventAggregator;
 
         UpscaleCommand = new AsyncRelayCommand(ExecuteUpscaleAsync, CanExecuteUpscale);
         DownloadModelCommand = new AsyncRelayCommand(ExecuteDownloadModelAsync, CanExecuteDownloadModel);
+        SendToBatchUpscaleCommand = new RelayCommand(ExecuteSendToBatchUpscale, CanExecuteSendToBatchUpscale);
     }
 
     #region Properties
@@ -146,6 +156,9 @@ public partial class UpscalingViewModel : ObservableObject
     public IAsyncRelayCommand UpscaleCommand { get; }
     public IAsyncRelayCommand DownloadModelCommand { get; }
 
+    /// <summary>Navigates to the Batch Upscale tab with the current image loaded as a single image.</summary>
+    public IRelayCommand SendToBatchUpscaleCommand { get; }
+
     #endregion
 
     #region Events
@@ -186,6 +199,7 @@ public partial class UpscalingViewModel : ObservableObject
     {
         UpscaleCommand.NotifyCanExecuteChanged();
         DownloadModelCommand.NotifyCanExecuteChanged();
+        SendToBatchUpscaleCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Refreshes the output dimensions display.</summary>
@@ -350,6 +364,18 @@ public partial class UpscalingViewModel : ObservableObject
             Progress = 0;
             IsBusy = false;
         }
+    }
+
+    private bool CanExecuteSendToBatchUpscale() =>
+        _hasImage() && !string.IsNullOrEmpty(_getImagePath());
+
+    private void ExecuteSendToBatchUpscale()
+    {
+        var imagePath = _getImagePath();
+        if (string.IsNullOrEmpty(imagePath)) return;
+
+        _eventAggregator?.PublishNavigateToBatchUpscale(
+            new NavigateToBatchUpscaleEventArgs { ImagePath = imagePath });
     }
 
     #endregion

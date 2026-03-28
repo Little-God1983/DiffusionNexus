@@ -5,6 +5,8 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
 
+#pragma warning disable CS0618 // UpscalingViewModel is deprecated but still referenced until full removal
+
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
@@ -328,7 +330,7 @@ public partial class ImageEditorViewModel : ObservableObject
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
-        Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, upscalingService);
+        Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, () => CurrentImagePath, DeactivateOtherTools, upscalingService, eventAggregator);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);

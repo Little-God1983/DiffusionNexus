@@ -291,6 +291,17 @@ public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when navigation to the Batch Upscale tab is requested with a single image.
+/// </summary>
+public sealed class NavigateToBatchUpscaleEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// Absolute path to the image file to upscale.
+    /// </summary>
+    public required string ImagePath { get; init; }
+}
+
+/// <summary>
 /// Event raised when navigation to the Image Comparer is requested.
 /// </summary>
 public sealed class NavigateToImageComparerEventArgs : DatasetEventArgs
@@ -453,6 +464,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
 
+    /// <summary>
+    /// Raised when a single image is sent to the Batch Upscale tab.
+    /// </summary>
+    event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
+
     #endregion
 
     #region Publish Methods
@@ -475,6 +491,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
+    void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
 
     #endregion
@@ -554,6 +571,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
 
     #endregion
 
@@ -683,6 +703,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToCaptioningRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToBatchUpscaleRequested, args);
     }
 
     /// <inheritdoc/>
