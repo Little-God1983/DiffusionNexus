@@ -234,9 +234,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     ];
     private readonly Random _random = new();
 
-    // Dataset selection
+    // Input selection
     private DatasetCardViewModel? _selectedDataset;
     private EditorVersionItem? _selectedDatasetVersion;
+    private string? _singleImagePath;
+    private bool _isSingleImageMode;
 
     // Upscale settings
     private double _denoisingStrength = 0.2;
@@ -285,6 +287,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         StartUpscaleCommand = new AsyncRelayCommand(StartUpscaleAsync, CanStartUpscale);
         CancelUpscaleCommand = new RelayCommand(CancelUpscale, () => IsProcessing);
         SelectCompareItemCommand = new RelayCommand<UpscaleImageItemViewModel>(SelectCompareItem);
+        SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
+        ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
     }
@@ -319,6 +323,58 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     public IReadOnlyList<UpscaleSaveMode> AvailableSaveModes { get; }
 
     /// <summary>
+    /// Whether to upscale a single image instead of a dataset.
+    /// </summary>
+    public bool IsSingleImageMode
+    {
+        get => _isSingleImageMode;
+        set
+        {
+            if (SetProperty(ref _isSingleImageMode, value))
+            {
+                if (value) SelectedDataset = null;
+                else SingleImagePath = null;
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(IsDatasetMode));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether dataset mode is active (inverse of single image mode).
+    /// Used for AXAML visibility bindings (e.g. hiding save settings).
+    /// </summary>
+    public bool IsDatasetMode => !IsSingleImageMode;
+
+    /// <summary>
+    /// Path to a single image for upscaling.
+    /// </summary>
+    public string? SingleImagePath
+    {
+        get => _singleImagePath;
+        set
+        {
+            if (SetProperty(ref _singleImagePath, value))
+            {
+                if (!string.IsNullOrEmpty(value)) IsSingleImageMode = true;
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(SingleImageName));
+                OnPropertyChanged(nameof(HasSingleImage));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Display name for the selected single image.
+    /// </summary>
+    public string? SingleImageName => Path.GetFileName(SingleImagePath);
+
+    /// <summary>
+    /// Whether a single image is currently loaded.
+    /// </summary>
+    public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
+
+    /// <summary>
     /// The selected dataset to upscale.
     /// </summary>
     public DatasetCardViewModel? SelectedDataset
@@ -331,6 +387,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 AvailableDatasetVersions.Clear();
                 if (value is not null)
                 {
+                    IsSingleImageMode = false;
                     PopulateVersionItems(value, AvailableDatasetVersions);
                 }
 
@@ -598,12 +655,29 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// </summary>
     public IRelayCommand<UpscaleImageItemViewModel> SelectCompareItemCommand { get; }
 
+    /// <summary>
+    /// Opens a file dialog to select a single image for upscaling.
+    /// </summary>
+    public IAsyncRelayCommand SelectSingleImageCommand { get; }
+
+    /// <summary>
+    /// Clears the single image selection.
+    /// </summary>
+    public IRelayCommand ClearSingleImageCommand { get; }
+
     #endregion
 
     #region Private Methods
 
-    private bool CanStartUpscale() =>
-        !IsProcessing && SelectedDataset is not null && DatasetImageCount > 0 && _comfyUiService is not null;
+    private bool CanStartUpscale()
+    {
+        if (IsProcessing || _comfyUiService is null) return false;
+
+        if (IsSingleImageMode)
+            return !string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath);
+
+        return SelectedDataset is not null && DatasetImageCount > 0;
+    }
 
     private async Task StartUpscaleAsync()
     {
@@ -613,6 +687,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
+        // --- Single Image Mode ---
+        if (IsSingleImageMode)
+        {
+            if (string.IsNullOrEmpty(SingleImagePath) || !File.Exists(SingleImagePath))
+            {
+                CurrentProcessingStatus = "No image selected.";
+                return;
+            }
+
+            var imageFiles = new List<string> { SingleImagePath };
+            var outputPath = GetSingleImageOutputPath(SingleImagePath);
+            // No save mode / new-version logic for single images
+            await RunUpscaleLoopAsync(imageFiles, newVersionPath: null, singleImageOutputPath: outputPath);
+            return;
+        }
+
+        // --- Dataset Mode ---
         if (SelectedDataset is null || SelectedDatasetVersion is null)
         {
             CurrentProcessingStatus = "No dataset selected.";
@@ -629,27 +720,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // Resolve the workflow file.
-        // Only VisionAutoPrompt uses the vision workflow; all other modes set the
-        // prompt text explicitly on node 17, so they use the manual workflow.
-        var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
-        var workflowRelPath = isVision ? VisionUpscaleWorkflowPath : ManualUpscaleWorkflowPath;
-        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, workflowRelPath);
-
-        if (!File.Exists(workflowPath))
-        {
-            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(workflowRelPath)}";
-            Logger.Error("Upscale workflow not found at {Path}", workflowPath);
-            return;
-        }
-
         // Gather image files
-        var imageFiles = Directory.EnumerateFiles(versionPath)
+        var datasetImageFiles = Directory.EnumerateFiles(versionPath)
             .Where(f => DatasetCardViewModel.IsImageFile(f) && !DatasetCardViewModel.IsVideoThumbnailFile(f))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (imageFiles.Count == 0)
+        if (datasetImageFiles.Count == 0)
         {
             CurrentProcessingStatus = "No images found in the selected version.";
             return;
@@ -660,7 +737,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             var confirmed = await DialogService.ShowConfirmAsync(
                 "Overwrite Original Images?",
-                $"This will permanently replace {imageFiles.Count} original image(s) with their upscaled versions. " +
+                $"This will permanently replace {datasetImageFiles.Count} original image(s) with their upscaled versions. " +
                 "This action cannot be undone.\n\nDo you want to continue?");
 
             if (!confirmed)
@@ -688,9 +765,37 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             Directory.CreateDirectory(newVersionPath);
         }
 
+        await RunUpscaleLoopAsync(datasetImageFiles, newVersionPath, singleImageOutputPath: null);
+    }
+
+    /// <summary>
+    /// Core upscale processing loop shared by single image and dataset modes.
+    /// </summary>
+    /// <param name="imageFiles">Image file paths to process.</param>
+    /// <param name="newVersionPath">Target folder for dataset new-version mode (null otherwise).</param>
+    /// <param name="singleImageOutputPath">Explicit output path for single image mode (null in dataset mode).</param>
+    private async Task RunUpscaleLoopAsync(
+        List<string> imageFiles,
+        string? newVersionPath,
+        string? singleImageOutputPath)
+    {
+        var isSingleImage = singleImageOutputPath is not null;
+
+        // Resolve the workflow file.
+        var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
+        var workflowRelPath = isVision ? VisionUpscaleWorkflowPath : ManualUpscaleWorkflowPath;
+        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, workflowRelPath);
+
+        if (!File.Exists(workflowPath))
+        {
+            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(workflowRelPath)}";
+            Logger.Error("Upscale workflow not found at {Path}", workflowPath);
+            return;
+        }
+
         // Clean up any previous temp originals and prepare for OverwriteInPlace comparison
         CleanupCompareOriginalsTempDir();
-        if (SaveMode == UpscaleSaveMode.OverwriteInPlace)
+        if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace)
         {
             _compareOriginalsTempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "upscale-compare", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_compareOriginalsTempDir);
@@ -757,12 +862,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0], ct);
 
-                    // 7. Save based on save mode
-                    var outputPath = GetOutputPath(item.OriginalPath, newVersionPath);
+                    // 7. Save based on mode
+                    var outputPath = isSingleImage
+                        ? singleImageOutputPath!
+                        : GetOutputPath(item.OriginalPath, newVersionPath);
 
                     // Preserve the original in a temp dir before overwriting so
                     // ImageCompareControl can still show a before/after comparison.
-                    if (SaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
+                    if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
                     {
                         var tempOriginal = Path.Combine(_compareOriginalsTempDir, item.FileName);
                         File.Copy(item.OriginalPath, tempOriginal, overwrite: true);
@@ -773,8 +880,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                     item.UpscaledPath = outputPath;
 
-                    // Copy caption files when creating a new version
-                    if (SaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
+                    // Copy caption files when creating a new version (dataset mode only)
+                    if (!isSingleImage && SaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
                     {
                         CopyCaptionFiles(item.OriginalPath, newVersionPath);
                     }
@@ -795,10 +902,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 TotalProgress = (double)(i + 1) / TotalImageCount * 100;
             }
 
-            CurrentProcessingStatus = $"Done – {CompletedCount}/{TotalImageCount} images upscaled.";
+            CurrentProcessingStatus = isSingleImage
+                ? $"Done – saved to {Path.GetFileName(singleImageOutputPath)}"
+                : $"Done – {CompletedCount}/{TotalImageCount} images upscaled.";
 
-            // Refresh dataset list so the new version appears
-            if (SaveMode == UpscaleSaveMode.NewVersion)
+            // Refresh dataset list so the new version appears (dataset mode only)
+            if (!isSingleImage && SaveMode == UpscaleSaveMode.NewVersion)
             {
                 _eventAggregator.PublishRefreshDatasetsRequested(new RefreshDatasetsRequestedEventArgs());
             }
@@ -1115,6 +1224,45 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 : 0;
             versionItems.Add(EditorVersionItem.Create(1, imageCount));
         }
+    }
+
+    /// <summary>
+    /// Opens a file dialog to select a single image for upscaling.
+    /// </summary>
+    private async Task SelectSingleImageAsync()
+    {
+        if (DialogService is null) return;
+
+        var result = await DialogService.ShowOpenFileDialogAsync("Select Image", null);
+        if (!string.IsNullOrEmpty(result))
+        {
+            SingleImagePath = result;
+        }
+    }
+
+    /// <summary>
+    /// Loads a single image for upscaling. Can be called from drag-drop or external navigation.
+    /// </summary>
+    public void LoadSingleImage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+        {
+            return;
+        }
+
+        SingleImagePath = imagePath;
+    }
+
+    /// <summary>
+    /// Builds the output path for a single image upscale.
+    /// Saves next to the original as {name}_upscaled{ext}.
+    /// </summary>
+    private static string GetSingleImageOutputPath(string originalPath)
+    {
+        var dir = Path.GetDirectoryName(originalPath) ?? ".";
+        var name = Path.GetFileNameWithoutExtension(originalPath);
+        var ext = Path.GetExtension(originalPath);
+        return Path.Combine(dir, $"{name}_upscaled{ext}");
     }
 
     #endregion
