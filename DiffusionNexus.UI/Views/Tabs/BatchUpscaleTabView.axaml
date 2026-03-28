@@ -23,7 +23,18 @@
             <ToggleSwitch IsChecked="{Binding IsSingleImageMode}"
                           OnContent="Single Image"
                           OffContent="Dataset"
-                          HorizontalAlignment="Left"/>
+                          HorizontalAlignment="Left"
+                          IsVisible="{Binding !IsTemporaryBatchMode}"/>
+
+            <!-- Gallery Selection indicator (shown when images are sent from the Generation Gallery) -->
+            <Border Background="#1976D2" CornerRadius="6" Padding="12,8"
+                    IsVisible="{Binding IsTemporaryBatchMode}">
+              <StackPanel Spacing="4">
+                <TextBlock Text="Gallery Selection" FontWeight="SemiBold" Foreground="White" FontSize="13"/>
+                <TextBlock Text="{Binding DatasetImageCount, StringFormat='{}{0} images from Generation Gallery'}"
+                           Foreground="White" Opacity="0.8" FontSize="12"/>
+              </StackPanel>
+            </Border>
 
             <!-- Dataset Input -->
             <StackPanel IsVisible="{Binding !IsSingleImageMode}">

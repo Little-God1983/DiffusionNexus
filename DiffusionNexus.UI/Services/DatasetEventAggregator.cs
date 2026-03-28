@@ -291,14 +291,20 @@ public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 }
 
 /// <summary>
-/// Event raised when navigation to the Batch Upscale tab is requested with a single image.
+/// Event raised when navigation to the Batch Upscale tab is requested.
+/// Supply either <see cref="ImagePath"/> for a single image or <see cref="ImagePaths"/> for a batch.
 /// </summary>
 public sealed class NavigateToBatchUpscaleEventArgs : DatasetEventArgs
 {
     /// <summary>
-    /// Absolute path to the image file to upscale.
+    /// Absolute path to the image file to upscale (single-image mode).
     /// </summary>
-    public required string ImagePath { get; init; }
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images to upscale (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }
 
 /// <summary>

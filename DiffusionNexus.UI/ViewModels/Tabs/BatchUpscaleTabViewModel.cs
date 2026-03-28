@@ -204,6 +204,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private string? _compareOriginalsTempDir;
+    private List<string>? _temporaryImagePaths;
 
     // Workflow paths (relative to AppDomain.CurrentDomain.BaseDirectory)
     private const string ManualUpscaleWorkflowPath = "Assets/Workflows/Z-Image-Turbo-Upscale.json";
@@ -388,6 +389,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 if (value is not null)
                 {
                     IsSingleImageMode = false;
+                    ClearTemporaryImages();
                     PopulateVersionItems(value, AvailableDatasetVersions);
                 }
 
@@ -673,6 +675,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         if (IsProcessing || _comfyUiService is null) return false;
 
+        if (IsTemporaryBatchMode)
+            return true;
+
         if (IsSingleImageMode)
             return !string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath);
 
@@ -700,6 +705,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             var outputPath = GetSingleImageOutputPath(SingleImagePath);
             // No save mode / new-version logic for single images
             await RunUpscaleLoopAsync(imageFiles, newVersionPath: null, singleImageOutputPath: outputPath);
+            return;
+        }
+
+        // --- Temporary Batch Mode (sent from Gallery etc.) ---
+        if (IsTemporaryBatchMode)
+        {
+            await RunUpscaleLoopAsync(_temporaryImagePaths!, newVersionPath: null, singleImageOutputPath: null);
             return;
         }
 
@@ -1253,7 +1265,41 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
+        ClearTemporaryImages();
         SingleImagePath = imagePath;
+    }
+
+    /// <summary>
+    /// Loads multiple images as a temporary batch for upscaling.
+    /// Sent from the Generation Gallery or other sources.
+    /// </summary>
+    public void LoadTemporaryImages(IReadOnlyList<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+
+        var validPaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToList();
+        if (validPaths.Count == 0) return;
+
+        _temporaryImagePaths = validPaths;
+        SelectedDataset = null;
+        SingleImagePath = null;
+        IsSingleImageMode = false;
+        DatasetImageCount = validPaths.Count;
+        CurrentProcessingStatus = $"Gallery Selection: {validPaths.Count} image(s) ready.";
+        StartUpscaleCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsTemporaryBatchMode));
+    }
+
+    /// <summary>
+    /// Whether the tab is loaded with temporary images from an external source.
+    /// </summary>
+    public bool IsTemporaryBatchMode => _temporaryImagePaths is { Count: > 0 };
+
+    private void ClearTemporaryImages()
+    {
+        if (_temporaryImagePaths is null) return;
+        _temporaryImagePaths = null;
+        OnPropertyChanged(nameof(IsTemporaryBatchMode));
     }
 
     /// <summary>

@@ -252,8 +252,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     private void OnNavigateToBatchUpscale(object? sender, NavigateToBatchUpscaleEventArgs e)
     {
-        // Load the image as a single image in the Batch Upscale tab
-        BatchUpscale.LoadSingleImage(e.ImagePath);
+        if (e.ImagePaths is { Count: > 0 })
+        {
+            BatchUpscale.LoadTemporaryImages(e.ImagePaths);
+        }
+        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+        {
+            BatchUpscale.LoadSingleImage(e.ImagePath);
+        }
 
         // Switch to Batch Upscale tab (index 4)
         SelectedTabIndex = 4;

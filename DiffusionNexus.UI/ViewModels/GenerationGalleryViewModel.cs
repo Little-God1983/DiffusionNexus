@@ -430,6 +430,21 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }, "Adding media to dataset...");
     }
 
+    /// <summary>
+    /// Placeholder: adds selected images to a training run.
+    /// Not yet implemented.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task AddSelectedToTrainingRunAsync()
+    {
+        if (DialogService is not null)
+        {
+            await DialogService.ShowMessageAsync(
+                "Coming Soon",
+                "Adding images to a training run is not yet implemented.");
+        }
+    }
+
     private async Task OpenImageViewerAtIndexAsync(int index)
     {
         if (DialogService is null || MediaItems.Count == 0) return;
@@ -925,8 +940,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(SelectionText));
         OnPropertyChanged(nameof(HasFavorites));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
+        AddSelectedToTrainingRunCommand.NotifyCanExecuteChanged();
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
         SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
+        SendSelectedToBatchUpscaleCommand.NotifyCanExecuteChanged();
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
     }
@@ -1001,7 +1018,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
         var tempDataset = new DatasetCardViewModel
         {
-            Name = "Temp Dataset",
+            Name = "Gallery Selection",
             FolderPath = "TEMP://GenerationGallery",
             IsVersionedStructure = true,
             CurrentVersion = 1,
@@ -1019,7 +1036,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         });
     }
 
-    [RelayCommand(CanExecute = nameof(HasMultipleImagesSelected))]
+    [RelayCommand(CanExecute = nameof(HasSelection))]
     private async Task SendSelectedToImageComparerAsync()
     {
         if (_eventAggregator is null)
@@ -1057,6 +1074,53 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             ImagePaths = imagePaths
         });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Batch Upscale tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToBatchUpscaleAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Batch Upscale only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        if (imagePaths.Count == 1)
+        {
+            _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
+            {
+                ImagePath = imagePaths[0]
+            });
+        }
+        else
+        {
+            _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
+            {
+                ImagePaths = imagePaths
+            });
+        }
     }
 
     /// <summary>
