@@ -122,8 +122,73 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     private readonly IImageCropperService _cropperService;
     private readonly IDatasetState? _state;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IAppSettingsService? _settingsService;
     private CancellationTokenSource? _cancellationTokenSource;
     private bool _disposed;
+    private DatasetCardViewModel? _tempDataset;
+    private string? _tempStagingDir;
+    private string? _singleImagePath;
+    private bool _isSingleImageMode;
+
+    #region Single Image Properties
+
+    /// <summary>
+    /// Whether to crop/scale a single image instead of a dataset.
+    /// </summary>
+    public bool IsSingleImageMode
+    {
+        get => _isSingleImageMode;
+        set
+        {
+            if (SetProperty(ref _isSingleImageMode, value))
+            {
+                if (value) SelectedDataset = null;
+                else SingleImagePath = null;
+                OnPropertyChanged(nameof(IsDatasetMode));
+                OnPropertyChanged(nameof(HasSourceSelected));
+                OnPropertyChanged(nameof(CanStart));
+                StartCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether dataset mode is active (inverse of single image mode).
+    /// Used for AXAML visibility bindings.
+    /// </summary>
+    public bool IsDatasetMode => !IsSingleImageMode;
+
+    /// <summary>
+    /// Path to a single image for crop/scale.
+    /// </summary>
+    public string? SingleImagePath
+    {
+        get => _singleImagePath;
+        set
+        {
+            if (SetProperty(ref _singleImagePath, value))
+            {
+                if (!string.IsNullOrEmpty(value)) IsSingleImageMode = true;
+                OnPropertyChanged(nameof(SingleImageName));
+                OnPropertyChanged(nameof(HasSingleImage));
+                OnPropertyChanged(nameof(HasSourceSelected));
+                OnPropertyChanged(nameof(CanStart));
+                StartCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Display name for the selected single image.
+    /// </summary>
+    public string? SingleImageName => Path.GetFileName(SingleImagePath);
+
+    /// <summary>
+    /// Whether a single image is currently loaded.
+    /// </summary>
+    public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
+
+    #endregion
 
     #region Dataset Selection Properties (Source)
 
@@ -132,7 +197,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Selected dataset for processing.
-    /// Selecting a dataset clears the source folder.
+    /// Selecting a dataset clears the source folder and exits single image mode.
     /// </summary>
     public DatasetCardViewModel? SelectedDataset
     {
@@ -145,6 +210,14 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 if (value is not null && !string.IsNullOrWhiteSpace(SourceFolder))
                 {
                     SourceFolder = string.Empty;
+                }
+                if (value is not null)
+                {
+                    IsSingleImageMode = false;
+                    if (!value.IsTemporary)
+                    {
+                        ClearGallerySelection();
+                    }
                 }
                 _ = LoadDatasetVersionsAsync();
                 UpdateNextVersionNumber();
@@ -344,9 +417,10 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         string.IsNullOrWhiteSpace(TargetFolder) && !UseIncrementVersion;
 
     /// <summary>
-    /// True if either a source folder is specified OR a dataset+version is selected.
+    /// True if a valid source is selected: single image, source folder, or dataset+version.
     /// </summary>
     public bool HasSourceSelected =>
+        (IsSingleImageMode && HasSingleImage) ||
         !string.IsNullOrWhiteSpace(SourceFolder) ||
         (SelectedDataset is not null && SelectedVersion is not null);
 
@@ -387,7 +461,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     public bool CanStart =>
         HasSourceSelected &&
         HasSelectedBuckets &&
-        (!IsOverwriteMode || OverwriteConfirmed) &&
+        (IsSingleImageMode || !IsOverwriteMode || OverwriteConfirmed) &&
         !IsProcessing;
 
     public double ProgressPercentage => ImageFiles > 0
@@ -400,6 +474,16 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
     public IDialogService? DialogService { get; set; }
 
+    /// <summary>
+    /// Opens a file dialog to select a single image for crop/scale.
+    /// </summary>
+    public IAsyncRelayCommand SelectSingleImageCommand { get; }
+
+    /// <summary>
+    /// Clears the currently loaded single image.
+    /// </summary>
+    public IRelayCommand ClearSingleImageCommand { get; }
+
     #endregion
 
     #region Constructor
@@ -407,11 +491,15 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Creates a new BatchCropScaleTabViewModel with dataset state support.
     /// </summary>
-    public BatchCropScaleTabViewModel(IDatasetState? state = null, IDatasetEventAggregator? eventAggregator = null)
+    public BatchCropScaleTabViewModel(IDatasetState? state = null, IDatasetEventAggregator? eventAggregator = null, IAppSettingsService? settingsService = null)
     {
         _state = state;
         _eventAggregator = eventAggregator;
+        _settingsService = settingsService;
         _cropperService = new ImageCropperService();
+
+        SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
+        ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
 
         // Subscribe to events for dataset/version creation
         if (_eventAggregator is not null)
@@ -464,9 +552,16 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
     partial void OnSourceFolderChanged(string value)
     {
-        // Clear dataset selection when source folder is specified
+        // Clear dataset selection and single image mode when source folder is specified
         if (!string.IsNullOrWhiteSpace(value))
         {
+            _isSingleImageMode = false;
+            _singleImagePath = null;
+            OnPropertyChanged(nameof(IsSingleImageMode));
+            OnPropertyChanged(nameof(IsDatasetMode));
+            OnPropertyChanged(nameof(SingleImagePath));
+            OnPropertyChanged(nameof(HasSingleImage));
+
             _selectedDataset = null;
             _selectedVersion = null;
             VersionItems.Clear();
@@ -598,6 +693,139 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         StatusMessage = $"Dataset '{dataset.Name}' V{version} loaded for processing";
     }
 
+    /// <summary>
+    /// Opens a file dialog to select a single image for crop/scale.
+    /// </summary>
+    private async Task SelectSingleImageAsync()
+    {
+        if (DialogService is null) return;
+
+        var result = await DialogService.ShowOpenFileDialogAsync("Select Image", null);
+        if (!string.IsNullOrEmpty(result))
+        {
+            SingleImagePath = result;
+        }
+    }
+
+    /// <summary>
+    /// Loads a single image for crop/scale. Can be called from drag-drop or external navigation.
+    /// </summary>
+    public void LoadSingleImage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+        {
+            return;
+        }
+
+        ClearGallerySelection();
+        SingleImagePath = imagePath;
+    }
+
+    /// <summary>
+    /// Builds the output path for a single image crop/scale.
+    /// Saves next to the original as {name}_cropped{ext}.
+    /// </summary>
+    private static string GetSingleImageOutputPath(string originalPath)
+    {
+        var dir = Path.GetDirectoryName(originalPath) ?? ".";
+        var name = Path.GetFileNameWithoutExtension(originalPath);
+        var ext = Path.GetExtension(originalPath);
+        return Path.Combine(dir, $"{name}_cropped{ext}");
+    }
+
+    /// <summary>
+    /// Loads multiple images as a temporary batch for crop/scale.
+    /// Stages images into a temp directory and injects a "Gallery Selection" dataset into the combo box.
+    /// </summary>
+    public void LoadTemporaryImages(IReadOnlyList<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+
+        var validPaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToList();
+        if (validPaths.Count == 0) return;
+
+        // Stage images into a temp directory so the crop service can process them as a folder
+        CleanupTempStagingDir();
+        _tempStagingDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "crop-gallery", Guid.NewGuid().ToString("N"));
+        var versionDir = Path.Combine(_tempStagingDir, "V1");
+        Directory.CreateDirectory(versionDir);
+
+        foreach (var src in validPaths)
+        {
+            var dest = Path.Combine(versionDir, Path.GetFileName(src));
+            // Avoid name collisions by appending a counter
+            if (File.Exists(dest))
+            {
+                var name = Path.GetFileNameWithoutExtension(src);
+                var ext = Path.GetExtension(src);
+                dest = Path.Combine(versionDir, $"{name}_{Guid.NewGuid():N}{ext}");
+            }
+            File.Copy(src, dest);
+        }
+
+        SourceFolder = string.Empty;
+
+        _tempDataset = new DatasetCardViewModel
+        {
+            Name = "Gallery Selection",
+            FolderPath = _tempStagingDir,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = validPaths.Count,
+            TotalImageCountAllVersions = validPaths.Count,
+            IsTemporary = true
+        };
+
+        var existingTemp = Datasets.FirstOrDefault(d => d.IsTemporary);
+        if (existingTemp is not null)
+        {
+            Datasets.Remove(existingTemp);
+        }
+        Datasets.Insert(0, _tempDataset);
+
+        SelectedDataset = _tempDataset;
+        SelectedVersion = VersionItems.FirstOrDefault();
+
+        // Auto-enable "Create New Version" so ConvertTempDatasetToPersistentAsync is triggered
+        UseIncrementVersion = true;
+
+        StatusMessage = $"Gallery Selection: {validPaths.Count} image(s) staged for processing.";
+    }
+
+    /// <summary>
+    /// Removes the temporary "Gallery Selection" dataset from the combo box.
+    /// </summary>
+    private void ClearGallerySelection()
+    {
+        if (_tempDataset is null) return;
+
+        Datasets.Remove(_tempDataset);
+        _tempDataset = null;
+        CleanupTempStagingDir();
+    }
+
+    /// <summary>
+    /// Cleans up the temporary staging directory used for gallery selections.
+    /// </summary>
+    private void CleanupTempStagingDir()
+    {
+        if (_tempStagingDir is null) return;
+
+        try
+        {
+            if (Directory.Exists(_tempStagingDir))
+            {
+                Directory.Delete(_tempStagingDir, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup; ignore failures
+        }
+        _tempStagingDir = null;
+    }
+
     private async Task SelectVersionAsync(int version)
     {
         // Small delay to allow version loading to complete
@@ -637,6 +865,14 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
         if (_selectedDataset is null) return;
 
+        // Temp dataset: create a single version item with stored count
+        if (_selectedDataset.IsTemporary)
+        {
+            VersionItems.Add(EditorVersionItem.Create(1, _selectedDataset.ImageCount));
+            await Task.CompletedTask;
+            return;
+        }
+
         try
         {
             var versionNumbers = _selectedDataset.GetAllVersionNumbers();
@@ -675,6 +911,15 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 TotalFiles = 0;
                 ImageFiles = 0;
             }
+            return;
+        }
+
+        // Temp dataset: use stored count
+        if (_selectedDataset.IsTemporary)
+        {
+            ImageFiles = _selectedDataset.ImageCount;
+            TotalFiles = _selectedDataset.ImageCount;
+            StatusMessage = $"Gallery Selection: {ImageFiles} images ready for processing";
             return;
         }
 
@@ -761,21 +1006,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
         try
         {
-            // Create the target version folder if using increment version
-            if (UseIncrementVersion && SelectedDataset is not null)
-            {
-                var newVersionPath = SelectedDataset.GetVersionFolderPath(NextVersionNumber);
-                Directory.CreateDirectory(newVersionPath);
-                
-                // Record the branch in the dataset metadata
-                if (SelectedVersion is not null)
-                {
-                    SelectedDataset.RecordBranch(NextVersionNumber, SelectedVersion.Version);
-                    SelectedDataset.SaveMetadata();
-                }
-            }
-
-            // Determine max resolution
+            // Determine max resolution (shared by single image and dataset modes)
             int? maxLongestSide = null;
             if (SelectedResolution != ResolutionOption.None)
             {
@@ -790,7 +1021,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 }
             }
 
-            // Configure fit mode and padding options
+            // Configure fit mode and padding options (shared)
             var fitMode = UsePadding ? FitMode.Pad : FitMode.Crop;
             var paddingOptions = UsePadding 
                 ? new PaddingOptions 
@@ -800,10 +1031,88 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 }
                 : null;
 
-            var progress = new Progress<CropProgress>(OnProgressUpdate);
+            // --- Single Image Mode ---
+            if (IsSingleImageMode)
+            {
+                if (string.IsNullOrEmpty(SingleImagePath) || !File.Exists(SingleImagePath))
+                {
+                    StatusMessage = "No image selected.";
+                    return;
+                }
+
+                var outputPath = GetSingleImageOutputPath(SingleImagePath);
+                var outputDir = Path.GetDirectoryName(outputPath) ?? ".";
+
+                // Stage the single image in a temp directory for the crop service
+                var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "crop-single", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tempDir);
+                var stagedFile = Path.Combine(tempDir, Path.GetFileName(SingleImagePath));
+                File.Copy(SingleImagePath, stagedFile);
+
+                var progress = new Progress<CropProgress>(OnProgressUpdate);
+                ImageFiles = 1;
+
+                var result = await _cropperService.ProcessImagesAsync(
+                    tempDir,
+                    outputDir,
+                    SelectedBuckets,
+                    maxLongestSide,
+                    skipUnchanged: false,
+                    fitMode,
+                    paddingOptions,
+                    progress,
+                    _cancellationTokenSource.Token);
+
+                SuccessCount = result.SuccessCount;
+                FailedCount = result.FailedCount;
+                SkippedCount = result.SkippedCount;
+
+                // Rename the output file to the _cropped name if the service wrote it with the original name
+                var serviceOutput = Path.Combine(outputDir, Path.GetFileName(SingleImagePath));
+                if (File.Exists(serviceOutput) && serviceOutput != outputPath)
+                {
+                    File.Move(serviceOutput, outputPath, overwrite: true);
+                }
+
+                var modeInfo = UsePadding ? " (padded)" : " (cropped)";
+                StatusMessage = $"Done{modeInfo} – saved to {Path.GetFileName(outputPath)}";
+
+                // Cleanup temp staging
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+                return;
+            }
+
+            // --- Dataset Mode ---
+
+            // Create the target version folder if using increment version
+            if (UseIncrementVersion && SelectedDataset is not null)
+            {
+                // For temporary datasets (gallery selection), create a real persistent dataset first
+                if (SelectedDataset.IsTemporary)
+                {
+                    var persistentDataset = await ConvertTempDatasetToPersistentAsync();
+                    if (persistentDataset is null)
+                    {
+                        // Conversion failed (e.g., storage path not configured)
+                        return;
+                    }
+                }
+
+                var newVersionPath = SelectedDataset.GetVersionFolderPath(NextVersionNumber);
+                Directory.CreateDirectory(newVersionPath);
+
+                // Record the branch in the dataset metadata
+                if (SelectedVersion is not null)
+                {
+                    SelectedDataset.RecordBranch(NextVersionNumber, SelectedVersion.Version);
+                    SelectedDataset.SaveMetadata();
+                }
+            }
+
+            var datasetProgress = new Progress<CropProgress>(OnProgressUpdate);
 
             // Use effective source and target folders
-            var result = await _cropperService.ProcessImagesAsync(
+            var datasetResult = await _cropperService.ProcessImagesAsync(
                 EffectiveSourceFolder,
                 EffectiveTargetFolder,
                 SelectedBuckets,
@@ -811,12 +1120,12 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 SkipUnchanged,
                 fitMode,
                 paddingOptions,
-                progress,
+                datasetProgress,
                 _cancellationTokenSource.Token);
 
-            SuccessCount = result.SuccessCount;
-            FailedCount = result.FailedCount;
-            SkippedCount = result.SkippedCount;
+            SuccessCount = datasetResult.SuccessCount;
+            FailedCount = datasetResult.FailedCount;
+            SkippedCount = datasetResult.SkippedCount;
 
             // Copy captions if creating a new version and the option is enabled
             var captionsCopied = 0;
@@ -827,17 +1136,19 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                     EffectiveTargetFolder!,
                     _cancellationTokenSource.Token);
             }
-            
-            var modeInfo = UsePadding ? " (padded)" : " (cropped)";
+
+            var datasetModeInfo = UsePadding ? " (padded)" : " (cropped)";
             var targetInfo = UseIncrementVersion 
                 ? $" to V{NextVersionNumber}" 
                 : "";
             var captionInfo = captionsCopied > 0 ? $", {captionsCopied} captions copied" : "";
-            StatusMessage = $"Completed{targetInfo}{modeInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed{captionInfo}";
+            StatusMessage = $"Completed{targetInfo}{datasetModeInfo}: {SuccessCount} processed, {SkippedCount} skipped, {FailedCount} failed{captionInfo}";
 
-            // If we created a new version, update the next version number for subsequent runs
+            // If we created a new version, update the dataset model and publish events
             if (UseIncrementVersion && SelectedDataset is not null)
             {
+                var branchedFrom = SelectedVersion?.Version;
+                FinalizeVersionCreation(NextVersionNumber, branchedFrom);
                 UpdateNextVersionNumber();
                 _ = LoadDatasetVersionsAsync(); // Refresh version list
             }
@@ -947,6 +1258,110 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         return copied;
     }
 
+    /// <summary>
+    /// Converts a temporary (gallery selection) dataset into a persistent dataset
+    /// stored in the configured dataset storage path. Copies source images into V1
+    /// of the new dataset so that version increment processing targets a real folder.
+    /// </summary>
+    /// <returns>The persistent dataset, or null if creation failed.</returns>
+    private async Task<DatasetCardViewModel?> ConvertTempDatasetToPersistentAsync()
+    {
+        if (_settingsService is null || SelectedDataset is null || !SelectedDataset.IsTemporary)
+            return null;
+
+        var settings = await _settingsService.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+        {
+            StatusMessage = "Dataset storage path is not configured. Please set it in Settings before creating a new version from gallery images.";
+            return null;
+        }
+
+        // Auto-generate a unique dataset name
+        var baseName = $"Gallery Crop {DateTime.Now:yyyy-MM-dd HH-mm}";
+        var datasetPath = Path.Combine(settings.DatasetStoragePath, baseName);
+
+        // Ensure unique name
+        var counter = 2;
+        while (Directory.Exists(datasetPath))
+        {
+            datasetPath = Path.Combine(settings.DatasetStoragePath, $"{baseName} ({counter++})");
+        }
+
+        var datasetName = Path.GetFileName(datasetPath);
+        Directory.CreateDirectory(datasetPath);
+
+        var v1Path = Path.Combine(datasetPath, "V1");
+        Directory.CreateDirectory(v1Path);
+
+        // Copy staged images from temp V1 to the real V1
+        var tempV1 = SelectedDataset.GetVersionFolderPath(1);
+        if (Directory.Exists(tempV1))
+        {
+            foreach (var file in Directory.EnumerateFiles(tempV1))
+            {
+                var destFile = Path.Combine(v1Path, Path.GetFileName(file));
+                File.Copy(file, destFile, overwrite: true);
+            }
+        }
+
+        var newDataset = new DatasetCardViewModel
+        {
+            Name = datasetName,
+            FolderPath = datasetPath,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = SelectedDataset.ImageCount,
+            TotalImageCountAllVersions = SelectedDataset.ImageCount
+        };
+        newDataset.SaveMetadata();
+
+        // Remove the temp dataset and register the persistent one
+        Datasets.Remove(SelectedDataset);
+        ClearGallerySelection();
+
+        if (!Datasets.Contains(newDataset))
+        {
+            Datasets.Add(newDataset);
+        }
+
+        _eventAggregator?.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = newDataset
+        });
+
+        // Select the new persistent dataset
+        SelectedDataset = newDataset;
+        await LoadDatasetVersionsAsync();
+        SelectedVersion = VersionItems.FirstOrDefault();
+        UpdateNextVersionNumber();
+
+        return newDataset;
+    }
+
+    /// <summary>
+    /// Updates the dataset model and publishes events after a new version is successfully created.
+    /// </summary>
+    private void FinalizeVersionCreation(int newVersion, int? branchedFromVersion)
+    {
+        if (SelectedDataset is null) return;
+
+        SelectedDataset.CurrentVersion = newVersion;
+        SelectedDataset.IsVersionedStructure = true;
+        SelectedDataset.TotalVersions = SelectedDataset.GetAllVersionNumbers().Count();
+        SelectedDataset.RefreshImageInfo();
+
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
+            {
+                Dataset = SelectedDataset,
+                NewVersion = newVersion,
+                BranchedFromVersion = branchedFromVersion ?? 1
+            });
+        }
+    }
+
     private void CheckTargetFolderEmpty()
     {
         if (string.IsNullOrWhiteSpace(TargetFolder) || !Directory.Exists(TargetFolder))
@@ -1007,6 +1422,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 _eventAggregator.ImageAdded -= OnImageAdded;
             }
 
+            ClearGallerySelection();
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource?.Dispose();
         }

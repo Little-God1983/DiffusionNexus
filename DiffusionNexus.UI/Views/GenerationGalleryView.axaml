@@ -190,6 +190,10 @@
                         ToolTip.Tip="Compare selected images side by side"/>
               <MenuItem Header="Batch Upscale" Command="{Binding SendSelectedToBatchUpscaleCommand}"
                         ToolTip.Tip="Send selected images to Batch Upscale as a temporary dataset"/>
+              <MenuItem Header="Batch Crop/Scale" Command="{Binding SendSelectedToBatchCropCommand}"
+                        ToolTip.Tip="Send selected images to Batch Crop/Scale as a temporary dataset"/>
+              <MenuItem Header="Captioning" Command="{Binding SendSelectedToCaptioningCommand}"
+                        ToolTip.Tip="Send selected images to Captioning as a temporary dataset"/>
             </MenuFlyout>
           </Button.Flyout>
         </Button>

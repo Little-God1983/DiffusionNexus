@@ -194,9 +194,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             analysisPipeline,
             bucketAnalyzer);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator);
-        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
-        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
-        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService);
+        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService);
+        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -204,6 +204,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Subscribe to navigation events to switch tabs
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
         _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
+        _eventAggregator.NavigateToCaptioningRequested += OnNavigateToCaptioning;
         _eventAggregator.NavigateToBatchUpscaleRequested += OnNavigateToBatchUpscale;
     }
 
@@ -243,18 +244,52 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     private void OnNavigateToBatchCropScale(object? sender, NavigateToBatchCropScaleEventArgs e)
     {
-        // Preselect the dataset and version in BatchCropScale tab
-        BatchCropScale.PreselectDataset(e.Dataset, e.Version);
+        if (e.ImagePaths is { Count: > 0 })
+        {
+            if (e.ImagePaths.Count == 1)
+                BatchCropScale.LoadSingleImage(e.ImagePaths[0]);
+            else
+                BatchCropScale.LoadTemporaryImages(e.ImagePaths);
+        }
+        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+        {
+            BatchCropScale.LoadSingleImage(e.ImagePath);
+        }
+        else if (e.Dataset is not null && e.Version.HasValue)
+        {
+            BatchCropScale.PreselectDataset(e.Dataset, e.Version.Value);
+        }
 
         // Switch to Batch Crop/Scale tab (index 3)
         SelectedTabIndex = 3;
+    }
+
+    private void OnNavigateToCaptioning(object? sender, NavigateToCaptioningEventArgs e)
+    {
+        if (e.ImagePaths is { Count: > 0 })
+        {
+            if (e.ImagePaths.Count == 1)
+                Captioning.LoadSingleImage(e.ImagePaths[0]);
+            else
+                Captioning.LoadTemporaryImages(e.ImagePaths);
+        }
+        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+        {
+            Captioning.LoadSingleImage(e.ImagePath);
+        }
+
+        // Switch to Captioning tab (index 2)
+        SelectedTabIndex = 2;
     }
 
     private void OnNavigateToBatchUpscale(object? sender, NavigateToBatchUpscaleEventArgs e)
     {
         if (e.ImagePaths is { Count: > 0 })
         {
-            BatchUpscale.LoadTemporaryImages(e.ImagePaths);
+            if (e.ImagePaths.Count == 1)
+                BatchUpscale.LoadSingleImage(e.ImagePaths[0]);
+            else
+                BatchUpscale.LoadTemporaryImages(e.ImagePaths);
         }
         else if (!string.IsNullOrWhiteSpace(e.ImagePath))
         {
@@ -311,6 +346,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
             _eventAggregator.NavigateToBatchCropScaleRequested -= OnNavigateToBatchCropScale;
+            _eventAggregator.NavigateToCaptioningRequested -= OnNavigateToCaptioning;
             _eventAggregator.NavigateToBatchUpscaleRequested -= OnNavigateToBatchUpscale;
 
             // Dispose child ViewModels

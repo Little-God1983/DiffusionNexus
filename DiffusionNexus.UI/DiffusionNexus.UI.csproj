@@ -35,20 +35,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.12">
+    <PackageReference Include="Avalonia" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.13">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>none</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Avalonia.Skia" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.12" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Avalonia.Skia" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.13" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.3">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -58,11 +58,11 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="SkiaSharp" Version="3.119.2" />
     <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="1.2.3" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="1.2.3" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.3" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.3" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.3" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="1.2.5" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="1.2.5" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.5" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.5" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.5" />
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
   </ItemGroup>
 

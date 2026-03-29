@@ -944,6 +944,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
         SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
         SendSelectedToBatchUpscaleCommand.NotifyCanExecuteChanged();
+        SendSelectedToBatchCropCommand.NotifyCanExecuteChanged();
+        SendSelectedToCaptioningCommand.NotifyCanExecuteChanged();
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
     }
@@ -1107,20 +1109,84 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
         var imagePaths = imageItems.Select(item => item.FilePath).ToList();
 
-        if (imagePaths.Count == 1)
+        _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
         {
-            _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
-            {
-                ImagePath = imagePaths[0]
-            });
-        }
-        else
+            ImagePaths = imagePaths
+        });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Batch Crop/Scale tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToBatchCropAsync()
+    {
+        if (_eventAggregator is null)
         {
-            _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
-            {
-                ImagePaths = imagePaths
-            });
+            return;
         }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Batch Crop/Scale only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
+        {
+            ImagePaths = imagePaths
+        });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Captioning tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToCaptioningAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Captioning only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
+        {
+            ImagePaths = imagePaths
+        });
     }
 
     /// <summary>

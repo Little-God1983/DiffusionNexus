@@ -264,30 +264,48 @@ public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 }
 
 /// <summary>
-/// Event raised when an image is sent to the Captioning tab for single-image captioning.
+/// Event raised when navigation to the Captioning tab is requested.
+/// Supply either <see cref="ImagePath"/> for a single image or <see cref="ImagePaths"/> for a batch.
 /// </summary>
 public sealed class NavigateToCaptioningEventArgs : DatasetEventArgs
 {
     /// <summary>
-    /// Absolute path to the image file.
+    /// Absolute path to the image file (single-image mode).
     /// </summary>
-    public required string ImagePath { get; init; }
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }
 
 /// <summary>
 /// Event raised when navigation to the Batch Crop/Scale tab is requested.
+/// Supply <see cref="Dataset"/>/<see cref="Version"/> for a dataset,
+/// <see cref="ImagePath"/> for a single image, or <see cref="ImagePaths"/> for a gallery selection.
 /// </summary>
 public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 {
     /// <summary>
     /// The dataset to process.
     /// </summary>
-    public required DatasetCardViewModel Dataset { get; init; }
+    public DatasetCardViewModel? Dataset { get; init; }
 
     /// <summary>
     /// The version to preselect.
     /// </summary>
-    public required int Version { get; init; }
+    public int? Version { get; init; }
+
+    /// <summary>
+    /// Absolute path to a single image (single-image mode).
+    /// </summary>
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }
 
 /// <summary>

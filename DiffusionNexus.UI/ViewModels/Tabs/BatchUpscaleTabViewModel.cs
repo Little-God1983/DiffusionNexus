@@ -201,6 +201,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IAppSettingsService? _settingsService;
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private string? _compareOriginalsTempDir;
@@ -269,14 +270,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Creates a new instance of BatchUpscaleTabViewModel.
     /// </summary>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for executing upscale workflows.</param>
+    /// <param name="settingsService">Optional settings service for dataset storage path resolution.</param>
     public BatchUpscaleTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
-        IComfyUIWrapperService? comfyUiService = null)
+        IComfyUIWrapperService? comfyUiService = null,
+        IAppSettingsService? settingsService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _comfyUiService = comfyUiService;
+        _settingsService = settingsService;
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -716,11 +720,26 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // Gallery Selection (temp dataset): use the stored image paths directly
+        // Gallery Selection (temp dataset): convert to persistent dataset first
         if (SelectedDataset.IsTemporary && _tempImagePaths is { Count: > 0 })
         {
-            await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, singleImageOutputPath: null);
-            return;
+            if (SaveMode == UpscaleSaveMode.NewVersion)
+            {
+                var persistentDataset = await ConvertTempDatasetToPersistentAsync();
+                if (persistentDataset is null)
+                {
+                    // Conversion failed (e.g., storage path not configured) — fall back to temp processing
+                    await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, singleImageOutputPath: null);
+                    return;
+                }
+                // Fall through to normal dataset processing with the newly persistent dataset
+            }
+            else
+            {
+                // OverwriteInPlace on temp images: process directly, no persistent dataset needed
+                await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, singleImageOutputPath: null);
+                return;
+            }
         }
 
         var versionPath = SelectedDataset.IsVersionedStructure
@@ -762,12 +781,22 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         // Prepare output folder for NewVersion save mode
         string? newVersionPath = null;
+        int? newVersionNumber = null;
+        int? branchedFromVersion = SelectedDatasetVersion?.Version;
         if (SaveMode == UpscaleSaveMode.NewVersion && SelectedDataset.IsVersionedStructure)
         {
             var maxVersion = SelectedDataset.GetAllVersionNumbers().DefaultIfEmpty(1).Max();
-            var newVersion = maxVersion + 1;
-            newVersionPath = SelectedDataset.GetVersionFolderPath(newVersion);
+            newVersionNumber = maxVersion + 1;
+            newVersionPath = SelectedDataset.GetVersionFolderPath(newVersionNumber.Value);
             Directory.CreateDirectory(newVersionPath);
+
+            // Record the branch in the dataset metadata
+            if (branchedFromVersion.HasValue)
+            {
+                SelectedDataset.RecordBranch(newVersionNumber.Value, branchedFromVersion.Value);
+                SelectedDataset.SaveMetadata();
+            }
+
             Logger.Information("Upscale: created new version folder {Path}", newVersionPath);
         }
         else if (SaveMode == UpscaleSaveMode.NewVersion && !SelectedDataset.IsVersionedStructure)
@@ -779,6 +808,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         }
 
         await RunUpscaleLoopAsync(datasetImageFiles, newVersionPath, singleImageOutputPath: null);
+
+        // If we created a new version, update the dataset model and publish events
+        if (newVersionNumber.HasValue && CompletedCount > 0)
+        {
+            FinalizeVersionCreation(newVersionNumber.Value, branchedFromVersion);
+        }
     }
 
     /// <summary>
@@ -918,12 +953,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             CurrentProcessingStatus = isSingleImage
                 ? $"Done – saved to {Path.GetFileName(singleImageOutputPath)}"
                 : $"Done – {CompletedCount}/{TotalImageCount} images upscaled.";
-
-            // Refresh dataset list so the new version appears (dataset mode only)
-            if (!isSingleImage && SaveMode == UpscaleSaveMode.NewVersion)
-            {
-                _eventAggregator.PublishRefreshDatasetsRequested(new RefreshDatasetsRequestedEventArgs());
-            }
         }
         catch (OperationCanceledException)
         {
@@ -1041,6 +1070,111 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             Logger.Warning(ex, "Failed to load thumbnail for {Path}", imagePath);
         }
+    }
+
+    /// <summary>
+    /// Converts a temporary (gallery selection) dataset into a persistent dataset
+    /// stored in the configured dataset storage path. Copies source images into V1
+    /// of the new dataset so that version increment processing targets a real folder.
+    /// </summary>
+    /// <returns>The persistent dataset, or null if creation failed.</returns>
+    private async Task<DatasetCardViewModel?> ConvertTempDatasetToPersistentAsync()
+    {
+        if (_settingsService is null || SelectedDataset is null || !SelectedDataset.IsTemporary)
+            return null;
+
+        var settings = await _settingsService.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+        {
+            CurrentProcessingStatus = "Dataset storage path is not configured. Please set it in Settings before creating a new version from gallery images.";
+            return null;
+        }
+
+        // Auto-generate a unique dataset name
+        var baseName = $"Gallery Upscale {DateTime.Now:yyyy-MM-dd HH-mm}";
+        var datasetPath = Path.Combine(settings.DatasetStoragePath, baseName);
+
+        // Ensure unique name
+        var counter = 2;
+        while (Directory.Exists(datasetPath))
+        {
+            datasetPath = Path.Combine(settings.DatasetStoragePath, $"{baseName} ({counter++})");
+        }
+
+        var datasetName = Path.GetFileName(datasetPath);
+        Directory.CreateDirectory(datasetPath);
+
+        var v1Path = Path.Combine(datasetPath, "V1");
+        Directory.CreateDirectory(v1Path);
+
+        // Copy source images from the temp paths into the real V1
+        if (_tempImagePaths is { Count: > 0 })
+        {
+            foreach (var srcPath in _tempImagePaths)
+            {
+                if (File.Exists(srcPath))
+                {
+                    var destFile = Path.Combine(v1Path, Path.GetFileName(srcPath));
+                    File.Copy(srcPath, destFile, overwrite: true);
+                }
+            }
+        }
+
+        var imageCount = SelectedDataset.ImageCount;
+        var newDataset = new DatasetCardViewModel
+        {
+            Name = datasetName,
+            FolderPath = datasetPath,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = imageCount,
+            TotalImageCountAllVersions = imageCount
+        };
+        newDataset.SaveMetadata();
+
+        // Remove the temp dataset and register the persistent one
+        AvailableDatasets.Remove(SelectedDataset);
+        ClearGallerySelection();
+
+        if (!AvailableDatasets.Contains(newDataset))
+        {
+            AvailableDatasets.Add(newDataset);
+        }
+
+        _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = newDataset
+        });
+
+        // Select the new persistent dataset and refresh versions
+        SelectedDataset = newDataset;
+        AvailableDatasetVersions.Clear();
+        PopulateVersionItems(newDataset, AvailableDatasetVersions);
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault();
+        RefreshDatasetStats();
+
+        return newDataset;
+    }
+
+    /// <summary>
+    /// Updates the dataset model and publishes events after a new version is successfully created.
+    /// </summary>
+    private void FinalizeVersionCreation(int newVersion, int? branchedFromVersion)
+    {
+        if (SelectedDataset is null) return;
+
+        SelectedDataset.CurrentVersion = newVersion;
+        SelectedDataset.IsVersionedStructure = true;
+        SelectedDataset.TotalVersions = SelectedDataset.GetAllVersionNumbers().Count();
+        SelectedDataset.RefreshImageInfo();
+
+        _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
+        {
+            Dataset = SelectedDataset,
+            NewVersion = newVersion,
+            BranchedFromVersion = branchedFromVersion ?? 1
+        });
     }
 
     private void CancelUpscale()
@@ -1269,6 +1403,22 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             SingleImagePath = result;
         }
+    }
+
+    /// <summary>
+    /// Preselects a dataset and version for upscaling.
+    /// Called when navigating from Gallery "Send to" after dataset creation.
+    /// </summary>
+    public void PreselectDataset(DatasetCardViewModel dataset, int version)
+    {
+        var matchingDataset = AvailableDatasets.FirstOrDefault(d =>
+            string.Equals(d.FolderPath, dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+
+        SelectedDataset = matchingDataset ?? dataset;
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault(v => v.Version == version)
+                                 ?? AvailableDatasetVersions.FirstOrDefault();
+
+        CurrentProcessingStatus = $"Dataset '{dataset.Name}' V{version} loaded for upscaling";
     }
 
     /// <summary>

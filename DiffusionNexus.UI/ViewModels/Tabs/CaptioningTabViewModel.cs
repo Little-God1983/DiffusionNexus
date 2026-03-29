@@ -61,6 +61,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private readonly IReadOnlyList<ICaptioningBackend> _backends;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
+    private readonly IAppSettingsService? _settingsService;
     private bool _disposed;
 
     // Backend Selection
@@ -97,6 +98,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _singleImagePath;
     private bool _isSingleImageMode;
     private bool _isCompareMode;
+    private DatasetCardViewModel? _tempDataset;
+    private List<string>? _tempImagePaths;
 
     // Processing
     private bool _isProcessing;
@@ -125,12 +128,14 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         ICaptioningService? captioningService = null,
-        IReadOnlyList<ICaptioningBackend>? backends = null)
+        IReadOnlyList<ICaptioningBackend>? backends = null,
+        IAppSettingsService? settingsService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
         _backends = backends ?? [];
+        _settingsService = settingsService;
 
         AvailableDatasetVersions = [];
         AvailableModels = Enum.GetValues<CaptioningModelType>();
@@ -170,7 +175,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshModelStatuses();
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
-        _eventAggregator.NavigateToCaptioningRequested += OnNavigateToCaptioningRequested;
     }
 
     /// <summary>
@@ -599,8 +603,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 if (value is not null)
                 {
                     IsSingleImageMode = false;
-
-                    PopulateVersionItems(value, AvailableDatasetVersions);
+                    if (!value.IsTemporary)
+                    {
+                        ClearGallerySelection();
+                    }
+                    PopulateVersionItems(value, AvailableDatasetVersions, _tempImagePaths);
                 }
 
                 GenerateCommand.NotifyCanExecuteChanged();
@@ -1089,8 +1096,25 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
             // Determine dataset path: create a new version folder when requested
             string? datasetPath = SelectedDataset?.CurrentVersionFolderPath;
+            int? newVersionNumber = null;
+            int? branchedFromVersion = SelectedDatasetVersion?.Version;
             if (!IsSingleImageMode && SaveMode == CaptionSaveMode.NewVersion && SelectedDataset is not null)
             {
+                // For temporary datasets (gallery selection), create a real persistent dataset first
+                if (SelectedDataset.IsTemporary)
+                {
+                    var persistentDataset = await ConvertTempDatasetToPersistentAsync();
+                    if (persistentDataset is null)
+                    {
+                        // Conversion failed (e.g., storage path not configured)
+                        return;
+                    }
+                    branchedFromVersion = 1;
+                }
+
+                // Calculate the new version number before creating the folder
+                newVersionNumber = SelectedDataset.GetAllVersionNumbers().DefaultIfEmpty(1).Max() + 1;
+
                 datasetPath = PrepareNewVersionFolder(SelectedDataset, !effectiveOverride);
                 // New version has fresh caption files (or copies), so always override into that folder
                 effectiveOverride = true;
@@ -1194,6 +1218,12 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             StatusMessage = $"Completed! {successCount}/{results.Count} images captioned.";
             CurrentProcessingStatus = "Done";
 
+            // If we created a new version, update the dataset model and publish events
+            if (newVersionNumber.HasValue && SelectedDataset is not null && successCount > 0)
+            {
+                FinalizeVersionCreation(SelectedDataset, newVersionNumber.Value, branchedFromVersion);
+            }
+
             // Show compare dialog when in compare mode and we got a new caption
             if (compareModeActive && DialogService is not null)
             {
@@ -1251,6 +1281,108 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     }
 
     /// <summary>
+    /// Converts a temporary (gallery selection) dataset into a persistent dataset
+    /// stored in the configured dataset storage path. Copies source images into V1
+    /// of the new dataset so that version creation targets a real folder.
+    /// </summary>
+    /// <returns>The persistent dataset, or null if creation failed.</returns>
+    private async Task<DatasetCardViewModel?> ConvertTempDatasetToPersistentAsync()
+    {
+        if (_settingsService is null || SelectedDataset is null || !SelectedDataset.IsTemporary)
+            return null;
+
+        var settings = await _settingsService.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath) || !Directory.Exists(settings.DatasetStoragePath))
+        {
+            StatusMessage = "Dataset storage path is not configured. Please set it in Settings before creating a new version from gallery images.";
+            return null;
+        }
+
+        // Auto-generate a unique dataset name
+        var baseName = $"Gallery Caption {DateTime.Now:yyyy-MM-dd HH-mm}";
+        var datasetPath = Path.Combine(settings.DatasetStoragePath, baseName);
+
+        // Ensure unique name
+        var counter = 2;
+        while (Directory.Exists(datasetPath))
+        {
+            datasetPath = Path.Combine(settings.DatasetStoragePath, $"{baseName} ({counter++})");
+        }
+
+        var datasetName = Path.GetFileName(datasetPath);
+        Directory.CreateDirectory(datasetPath);
+
+        var v1Path = Path.Combine(datasetPath, "V1");
+        Directory.CreateDirectory(v1Path);
+
+        // Copy temp images from their original locations to V1
+        if (_tempImagePaths is { Count: > 0 })
+        {
+            foreach (var imgPath in _tempImagePaths)
+            {
+                if (File.Exists(imgPath))
+                {
+                    File.Copy(imgPath, Path.Combine(v1Path, Path.GetFileName(imgPath)), overwrite: true);
+                }
+            }
+        }
+
+        var imageCount = _tempImagePaths?.Count ?? 0;
+        var newDataset = new DatasetCardViewModel
+        {
+            Name = datasetName,
+            FolderPath = datasetPath,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = imageCount,
+            TotalImageCountAllVersions = imageCount
+        };
+        newDataset.SaveMetadata();
+
+        // Remove the temp dataset and register the persistent one
+        AvailableDatasets.Remove(SelectedDataset);
+        ClearGallerySelection();
+
+        if (!AvailableDatasets.Contains(newDataset))
+        {
+            AvailableDatasets.Add(newDataset);
+        }
+
+        _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs
+        {
+            Dataset = newDataset
+        });
+
+        // Select the new persistent dataset and refresh versions
+        SelectedDataset = newDataset;
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault();
+        RefreshDatasetStats();
+
+        return newDataset;
+    }
+
+    /// <summary>
+    /// Updates the dataset model and publishes events after a new version is successfully created.
+    /// </summary>
+    private void FinalizeVersionCreation(DatasetCardViewModel dataset, int newVersion, int? branchedFromVersion)
+    {
+        dataset.RecordBranch(newVersion, branchedFromVersion ?? 1);
+        dataset.CurrentVersion = newVersion;
+        dataset.IsVersionedStructure = true;
+        dataset.TotalVersions = dataset.GetAllVersionNumbers().Count();
+        dataset.SaveMetadata();
+        dataset.RefreshImageInfo();
+
+        _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
+        {
+            Dataset = dataset,
+            NewVersion = newVersion,
+            BranchedFromVersion = branchedFromVersion ?? 1
+        });
+    }
+
+    /// <summary>
     /// Creates a new version folder for the dataset, copies all images from the current version,
     /// and optionally copies existing caption (.txt) files when preserving captions.
     /// </summary>
@@ -1299,6 +1431,12 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             return [SingleImagePath];
         }
 
+        // Gallery Selection: return stored paths directly
+        if (SelectedDataset is not null && SelectedDataset.IsTemporary && _tempImagePaths is { Count: > 0 })
+        {
+            return _tempImagePaths;
+        }
+
         if (SelectedDataset is not null)
         {
             var path = SelectedDataset.CurrentVersionFolderPath;
@@ -1345,10 +1483,20 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshVersionList();
     }
 
-    private void OnNavigateToCaptioningRequested(object? sender, NavigateToCaptioningEventArgs e)
+    /// <summary>
+    /// Preselects a dataset and version for captioning.
+    /// Called when navigating from Gallery "Send to" after dataset creation.
+    /// </summary>
+    public void PreselectDataset(DatasetCardViewModel dataset, int version)
     {
-        LoadSingleImage(e.ImagePath);
-        _state.SelectedTabIndex = 2;
+        var matchingDataset = AvailableDatasets.FirstOrDefault(d =>
+            string.Equals(d.FolderPath, dataset.FolderPath, StringComparison.OrdinalIgnoreCase));
+
+        SelectedDataset = matchingDataset ?? dataset;
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault(v => v.Version == version)
+                                 ?? AvailableDatasetVersions.FirstOrDefault();
+
+        CurrentProcessingStatus = $"Dataset '{dataset.Name}' V{version} loaded for captioning";
     }
 
     /// <summary>
@@ -1361,7 +1509,63 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             return;
         }
 
+        ClearGallerySelection();
         SingleImagePath = imagePath;
+    }
+
+    /// <summary>
+    /// Loads multiple images as a temporary batch for captioning.
+    /// Injects a "Gallery Selection" dataset into the combo box.
+    /// </summary>
+    public void LoadTemporaryImages(IReadOnlyList<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+
+        var validPaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToList();
+        if (validPaths.Count == 0) return;
+
+        _tempImagePaths = validPaths;
+        SingleImagePath = null;
+        IsSingleImageMode = false;
+
+        _tempDataset = new DatasetCardViewModel
+        {
+            Name = "Gallery Selection",
+            FolderPath = "TEMP://Captioning",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = validPaths.Count,
+            TotalImageCountAllVersions = validPaths.Count,
+            IsTemporary = true
+        };
+
+        var existingTemp = AvailableDatasets.FirstOrDefault(d => d.IsTemporary);
+        if (existingTemp is not null)
+        {
+            AvailableDatasets.Remove(existingTemp);
+        }
+        AvailableDatasets.Insert(0, _tempDataset);
+
+        SelectedDataset = _tempDataset;
+        SelectedDatasetVersion = AvailableDatasetVersions.FirstOrDefault();
+
+        // Auto-enable "New Version" so ConvertTempDatasetToPersistentAsync is triggered
+        SaveMode = CaptionSaveMode.NewVersion;
+
+        CurrentProcessingStatus = $"Gallery Selection: {validPaths.Count} image(s) ready.";
+    }
+
+    /// <summary>
+    /// Removes the temporary "Gallery Selection" dataset from the combo box.
+    /// </summary>
+    private void ClearGallerySelection()
+    {
+        if (_tempDataset is null) return;
+
+        AvailableDatasets.Remove(_tempDataset);
+        _tempDataset = null;
+        _tempImagePaths = null;
     }
 
     /// <summary>
@@ -1378,7 +1582,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         var previousVersionNum = SelectedDatasetVersion?.Version;
 
         AvailableDatasetVersions.Clear();
-        PopulateVersionItems(SelectedDataset, AvailableDatasetVersions);
+        PopulateVersionItems(SelectedDataset, AvailableDatasetVersions, _tempImagePaths);
 
         // Keep the previous selection if still valid, otherwise pick the latest
         SelectedDatasetVersion = previousVersionNum.HasValue
@@ -1389,11 +1593,19 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     /// <summary>
     /// Populates an EditorVersionItem collection from a dataset's version folders.
+    /// For temporary datasets (Gallery Selection), uses the stored image count.
     /// </summary>
     private static void PopulateVersionItems(
         DatasetCardViewModel dataset,
-        ObservableCollection<EditorVersionItem> versionItems)
+        ObservableCollection<EditorVersionItem> versionItems,
+        List<string>? tempImagePaths = null)
     {
+        if (dataset.IsTemporary)
+        {
+            versionItems.Add(EditorVersionItem.Create(1, tempImagePaths?.Count ?? dataset.ImageCount));
+            return;
+        }
+
         if (dataset.IsVersionedStructure)
         {
             foreach (var v in dataset.GetAllVersionNumbers())
@@ -1421,6 +1633,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (IsSingleImageMode || SelectedDataset is null)
         {
             DatasetImageCount = 0;
+            DatasetCaptionedCount = 0;
+            OnPropertyChanged(nameof(DatasetUncaptionedCount));
+            OnPropertyChanged(nameof(HasDatasetStats));
+            return;
+        }
+
+        // Temp dataset: use stored count, skip disk scan
+        if (SelectedDataset.IsTemporary)
+        {
+            DatasetImageCount = _tempImagePaths?.Count ?? 0;
             DatasetCaptionedCount = 0;
             OnPropertyChanged(nameof(DatasetUncaptionedCount));
             OnPropertyChanged(nameof(HasDatasetStats));
@@ -1516,7 +1738,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (disposing)
         {
             _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
-            _eventAggregator.NavigateToCaptioningRequested -= OnNavigateToCaptioningRequested;
+            ClearGallerySelection();
             DisposePreviewBitmaps();
         }
 
