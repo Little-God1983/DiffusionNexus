@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -431,18 +432,101 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     /// <summary>
-    /// Placeholder: adds selected images to a training run.
-    /// Not yet implemented.
+    /// Shows the Add to Training Run dialog and imports selected images into the chosen
+    /// dataset version, creating a new training run when requested.
     /// </summary>
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private async Task AddSelectedToTrainingRunAsync()
     {
-        if (DialogService is not null)
+        if (DialogService is null || _datasetState is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected && item.IsImage).ToList();
+        if (selectedItems.Count == 0)
         {
             await DialogService.ShowMessageAsync(
-                "Coming Soon",
-                "Adding images to a training run is not yet implemented.");
+                "No Images Selected",
+                "Please select at least one image to add to a training run.");
+            return;
         }
+
+        var dialogResult = await DialogService.ShowAddToTrainingRunDialogAsync(
+            selectedItems.Count,
+            _datasetState.Datasets);
+
+        if (!dialogResult.Confirmed) return;
+
+        var dataset = dialogResult.SelectedDataset;
+        if (dataset is null || !dialogResult.SelectedVersion.HasValue) return;
+
+        var version = dialogResult.SelectedVersion.Value;
+
+        await RunBusyAsync(async () =>
+        {
+            // Ensure the training run exists
+            var trainingRunName = dialogResult.IsNewTrainingRun
+                ? dialogResult.NewTrainingRunName
+                : dialogResult.SelectedTrainingRunName;
+
+            if (string.IsNullOrWhiteSpace(trainingRunName)) return;
+
+            if (dialogResult.IsNewTrainingRun)
+            {
+                var versionPath = dataset.GetVersionFolderPath(version);
+                TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, trainingRunName);
+
+                var runInfo = new TrainingRunInfo
+                {
+                    Name = trainingRunName,
+                    CreatedAt = DateTimeOffset.Now
+                };
+
+                if (!dataset.TrainingRuns.ContainsKey(version))
+                {
+                    dataset.TrainingRuns[version] = [];
+                }
+
+                dataset.TrainingRuns[version].Add(runInfo);
+                dataset.SaveMetadata();
+            }
+
+            // Copy or move images into the version folder
+            var destinationFolder = dataset.GetVersionFolderPath(version);
+
+            var importer = new DatasetFileImporter(new FileOperations());
+            var importResult = await importer.ImportWithDialogAsync(
+                selectedItems.Select(item => item.FilePath),
+                destinationFolder,
+                DialogService!,
+                _videoThumbnailService,
+                moveFiles: dialogResult.ImportAction == DatasetImportAction.Move);
+
+            if (importResult.Cancelled)
+            {
+                return;
+            }
+
+            if (dialogResult.ImportAction == DatasetImportAction.Move)
+            {
+                var movedSet = importResult.ProcessedSourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in selectedItems.Where(item => movedSet.Contains(item.FilePath)).ToList())
+                {
+                    RemoveMediaItem(item);
+                }
+            }
+
+            dataset.RefreshImageInfo();
+            _eventAggregator?.PublishImageAdded(new ImageAddedEventArgs
+            {
+                Dataset = dataset,
+                AddedImages = []
+            });
+
+            ClearSelectionSilent();
+            UpdateSelectionState();
+        }, "Adding images to training run...");
     }
 
     private async Task OpenImageViewerAtIndexAsync(int index)

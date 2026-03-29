@@ -186,6 +186,11 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IEnumerable<DatasetCardViewModel> availableDatasets) =>
             Task.FromResult(AddToDatasetResult.Cancelled());
 
+        public Task<AddToTrainingRunResult> ShowAddToTrainingRunDialogAsync(
+            int selectedFileCount,
+            IEnumerable<DatasetCardViewModel> availableDatasets) =>
+            Task.FromResult(AddToTrainingRunResult.Cancelled());
+
         public Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(string imagePath, string currentCaption, string newCaption) =>
             Task.FromResult(CaptionCompareResult.Cancelled());
 

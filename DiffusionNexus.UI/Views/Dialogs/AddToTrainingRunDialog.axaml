@@ -1,0 +1,164 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        xmlns:models="using:DiffusionNexus.Domain.Models"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.AddToTrainingRunDialog"
+        x:DataType="vm:AddToTrainingRunDialogViewModel"
+        Width="720"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+    <StackPanel Grid.Row="0" Margin="0,0,0,20">
+      <TextBlock Text="Add Selected to Training Run"
+                 FontSize="18"
+                 FontWeight="SemiBold"
+                 Foreground="#4CAF50"/>
+      <TextBlock Text="{Binding SelectedCountText}"
+                 Opacity="0.7"
+                 Margin="0,6,0,0"/>
+    </StackPanel>
+    <Border Grid.Row="1"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16"
+            Margin="0,0,0,20">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Import Action"
+                   FontWeight="SemiBold"/>
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <RadioButton Content="Copy"
+                       GroupName="ImportAction"
+                       IsChecked="{Binding IsCopy, Mode=TwoWay}"/>
+          <RadioButton Content="Move"
+                       GroupName="ImportAction"
+                       IsChecked="{Binding IsMove, Mode=TwoWay}"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="2"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16"
+            Margin="0,0,0,20">
+      <StackPanel Spacing="12">
+        <TextBlock Text="Destination"
+                   FontWeight="SemiBold"/>
+        <TextBlock Text="No datasets available. Create a dataset first."
+                   Opacity="0.6"
+                   FontSize="12"
+                   IsVisible="{Binding !HasDatasets}"/>
+        <StackPanel Spacing="6"
+                    IsVisible="{Binding HasDatasets}">
+          <TextBlock Text="Dataset"
+                     FontSize="12"
+                     Opacity="0.7"/>
+          <ComboBox ItemsSource="{Binding AvailableDatasets}"
+                    SelectedItem="{Binding SelectedDataset, Mode=TwoWay}"
+                    MinWidth="300">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:DatasetCardViewModel">
+                <TextBlock Text="{Binding Name}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+        <StackPanel Spacing="6"
+                    IsVisible="{Binding HasDatasets}">
+          <TextBlock Text="Version"
+                     FontSize="12"
+                     Opacity="0.7"/>
+          <ComboBox ItemsSource="{Binding VersionItems}"
+                    SelectedItem="{Binding SelectedVersionItem, Mode=TwoWay}"
+                    MinWidth="300">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:TrainingRunVersionItem">
+                <TextBlock Text="{Binding DisplayText}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="3"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16"
+            Margin="0,0,0,20"
+            IsVisible="{Binding HasSelectedVersion}">
+      <StackPanel Spacing="12">
+        <TextBlock Text="Training Run"
+                   FontWeight="SemiBold"/>
+        <StackPanel Spacing="8"
+                    IsVisible="{Binding MustCreateNewRun}">
+          <Border Background="#2D2D2D"
+                  CornerRadius="6"
+                  Padding="12">
+            <StackPanel Spacing="6">
+              <TextBlock Text="This version does not have a training run yet, but you can create one."
+                         TextWrapping="Wrap"
+                         Foreground="#FFB74D"
+                         FontSize="13"/>
+              <TextBlock Text="Training Run Name"
+                         FontSize="12"
+                         Opacity="0.7"
+                         Margin="0,4,0,0"/>
+              <TextBox Text="{Binding NewTrainingRunName, Mode=TwoWay}"
+                       Watermark="e.g. SDXL_MyLoRA"
+                       MinWidth="300"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel Spacing="8"
+                    IsVisible="{Binding HasExistingTrainingRuns}">
+          <Border Background="#232323"
+                  CornerRadius="6"
+                  Padding="12"
+                  BorderThickness="2"
+                  BorderBrush="{Binding IsUseExistingRun, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+            <StackPanel Spacing="6">
+              <RadioButton Content="Add to existing training run"
+                           GroupName="TrainingRunOption"
+                           IsChecked="{Binding IsUseExistingRun, Mode=TwoWay}"/>
+              <ComboBox ItemsSource="{Binding ExistingTrainingRuns}"
+                        SelectedItem="{Binding SelectedTrainingRun, Mode=TwoWay}"
+                        MinWidth="300"
+                        IsEnabled="{Binding IsUseExistingRun}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="models:TrainingRunInfo">
+                    <TextBlock Text="{Binding Name}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
+          </Border>
+          <Border Background="#232323"
+                  CornerRadius="6"
+                  Padding="12"
+                  BorderThickness="2"
+                  BorderBrush="{Binding IsCreateNewRun, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+            <StackPanel Spacing="6">
+              <RadioButton Content="Create new training run"
+                           GroupName="TrainingRunOption"
+                           IsChecked="{Binding IsCreateNewRun, Mode=TwoWay}"/>
+              <TextBox Text="{Binding NewTrainingRunName, Mode=TwoWay}"
+                       Watermark="e.g. SDXL_MyLoRA"
+                       MinWidth="300"
+                       IsEnabled="{Binding IsCreateNewRun}"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Content="Cancel" Width="110" Click="OnCancelClick"/>
+      <Button Content="Add to Training Run"
+              Width="170"
+              Background="#4CAF50"
+              IsEnabled="{Binding CanConfirm}"
+              Click="OnConfirmClick"/>
+    </StackPanel>
+  </Grid>
+</Window>

@@ -282,6 +282,16 @@ public interface IDialogService
         IEnumerable<DatasetCardViewModel> availableDatasets);
 
     /// <summary>
+    /// Shows the add to training run dialog for importing images into a dataset version's training run.
+    /// </summary>
+    /// <param name="selectedFileCount">Number of selected files.</param>
+    /// <param name="availableDatasets">Datasets available for selection.</param>
+    /// <returns>Result describing import options and training run target, or cancelled result.</returns>
+    Task<AddToTrainingRunResult> ShowAddToTrainingRunDialogAsync(
+        int selectedFileCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets);
+
+    /// <summary>
     /// Shows the caption compare dialog for choosing between existing and newly generated captions.
     /// </summary>
     /// <param name="imagePath">Path to the image being captioned.</param>
