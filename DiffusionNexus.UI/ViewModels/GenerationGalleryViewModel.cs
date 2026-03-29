@@ -432,8 +432,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     /// <summary>
-    /// Shows the Add to Training Run dialog and imports selected images into the chosen
-    /// dataset version, creating a new training run when requested.
+    /// Shows the Add to Training Run dialog and imports selected images into the
+    /// Presentation folder of the chosen training run, creating a new run when requested.
     /// </summary>
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private async Task AddSelectedToTrainingRunAsync()
@@ -472,9 +472,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             if (string.IsNullOrWhiteSpace(trainingRunName)) return;
 
+            var versionPath = dataset.GetVersionFolderPath(version);
+
             if (dialogResult.IsNewTrainingRun)
             {
-                var versionPath = dataset.GetVersionFolderPath(version);
                 TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, trainingRunName);
 
                 var runInfo = new TrainingRunInfo
@@ -492,8 +493,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 dataset.SaveMetadata();
             }
 
-            // Copy or move images into the version folder
-            var destinationFolder = dataset.GetVersionFolderPath(version);
+            // Copy or move images into the training run's Presentation folder
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, trainingRunName);
+            var destinationFolder = Path.Combine(runPath, "Presentation");
+            Directory.CreateDirectory(destinationFolder);
 
             var importer = new DatasetFileImporter(new FileOperations());
             var importResult = await importer.ImportWithDialogAsync(
