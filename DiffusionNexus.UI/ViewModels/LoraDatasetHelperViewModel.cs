@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
@@ -244,60 +245,74 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     private void OnNavigateToBatchCropScale(object? sender, NavigateToBatchCropScaleEventArgs e)
     {
-        if (e.ImagePaths is { Count: > 0 })
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // (which attaches the view and triggers DatasetVersionSelectorControl's restore)
+        // completes first.  Normal-priority Post runs before the restore's Background posts,
+        // ensuring SelectedDataset survives the reattach cycle.
+        Dispatcher.UIThread.Post(() =>
         {
-            if (e.ImagePaths.Count == 1)
-                BatchCropScale.LoadSingleImage(e.ImagePaths[0]);
-            else
-                BatchCropScale.LoadTemporaryImages(e.ImagePaths);
-        }
-        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
-        {
-            BatchCropScale.LoadSingleImage(e.ImagePath);
-        }
-        else if (e.Dataset is not null && e.Version.HasValue)
-        {
-            BatchCropScale.PreselectDataset(e.Dataset, e.Version.Value);
-        }
+            SelectedTabIndex = 3;
 
-        // Switch to Batch Crop/Scale tab (index 3)
-        SelectedTabIndex = 3;
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    BatchCropScale.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    BatchCropScale.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                BatchCropScale.LoadSingleImage(e.ImagePath);
+            }
+            else if (e.Dataset is not null && e.Version.HasValue)
+            {
+                BatchCropScale.PreselectDataset(e.Dataset, e.Version.Value);
+            }
+        });
     }
 
     private void OnNavigateToCaptioning(object? sender, NavigateToCaptioningEventArgs e)
     {
-        if (e.ImagePaths is { Count: > 0 })
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // completes first — see OnNavigateToBatchCropScale comment for details.
+        Dispatcher.UIThread.Post(() =>
         {
-            if (e.ImagePaths.Count == 1)
-                Captioning.LoadSingleImage(e.ImagePaths[0]);
-            else
-                Captioning.LoadTemporaryImages(e.ImagePaths);
-        }
-        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
-        {
-            Captioning.LoadSingleImage(e.ImagePath);
-        }
+            SelectedTabIndex = 2;
 
-        // Switch to Captioning tab (index 2)
-        SelectedTabIndex = 2;
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    Captioning.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    Captioning.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                Captioning.LoadSingleImage(e.ImagePath);
+            }
+        });
     }
 
     private void OnNavigateToBatchUpscale(object? sender, NavigateToBatchUpscaleEventArgs e)
     {
-        if (e.ImagePaths is { Count: > 0 })
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // completes first — see OnNavigateToBatchCropScale comment for details.
+        Dispatcher.UIThread.Post(() =>
         {
-            if (e.ImagePaths.Count == 1)
-                BatchUpscale.LoadSingleImage(e.ImagePaths[0]);
-            else
-                BatchUpscale.LoadTemporaryImages(e.ImagePaths);
-        }
-        else if (!string.IsNullOrWhiteSpace(e.ImagePath))
-        {
-            BatchUpscale.LoadSingleImage(e.ImagePath);
-        }
+            SelectedTabIndex = 4;
 
-        // Switch to Batch Upscale tab (index 4)
-        SelectedTabIndex = 4;
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    BatchUpscale.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    BatchUpscale.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                BatchUpscale.LoadSingleImage(e.ImagePath);
+            }
+        });
     }
 
     #endregion
