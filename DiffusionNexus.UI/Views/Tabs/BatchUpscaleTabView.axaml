@@ -19,29 +19,82 @@
         <Border Background="#333333" CornerRadius="8" Padding="16">
           <StackPanel Spacing="12">
             <TextBlock Text="Input Source" FontWeight="SemiBold" FontSize="14"/>
-            <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
-            <Grid ColumnDefinitions="*,Auto">
-              <controls:DatasetVersionSelectorControl Grid.Column="0"
-                  Datasets="{Binding AvailableDatasets}"
-                  SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
-                  VersionItems="{Binding AvailableDatasetVersions}"
-                  SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
-                  IsDatasetSearchable="False"
-                  DatasetPlaceholderText="Choose a dataset..."/>
-              <Button Grid.Column="1"
-                      Content="&#x21BB;"
-                      Command="{Binding RefreshDatasetsCommand}"
-                      Margin="4,0,0,0"
-                      ToolTip.Tip="Refresh dataset list"
-                      Padding="8,6"/>
-            </Grid>
-            <TextBlock Text="{Binding DatasetImageCount, StringFormat='{}{0} images'}"
-                       IsVisible="{Binding HasDatasetStats}"
-                       Opacity="0.6" FontSize="12"/>
-            <TextBlock Text="No images in selected version – select a different one."
-                       IsVisible="{Binding IsSelectedVersionEmpty}"
-                       Foreground="#FF5722" FontSize="12"
-                       TextWrapping="Wrap"/>
+
+            <ToggleSwitch IsChecked="{Binding IsSingleImageMode}"
+                          OnContent="Single Image"
+                          OffContent="Dataset"
+                          HorizontalAlignment="Left"/>
+
+            <!-- Dataset Input -->
+            <StackPanel IsVisible="{Binding !IsSingleImageMode}">
+              <TextBlock Text="Select Dataset" Margin="0,0,0,4"/>
+              <Grid ColumnDefinitions="*,Auto">
+                <controls:DatasetVersionSelectorControl Grid.Column="0"
+                    Datasets="{Binding AvailableDatasets}"
+                    SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                    VersionItems="{Binding AvailableDatasetVersions}"
+                    SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
+                    IsDatasetSearchable="False"
+                    DatasetPlaceholderText="Choose a dataset..."/>
+                <Button Grid.Column="1"
+                        Content="&#x21BB;"
+                        Command="{Binding RefreshDatasetsCommand}"
+                        Margin="4,0,0,0"
+                        ToolTip.Tip="Refresh dataset list"
+                        Padding="8,6"/>
+              </Grid>
+              <TextBlock Text="{Binding DatasetImageCount, StringFormat='{}{0} images'}"
+                         IsVisible="{Binding HasDatasetStats}"
+                         Opacity="0.6" FontSize="12"/>
+              <TextBlock Text="No images in selected version – select a different one."
+                         IsVisible="{Binding IsSelectedVersionEmpty}"
+                         Foreground="#FF5722" FontSize="12"
+                         TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- Single Image Input -->
+            <StackPanel IsVisible="{Binding IsSingleImageMode}" Spacing="8">
+              <!-- Drop zone (no image loaded) -->
+              <Border x:Name="SingleImageDropZone"
+                      Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+                      CornerRadius="8" Padding="16" MinHeight="100"
+                      DragDrop.AllowDrop="True"
+                      IsVisible="{Binding !HasSingleImage}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                  <TextBlock Text="No image loaded" FontSize="14" FontWeight="SemiBold"
+                             HorizontalAlignment="Center" Opacity="0.6"/>
+                  <TextBlock Text="Drag and drop an image here"
+                             FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
+                  <Button Content="+ Open Image"
+                          Command="{Binding SelectSingleImageCommand}"
+                          HorizontalAlignment="Center"
+                          Background="#4CAF50" Foreground="White"
+                          Padding="12,6" Margin="0,4,0,0"/>
+                </StackPanel>
+              </Border>
+
+              <!-- Loaded image info -->
+              <Border Background="#1A1A1A" CornerRadius="8" Padding="12"
+                      IsVisible="{Binding HasSingleImage}"
+                      DragDrop.AllowDrop="True"
+                      x:Name="SingleImageLoadedZone">
+                <Grid ColumnDefinitions="Auto,8,*,Auto,Auto">
+                  <TextBlock Grid.Column="0" Text="&#x1F5BC;" FontSize="20" VerticalAlignment="Center" Opacity="0.5"/>
+                  <TextBlock Grid.Column="2" Text="{Binding SingleImageName}"
+                             FontSize="13" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" Opacity="0.8"/>
+                  <Button Grid.Column="3" Content="..."
+                          Command="{Binding SelectSingleImageCommand}"
+                          Padding="8,4" Margin="4,0,0,0"
+                          ToolTip.Tip="Choose a different image"/>
+                  <Button Grid.Column="4" Content="X"
+                          Command="{Binding ClearSingleImageCommand}"
+                          Padding="8,4" Margin="4,0,0,0"
+                          Foreground="#FF6B6B" FontWeight="Bold"
+                          ToolTip.Tip="Remove image"/>
+                </Grid>
+              </Border>
+            </StackPanel>
           </StackPanel>
         </Border>
 
@@ -113,8 +166,9 @@
           </StackPanel>
         </Border>
 
-        <!-- Save Settings -->
-        <Border Background="#333333" CornerRadius="8" Padding="16">
+        <!-- Save Settings (dataset mode only) -->
+        <Border Background="#333333" CornerRadius="8" Padding="16"
+                IsVisible="{Binding IsDatasetMode}">
           <StackPanel Spacing="12">
             <TextBlock Text="Save Settings" FontWeight="SemiBold" FontSize="14"/>
             <ComboBox ItemsSource="{Binding AvailableSaveModes}"

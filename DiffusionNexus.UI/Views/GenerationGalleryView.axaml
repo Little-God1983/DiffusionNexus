@@ -167,12 +167,37 @@
         <Button Content="★ Select All Favorites" Command="{Binding SelectAllFavoritesCommand}"
                 Foreground="#FFD700" Padding="8,4" Margin="0,4,4,4"/>
         <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4" Margin="0,4,16,4"/>
-        <Button Content="Add Selected to Dataset" Command="{Binding AddSelectedToDatasetCommand}"
-                Background="#2E7D32" Padding="12,6" Margin="0,4,8,4"/>
-        <Button Content="Send Selected to Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
-                Background="#1976D2" Padding="12,6" Margin="0,4,8,4"/>
-        <Button Content="Send Selected to Image Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
-                Background="#7B1FA2" Padding="12,6" Margin="0,4,8,4"/>
+
+        <!-- Add Selected To... dropdown -->
+        <Button Content="Add Selected To..." Background="#2E7D32" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
+          <Button.Flyout>
+            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+              <MenuItem Header="Dataset" Command="{Binding AddSelectedToDatasetCommand}"
+                        ToolTip.Tip="Add selected images to an existing or new dataset"/>
+              <MenuItem Header="Training Run" Command="{Binding AddSelectedToTrainingRunCommand}"
+                        ToolTip.Tip="Add selected images to a training run (coming soon)"/>
+            </MenuFlyout>
+          </Button.Flyout>
+        </Button>
+
+        <!-- Send Selected To... dropdown -->
+        <Button Content="Send Selected To..." Background="#1976D2" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
+          <Button.Flyout>
+            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+              <MenuItem Header="Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
+                        ToolTip.Tip="Open selected images in the Image Editor"/>
+              <MenuItem Header="Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
+                        ToolTip.Tip="Compare selected images side by side"/>
+              <MenuItem Header="Batch Upscale" Command="{Binding SendSelectedToBatchUpscaleCommand}"
+                        ToolTip.Tip="Send selected images to Batch Upscale as a temporary dataset"/>
+              <MenuItem Header="Batch Crop/Scale" Command="{Binding SendSelectedToBatchCropCommand}"
+                        ToolTip.Tip="Send selected images to Batch Crop/Scale as a temporary dataset"/>
+              <MenuItem Header="Captioning" Command="{Binding SendSelectedToCaptioningCommand}"
+                        ToolTip.Tip="Send selected images to Captioning as a temporary dataset"/>
+            </MenuFlyout>
+          </Button.Flyout>
+        </Button>
+
         <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
                 Background="#B22222" Padding="12,6" Margin="0,4,0,4"/>
       </WrapPanel>

@@ -75,57 +75,110 @@
                 <StackPanel Spacing="16">
                     <TextBlock Text="Image Source" Classes="Header" Margin="0"/>
 
-                    <!-- Dataset Selection -->
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Select Dataset" FontWeight="SemiBold"/>
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                            <controls:DatasetVersionSelectorControl Grid.Column="0"
-                                Datasets="{Binding Datasets}"
-                                SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
-                                VersionItems="{Binding VersionItems}"
-                                SelectedVersion="{Binding SelectedVersion, Mode=TwoWay}"
-                                IsEnabled="{Binding !IsProcessing}"
-                                IsDatasetSearchable="True"
-                                DatasetPlaceholderText="Select a dataset..."/>
-                            <Button Grid.Column="1"
-                                    Content="Clear"
-                                    Command="{Binding ClearDatasetSelectionCommand}"
+                    <ToggleSwitch IsChecked="{Binding IsSingleImageMode}"
+                                  OnContent="Single Image"
+                                  OffContent="Dataset"
+                                  HorizontalAlignment="Left"/>
+
+                    <!-- Dataset / Folder Input (hidden in single image mode) -->
+                    <StackPanel IsVisible="{Binding !IsSingleImageMode}">
+
+                        <!-- Dataset Selection -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Select Dataset" FontWeight="SemiBold"/>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <controls:DatasetVersionSelectorControl Grid.Column="0"
+                                    Datasets="{Binding Datasets}"
+                                    SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                                    VersionItems="{Binding VersionItems}"
+                                    SelectedVersion="{Binding SelectedVersion, Mode=TwoWay}"
                                     IsEnabled="{Binding !IsProcessing}"
-                                    IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                    IsDatasetSearchable="True"
+                                    DatasetPlaceholderText="Select a dataset..."/>
+                                <Button Grid.Column="1"
+                                        Content="Clear"
+                                        Command="{Binding ClearDatasetSelectionCommand}"
+                                        IsEnabled="{Binding !IsProcessing}"
+                                        IsVisible="{Binding SelectedDataset, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- OR Separator -->
+                        <Grid ColumnDefinitions="*,Auto,*" Margin="0,8">
+                            <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
+                            <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
+                            <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
                         </Grid>
+
+                        <!-- Source Folder Selection -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Source Folder" FontWeight="SemiBold"/>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding SourceFolder}"
+                                         Watermark="Select a folder containing images..."
+                                         IsEnabled="{Binding !IsProcessing}"/>
+                                <Button Grid.Column="1"
+                                        x:Name="BrowseSourceButton"
+                                        Content="Browse..."
+                                        IsEnabled="{Binding !IsProcessing}"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Image Count Display -->
+                        <TextBlock Classes="SubText" Margin="0,8,0,0">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="Found {0} images in {1} files">
+                                    <Binding Path="ImageFiles"/>
+                                    <Binding Path="TotalFiles"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
                     </StackPanel>
 
-                    <!-- OR Separator -->
-                    <Grid ColumnDefinitions="*,Auto,*" Margin="0,8">
-                        <Separator Grid.Column="0" VerticalAlignment="Center" Opacity="0.3"/>
-                        <TextBlock Grid.Column="1" Text="OR" Margin="16,0" Opacity="0.6" FontWeight="SemiBold"/>
-                        <Separator Grid.Column="2" VerticalAlignment="Center" Opacity="0.3"/>
-                    </Grid>
+                    <!-- Single Image Input (visible in single image mode) -->
+                    <StackPanel IsVisible="{Binding IsSingleImageMode}" Spacing="8">
+                      <!-- Drop zone (no image loaded) -->
+                      <Border x:Name="SingleImageDropZone"
+                              Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+                              CornerRadius="8" Padding="16" MinHeight="100"
+                              DragDrop.AllowDrop="True"
+                              IsVisible="{Binding !HasSingleImage}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                          <TextBlock Text="No image loaded" FontSize="14" FontWeight="SemiBold"
+                                     HorizontalAlignment="Center" Opacity="0.6"/>
+                          <TextBlock Text="Drag and drop an image here"
+                                     FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
+                          <Button Content="+ Open Image"
+                                  Command="{Binding SelectSingleImageCommand}"
+                                  HorizontalAlignment="Center"
+                                  Background="#4CAF50" Foreground="White"
+                                  Padding="12,6" Margin="0,4,0,0"/>
+                        </StackPanel>
+                      </Border>
 
-                    <!-- Source Folder Selection -->
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Source Folder" FontWeight="SemiBold"/>
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                            <TextBox Grid.Column="0"
-                                     Text="{Binding SourceFolder}"
-                                     Watermark="Select a folder containing images..."
-                                     IsEnabled="{Binding !IsProcessing}"/>
-                            <Button Grid.Column="1"
-                                    x:Name="BrowseSourceButton"
-                                    Content="Browse..."
-                                    IsEnabled="{Binding !IsProcessing}"/>
+                      <!-- Loaded image info -->
+                      <Border Background="#1A1A1A" CornerRadius="8" Padding="12"
+                              IsVisible="{Binding HasSingleImage}"
+                              DragDrop.AllowDrop="True"
+                              x:Name="SingleImageLoadedZone">
+                        <Grid ColumnDefinitions="Auto,8,*,Auto,Auto">
+                          <TextBlock Grid.Column="0" Text="&#x1F5BC;" FontSize="20" VerticalAlignment="Center" Opacity="0.5"/>
+                          <TextBlock Grid.Column="2" Text="{Binding SingleImageName}"
+                                     FontSize="13" VerticalAlignment="Center"
+                                     TextTrimming="CharacterEllipsis" Opacity="0.8"/>
+                          <Button Grid.Column="3" Content="..."
+                                  Command="{Binding SelectSingleImageCommand}"
+                                  Padding="8,4" Margin="4,0,0,0"
+                                  ToolTip.Tip="Choose a different image"/>
+                          <Button Grid.Column="4" Content="X"
+                                  Command="{Binding ClearSingleImageCommand}"
+                                  Padding="8,4" Margin="4,0,0,0"
+                                  Foreground="#FF6B6B" FontWeight="Bold"
+                                  ToolTip.Tip="Remove image"/>
                         </Grid>
+                      </Border>
                     </StackPanel>
-
-                    <!-- Image Count Display -->
-                    <TextBlock Classes="SubText" Margin="0,8,0,0">
-                        <TextBlock.Text>
-                            <MultiBinding StringFormat="Found {0} images in {1} files">
-                                <Binding Path="ImageFiles"/>
-                                <Binding Path="TotalFiles"/>
-                            </MultiBinding>
-                        </TextBlock.Text>
-                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -309,8 +362,8 @@
                 </StackPanel>
             </Border>
 
-            <!-- Target Destination Card -->
-            <Border Classes="Card">
+            <!-- Target Destination Card (dataset mode only) -->
+            <Border Classes="Card" IsVisible="{Binding IsDatasetMode}">
                 <StackPanel Spacing="16">
                     <TextBlock Text="Target Destination" Classes="Header" Margin="0"/>
 

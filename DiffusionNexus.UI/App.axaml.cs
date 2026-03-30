@@ -678,7 +678,6 @@ public partial class App : Application
             sp.GetServices<ICaptioningBackend>().ToList(),
             sp.GetService<IVideoThumbnailService>(),
             sp.GetService<IBackgroundRemovalService>(),
-            sp.GetService<IImageUpscalingService>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<IComfyUIWrapperService>(),
@@ -790,6 +789,16 @@ public partial class App : Application
         };
 
         eventAggregator.NavigateToBatchCropScaleRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+        };
+
+        eventAggregator.NavigateToBatchUpscaleRequested += (_, _) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+        };
+
+        eventAggregator.NavigateToCaptioningRequested += (_, _) =>
         {
             mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
         };

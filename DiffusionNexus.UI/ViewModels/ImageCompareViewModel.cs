@@ -153,7 +153,7 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
 
     public string RightLabel => BuildLabel(EffectiveRightDataset?.Name, EffectiveRightVersion?.Version, SelectedRightImage?.DisplayName, "Right");
 
-    public double TrayHeight => 260d;
+    public double TrayHeight => 350d;
 
     public double TrayHandleHeight => 48d;
 

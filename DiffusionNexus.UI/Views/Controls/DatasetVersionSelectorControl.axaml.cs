@@ -135,11 +135,11 @@ public partial class DatasetVersionSelectorControl : UserControl
 
     private bool _autoSelectScheduled;
 
-    // Tracks the last non-null selections so they can be restored after a visual-tree
-    // detach/reattach cycle (editable ComboBoxes clear their selection on detach).
+    // Tracks the last non-null selections so they can be restored after any visual-tree
+    // attach (first-time or re-attach).  Editable ComboBoxes clear their selection when
+    // detached, and item containers may not yet be generated on first attach.
     private DatasetCardViewModel? _lastValidDataset;
     private EditorVersionItem? _lastValidVersion;
-    private bool _wasDetached;
 
     public DatasetVersionSelectorControl()
     {
@@ -178,68 +178,74 @@ public partial class DatasetVersionSelectorControl : UserControl
     }
 
     /// <inheritdoc />
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        _wasDetached = true;
-        base.OnDetachedFromVisualTree(e);
-    }
-
-    /// <inheritdoc />
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
 
-        if (_wasDetached)
-        {
-            _wasDetached = false;
-            RestoreSelectionsIfNeeded();
-        }
+        // Always restore on attach, not just re-attach.
+        // On first attach the dataset may have been set in the VM before the tab became
+        // visible.  Avalonia's ComboBox can miss the SelectedItem because item containers
+        // aren't generated yet when the binding fires, so the restore nudges it after
+        // the first layout pass.  On re-attach the editable ComboBox clears its text on
+        // detach, so the same logic is needed there too.
+        RestoreSelectionsIfNeeded();
     }
 
     /// <summary>
-    /// Restores dataset and version selections that were lost when editable ComboBoxes
-    /// cleared their SelectedItem during a visual-tree detach/reattach cycle.
+    /// Restores dataset and version selections after a visual-tree attach (first-time or
+    /// re-attach).  Uses a double Background post: the outer post is enqueued immediately;
+    /// Avalonia's binding re-activation (which may also run at Background priority) is
+    /// enqueued around the same time; the inner post is enqueued only after the outer post
+    /// runs, guaranteeing it executes after any same-priority binding work has completed and
+    /// <see cref="_lastValidDataset"/> has been populated.
+    /// The restore sets the inner ComboBox's SelectedItem directly to avoid triggering the
+    /// TwoWay-binding chain back into the VM (which would clear and repopulate versions).
     /// </summary>
     private void RestoreSelectionsIfNeeded()
     {
-        var dataset = _lastValidDataset;
-        var version = _lastValidVersion;
+        Dispatcher.UIThread.Post(() =>
+        {
+            Dispatcher.UIThread.Post(ApplyStoredSelections, DispatcherPriority.Background);
+        }, DispatcherPriority.Background);
+    }
 
+    private void ApplyStoredSelections()
+    {
+        var dataset = _lastValidDataset;
         if (dataset is null)
         {
             return;
         }
 
-        Dispatcher.UIThread.Post(() =>
+        var datasetCombo = this.FindControl<ComboBox>("DatasetComboBox");
+        if (datasetCombo is not null && !ReferenceEquals(datasetCombo.SelectedItem, dataset))
         {
-            // Temporarily disable auto-select so the version restore is not overridden
-            var wasAutoSelect = AutoSelectLastVersion;
-            AutoSelectLastVersion = false;
+            datasetCombo.SelectedItem = dataset;
+        }
 
-            try
-            {
-                if (SelectedDataset is null)
-                {
-                    SelectedDataset = dataset;
-                }
+        var version = _lastValidVersion;
+        if (version is null || VersionItems is null)
+        {
+            return;
+        }
 
-                if (version is not null && VersionItems is not null)
-                {
-                    foreach (var item in VersionItems)
-                    {
-                        if (item is EditorVersionItem evi && evi.Version == version.Version)
-                        {
-                            SelectedVersion = evi;
-                            break;
-                        }
-                    }
-                }
-            }
-            finally
+        var versionCombo = this.FindControl<ComboBox>("VersionComboBox");
+        if (versionCombo is null)
+        {
+            return;
+        }
+
+        foreach (var item in VersionItems)
+        {
+            if (item is EditorVersionItem evi && evi.Version == version.Version)
             {
-                AutoSelectLastVersion = wasAutoSelect;
+                if (!ReferenceEquals(versionCombo.SelectedItem, evi))
+                {
+                    versionCombo.SelectedItem = evi;
+                }
+                break;
             }
-        }, DispatcherPriority.Background);
+        }
     }
 
     private void OnVersionItemsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

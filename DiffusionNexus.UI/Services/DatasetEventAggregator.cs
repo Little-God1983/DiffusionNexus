@@ -264,30 +264,65 @@ public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 }
 
 /// <summary>
-/// Event raised when an image is sent to the Captioning tab for single-image captioning.
+/// Event raised when navigation to the Captioning tab is requested.
+/// Supply either <see cref="ImagePath"/> for a single image or <see cref="ImagePaths"/> for a batch.
 /// </summary>
 public sealed class NavigateToCaptioningEventArgs : DatasetEventArgs
 {
     /// <summary>
-    /// Absolute path to the image file.
+    /// Absolute path to the image file (single-image mode).
     /// </summary>
-    public required string ImagePath { get; init; }
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }
 
 /// <summary>
 /// Event raised when navigation to the Batch Crop/Scale tab is requested.
+/// Supply <see cref="Dataset"/>/<see cref="Version"/> for a dataset,
+/// <see cref="ImagePath"/> for a single image, or <see cref="ImagePaths"/> for a gallery selection.
 /// </summary>
 public sealed class NavigateToBatchCropScaleEventArgs : DatasetEventArgs
 {
     /// <summary>
     /// The dataset to process.
     /// </summary>
-    public required DatasetCardViewModel Dataset { get; init; }
+    public DatasetCardViewModel? Dataset { get; init; }
 
     /// <summary>
     /// The version to preselect.
     /// </summary>
-    public required int Version { get; init; }
+    public int? Version { get; init; }
+
+    /// <summary>
+    /// Absolute path to a single image (single-image mode).
+    /// </summary>
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
+}
+
+/// <summary>
+/// Event raised when navigation to the Batch Upscale tab is requested.
+/// Supply either <see cref="ImagePath"/> for a single image or <see cref="ImagePaths"/> for a batch.
+/// </summary>
+public sealed class NavigateToBatchUpscaleEventArgs : DatasetEventArgs
+{
+    /// <summary>
+    /// Absolute path to the image file to upscale (single-image mode).
+    /// </summary>
+    public string? ImagePath { get; init; }
+
+    /// <summary>
+    /// Absolute paths to multiple images to upscale (batch mode via temporary dataset).
+    /// </summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }
 
 /// <summary>
@@ -453,6 +488,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
 
+    /// <summary>
+    /// Raised when a single image is sent to the Batch Upscale tab.
+    /// </summary>
+    event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
+
     #endregion
 
     #region Publish Methods
@@ -475,6 +515,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
+    void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
 
     #endregion
@@ -554,6 +595,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToCaptioningEventArgs>? NavigateToCaptioningRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
 
     #endregion
 
@@ -683,6 +727,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToCaptioningRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToBatchUpscaleRequested, args);
     }
 
     /// <inheritdoc/>

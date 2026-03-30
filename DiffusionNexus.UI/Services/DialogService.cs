@@ -460,6 +460,17 @@ public class DialogService : IDialogService
         return dialog.Result ?? AddToDatasetResult.Cancelled();
     }
 
+    public async Task<AddToTrainingRunResult> ShowAddToTrainingRunDialogAsync(
+        int selectedFileCount,
+        IEnumerable<DatasetCardViewModel> availableDatasets)
+    {
+        var dialog = new AddToTrainingRunDialog()
+            .WithOptions(selectedFileCount, availableDatasets);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? AddToTrainingRunResult.Cancelled();
+    }
+
     public async Task<CaptionCompareResult> ShowCaptionCompareDialogAsync(
         string imagePath, string currentCaption, string newCaption)
     {

@@ -182,6 +182,8 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
 
     /// <summary>
     /// Loads and decodes an image from disk, resizing to target width.
+    /// Uses <see cref="EfficientImageDecoder"/> for SKCodec-based subsampled decoding
+    /// which avoids loading the full image into memory for large files (especially JPEG).
     /// </summary>
     private static Bitmap? LoadAndDecode(string imagePath, int targetWidth)
     {
@@ -193,46 +195,9 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
         {
             return CreateVideoPlaceholder(targetWidth);
         }
-        
-        try
-        {
-            // Verify file exists
-            if (!File.Exists(imagePath)) return null;
 
-            // Ensure valid width
-            var width = targetWidth > 0 ? targetWidth : 340;
-
-            // Use FileStream with shared read access to avoid locking issues
-            using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            
-            // Empty stream check
-            if (stream.Length == 0 || !stream.CanRead) return null;
-            
-            // Decode with error handling
-            try 
-            {
-                var bitmap = Bitmap.DecodeToWidth(stream, width, BitmapInterpolationMode.MediumQuality);
-                
-                // Validate bitmap
-                if (bitmap != null && bitmap.PixelSize.Width > 0)
-                {
-                    return bitmap;
-                }
-                
-                bitmap?.Dispose();
-                return null;
-            }
-            catch
-            {
-                // Internal decoding error
-                return null;
-            }
-        }
-        catch
-        {
-            // File access or generic error
-            return null;
-        }
+        var width = targetWidth > 0 ? targetWidth : 340;
+        return EfficientImageDecoder.DecodeThumbnail(imagePath, width);
     }
 
     /// <summary>

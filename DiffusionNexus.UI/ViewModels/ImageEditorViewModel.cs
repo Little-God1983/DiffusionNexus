@@ -4,6 +4,7 @@ using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
+#pragma warning disable CS0618 // UpscalingViewModel is deprecated but still referenced until full removal
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -314,7 +315,6 @@ public partial class ImageEditorViewModel : ObservableObject
     public ImageEditorViewModel(
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IImageUpscalingService? upscalingService = null,
         IComfyUIWrapperService? comfyUiService = null,
         EditorServices? services = null)
     {
@@ -328,7 +328,7 @@ public partial class ImageEditorViewModel : ObservableObject
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
-        Upscaling = new UpscalingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, upscalingService);
+        Upscaling = new UpscalingViewModel(() => HasImage, () => CurrentImagePath, DeactivateOtherTools, eventAggregator);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
@@ -557,7 +557,6 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         ImageWidth = width;
         ImageHeight = height;
-        Upscaling.RefreshOutputDimensions();
     }
 
     /// <summary>Updates file information displayed in the ViewModel.</summary>

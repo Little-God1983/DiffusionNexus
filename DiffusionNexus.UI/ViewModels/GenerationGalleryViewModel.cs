@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -428,6 +429,107 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             ClearSelectionSilent();
             UpdateSelectionState();
         }, "Adding media to dataset...");
+    }
+
+    /// <summary>
+    /// Shows the Add to Training Run dialog and imports selected images into the
+    /// Presentation folder of the chosen training run, creating a new run when requested.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task AddSelectedToTrainingRunAsync()
+    {
+        if (DialogService is null || _datasetState is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected && item.IsImage).ToList();
+        if (selectedItems.Count == 0)
+        {
+            await DialogService.ShowMessageAsync(
+                "No Images Selected",
+                "Please select at least one image to add to a training run.");
+            return;
+        }
+
+        var dialogResult = await DialogService.ShowAddToTrainingRunDialogAsync(
+            selectedItems.Count,
+            _datasetState.Datasets);
+
+        if (!dialogResult.Confirmed) return;
+
+        var dataset = dialogResult.SelectedDataset;
+        if (dataset is null || !dialogResult.SelectedVersion.HasValue) return;
+
+        var version = dialogResult.SelectedVersion.Value;
+
+        await RunBusyAsync(async () =>
+        {
+            // Ensure the training run exists
+            var trainingRunName = dialogResult.IsNewTrainingRun
+                ? dialogResult.NewTrainingRunName
+                : dialogResult.SelectedTrainingRunName;
+
+            if (string.IsNullOrWhiteSpace(trainingRunName)) return;
+
+            var versionPath = dataset.GetVersionFolderPath(version);
+
+            if (dialogResult.IsNewTrainingRun)
+            {
+                TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, trainingRunName);
+
+                var runInfo = new TrainingRunInfo
+                {
+                    Name = trainingRunName,
+                    CreatedAt = DateTimeOffset.Now
+                };
+
+                if (!dataset.TrainingRuns.ContainsKey(version))
+                {
+                    dataset.TrainingRuns[version] = [];
+                }
+
+                dataset.TrainingRuns[version].Add(runInfo);
+                dataset.SaveMetadata();
+            }
+
+            // Copy or move images into the training run's Presentation folder
+            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, trainingRunName);
+            var destinationFolder = Path.Combine(runPath, "Presentation");
+            Directory.CreateDirectory(destinationFolder);
+
+            var importer = new DatasetFileImporter(new FileOperations());
+            var importResult = await importer.ImportWithDialogAsync(
+                selectedItems.Select(item => item.FilePath),
+                destinationFolder,
+                DialogService!,
+                _videoThumbnailService,
+                moveFiles: dialogResult.ImportAction == DatasetImportAction.Move);
+
+            if (importResult.Cancelled)
+            {
+                return;
+            }
+
+            if (dialogResult.ImportAction == DatasetImportAction.Move)
+            {
+                var movedSet = importResult.ProcessedSourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in selectedItems.Where(item => movedSet.Contains(item.FilePath)).ToList())
+                {
+                    RemoveMediaItem(item);
+                }
+            }
+
+            dataset.RefreshImageInfo();
+            _eventAggregator?.PublishImageAdded(new ImageAddedEventArgs
+            {
+                Dataset = dataset,
+                AddedImages = []
+            });
+
+            ClearSelectionSilent();
+            UpdateSelectionState();
+        }, "Adding images to training run...");
     }
 
     private async Task OpenImageViewerAtIndexAsync(int index)
@@ -925,8 +1027,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(SelectionText));
         OnPropertyChanged(nameof(HasFavorites));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
+        AddSelectedToTrainingRunCommand.NotifyCanExecuteChanged();
         SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
         SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
+        SendSelectedToBatchUpscaleCommand.NotifyCanExecuteChanged();
+        SendSelectedToBatchCropCommand.NotifyCanExecuteChanged();
+        SendSelectedToCaptioningCommand.NotifyCanExecuteChanged();
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
     }
@@ -1001,7 +1107,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
         var tempDataset = new DatasetCardViewModel
         {
-            Name = "Temp Dataset",
+            Name = "Gallery Selection",
             FolderPath = "TEMP://GenerationGallery",
             IsVersionedStructure = true,
             CurrentVersion = 1,
@@ -1019,7 +1125,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         });
     }
 
-    [RelayCommand(CanExecute = nameof(HasMultipleImagesSelected))]
+    [RelayCommand(CanExecute = nameof(HasSelection))]
     private async Task SendSelectedToImageComparerAsync()
     {
         if (_eventAggregator is null)
@@ -1054,6 +1160,117 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var imagePaths = imageItems.Select(item => item.FilePath).ToList();
 
         _eventAggregator.PublishNavigateToImageComparer(new NavigateToImageComparerEventArgs
+        {
+            ImagePaths = imagePaths
+        });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Batch Upscale tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToBatchUpscaleAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Batch Upscale only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
+        {
+            ImagePaths = imagePaths
+        });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Batch Crop/Scale tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToBatchCropAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Batch Crop/Scale only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
+        {
+            ImagePaths = imagePaths
+        });
+    }
+
+    /// <summary>
+    /// Sends the selected images to the Captioning tab as a temporary dataset.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task SendSelectedToCaptioningAsync()
+    {
+        if (_eventAggregator is null)
+        {
+            return;
+        }
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
+        if (imageItems.Count == 0)
+        {
+            if (DialogService is not null)
+            {
+                await DialogService.ShowMessageAsync(
+                    "No Images Selected",
+                    "Captioning only supports images. Please select at least one image.");
+            }
+            return;
+        }
+
+        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
+
+        _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
         {
             ImagePaths = imagePaths
         });

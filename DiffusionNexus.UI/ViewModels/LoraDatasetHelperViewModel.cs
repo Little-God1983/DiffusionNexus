@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
@@ -153,7 +154,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="captioningBackends">Available captioning backends (local inference, ComfyUI, etc.).</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service.</param>
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
-    /// <param name="upscalingService">Optional image upscaling service for AI-powered upscaling.</param>
     /// <param name="backupService">Optional dataset backup service for automatic backups.</param>
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
@@ -166,7 +166,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IReadOnlyList<ICaptioningBackend>? captioningBackends = null,
         IVideoThumbnailService? videoThumbnailService = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IImageUpscalingService? upscalingService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
         IComfyUIWrapperService? comfyUiService = null,
@@ -195,10 +194,10 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             thumbnailOrchestrator,
             analysisPipeline,
             bucketAnalyzer);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, upscalingService, comfyUiService, thumbnailOrchestrator);
-        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator);
-        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends);
-        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator);
+        BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService);
+        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -206,6 +205,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         // Subscribe to navigation events to switch tabs
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditor;
         _eventAggregator.NavigateToBatchCropScaleRequested += OnNavigateToBatchCropScale;
+        _eventAggregator.NavigateToCaptioningRequested += OnNavigateToCaptioning;
+        _eventAggregator.NavigateToBatchUpscaleRequested += OnNavigateToBatchUpscale;
     }
 
     /// <summary>
@@ -244,11 +245,74 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
 
     private void OnNavigateToBatchCropScale(object? sender, NavigateToBatchCropScaleEventArgs e)
     {
-        // Preselect the dataset and version in BatchCropScale tab
-        BatchCropScale.PreselectDataset(e.Dataset, e.Version);
-        
-        // Switch to Batch Crop/Scale tab (index 3)
-        SelectedTabIndex = 3;
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // (which attaches the view and triggers DatasetVersionSelectorControl's restore)
+        // completes first.  Normal-priority Post runs before the restore's Background posts,
+        // ensuring SelectedDataset survives the reattach cycle.
+        Dispatcher.UIThread.Post(() =>
+        {
+            SelectedTabIndex = 3;
+
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    BatchCropScale.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    BatchCropScale.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                BatchCropScale.LoadSingleImage(e.ImagePath);
+            }
+            else if (e.Dataset is not null && e.Version.HasValue)
+            {
+                BatchCropScale.PreselectDataset(e.Dataset, e.Version.Value);
+            }
+        });
+    }
+
+    private void OnNavigateToCaptioning(object? sender, NavigateToCaptioningEventArgs e)
+    {
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // completes first — see OnNavigateToBatchCropScale comment for details.
+        Dispatcher.UIThread.Post(() =>
+        {
+            SelectedTabIndex = 2;
+
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    Captioning.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    Captioning.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                Captioning.LoadSingleImage(e.ImagePath);
+            }
+        });
+    }
+
+    private void OnNavigateToBatchUpscale(object? sender, NavigateToBatchUpscaleEventArgs e)
+    {
+        // Defer data loading + tab switch so the module navigation handler in App.axaml.cs
+        // completes first — see OnNavigateToBatchCropScale comment for details.
+        Dispatcher.UIThread.Post(() =>
+        {
+            SelectedTabIndex = 4;
+
+            if (e.ImagePaths is { Count: > 0 })
+            {
+                if (e.ImagePaths.Count == 1)
+                    BatchUpscale.LoadSingleImage(e.ImagePaths[0]);
+                else
+                    BatchUpscale.LoadTemporaryImages(e.ImagePaths);
+            }
+            else if (!string.IsNullOrWhiteSpace(e.ImagePath))
+            {
+                BatchUpscale.LoadSingleImage(e.ImagePath);
+            }
+        });
     }
 
     #endregion
@@ -297,6 +361,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.NavigateToImageEditorRequested -= OnNavigateToImageEditor;
             _eventAggregator.NavigateToBatchCropScaleRequested -= OnNavigateToBatchCropScale;
+            _eventAggregator.NavigateToCaptioningRequested -= OnNavigateToCaptioning;
+            _eventAggregator.NavigateToBatchUpscaleRequested -= OnNavigateToBatchUpscale;
 
             // Dispose child ViewModels
             DatasetManagement.Dispose();

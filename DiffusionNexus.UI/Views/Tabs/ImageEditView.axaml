@@ -121,7 +121,7 @@
                           ToolTip.Tip="Fill transparent background with solid color"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Upscale" IsChecked="{Binding ImageEditor.Upscaling.IsPanelOpen, Mode=TwoWay}" Padding="12,6" 
-                          ToolTip.Tip="AI Upscaling (4x-UltraSharp)"
+                          ToolTip.Tip="AI Upscaling (Deprecated – use Batch Upscale tab)"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Draw" IsChecked="{Binding ImageEditor.DrawingTools.IsDrawingToolActive, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Drawing Tool - Hold Shift for straight lines"
@@ -628,81 +628,23 @@
             </Border>
           </StackPanel>
           
-          <!-- AI Upscaling Panel -->
+          <!-- AI Upscaling Panel (Deprecated) -->
           <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Upscaling.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="AI Upscaling" FontWeight="SemiBold" FontSize="14"/>
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
-              <StackPanel Spacing="8">
-                <!-- Model Status -->
-                <StackPanel Spacing="4">
-                  <TextBlock Text="Model Status" FontSize="11" Opacity="0.7"/>
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <Border Width="8" Height="8" CornerRadius="4"
-                            Background="{Binding ImageEditor.Upscaling.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToStatusBrush}}"/>
-                    <TextBlock FontSize="12" Opacity="0.9"
-                               Text="{Binding ImageEditor.Upscaling.IsModelReady, Converter={x:Static converters:BoolConverters.BoolToUpscalingModelStatusText}}"/>
-                  </StackPanel>
-                </StackPanel>
-                
-                <!-- Download Button (shown when model missing and not busy) -->
-                <Button Content="Download Model (~67 MB)" 
-                        Command="{Binding ImageEditor.Upscaling.DownloadModelCommand}"
-                        HorizontalAlignment="Stretch"
-                        Background="#5E35B1"
-                        Foreground="White"
-                        IsVisible="{Binding ImageEditor.Upscaling.IsModelMissing}"
-                        IsEnabled="{Binding !ImageEditor.Upscaling.IsBusy}"/>
-                
-                <!-- Progress (shown when busy) -->
-                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Upscaling.IsBusy}">
-                  <TextBlock Text="{Binding ImageEditor.Upscaling.Status}" 
-                             FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
-                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
-                    <Border Background="#5E35B1" CornerRadius="2" HorizontalAlignment="Left"
-                            Width="{Binding ImageEditor.Upscaling.Progress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
-                  </Border>
-                </StackPanel>
-                
-                <Border Height="1" Background="#444" Margin="0,4"/>
-                
-                <!-- Scale Slider (only show when model is ready) -->
-                <StackPanel Spacing="6" IsVisible="{Binding ImageEditor.Upscaling.IsModelReady}">
-                  <TextBlock Text="Target Scale" FontSize="11" Opacity="0.7"/>
-                  <Grid ColumnDefinitions="Auto,*,Auto">
-                    <TextBlock Grid.Column="0" Text="1.1x" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                    <Slider Grid.Column="1" Minimum="1.1" Maximum="4.0" Value="{Binding ImageEditor.Upscaling.TargetScale}" 
-                            TickFrequency="0.1" Margin="8,0"/>
-                    <TextBlock Grid.Column="2" Text="4.0x" FontSize="10" VerticalAlignment="Center" Opacity="0.5"/>
-                  </Grid>
-                  <TextBlock Text="{Binding ImageEditor.Upscaling.TargetScaleText}" 
-                             FontSize="18" FontWeight="SemiBold" Foreground="#5E35B1" HorizontalAlignment="Center"/>
-                  
-                  <!-- Output Dimensions Preview -->
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Margin="0,4,0,0">
-                    <TextBlock Text="Output:" FontSize="10" Opacity="0.6"/>
-                    <TextBlock Text="{Binding ImageEditor.Upscaling.OutputDimensions}" FontSize="10" Opacity="0.8"/>
-                  </StackPanel>
-                </StackPanel>
-                
-                <Border Height="1" Background="#444" Margin="0,4"/>
-                
-                <!-- Instructions -->
-                <TextBlock Text="Uses 4x-UltraSharp AI model for high-quality upscaling. Runs locally on GPU/CPU." 
-                           FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
-                
-                <!-- Performance Warning -->
-                <Border Background="#3D2D00" CornerRadius="4" Padding="6" Margin="0,4,0,0" 
-                        IsVisible="{Binding ImageEditor.Upscaling.IsModelReady}">
-                  <TextBlock Text="? Processing can take several minutes for large images. A 4x upscale is always computed internally, even for lower target scales." 
-                             FontSize="9" Opacity="0.9" TextWrapping="Wrap" Foreground="#FFCC00"/>
+              <StackPanel Spacing="10">
+                <!-- Deprecated Notice -->
+                <Border Background="#3D2D00" CornerRadius="4" Padding="8">
+                  <TextBlock Text="This built-in upscaler is deprecated. Use the Batch Upscale tab for higher-quality ComfyUI-powered upscaling with prompt guidance."
+                             FontSize="11" Opacity="0.9" TextWrapping="Wrap" Foreground="#FFCC00"/>
                 </Border>
-                
-                <Border Height="1" Background="#444" Margin="0,4"/>
-                
-                <!-- Action Button -->
-                <Button Content="Apply Upscale" Command="{Binding ImageEditor.Upscaling.UpscaleCommand}" 
-                        Background="#2D7D46" HorizontalAlignment="Stretch"
-                        IsEnabled="{Binding ImageEditor.Upscaling.IsModelReady}"/>
+
+                <TextBlock Text="The Batch Upscale tab supports single images and full datasets with vision auto-prompt, manual prompt, and caption-based modes."
+                           FontSize="10" Opacity="0.6" TextWrapping="Wrap"/>
+
+                <!-- Send to Batch Upscale Button -->
+                <Button Content="Send to Batch Upscale" Command="{Binding ImageEditor.Upscaling.SendToBatchUpscaleCommand}"
+                        Background="#5E35B1" Foreground="White" HorizontalAlignment="Stretch" FontWeight="SemiBold"/>
               </StackPanel>
             </Border>
           </StackPanel>

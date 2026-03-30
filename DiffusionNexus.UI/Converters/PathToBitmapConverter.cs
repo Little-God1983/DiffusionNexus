@@ -2,6 +2,7 @@ using Avalonia.Data.Converters;
 using Avalonia.Media.Imaging;
 using DiffusionNexus.UI.Services;
 using System.Globalization;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.Converters;
 
@@ -65,33 +66,17 @@ public class PathToBitmapConverter : IValueConverter
     }
 
     /// <summary>
-    /// Loads the full resolution image without any scaling.
+    /// Loads the image for display, capping at a maximum resolution to prevent
+    /// excessive memory usage with very large images (e.g., 8K+ upscale results).
     /// </summary>
     private static Bitmap? LoadFullResolution(string path)
     {
-        try
-        {
-            using var stream = File.OpenRead(path);
-            return new Bitmap(stream);
-        }
-        catch
-        {
-            return null;
-        }
+        return EfficientImageDecoder.DecodeForDisplay(path);
     }
 
     private static Bitmap? LoadSynchronous(string path)
     {
-        try
-        {
-            using var stream = File.OpenRead(path);
-            // Use DecodeToWidth for smaller memory footprint
-            return Bitmap.DecodeToWidth(stream, DefaultThumbnailWidth, BitmapInterpolationMode.MediumQuality);
-        }
-        catch
-        {
-            return null;
-        }
+        return EfficientImageDecoder.DecodeThumbnail(path, DefaultThumbnailWidth);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -132,14 +117,6 @@ public class ThumbnailMultiConverter : IMultiValueConverter
         }
 
         // Sync fallback
-        try
-        {
-            using var stream = File.OpenRead(path);
-            return Bitmap.DecodeToWidth(stream, PathToBitmapConverter.DefaultThumbnailWidth, BitmapInterpolationMode.MediumQuality);
-        }
-        catch
-        {
-            return null;
-        }
+        return EfficientImageDecoder.DecodeThumbnail(path, PathToBitmapConverter.DefaultThumbnailWidth);
     }
 }

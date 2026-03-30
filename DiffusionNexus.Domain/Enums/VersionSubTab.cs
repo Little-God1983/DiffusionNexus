@@ -25,6 +25,7 @@ public enum VersionSubTab
 
     /// <summary>
     /// Dataset quality analysis tab - checks caption consistency, trigger words, and more.
+    /// <para><b>BETA:</b> Hidden from UI until ready for release.</para>
     /// </summary>
     DatasetQuality = 2
 }
