@@ -186,6 +186,14 @@
           </StackPanel>
         </Border>
 
+        <!-- ComfyUI Readiness -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="ComfyUI Status" FontWeight="SemiBold" FontSize="14"/>
+            <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
+          </StackPanel>
+        </Border>
+
         <!-- Action & Status -->
         <Border Background="#333333" CornerRadius="8" Padding="16">
           <StackPanel Spacing="12">
@@ -215,12 +223,6 @@
             <TextBlock Text="{Binding CurrentProcessingStatus}"
                        Foreground="#4CAF50" FontSize="13"
                        TextWrapping="Wrap"/>
-
-            <!-- ComfyUI unavailable warning -->
-            <TextBlock Text="ComfyUI service is not connected. Check your ComfyUI settings."
-                       Foreground="#FF5722" FontSize="12"
-                       TextWrapping="Wrap"
-                       IsVisible="{Binding !IsComfyUIAvailable}"/>
           </StackPanel>
         </Border>
 

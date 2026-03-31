@@ -935,6 +935,10 @@
           <!-- Inpainting Panel -->
           <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.Inpainting.IsPanelOpen, FallbackValue=False}">
             <TextBlock Text="Inpainting" FontWeight="SemiBold" FontSize="14"/>
+
+            <!-- ComfyUI Readiness Status -->
+            <reusable:ComfyUIReadinessPanel DataContext="{Binding ImageEditor.Inpainting.Readiness}"/>
+
             <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
               <StackPanel Spacing="10">
                 <!-- Instructions -->

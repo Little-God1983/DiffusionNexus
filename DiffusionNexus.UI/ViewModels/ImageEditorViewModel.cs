@@ -316,7 +316,8 @@ public partial class ImageEditorViewModel : ObservableObject
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
-        EditorServices? services = null)
+        EditorServices? services = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator;
         _services = services ?? EditorServiceFactory.Create();
@@ -329,7 +330,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Upscaling = new UpscalingViewModel(() => HasImage, () => CurrentImagePath, DeactivateOtherTools, eventAggregator);
-        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator);
+        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 

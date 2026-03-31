@@ -271,16 +271,22 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// </summary>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for executing upscale workflows.</param>
     /// <param name="settingsService">Optional settings service for dataset storage path resolution.</param>
+    /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
     public BatchUpscaleTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IComfyUIWrapperService? comfyUiService = null,
-        IAppSettingsService? settingsService = null)
+        IAppSettingsService? settingsService = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _comfyUiService = comfyUiService;
         _settingsService = settingsService;
+
+        // Create readiness ViewModels for both upscale variants
+        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscale);
+        VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscaleVision);
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -312,6 +318,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// Unified readiness state for the standard batch upscale workflow.
+    /// Bind to <c>Readiness.IsReady</c>, <c>Readiness.MissingRequirements</c>, etc.
+    /// </summary>
+    public ComfyUIReadinessViewModel Readiness { get; }
+
+    /// <summary>
+    /// Unified readiness state for the vision auto-prompt upscale workflow.
+    /// Has additional requirements (Qwen3_VQA node + model) compared to <see cref="Readiness"/>.
+    /// </summary>
+    public ComfyUIReadinessViewModel VisionReadiness { get; }
 
     /// <summary>
     /// Available datasets from shared state.

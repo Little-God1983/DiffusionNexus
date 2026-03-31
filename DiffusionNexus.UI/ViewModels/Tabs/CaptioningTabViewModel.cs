@@ -66,7 +66,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     // Backend Selection
     private ICaptioningBackend? _selectedBackend;
-    private bool _isBackendAvailable;
 
     // Model Selection (used by Local Inference backend)
     private CaptioningModelType _selectedModelType = CaptioningModelType.Qwen3_VL_8B;
@@ -129,13 +128,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         IDatasetState state,
         ICaptioningService? captioningService = null,
         IReadOnlyList<ICaptioningBackend>? backends = null,
-        IAppSettingsService? settingsService = null)
+        IAppSettingsService? settingsService = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
         _backends = backends ?? [];
         _settingsService = settingsService;
+
+        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Captioning);
 
         AvailableDatasetVersions = [];
         AvailableModels = Enum.GetValues<CaptioningModelType>();
@@ -167,10 +169,20 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
         ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
-        CheckBackendAvailabilityCommand = new AsyncRelayCommand(CheckBackendAvailabilityAsync);
         PauseCommand = new RelayCommand(PauseCaptioning, () => IsProcessing);
         RefreshDatasetsCommand = new RelayCommand(
             () => _eventAggregator.PublishRefreshDatasetsRequested(new RefreshDatasetsRequestedEventArgs()));
+
+        // Propagate readiness changes to model/generate status
+        Readiness.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady) or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                OnPropertyChanged(nameof(IsModelReady));
+                OnPropertyChanged(nameof(IsModelMissing));
+                GenerateCommand.NotifyCanExecuteChanged();
+            }
+        };
 
         RefreshModelStatuses();
 
@@ -190,6 +202,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// Unified readiness check for the Captioning feature (server, nodes, models).
+    /// </summary>
+    public ComfyUIReadinessViewModel Readiness { get; }
 
     /// <summary>
     /// Whether any captioning backend is available (local inference or ComfyUI).
@@ -230,54 +247,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 OnPropertyChanged(nameof(IsModelReady));
                 OnPropertyChanged(nameof(IsModelMissing));
                 GenerateCommand.NotifyCanExecuteChanged();
-                _ = CheckBackendAvailabilityAsync();
+                Readiness.CheckReadinessCommand.Execute(null);
             }
         }
     }
 
     /// <summary>
     /// Whether the selected backend is available and ready.
+    /// Delegates to the unified <see cref="Readiness"/> check.
     /// </summary>
-    public bool IsBackendAvailable
-    {
-        get => _isBackendAvailable;
-        private set
-        {
-            if (SetProperty(ref _isBackendAvailable, value))
-            {
-                OnPropertyChanged(nameof(IsModelReady));
-                OnPropertyChanged(nameof(IsModelMissing));
-                OnPropertyChanged(nameof(HasMissingRequirements));
-                GenerateCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Whether the selected backend has unmet requirements (e.g. missing custom nodes).
-    /// </summary>
-    public bool HasMissingRequirements => !IsBackendAvailable
-        && SelectedBackend is not null
-        && SelectedBackend.MissingRequirements.Count > 0;
-
-    /// <summary>
-    /// Human-readable list of missing requirements from the selected backend.
-    /// </summary>
-    public IReadOnlyList<string> BackendMissingRequirements =>
-        SelectedBackend?.MissingRequirements ?? [];
-
-    /// <summary>
-    /// Whether the selected backend has non-blocking warnings (e.g. model not yet downloaded).
-    /// </summary>
-    public bool HasBackendWarnings => IsBackendAvailable
-        && SelectedBackend is not null
-        && SelectedBackend.Warnings.Count > 0;
-
-    /// <summary>
-    /// Non-blocking warnings from the selected backend.
-    /// </summary>
-    public IReadOnlyList<string> BackendWarnings =>
-        SelectedBackend?.Warnings ?? [];
+    public bool IsBackendAvailable => Readiness.IsReady;
 
     /// <summary>
     /// Available captioning model types (for local inference backend).
@@ -423,7 +402,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         {
             if (!IsLocalInferenceBackend)
             {
-                return IsBackendAvailable;
+                return Readiness.IsReady;
             }
 
             return SelectedModelType switch
@@ -871,11 +850,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public IRelayCommand<CaptionHistoryItemViewModel> ToggleHistoryItemCommand { get; }
 
     /// <summary>
-    /// Command to check whether the selected backend is available.
-    /// </summary>
-    public IAsyncRelayCommand CheckBackendAvailabilityCommand { get; }
-
-    /// <summary>
     /// Command to pause captioning after the current image finishes.
     /// </summary>
     public IRelayCommand PauseCommand { get; }
@@ -893,32 +867,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         _captioningCts?.Cancel();
         CurrentProcessingStatus = "Stopping after current image...";
-    }
-
-    private async Task CheckBackendAvailabilityAsync()
-    {
-        if (SelectedBackend is null)
-        {
-            IsBackendAvailable = false;
-            return;
-        }
-
-        try
-        {
-            IsBackendAvailable = await SelectedBackend.IsAvailableAsync();
-            StatusMessage = null;
-        }
-        catch
-        {
-            IsBackendAvailable = false;
-        }
-        finally
-        {
-            OnPropertyChanged(nameof(HasMissingRequirements));
-            OnPropertyChanged(nameof(BackendMissingRequirements));
-            OnPropertyChanged(nameof(HasBackendWarnings));
-            OnPropertyChanged(nameof(BackendWarnings));
-        }
     }
 
     private static string GetStatusText(CaptioningModelStatus status) => status switch
@@ -1044,7 +992,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         // ComfyUI / non-local backend
         if (!IsLocalInferenceBackend)
         {
-            return SelectedBackend is not null && IsBackendAvailable;
+            return SelectedBackend is not null && Readiness.IsReady;
         }
 
         // Local inference backend

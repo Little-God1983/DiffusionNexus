@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using Serilog;
@@ -76,7 +77,8 @@ public partial class InpaintingViewModel : ObservableObject
         Func<bool> hasImage,
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService,
-        IDatasetEventAggregator? eventAggregator)
+        IDatasetEventAggregator? eventAggregator,
+        IComfyUIReadinessService? readinessService = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
@@ -84,6 +86,8 @@ public partial class InpaintingViewModel : ObservableObject
         _deactivateOtherTools = deactivateOtherTools;
         _comfyUiService = comfyUiService;
         _eventAggregator = eventAggregator;
+
+        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Inpainting);
 
         ClearMaskCommand = new RelayCommand(
             () => ClearMaskRequested?.Invoke(this, EventArgs.Empty),
@@ -98,6 +102,9 @@ public partial class InpaintingViewModel : ObservableObject
             () => SetBaseRequested?.Invoke(this, EventArgs.Empty),
             () => _hasImage() && IsPanelOpen);
     }
+
+    /// <summary>Unified readiness check for the Inpainting feature (server, nodes, models).</summary>
+    public ComfyUIReadinessViewModel Readiness { get; }
 
     #region Properties
 
