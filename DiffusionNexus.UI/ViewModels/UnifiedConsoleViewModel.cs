@@ -83,6 +83,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _hasInstances;
 
+    [ObservableProperty]
+    private bool _hasRunningInstances;
+
     #endregion
 
     /// <summary>
@@ -483,6 +486,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                     InstanceTabs.Add(tab);
                 }
                 HasInstances = InstanceTabs.Count > 0;
+                HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
 
                 // Check for updates in the background after loading
                 _ = CheckAllForUpdatesAsync();
@@ -735,6 +739,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
             if (tab is null) return;
 
             tab.IsRunning = running;
+            HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
 
             if (running)
             {
