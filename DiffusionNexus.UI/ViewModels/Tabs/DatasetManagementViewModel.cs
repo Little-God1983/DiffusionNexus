@@ -1768,6 +1768,22 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         StatusMessage = $"Sent to Captioning: {image.FullFileName}";
     }
 
+    /// <summary>
+    /// Sends the image to the Batch Upscale tab for single-image upscaling.
+    /// </summary>
+    [RelayCommand]
+    private void SendToBatchUpscale(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
+        {
+            ImagePath = image.ImagePath
+        });
+
+        StatusMessage = $"Sent to Batch Upscale: {image.FullFileName}";
+    }
+
     private void SendToBatchCropScale()
     {
         if (ActiveDataset is null) return;

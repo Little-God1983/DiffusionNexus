@@ -468,33 +468,44 @@
                                 <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
                               </Border>
                               <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
-                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
                                   <Button Grid.Column="0" Content="+" Command="{Binding MarkApprovedCommand}" Padding="12,6" FontSize="14"
                                           Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                                           Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
-                                          CornerRadius="4" Margin="0,0,4,0" FontWeight="Bold"/>
+                                          CornerRadius="4" Margin="0,0,4,0" FontWeight="Bold"
+                                          ToolTip.Tip="Approve"/>
                                   <Button Grid.Column="1" Content="-" Command="{Binding MarkRejectedCommand}" Padding="12,6" FontSize="14"
                                           Background="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonBackground}}"
                                           Foreground="{Binding IsRejected, Converter={x:Static converters:BoolConverters.BoolToRejectedButtonForeground}}"
-                                          CornerRadius="4" FontWeight="Bold"/>
+                                          CornerRadius="4" FontWeight="Bold"
+                                          ToolTip.Tip="Reject"/>
                                   <Border Grid.Column="2"/>
-                                  <Button Grid.Column="3" Content="Replace"
+                                  <Button Grid.Column="3" Content="&#x1F504;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).ReplaceImageCommand}"
-                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
-                                          CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="4" Content="Caption"
+                                          CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,2,0"
+                                          ToolTip.Tip="Replace image"/>
+                                  <Button Grid.Column="4" Content="&#x1F4AC;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToCaptioningCommand}"
-                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
-                                          CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="5" Content="Edit"
+                                          CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,2,0"
+                                          ToolTip.Tip="Send to Captioning"/>
+                                  <Button Grid.Column="5" Content="&#x2B06;"
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToBatchUpscaleCommand}"
+                                          CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,2,0"
+                                          ToolTip.Tip="Send to Batch Upscale"/>
+                                  <Button Grid.Column="6" Content="&#x270F;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
-                                          CommandParameter="{Binding}" Padding="10,6" FontSize="12" Background="#80444444"
-                                          CornerRadius="4" Margin="0,0,4,0"/>
-                                  <Button Grid.Column="6" Content="X" 
+                                          CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,2,0"
+                                          ToolTip.Tip="Edit in Image Editor"/>
+                                  <Button Grid.Column="7" Content="&#x2716;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
-                                          CommandParameter="{Binding}" 
-                                          Padding="12,6" FontSize="14"
-                                          Background="#80444444" CornerRadius="4" Foreground="#FF6B6B" FontWeight="Bold"/>
+                                          CommandParameter="{Binding}"
+                                          Padding="8,6" FontSize="14"
+                                          Background="#80444444" CornerRadius="4" Foreground="#FF6B6B" FontWeight="Bold"
+                                          ToolTip.Tip="Delete image"/>
                                 </Grid>
                               </Border>
                             </Grid>
