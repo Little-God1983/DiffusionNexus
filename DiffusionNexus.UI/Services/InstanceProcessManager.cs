@@ -79,7 +79,7 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         _runningTasks[instanceId] = handle;
         handle.ReportIndeterminate("Starting...");
 
-        _processManager.Launch(packageId, fullPath, package.InstallationPath, package.Arguments);
+        _processManager.Launch(packageId, fullPath, package.InstallationPath, package.Arguments, package.Type);
 
         return handle;
     }

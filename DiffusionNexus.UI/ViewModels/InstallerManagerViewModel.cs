@@ -287,7 +287,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
 
         card.ConsoleLines.Clear();
-        _processManager.Launch(card.Id, fullPath, card.InstallationPath, card.Arguments);
+        _processManager.Launch(card.Id, fullPath, card.InstallationPath, card.Arguments, card.Type);
     }
 
     private async Task OnStopRequestedAsync(InstallerPackageCardViewModel card)

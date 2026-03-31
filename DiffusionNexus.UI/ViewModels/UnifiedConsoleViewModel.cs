@@ -528,7 +528,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
             var fullPath = Path.Combine(package.InstallationPath, package.ExecutablePath);
             if (!File.Exists(fullPath)) return;
 
-            _processManager!.Launch(package.Id, fullPath, package.InstallationPath, package.Arguments);
+            _processManager!.Launch(package.Id, fullPath, package.InstallationPath, package.Arguments, package.Type);
         }
         catch (Exception ex)
         {
