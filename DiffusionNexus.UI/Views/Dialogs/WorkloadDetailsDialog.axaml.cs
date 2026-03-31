@@ -17,7 +17,6 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 public partial class WorkloadDetailsDialog : Window
 {
     private readonly ObservableCollection<string> _logLines = [];
-    private bool _isInstalling;
 
     /// <summary>
     /// Token source used to skip the current model download.
@@ -187,7 +186,6 @@ public partial class WorkloadDetailsDialog : Window
     private async Task RunInstallWithProgressAsync(
         IReadOnlyList<WorkloadDetailItemViewModel> selected, int vramGb)
     {
-        _isInstalling = true;
         _skipDownloadCts = new CancellationTokenSource();
         SetInstallingUiState(true);
 
@@ -224,7 +222,6 @@ public partial class WorkloadDetailsDialog : Window
         }
         finally
         {
-            _isInstalling = false;
             _skipDownloadCts?.Dispose();
             _skipDownloadCts = null;
             SetInstallingUiState(false);

@@ -1414,7 +1414,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 var targetWidth = 340;
                 var scale = (float)targetWidth / skBitmap.Width;
                 var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), SKFilterQuality.Medium);
+                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
                 if (resized is null) return false;
 
                 using var skImage = SKImage.FromBitmap(resized);

@@ -11,9 +11,9 @@ public class ModelMetadataUtilsTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void ParseTags_String_Empty_ReturnsEmpty(string input)
+    public void ParseTags_String_Empty_ReturnsEmpty(string? input)
     {
-        var result = ModelMetadataUtils.ParseTags(input);
+        var result = ModelMetadataUtils.ParseTags(input!);
         result.Should().BeEmpty();
     }
 

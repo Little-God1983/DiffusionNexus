@@ -48,12 +48,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
     public ObservableCollection<InstallerPackageCardViewModel> InstallerCards { get; } = [];
 
     /// <summary>
-    /// Bottom tray with one tab per running process console.
-    /// </summary>
-    [Obsolete("Use the global UnifiedConsole in the StatusBar instead. Will be removed once migration is complete.")]
-    public ProcessConsoleTrayViewModel ConsoleTray { get; } = new();
-
-    /// <summary>
     /// True when there are no installations to show.
     /// </summary>
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
@@ -252,17 +246,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
             if (card is null) return;
 
             card.IsRunning = running;
-
-            if (running)
-            {
-                // Auto-open a console tab when a process starts
-                ConsoleTray.OpenTab(card);
-            }
-            else
-            {
-                // Remove the tab when the process exits
-                ConsoleTray.CloseTab(card);
-            }
         });
     }
 
@@ -353,8 +336,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private Task OnConsoleRequestedAsync(InstallerPackageCardViewModel card)
     {
-        ConsoleTray.OpenTab(card);
-        ConsoleTray.IsPinned = true;
+        UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 

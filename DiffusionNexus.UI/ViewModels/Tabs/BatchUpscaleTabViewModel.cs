@@ -862,6 +862,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         string? newVersionPath,
         string? singleImageOutputPath)
     {
+        if (_comfyUiService is null) return;
+
         var isSingleImage = singleImageOutputPath is not null;
 
         // Resolve the workflow file.

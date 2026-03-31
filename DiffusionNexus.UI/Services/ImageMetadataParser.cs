@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Models;
 
 namespace DiffusionNexus.UI.Services;
@@ -47,7 +48,7 @@ internal sealed partial class ImageMetadataParser
 
         try
         {
-            var (width, height) = ReadPngDimensions(filePath);
+            var (width, height) = new ImageHeaderReader().ReadDimensions(filePath);
 
             var chunks = PngChunkReader.ReadTextChunks(filePath);
 
@@ -626,44 +627,5 @@ internal sealed partial class ImageMetadataParser
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Reads width and height from the IHDR chunk of a PNG file without decoding pixels.
-    /// </summary>
-    [Obsolete("Use ImageHeaderReader.ReadDimensions for multi-format header-only dimension reading.")]
-    private static (int Width, int Height) ReadPngDimensions(string filePath)
-    {
-        try
-        {
-            using var stream = File.OpenRead(filePath);
-            using var reader = new BinaryReader(stream);
-
-            // Skip 8-byte PNG signature
-            stream.Seek(8, SeekOrigin.Begin);
-
-            // IHDR is always the first chunk
-            var lengthBytes = reader.ReadBytes(4);
-            if (BitConverter.IsLittleEndian) Array.Reverse(lengthBytes);
-
-            var typeBytes = reader.ReadBytes(4);
-            var type = System.Text.Encoding.ASCII.GetString(typeBytes);
-            if (type != "IHDR") return (0, 0);
-
-            var widthBytes = reader.ReadBytes(4);
-            var heightBytes = reader.ReadBytes(4);
-
-            if (BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(widthBytes);
-                Array.Reverse(heightBytes);
-            }
-
-            return (BitConverter.ToInt32(widthBytes, 0), BitConverter.ToInt32(heightBytes, 0));
-        }
-        catch
-        {
-            return (0, 0);
-        }
     }
 }
