@@ -138,8 +138,11 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
                     if (shouldInstallReqs && pythonExe is not null)
                     {
+                        // TODO: Pass gitRepo?.AdditionalPipPackages once SDK NuGet includes the property
                         await InstallRequirementsAsync(
-                            pythonExe, clonedPath, node.Name, progress, cancellationToken);
+                            pythonExe, clonedPath, node.Name,
+                            additionalPipPackages: null,
+                            progress, cancellationToken);
                     }
 
                     progress?.Report(new WorkloadInstallProgress
@@ -225,6 +228,116 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         return summary;
     }
 
+    /// <inheritdoc />
+    public async Task<string> RepairPipDependenciesAsync(
+        InstallationConfiguration configuration,
+        string comfyUIRootPath,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
+
+        var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUIRootPath);
+        var repositoryPath = ConfigurationCheckerService.GetRepositoryPath(comfyUIRootPath, installationType);
+        var customNodesPath = Path.Combine(repositoryPath, "custom_nodes");
+
+        var pythonExe = ResolvePythonExecutable(comfyUIRootPath, repositoryPath, installationType);
+        if (pythonExe is null)
+        {
+            const string msg = "Python executable not found — cannot repair pip dependencies.";
+            Logger.Warning(msg);
+            progress?.Report(new WorkloadInstallProgress { ItemName = "Python", Message = msg });
+            return msg;
+        }
+
+        var gitRepositories = configuration.GitRepositories ?? [];
+        if (gitRepositories.Count == 0)
+        {
+            return "No custom nodes configured for this workload.";
+        }
+
+        var repairedCount = 0;
+        var skippedCount = 0;
+        var failedCount = 0;
+
+        foreach (var repo in gitRepositories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var repoFolderName = PathNormalizer.GetRepositoryName(repo.Url);
+            var repoPath = Path.Combine(customNodesPath, repoFolderName);
+            var requirementsPath = Path.Combine(repoPath, "requirements.txt");
+            var nodeName = string.IsNullOrWhiteSpace(repo.Name) ? repoFolderName : repo.Name;
+
+            if (!Directory.Exists(repoPath) || !File.Exists(requirementsPath))
+            {
+                skippedCount++;
+                continue;
+            }
+
+            // TODO: Pass repo.AdditionalPipPackages once SDK NuGet includes the property
+            var extras = ResolveSupplementaryPackages(
+                requirementsPath, additionalPipPackages: null);
+
+            if (extras.Count == 0)
+            {
+                skippedCount++;
+                continue;
+            }
+
+            var packageList = string.Join(" ", extras);
+            Logger.Information(
+                "Repairing {Count} supplementary package(s) for {Name}: {Packages}",
+                extras.Count, nodeName, packageList);
+
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemId = repo.Id,
+                ItemName = nodeName,
+                Message = $"Installing supplementary packages: {packageList}"
+            });
+
+            var (success, _) = await RunPipInstallAsync(
+                pythonExe, repoPath,
+                $"-m pip install {packageList}",
+                nodeName, "supplementary packages",
+                progress, cancellationToken);
+
+            if (success)
+            {
+                repairedCount++;
+                progress?.Report(new WorkloadInstallProgress
+                {
+                    ItemId = repo.Id,
+                    ItemName = nodeName,
+                    Message = $"Repaired {nodeName}",
+                    IsSuccess = true
+                });
+            }
+            else
+            {
+                failedCount++;
+                progress?.Report(new WorkloadInstallProgress
+                {
+                    ItemId = repo.Id,
+                    ItemName = nodeName,
+                    Message = $"Failed to repair {nodeName}",
+                    IsFailed = true
+                });
+            }
+        }
+
+        var parts = new List<string>();
+        if (repairedCount > 0) parts.Add($"{repairedCount} node(s) repaired");
+        if (skippedCount > 0) parts.Add($"{skippedCount} node(s) up-to-date");
+        if (failedCount > 0) parts.Add($"{failedCount} node(s) failed");
+
+        var result = parts.Count > 0 ? string.Join(", ", parts) : "Nothing to repair.";
+        Logger.Information("Pip dependency repair complete: {Summary}", result);
+        return result;
+    }
+
     #region Python / Requirements
 
     /// <summary>
@@ -274,12 +387,14 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     /// <summary>
     /// Installs <c>requirements.txt</c> for a cloned custom node using the venv's Python,
     /// matching the SDK's <c>CloneAdditionalReposStepHandler.InstallRepositoryRequirementsAsync</c>.
-    /// Runs: <c>{pythonExe} -m pip install -r requirements.txt</c>.
+    /// After the main install, resolves supplementary packages via
+    /// <see cref="ResolveSupplementaryPackages"/> and installs those too.
     /// </summary>
     private static async Task InstallRequirementsAsync(
         string pythonExe,
         string repoPath,
         string nodeName,
+        string? additionalPipPackages,
         IProgress<WorkloadInstallProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -298,14 +413,60 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
         Logger.Information("pip install -r requirements.txt for {Name} using {Python}", nodeName, pythonExe);
 
+        // ── Step 1: Install the node's own requirements.txt ──
+        var (mainSuccess, _) = await RunPipInstallAsync(
+            pythonExe, repoPath,
+            $"-m pip install -r \"{requirementsPath}\"",
+            nodeName, "requirements",
+            progress, cancellationToken);
+
+        if (!mainSuccess)
+            return;
+
+        // ── Step 2: Install supplementary packages (known upstream gaps + per-repo overrides) ──
+        var extras = ResolveSupplementaryPackages(requirementsPath, additionalPipPackages);
+        if (extras.Count > 0)
+        {
+            var packageList = string.Join(" ", extras);
+            Logger.Information(
+                "Installing {Count} supplementary pip package(s) for {Name}: {Packages}",
+                extras.Count, nodeName, packageList);
+
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemName = nodeName,
+                Message = $"Installing supplementary packages for {nodeName}: {packageList}"
+            });
+
+            await RunPipInstallAsync(
+                pythonExe, repoPath,
+                $"-m pip install {packageList}",
+                nodeName, "supplementary packages",
+                progress, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Runs a single pip install command and reports progress.
+    /// </summary>
+    /// <returns>A tuple of (success, stderr output).</returns>
+    private static async Task<(bool Success, string StdErr)> RunPipInstallAsync(
+        string pythonExe,
+        string workingDirectory,
+        string arguments,
+        string nodeName,
+        string description,
+        IProgress<WorkloadInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
         try
         {
             using var process = new Process();
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = pythonExe,
-                Arguments = $"-m pip install -r \"{requirementsPath}\"",
-                WorkingDirectory = repoPath,
+                Arguments = arguments,
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -325,35 +486,135 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
             if (process.ExitCode == 0)
             {
-                Logger.Information("Requirements installed for {Name}", nodeName);
+                Logger.Information("{Description} installed for {Name}", description, nodeName);
                 progress?.Report(new WorkloadInstallProgress
                 {
                     ItemName = nodeName,
-                    Message = $"Requirements installed for {nodeName}"
+                    Message = $"{description} installed for {nodeName}"
                 });
+                return (true, stderrText);
             }
-            else
-            {
-                Logger.Warning(
-                    "pip install failed for {Name} (exit code {Code}):\n{StdErr}",
-                    nodeName, process.ExitCode, stderrText);
 
-                progress?.Report(new WorkloadInstallProgress
-                {
-                    ItemName = nodeName,
-                    Message = $"pip install failed for {nodeName} (exit code {process.ExitCode})"
-                });
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Logger.Error(ex, "Failed to run pip install for {Name}", nodeName);
+            Logger.Warning(
+                "pip install {Description} failed for {Name} (exit code {Code}):\n{StdErr}",
+                description, nodeName, process.ExitCode, stderrText);
+
             progress?.Report(new WorkloadInstallProgress
             {
                 ItemName = nodeName,
-                Message = $"Failed to install requirements for {nodeName}: {ex.Message}"
+                Message = $"pip install {description} failed for {nodeName} (exit code {process.ExitCode})"
             });
+
+            return (false, stderrText);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Error(ex, "Failed to run pip install {Description} for {Name}", description, nodeName);
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemName = nodeName,
+                Message = $"Failed to install {description} for {nodeName}: {ex.Message}"
+            });
+            return (false, ex.Message);
+        }
+    }
+
+    // TODO: Remove once SDK NuGet is updated to include SupplementaryPipPackageResolver.
+    // These methods mirror SDK's SupplementaryPipPackageResolver and should be replaced
+    // with direct calls to the SDK utility when the NuGet package is published.
+
+    /// <summary>
+    /// Known packages whose upstream <c>requirements.txt</c> omits required runtime deps.
+    /// Mirrors the SDK's <c>SupplementaryPipPackageResolver.KnownSupplementaryPackages</c>.
+    /// </summary>
+    internal static readonly Dictionary<string, string[]> SupplementaryPipPackages =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["transformers"] = ["kernels"],
+        };
+
+    /// <summary>
+    /// Scans a <c>requirements.txt</c> file and returns any supplementary packages that
+    /// should be installed alongside the declared dependencies, merged with any
+    /// per-repository additional packages from the configuration.
+    /// </summary>
+    internal static List<string> ResolveSupplementaryPackages(
+        string requirementsPath, string? additionalPipPackages = null)
+    {
+        var extras = new List<string>();
+
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(requirementsPath);
+        }
+        catch (IOException)
+        {
+            return extras;
+        }
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line[0] == '#')
+                continue;
+
+            var packageName = ExtractPackageName(line);
+            if (packageName.Length == 0)
+                continue;
+
+            if (SupplementaryPipPackages.TryGetValue(packageName, out var supplementary))
+            {
+                foreach (var pkg in supplementary)
+                {
+                    if (!extras.Contains(pkg, StringComparer.OrdinalIgnoreCase))
+                        extras.Add(pkg);
+                }
+            }
+        }
+
+        // Merge per-repository overrides
+        if (!string.IsNullOrWhiteSpace(additionalPipPackages))
+        {
+            var configured = additionalPipPackages
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            foreach (var pkg in configured)
+            {
+                if (!extras.Contains(pkg, StringComparer.OrdinalIgnoreCase))
+                    extras.Add(pkg);
+            }
+        }
+
+        return extras;
+    }
+
+    /// <summary>
+    /// Extracts the pip package name from a requirements.txt line, stripping version
+    /// specifiers, extras markers, and environment markers.
+    /// </summary>
+    internal static string ExtractPackageName(string requirementLine)
+    {
+        var commentIdx = requirementLine.IndexOf('#');
+        var line = commentIdx >= 0 ? requirementLine[..commentIdx].Trim() : requirementLine.Trim();
+
+        if (line.StartsWith('-'))
+            return string.Empty;
+
+        var markerIdx = line.IndexOf(';');
+        if (markerIdx >= 0)
+            line = line[..markerIdx].Trim();
+
+        var bracketIdx = line.IndexOf('[');
+        if (bracketIdx >= 0)
+            line = line[..bracketIdx].Trim();
+
+        var specifierChars = new[] { '>', '<', '=', '~', '!' };
+        var specIdx = line.IndexOfAny(specifierChars);
+        if (specIdx >= 0)
+            line = line[..specIdx].Trim();
+
+        return line.Replace('_', '-').ToLowerInvariant();
     }
 
     #endregion

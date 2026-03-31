@@ -105,6 +105,13 @@ public partial class WorkloadDetailsDialog : Window
         InstallCallback { get; set; }
 
     /// <summary>
+    /// Callback that repairs pip dependencies for already-installed custom nodes.
+    /// Set by the caller before ShowDialog. Returns a summary string.
+    /// </summary>
+    public Func<IProgress<WorkloadInstallProgress>, CancellationToken, Task<string>>?
+        RepairCallback { get; set; }
+
+    /// <summary>
     /// True after the install completed (regardless of success/failure).
     /// The caller uses this to decide whether to re-check the workload.
     /// </summary>
@@ -168,6 +175,50 @@ public partial class WorkloadDetailsDialog : Window
             var old = _skipDownloadCts;
             _skipDownloadCts = new CancellationTokenSource();
             old.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Repairs pip dependencies for already-installed custom nodes that have
+    /// missing supplementary packages (e.g. <c>kernels</c> for <c>transformers</c>).
+    /// </summary>
+    private async void OnRepairDependencies(object sender, RoutedEventArgs e)
+    {
+        if (RepairCallback is null)
+            return;
+
+        SetInstallingUiState(true);
+        var progress = new Progress<WorkloadInstallProgress>(OnInstallProgressReport);
+
+        try
+        {
+            AppendLog("Repairing pip dependencies...");
+            var summary = await RepairCallback(progress, CancellationToken.None);
+            DidInstall = true;
+
+            AppendLog($"--- {summary} ---");
+            var statusText = this.FindControl<TextBlock>("ProgressStatusText");
+            if (statusText is not null)
+            {
+                statusText.Text = "Repair complete";
+                statusText.Foreground = new Avalonia.Media.SolidColorBrush(
+                    Avalonia.Media.Color.Parse("#4CAF50"));
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"ERROR: {ex.Message}");
+            var statusText = this.FindControl<TextBlock>("ProgressStatusText");
+            if (statusText is not null)
+            {
+                statusText.Text = "Repair failed";
+                statusText.Foreground = new Avalonia.Media.SolidColorBrush(
+                    Avalonia.Media.Color.Parse("#F44336"));
+            }
+        }
+        finally
+        {
+            SetInstallingUiState(false);
         }
     }
 

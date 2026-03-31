@@ -198,7 +198,8 @@ public partial class WorkloadsViewModel : ViewModelBase
             DetailItems = detailItems,
             Summary = item.CheckResult.Summary,
             ConfiguredVramProfiles = item.ConfiguredVramProfiles,
-            InstallCallback = CreateInstallCallback(item)
+            InstallCallback = CreateInstallCallback(item),
+            RepairCallback = CreateRepairCallback(item)
         };
 
         var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
@@ -248,6 +249,26 @@ public partial class WorkloadsViewModel : ViewModelBase
                 config, _comfyUIRootPath,
                 selectedNodes, selectedModels,
                 vramGb, progress, downloadProgress, skipTokenProvider, ct);
+        };
+    }
+
+    /// <summary>
+    /// Creates the repair callback that the dialog invokes to fix missing pip dependencies
+    /// on already-installed custom nodes.
+    /// </summary>
+    private Func<IProgress<WorkloadInstallProgress>, CancellationToken, Task<string>>
+        CreateRepairCallback(WorkloadItemViewModel item)
+    {
+        return async (progress, ct) =>
+        {
+            var config = _loadedConfigurations.FirstOrDefault(c => c.Id == item.Id);
+            if (config is null)
+            {
+                throw new InvalidOperationException($"Configuration {item.Id} not found");
+            }
+
+            return await _installService.RepairPipDependenciesAsync(
+                config, _comfyUIRootPath, progress, ct);
         };
     }
 
