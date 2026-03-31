@@ -256,7 +256,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     // Processing state
     private bool _isProcessing;
     private double _totalProgress;
-    private string _currentProcessingStatus = "Ready";
+    private string _currentProcessingStatus = string.Empty;
     private int _completedCount;
     private int _totalImageCount;
 
@@ -301,6 +301,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         SelectCompareItemCommand = new RelayCommand<UpscaleImageItemViewModel>(SelectCompareItem);
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
+
+        // Re-evaluate start command when readiness changes
+        Readiness.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+        };
+        VisionReadiness.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+        };
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
     }
@@ -502,10 +514,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         set
         {
             if (SetProperty(ref _promptMode, value))
-            {
-                OnPropertyChanged(nameof(IsManualPromptMode));
-                OnPropertyChanged(nameof(PromptModeDescription));
-            }
+                {
+                    OnPropertyChanged(nameof(IsManualPromptMode));
+                    OnPropertyChanged(nameof(PromptModeDescription));
+                    StartUpscaleCommand.NotifyCanExecuteChanged();
+                }
         }
     }
 
@@ -700,6 +713,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private bool CanStartUpscale()
     {
         if (IsProcessing || _comfyUiService is null) return false;
+
+        // Require ComfyUI readiness for the selected workflow
+        var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+        if (!requiredReadiness.IsReady) return false;
 
         if (IsSingleImageMode)
             return !string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath);

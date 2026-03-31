@@ -110,7 +110,7 @@ public partial class UpscalingViewModel : ObservableObject
         if (string.IsNullOrEmpty(imagePath)) return;
 
         _eventAggregator?.PublishNavigateToBatchUpscale(
-            new NavigateToBatchUpscaleEventArgs { ImagePath = imagePath });
+            new NavigateToBatchUpscaleEventArgs { ImagePaths = [imagePath] });
     }
 
     #endregion

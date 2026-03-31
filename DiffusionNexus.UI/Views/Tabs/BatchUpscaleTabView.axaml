@@ -12,8 +12,17 @@
   <Grid ColumnDefinitions="Auto,*">
 
     <!-- Left Settings Panel -->
-    <ScrollViewer Grid.Column="0" Padding="16" Width="480">
-      <StackPanel Spacing="16">
+    <Grid Grid.Column="0" Width="480" RowDefinitions="*,Auto">
+    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="16" Margin="16">
+
+        <!-- ComfyUI Readiness -->
+        <Border Background="#333333" CornerRadius="8" Padding="16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="ComfyUI Status" FontWeight="SemiBold" FontSize="14"/>
+            <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
+          </StackPanel>
+        </Border>
 
         <!-- Input Source -->
         <Border Background="#333333" CornerRadius="8" Padding="16">
@@ -186,16 +195,11 @@
           </StackPanel>
         </Border>
 
-        <!-- ComfyUI Readiness -->
-        <Border Background="#333333" CornerRadius="8" Padding="16">
-          <StackPanel Spacing="12">
-            <TextBlock Text="ComfyUI Status" FontWeight="SemiBold" FontSize="14"/>
-            <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
           </StackPanel>
-        </Border>
+        </ScrollViewer>
 
-        <!-- Action & Status -->
-        <Border Background="#333333" CornerRadius="8" Padding="16">
+        <!-- Action & Status (pinned at bottom, always visible) -->
+        <Border Grid.Row="1" Background="#333333" CornerRadius="8" Padding="16" Margin="16,4,16,8">
           <StackPanel Spacing="12">
             <Grid ColumnDefinitions="*,Auto">
               <Button Grid.Column="0"
@@ -222,12 +226,11 @@
                          Height="6"/>
             <TextBlock Text="{Binding CurrentProcessingStatus}"
                        Foreground="#4CAF50" FontSize="13"
-                       TextWrapping="Wrap"/>
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding CurrentProcessingStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
           </StackPanel>
         </Border>
-
-      </StackPanel>
-    </ScrollViewer>
+        </Grid>
 
     <!-- Right Panel: Overlay Compare + Image Gallery -->
     <Grid Grid.Column="1" RowDefinitions="*,Auto">

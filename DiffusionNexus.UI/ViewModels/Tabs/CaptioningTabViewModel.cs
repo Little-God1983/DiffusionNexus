@@ -103,7 +103,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     // Processing
     private bool _isProcessing;
     private double _totalProgress;
-    private string _currentProcessingStatus = "Ready";
+    private string _currentProcessingStatus = string.Empty;
     private CancellationTokenSource? _captioningCts;
 
     // Dataset statistics

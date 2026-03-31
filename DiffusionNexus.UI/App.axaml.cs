@@ -308,9 +308,8 @@ public partial class App : Application
             Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
 
             // Log the resolved SDK database path to the unified activity log
-            var resolvedPath = ServiceCollectionExtensions.ResolveDatabasePath();
             var activityLog = Services!.GetService<IActivityLogService>();
-            activityLog?.LogInfo("Installer SDK", $"Database loaded from: {resolvedPath}");
+            activityLog?.LogInfo("Installer SDK", $"Database loaded from: {runtimeDb}");
         }
         catch (Exception ex)
         {
