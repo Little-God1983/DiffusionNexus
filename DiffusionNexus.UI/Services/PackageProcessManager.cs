@@ -175,6 +175,7 @@ public sealed class PackageProcessManager : IDisposable
         private readonly List<ConsoleOutputLine> _outputLines = [];
         private readonly object _lock = new();
         private Process? _process;
+        private ChildProcessJobObject? _processJobObject;
         private CancellationTokenSource? _urlProbeCts;
         private int _lineCounter;
 
@@ -270,12 +271,27 @@ public sealed class PackageProcessManager : IDisposable
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
 
-                // Assign to Job Object so the OS kills this process if our app crashes
-                if (_jobObject is not null && OperatingSystem.IsWindows())
+                // Assign to Job Objects for process lifecycle management
+                if (OperatingSystem.IsWindows())
                 {
-                    if (_jobObject.AssignProcess(_process))
+                    // Per-process job for explicit termination via TerminateJobObject.
+                    // All child processes automatically inherit this job, so terminating
+                    // it kills the entire tree — even for deep cmd → npm → node chains
+                    // where parent-PID tracking fails.
+                    try
                     {
-                        Serilog.Log.Debug("PackageProcessManager: Process {Pid} assigned to Job Object", _process.Id);
+                        _processJobObject = new ChildProcessJobObject(name: null);
+                        _processJobObject.AssignProcess(_process);
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "PackageProcessManager: Failed to create per-process Job Object for PID {Pid}", _process.Id);
+                    }
+
+                    // Shared job so the OS kills child processes if our app crashes
+                    if (_jobObject is not null && _jobObject.AssignProcess(_process))
+                    {
+                        Serilog.Log.Debug("PackageProcessManager: Process {Pid} assigned to shared Job Object", _process.Id);
                     }
                 }
 
@@ -404,11 +420,22 @@ public sealed class PackageProcessManager : IDisposable
 
                 AddLine($"[Started AI Toolkit launcher PID {_process.Id}]", isError: false);
 
-                // Assign to Job Object so the OS kills npm + node + next + worker
-                // if our app crashes or is killed
-                if (_jobObject is not null && OperatingSystem.IsWindows())
+                // Assign to Job Objects for process lifecycle management
+                if (OperatingSystem.IsWindows())
                 {
-                    _jobObject.AssignProcess(_process);
+                    // Per-process job for explicit termination via TerminateJobObject
+                    try
+                    {
+                        _processJobObject = new ChildProcessJobObject(name: null);
+                        _processJobObject.AssignProcess(_process);
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "PackageProcessManager: Failed to create per-process Job Object for AI Toolkit PID {Pid}", _process.Id);
+                    }
+
+                    // Shared job for crash protection
+                    _jobObject?.AssignProcess(_process);
                 }
 
                 Serilog.Log.Information(
@@ -468,7 +495,7 @@ public sealed class PackageProcessManager : IDisposable
                 Serilog.Log.Information("PackageProcessManager: Stopping process {Pid} for package {PackageId}",
                     _process.Id, _packageId);
 
-                // Try graceful shutdown first via Ctrl+C / SIGINT
+                // Try graceful shutdown first via closing stdin
                 // TODO: Linux Implementation - send SIGTERM on Linux
                 try
                 {
@@ -487,9 +514,28 @@ public sealed class PackageProcessManager : IDisposable
                 }
                 catch (OperationCanceledException)
                 {
-                    // Graceful shutdown timed out — force kill the entire process tree
-                    Serilog.Log.Warning("PackageProcessManager: Force-killing process tree {Pid}", _process.Id);
+                    Serilog.Log.Warning("PackageProcessManager: Graceful shutdown timed out for PID {Pid}", _process.Id);
+                }
+
+                // Terminate all processes via the per-process Job Object. This is atomic
+                // and catches the entire tree — even for deep cmd.exe /c → npm → node →
+                // concurrently chains where .NET's Kill(entireProcessTree) fails because
+                // parent-PID tracking breaks when intermediate cmd.exe processes exit.
+                // TODO: Linux Implementation - use cgroups or process group kill
+                if (OperatingSystem.IsWindows() && _processJobObject is not null)
+                {
+                    Serilog.Log.Debug("PackageProcessManager: Terminating job object for PID {Pid}", _process.Id);
+                    _processJobObject.Terminate();
+                }
+
+                // Belt-and-suspenders: also try .NET's built-in tree kill
+                try
+                {
                     _process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Entire tree already exited — expected after job termination
                 }
 
                 AddLine("[Process stopped]", isError: false);
@@ -642,10 +688,18 @@ public sealed class PackageProcessManager : IDisposable
 
             if (_process is not null)
             {
+                // Terminate via Job Object first (most reliable for deep process trees)
+                if (OperatingSystem.IsWindows())
+                {
+                    _processJobObject?.Terminate();
+                    _processJobObject?.Dispose();
+                    _processJobObject = null;
+                }
+
                 try
                 {
-                    if (!_process.HasExited)
-                        _process.Kill(entireProcessTree: true);
+                    // Belt-and-suspenders: also try .NET's tree kill
+                    _process.Kill(entireProcessTree: true);
                 }
                 catch { /* best effort */ }
 
