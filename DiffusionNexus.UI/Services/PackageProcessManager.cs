@@ -178,6 +178,11 @@ public sealed class PackageProcessManager : IDisposable
         private CancellationTokenSource? _urlProbeCts;
         private int _lineCounter;
 
+        // 3-way barrier: stdout EOF + stderr EOF + Exited event.
+        // Process.Exited can fire before all async output callbacks complete,
+        // so we only signal RunningStateChanged(false) when all three arrive.
+        private int _exitBarrier;
+
         public string ExecutablePath { get; }
         public string WorkingDirectory { get; }
         public string Arguments { get; }
@@ -217,11 +222,13 @@ public sealed class PackageProcessManager : IDisposable
                 DetectedUrl = null;
             }
 
+            Interlocked.Exchange(ref _exitBarrier, 0);
+
             if (Type == InstallerType.AIToolkit)
             {
-                // AI Toolkit: run "npm run build_and_start" in the ui/ directory
-                // instead of the .bat file (which opens a browser prematurely).
-                StartAIToolkitAsync(CancellationToken.None);
+                // AI Toolkit: run the same npm chain as the batch file,
+                // but without the final browser-opening step.
+                StartAIToolkit();
                 return;
             }
 
@@ -287,13 +294,13 @@ public sealed class PackageProcessManager : IDisposable
 
         /// <summary>
         /// AI Toolkit launch that replaces the Start-AI-Toolkit.bat file.
-        /// Runs <c>npm run build_and_start</c> in the ui/ directory — exactly what the
+        /// Runs <c>npm run build_and_start</c> through <c>cmd.exe</c> in the ui/ directory — exactly what the
         /// .bat does after <c>cd ./AI-Toolkit &amp;&amp; call venv\Scripts\activate.bat &amp;&amp; cd ui</c>.
         /// That single npm script chains: npm install → prisma generate → prisma db push
         /// → tsc + next build → concurrently (worker + next start --port 8675).
         /// All output streams to the unified logger. No browser is opened.
         /// </summary>
-        private Task StartAIToolkitAsync(CancellationToken ct)
+        private void StartAIToolkit()
         {
             // The InstallationPath (WorkingDirectory) may be the parent folder
             // (e.g. E:\AI\Toolkit) while the actual ai-toolkit code lives in a
@@ -305,7 +312,7 @@ public sealed class PackageProcessManager : IDisposable
                 AddLine("[ERROR] Cannot locate AI Toolkit root (expected a folder with 'toolkit/' and 'run.py').", isError: true);
                 AddLine("        Searched: " + WorkingDirectory, isError: true);
                 RunningStateChanged?.Invoke(false);
-                return Task.CompletedTask;
+                return;
             }
 
             var uiDir = Path.Combine(aiToolkitRoot, "ui");
@@ -313,33 +320,45 @@ public sealed class PackageProcessManager : IDisposable
             {
                 AddLine("[ERROR] AI Toolkit 'ui' folder not found. Expected at: " + uiDir, isError: true);
                 RunningStateChanged?.Invoke(false);
-                return Task.CompletedTask;
+                return;
             }
 
-            // Resolve npm.cmd — the .bat file relies on npm being on PATH
-            var npmPath = FindExecutableOnPath("npm.cmd") ?? FindExecutableOnPath("npm");
-            if (npmPath is null)
+            var packageJsonPath = Path.Combine(uiDir, "package.json");
+            if (!File.Exists(packageJsonPath))
             {
-                AddLine("[ERROR] npm not found on PATH. Please install Node.js.", isError: true);
+                AddLine("[ERROR] AI Toolkit package.json not found. Expected at: " + packageJsonPath, isError: true);
                 RunningStateChanged?.Invoke(false);
-                return Task.CompletedTask;
+                return;
             }
+
+            // Locate the Python virtual environment (same as: call venv\Scripts\activate.bat)
+            var venvDir = Path.Combine(aiToolkitRoot, "venv");
+            // TODO: Linux Implementation - use venv/bin instead of venv\Scripts on Linux
+            var venvScriptsDir = Path.Combine(venvDir, "Scripts");
+            var hasVenv = Directory.Exists(venvScriptsDir);
+            if (!hasVenv)
+            {
+                AddLine("[WARNING] Python venv not found at: " + venvDir, isError: true);
+                AddLine("         The worker process may fail without the virtual environment.", isError: true);
+            }
+
+            var commandInterpreter = Environment.GetEnvironmentVariable("ComSpec");
+            if (string.IsNullOrWhiteSpace(commandInterpreter))
+                commandInterpreter = "cmd.exe";
 
             AddLine("═══════════════════════════════════════════════", isError: false);
             AddLine("  AI Toolkit — DiffusionNexus Direct Launch", isError: false);
             AddLine("═══════════════════════════════════════════════", isError: false);
-            AddLine("", isError: false);
-            AddLine("Running: npm run build_and_start", isError: false);
+            AddLine("Running: cmd.exe /d /c npm run build_and_start", isError: false);
             AddLine("  (npm install → prisma db setup → build → server start)", isError: false);
             AddLine($"  Working directory: {uiDir}", isError: false);
-            AddLine("", isError: false);
+            if (hasVenv)
+                AddLine($"  Python venv: {venvDir}", isError: false);
 
-            // Run exactly what the .bat does: npm run build_and_start
-            // This single script chains all stages and keeps the server running.
             var psi = new ProcessStartInfo
             {
-                FileName = npmPath,
-                Arguments = "run build_and_start",
+                FileName = commandInterpreter,
+                Arguments = "/d /c npm run build_and_start",
                 WorkingDirectory = uiDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -360,6 +379,18 @@ public sealed class PackageProcessManager : IDisposable
             // Suppress auto-browser-opening in Node.js ecosystem
             psi.Environment["BROWSER"] = "none";
 
+            // Activate the Python virtual environment by replicating what
+            // venv\Scripts\activate.bat does: set VIRTUAL_ENV and prepend
+            // the venv's Scripts directory to PATH so the venv Python is found first.
+            if (hasVenv)
+            {
+                psi.Environment["VIRTUAL_ENV"] = venvDir;
+                var currentPath = psi.Environment.TryGetValue("PATH", out var existingPath)
+                    ? existingPath
+                    : Environment.GetEnvironmentVariable("PATH") ?? "";
+                psi.Environment["PATH"] = venvScriptsDir + Path.PathSeparator + currentPath;
+            }
+
             _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             _process.OutputDataReceived += OnOutputDataReceived;
             _process.ErrorDataReceived += OnErrorDataReceived;
@@ -370,6 +401,8 @@ public sealed class PackageProcessManager : IDisposable
                 _process.Start();
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
+
+                AddLine($"[Started AI Toolkit launcher PID {_process.Id}]", isError: false);
 
                 // Assign to Job Object so the OS kills npm + node + next + worker
                 // if our app crashes or is killed
@@ -390,25 +423,6 @@ public sealed class PackageProcessManager : IDisposable
                 AddLine($"[ERROR] AI Toolkit launch failed: {ex.Message}", isError: true);
                 RunningStateChanged?.Invoke(false);
             }
-
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// Finds an executable on the system PATH.
-        /// </summary>
-        private static string? FindExecutableOnPath(string executableName)
-        {
-            var pathEnv = Environment.GetEnvironmentVariable("PATH");
-            if (string.IsNullOrWhiteSpace(pathEnv)) return null;
-
-            foreach (var dir in pathEnv.Split(Path.PathSeparator))
-            {
-                var fullPath = Path.Combine(dir.Trim(), executableName);
-                if (File.Exists(fullPath)) return fullPath;
-            }
-
-            return null;
         }
 
         /// <summary>
@@ -491,16 +505,34 @@ public sealed class PackageProcessManager : IDisposable
         {
             if (e.Data is not null)
                 AddLine(e.Data, isError: false);
+            else
+                OnExitPartCompleted(); // stdout EOF sentinel
         }
 
         private void OnErrorDataReceived(object sender, DataReceivedEventArgs e)
         {
             if (e.Data is not null)
                 AddLine(e.Data, isError: true);
+            else
+                OnExitPartCompleted(); // stderr EOF sentinel
         }
 
         private void OnProcessExited(object? sender, EventArgs e)
         {
+            OnExitPartCompleted(); // process exited signal
+        }
+
+        /// <summary>
+        /// Called when one of the three exit signals arrives (stdout EOF, stderr EOF,
+        /// process exited). Only the third signal triggers the actual exit logic,
+        /// ensuring all buffered output has been drained first.
+        /// </summary>
+        private void OnExitPartCompleted()
+        {
+            // Only the third signal (stdout + stderr + exited) fires the exit logic
+            if (Interlocked.Increment(ref _exitBarrier) < 3)
+                return;
+
             var exitCode = _process?.ExitCode ?? -1;
             AddLine($"[Process exited with code {exitCode}]", isError: exitCode != 0);
             RunningStateChanged?.Invoke(false);

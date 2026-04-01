@@ -232,6 +232,21 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(TaskIdFilter) && entry.TaskId != TaskIdFilter)
             return false;
 
+        // Instance filter: when an instance tab is selected, match entries whose Source
+        // contains either "Instance:{id}" (fallback format) or the instance name
+        // (task-handle format). This replaces the old SearchText-based approach that
+        // broke because process stdout lines don't contain the package name.
+        if (SelectedInstance is not null)
+        {
+            var idPattern = $"Instance:{SelectedInstance.PackageId}";
+            var namePattern = SelectedInstance.Name;
+            if (!entry.Source.Contains(idPattern, StringComparison.OrdinalIgnoreCase) &&
+                !entry.Source.Contains(namePattern, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
         // Text search
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
@@ -280,6 +295,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     partial void OnCategoryFilterChanged(LogCategory? value) => ApplyFilters();
     partial void OnTaskIdFilterChanged(string? value) => ApplyFilters();
     partial void OnSearchTextChanged(string? value) => ApplyFilters();
+    partial void OnSelectedInstanceChanged(InstanceTabItem? value) => ApplyFilters();
 
     #endregion
 
@@ -721,13 +737,15 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            // Select this tab and filter the log to its output
+            // Select this tab and filter the log to its output.
+            // SelectedInstance-based filtering in ShouldInclude matches entries
+            // by both "Instance:{id}" and "Instance: {name}" source patterns.
+            // SearchText is left clear so the user can still search within the output.
             foreach (var t in InstanceTabs) t.IsSelected = false;
             tab.IsSelected = true;
             SelectedInstance = tab;
             CategoryFilter = LogCategory.InstanceManagement;
-            // Search by package name – matches "Instance: {name}" source from TrackedTaskHandle
-            SearchText = tab.Name;
+            SearchText = null;
         }
     }
 
