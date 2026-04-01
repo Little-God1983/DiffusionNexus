@@ -19,6 +19,12 @@
     <Style Selector="Border.inst-tab"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Border.inst-tab-selected"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#0088CC"/><Setter Property="Cursor" Value="Hand"/></Style>
     <Style Selector="Border.inst-tab-missing"><Setter Property="Background" Value="#2D2D30"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="8,6"/><Setter Property="MinWidth" Value="180"/><Setter Property="BorderThickness" Value="2"/><Setter Property="BorderBrush" Value="#DC3545"/><Setter Property="Opacity" Value="0.6"/></Style>
+    <Style Selector="ListBox#LogEntriesListBox ListBoxItem">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="MinHeight" Value="0"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="Height" Value="20"/>
+    </Style>
   </UserControl.Styles>
   <Border Background="#1E1E1E" BorderBrush="#3C3C3C" BorderThickness="0,1,0,0">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
@@ -137,14 +143,12 @@
       <ListBox x:Name="LogEntriesListBox" Grid.Row="4" ItemsSource="{Binding FilteredEntries}" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="ul:LogEntry">
-            <Border Padding="8,3" Margin="0,1" CornerRadius="2">
-              <Grid ColumnDefinitions="70,40,90,*">
-                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" Foreground="#808080" FontSize="11" FontFamily="Consolas,Menlo,monospace"/>
-                <TextBlock Grid.Column="1" Text="{Binding LevelAbbreviation}" FontSize="11" FontWeight="Bold" FontFamily="Consolas,Menlo,monospace"/>
-                <TextBlock Grid.Column="2" Text="{Binding Source}" FontSize="11" Foreground="#007ACC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                <TextBlock Grid.Column="3" Text="{Binding Message}" FontSize="12" TextWrapping="Wrap"/>
-              </Grid>
-            </Border>
+            <Grid ColumnDefinitions="54,26,74,*" Margin="4,0,2,0">
+              <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" Foreground="#808080" FontSize="10" FontFamily="Consolas,Menlo,monospace" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="{Binding LevelAbbreviation}" FontSize="10" FontWeight="Bold" FontFamily="Consolas,Menlo,monospace" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="2" Text="{Binding Source}" FontSize="10" Foreground="#007ACC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="3" Text="{Binding Message}" FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            </Grid>
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
