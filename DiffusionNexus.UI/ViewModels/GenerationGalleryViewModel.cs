@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using Avalonia.Threading;
@@ -155,6 +155,22 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public bool HasFavorites => MediaItems.Any(item => item.IsFavorite);
 
+    /// <summary>
+    /// True when at least one selected item is a favorite.
+    /// Used to decide whether the bulk action should unmark (any favorite present)
+    /// or mark (no favorites in selection).
+    /// </summary>
+    public bool AnySelectedIsFavorite =>
+        HasSelection && MediaItems.Any(item => item.IsSelected && item.IsFavorite);
+
+    /// <summary>
+    /// Button text for the bulk favorites toggle.
+    /// Shows "☆ Unmark Favorites" when any selected item is a favorite (including mixed);
+    /// shows "★ Mark as Favorites" only when none of the selected items are favorites.
+    /// </summary>
+    public string ToggleFavoritesButtonText =>
+        AnySelectedIsFavorite ? "☆ Unmark Favorites" : "★ Mark as Favorites";
+
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
 
     #region IThumbnailAware
@@ -308,6 +324,40 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
 
         UpdateSelectionState();
+    }
+
+    /// <summary>
+    /// Toggles favorites for all selected items.
+    /// If any selected item is a favorite (including mixed), unmarks all.
+    /// If none are favorites, marks all as favorites.
+    /// This means a mixed selection requires two clicks to mark all as favorites.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task ToggleSelectedFavoritesAsync()
+    {
+        if (_favoritesService is null) return;
+
+        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0) return;
+
+        // Any favorite present → unmark all; no favorites → mark all
+        var newState = !selectedItems.Any(item => item.IsFavorite);
+
+        foreach (var item in selectedItems)
+        {
+            await _favoritesService.SetFavoriteAsync(item.FilePath, newState);
+            item.IsFavorite = newState;
+        }
+
+        OnPropertyChanged(nameof(HasFavorites));
+        OnPropertyChanged(nameof(AnySelectedIsFavorite));
+        OnPropertyChanged(nameof(ToggleFavoritesButtonText));
+        SelectAllFavoritesCommand.NotifyCanExecuteChanged();
+
+        if (ShowFavoritesOnly && !newState)
+        {
+            ApplySortingAndGrouping();
+        }
     }
 
     [RelayCommand]
@@ -927,7 +977,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             return (resultList, resultGroups);
         });
 
-        // Back on the original context (UI thread) � apply results directly
+        // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);
     }
 
@@ -937,7 +987,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         MediaItems.ReplaceAll(sortedList);
 
-        // Only materialise the first page in the UI � the rest loads on scroll
+        // Only materialise the first page in the UI — the rest loads on scroll
         var initialPage = sortedList.Count <= InitialPageSize
             ? sortedList
             : sortedList.GetRange(0, InitialPageSize);
@@ -1035,6 +1085,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         SendSelectedToCaptioningCommand.NotifyCanExecuteChanged();
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
+        ToggleSelectedFavoritesCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(AnySelectedIsFavorite));
+        OnPropertyChanged(nameof(ToggleFavoritesButtonText));
     }
 
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)

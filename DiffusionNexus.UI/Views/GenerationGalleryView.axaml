@@ -168,6 +168,11 @@
                 Foreground="#FFD700" Padding="8,4" Margin="0,4,4,4"/>
         <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}" Padding="8,4" Margin="0,4,16,4"/>
 
+        <Button Content="{Binding ToggleFavoritesButtonText}"
+                Command="{Binding ToggleSelectedFavoritesCommand}"
+                Foreground="#FFD700" Padding="8,4" Margin="0,4,16,4"
+                ToolTip.Tip="Mark or unmark selected items as favorites. Mixed selection will unmark first."/>
+
         <!-- Add Selected To... dropdown -->
         <Button Content="Add Selected To..." Background="#2E7D32" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
           <Button.Flyout>
