@@ -202,7 +202,7 @@
                                 Width="400"
                                 Margin="0,0,16,16"
                                 ClipToBounds="True">
-                            <Grid RowDefinitions="Auto,Auto">
+                            <Grid RowDefinitions="Auto,Auto,Auto">
                                 <!-- Top: image + info -->
                                 <Grid Grid.Row="0" ColumnDefinitions="140,*" Margin="12,12,12,8">
                                     <!-- Installer logo -->
@@ -263,7 +263,7 @@
                                                    Margin="0,2,0,8"
                                                    IsVisible="{Binding VersionDisplay, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
-                                        <!-- Update + Settings buttons -->
+                                        <!-- Update Available + Settings buttons -->
                                         <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
                                             <Button Classes="update-btn"
                                                     IsVisible="{Binding ShowUpdateButton}"
@@ -273,18 +273,6 @@
                                                     <TextBlock Text="Update Available" FontSize="12" VerticalAlignment="Center"/>
                                                 </StackPanel>
                                             </Button>
-                                            <StackPanel Orientation="Horizontal" Spacing="6"
-                                                        IsVisible="{Binding IsUpdating}">
-                                                <ProgressBar IsIndeterminate="True"
-                                                             Width="60" Height="4"
-                                                             VerticalAlignment="Center"
-                                                             Foreground="#FF8C00"/>
-                                                <TextBlock Text="Updating..."
-                                                           FontSize="12"
-                                                           Foreground="#FF8C00"
-                                                           FontWeight="SemiBold"
-                                                           VerticalAlignment="Center"/>
-                                            </StackPanel>
                                             <TextBlock Text="&#x2B50;"
                                                        FontSize="16"
                                                        VerticalAlignment="Center"
@@ -296,17 +284,6 @@
                                                 <TextBlock Text="&#x2699;" FontSize="16"/>
                                             </Button>
                                         </StackPanel>
-
-                                        <!-- Update status message (live progress) -->
-                                        <TextBlock Grid.Row="4"
-                                                   Text="{Binding UpdateStatusMessage}"
-                                                   FontSize="11"
-                                                   Foreground="#FF8C00"
-                                                   Opacity="0.8"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   ToolTip.Tip="{Binding UpdateStatusMessage}"
-                                                   Margin="0,2,0,0"
-                                                   IsVisible="{Binding IsUpdating}"/>
 
                                         <!-- Stop / Restart when running -->
                                         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6"
@@ -328,8 +305,34 @@
                                     </Grid>
                                 </Grid>
 
+                                <!-- Update progress (full card width) -->
+                                <StackPanel Grid.Row="1" Spacing="4"
+                                            Margin="12,0,12,8"
+                                            IsVisible="{Binding IsUpdating}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ProgressBar IsIndeterminate="True"
+                                                     Height="4"
+                                                     MinWidth="120"
+                                                     HorizontalAlignment="Stretch"
+                                                     VerticalAlignment="Center"
+                                                     Foreground="#FF8C00"/>
+                                        <TextBlock Text="Updating..."
+                                                   FontSize="12"
+                                                   Foreground="#FF8C00"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding UpdateStatusMessage}"
+                                               FontSize="11"
+                                               Foreground="#FF8C00"
+                                               Opacity="0.8"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding UpdateStatusMessage}"
+                                               IsVisible="{Binding UpdateStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                </StackPanel>
+
                                 <!-- Not Found banner (when folder deleted from disk) -->
-                                <Border Grid.Row="1"
+                                <Border Grid.Row="2"
                                         Background="#44DC3545"
                                         Padding="12,8"
                                         IsVisible="{Binding IsMissing}">
@@ -340,7 +343,7 @@
                                 </Border>
 
                                 <!-- Launch + Workloads (when not running) -->
-                                <StackPanel Grid.Row="1"
+                                <StackPanel Grid.Row="2"
                                             Spacing="4"
                                             Margin="12,4,12,4"
                                             IsVisible="{Binding ShowLaunchButton}">
@@ -362,7 +365,7 @@
                                 </StackPanel>
 
                                 <!-- Console + Open Web UI (when running) -->
-                                <StackPanel Grid.Row="1" Spacing="4" Margin="12,4,12,4"
+                                <StackPanel Grid.Row="2" Spacing="4" Margin="12,4,12,4"
                                             IsVisible="{Binding ShowRunningControls}">
                                     <Button Classes="console-btn" Command="{Binding ShowConsoleCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
