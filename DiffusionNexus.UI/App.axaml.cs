@@ -726,6 +726,17 @@ public partial class App : Application
             });
         };
 
+        // Wire Unified Console ↔ Installer Manager update synchronisation:
+        // 1. Console "Update" button delegates to the Installer Manager's centralised logic
+        // 2. Installer Manager state changes flow back to the console tabs
+        if (mainViewModel.StatusBar?.UnifiedConsole is { } unifiedConsole)
+        {
+            unifiedConsole.SetUpdateDelegate(installerManagerVm.UpdatePackageByIdAsync);
+
+            installerManagerVm.InstallerUpdateStateChanged += (_, e) =>
+                unifiedConsole.OnExternalUpdateStateChanged(e);
+        }
+
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
         var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
