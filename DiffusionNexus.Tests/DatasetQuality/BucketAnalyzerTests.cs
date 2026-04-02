@@ -503,6 +503,28 @@ public class BucketAnalyzerTests
         score.Should().BeLessThan(65, "~50% concentration in one bucket is not a good distribution");
     }
 
+    [Fact]
+    public void WhenTwoDominantBucketsWithSmallTailsThenScoreIsFair()
+    {
+        // Real-world case: two large buckets (27 + 21 = 70%) with small scattered tail buckets.
+        // This bimodal distribution with many near-empty buckets should score in the Fair range.
+        var distribution = new List<BucketDistributionEntry>
+        {
+            new() { Bucket = new BucketResolution(832, 1216), ImageCount = 27, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(896, 1152), ImageCount = 3, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1024, 1024), ImageCount = 3, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1216, 832), ImageCount = 21, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1280, 768), ImageCount = 2, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1344, 768), ImageCount = 11, ImagePaths = [] },
+            new() { Bucket = new BucketResolution(1408, 704), ImageCount = 1, ImagePaths = [] },
+        };
+
+        var score = BucketAnalyzer.CalculateDistributionScore(distribution);
+
+        score.Should().BeInRange(45, 60,
+            "bimodal distribution with many near-empty tail buckets should score in the Fair range");
+    }
+
     #endregion
 
     #region Full Analysis

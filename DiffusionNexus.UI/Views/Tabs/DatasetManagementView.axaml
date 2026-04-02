@@ -539,12 +539,11 @@
           <views:TrainingRunsTabView/>
         </TabItem>
 
-        <!-- Tab 3: Dataset Quality (BETA – hidden until ready for release) -->
-        <!--
-        <TabItem Header="Dataset Quality">
+        <!-- Tab 3: Dataset Quality (hidden until feature toggle is enabled) -->
+        <TabItem Header="Dataset Quality"
+                 IsVisible="{ReflectionBinding $parent[Window].DataContext.IsDatasetQualityEnabled}">
           <views:DatasetQualityTabView DataContext="{Binding DatasetQualityTab}"/>
         </TabItem>
-        -->
 
       </TabControl>
     </Grid>
