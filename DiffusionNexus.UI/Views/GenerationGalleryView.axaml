@@ -189,15 +189,15 @@
         <Button Content="Send Selected To..." Background="#1976D2" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
           <Button.Flyout>
             <MenuFlyout Placement="BottomEdgeAlignedLeft">
-              <MenuItem Header="Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
+              <MenuItem Header="&#x270F; Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
                         ToolTip.Tip="Open selected images in the Image Editor"/>
-              <MenuItem Header="Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
+              <MenuItem Header="&#x274F; Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
                         ToolTip.Tip="Compare selected images side by side"/>
-              <MenuItem Header="Batch Upscale" Command="{Binding SendSelectedToBatchUpscaleCommand}"
+              <MenuItem Header="&#x2B06; Batch Upscale" Command="{Binding SendSelectedToBatchUpscaleCommand}"
                         ToolTip.Tip="Send selected images to Batch Upscale as a temporary dataset"/>
-              <MenuItem Header="Batch Crop/Scale" Command="{Binding SendSelectedToBatchCropCommand}"
+              <MenuItem Header="&#x2702; Batch Crop/Scale" Command="{Binding SendSelectedToBatchCropCommand}"
                         ToolTip.Tip="Send selected images to Batch Crop/Scale as a temporary dataset"/>
-              <MenuItem Header="Captioning" Command="{Binding SendSelectedToCaptioningCommand}"
+              <MenuItem Header="&#x1F4AC; Captioning" Command="{Binding SendSelectedToCaptioningCommand}"
                         ToolTip.Tip="Send selected images to Captioning as a temporary dataset"/>
             </MenuFlyout>
           </Button.Flyout>

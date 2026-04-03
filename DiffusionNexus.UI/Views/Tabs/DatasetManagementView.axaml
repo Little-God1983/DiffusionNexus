@@ -468,7 +468,7 @@
                                 <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold" Foreground="#4FC3F7"/>
                               </Border>
                               <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
-                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
                                   <Button Grid.Column="0" Content="+" Command="{Binding MarkApprovedCommand}" Padding="12,6" FontSize="14"
                                           Background="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonBackground}}"
                                           Foreground="{Binding IsApproved, Converter={x:Static converters:BoolConverters.BoolToApprovedButtonForeground}}"
@@ -495,12 +495,17 @@
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
                                           ToolTip.Tip="Send to Batch Upscale"/>
-                                  <Button Grid.Column="6" Content="&#x270F;"
+                                  <Button Grid.Column="6" Content="&#x2702;"
+                                          Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendImageToBatchCropScaleCommand}"
+                                          CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
+                                          CornerRadius="4" Margin="0,0,2,0"
+                                          ToolTip.Tip="Send to Batch Crop/Scale"/>
+                                  <Button Grid.Column="7" Content="&#x270F;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
                                           ToolTip.Tip="Edit in Image Editor"/>
-                                  <Button Grid.Column="7" Content="&#x2716;"
+                                  <Button Grid.Column="8" Content="&#x2716;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
                                           CommandParameter="{Binding}"
                                           Padding="8,6" FontSize="14"
