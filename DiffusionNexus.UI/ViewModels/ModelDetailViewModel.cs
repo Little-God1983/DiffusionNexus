@@ -1275,11 +1275,16 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    /// <summary>
+    /// Retrieves the Civitai API key using a fresh DI scope to avoid stale EF Core tracked entities.
+    /// The injected <c>_settingsService</c> may hold a cached <see cref="AppSettings"/> entity from
+    /// a long-lived DbContext that was loaded before the key was saved via the Settings view.
+    /// </summary>
+    private static async Task<string?> GetApiKeyAsync()
     {
-        if (_settingsService is null || _secureStorage is null) return null;
-        var settings = await _settingsService.GetSettingsAsync();
-        return _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        return await settingsService.GetCivitaiApiKeyAsync();
     }
 
     /// <summary>
