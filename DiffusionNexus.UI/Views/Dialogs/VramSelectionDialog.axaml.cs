@@ -19,6 +19,13 @@ public partial class VramSelectionDialog : Window
     /// </summary>
     public int? SelectedVramGb { get; private set; }
 
+    /// <summary>
+    /// Parameterless constructor required by Avalonia XAML runtime loader.
+    /// </summary>
+    public VramSelectionDialog() : this([])
+    {
+    }
+
     /// <param name="configuredProfiles">
     /// Available VRAM sizes in GB, parsed from the configuration
     /// (e.g. <c>[8, 16, 24]</c>). Must contain at least one value.

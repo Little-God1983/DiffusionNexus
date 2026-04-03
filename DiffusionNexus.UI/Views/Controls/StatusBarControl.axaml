@@ -33,19 +33,109 @@
                 </Animation>
             </Style.Animations>
         </Style>
+        <!-- Compact pinned running instance card -->
+        <Style Selector="Border.pinned-inst">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#4CAF50"/>
+        </Style>
+        <Style Selector="Button.pinned-stop">
+            <Setter Property="Background" Value="#DC3545"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="5,1"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.pinned-restart">
+            <Setter Property="Background" Value="#0088CC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="5,1"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.pinned-webui">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#0088CC"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,1"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,Auto">
-        
+    <Grid RowDefinitions="Auto,Auto,Auto">
+
         <!-- Expandable Unified Console Panel (replaces old Activity Log) -->
         <Border Grid.Row="0"
                 Height="250"
                 IsVisible="{Binding IsLogPanelOpen}">
             <controls:UnifiedConsoleView DataContext="{Binding UnifiedConsole}"/>
         </Border>
-        
+
+        <!-- Pinned Running Instances (visible only when console is hidden and instances are running) -->
+        <Panel Grid.Row="1" IsVisible="{Binding !IsLogPanelOpen}">
+            <Border Background="#1B1B1B" Padding="4,3" BorderBrush="#3C3C3C" BorderThickness="0,1,0,0"
+                    IsVisible="{Binding UnifiedConsole.HasRunningInstances}">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding UnifiedConsole.InstanceTabs}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="6"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:InstanceTabItem">
+                                <Border Classes="pinned-inst" IsVisible="{Binding IsRunning}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Image Source="{Binding Logo}" Width="16" Height="16"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding Logo, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                        <Ellipse Width="7" Height="7" Fill="#4CAF50" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="100"/>
+                                        <!-- Stop -->
+                                        <Button Classes="pinned-stop"
+                                                Command="{Binding $parent[UserControl].((vm:StatusBarViewModel)DataContext).UnifiedConsole.StopInstanceCommand}"
+                                                CommandParameter="{Binding}">
+                                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                                <TextBlock Text="&#x25A0;" FontSize="8" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Stop" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <!-- Restart -->
+                                        <Button Classes="pinned-restart"
+                                                Command="{Binding $parent[UserControl].((vm:StatusBarViewModel)DataContext).UnifiedConsole.RestartInstanceCommand}"
+                                                CommandParameter="{Binding}">
+                                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                                <TextBlock Text="&#x21BB;" FontSize="10" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Restart" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <!-- Web UI (when URL detected) -->
+                                        <Button Classes="pinned-webui"
+                                                IsVisible="{Binding DetectedWebUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                                Command="{Binding $parent[UserControl].((vm:StatusBarViewModel)DataContext).UnifiedConsole.OpenInstanceWebUiCommand}"
+                                                CommandParameter="{Binding}">
+                                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                                <TextBlock Text="&#x2197;" FontSize="10"/>
+                                                <TextBlock Text="Web UI"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+        </Panel>
+
         <!-- Status Bar -->
-        <Border Grid.Row="1" 
+        <Border Grid.Row="2"
                 Background="{Binding StatusBackground}"
                 Height="24">
             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">

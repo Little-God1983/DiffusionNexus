@@ -54,4 +54,20 @@ public interface IWorkloadInstallService
         IProgress<DownloadProgress>? downloadProgress = null,
         Func<CancellationToken>? skipDownloadTokenProvider = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Scans already-installed custom nodes for a workload configuration and installs
+    /// any missing supplementary pip packages. Use this to repair existing installations
+    /// where upstream <c>requirements.txt</c> files omit runtime dependencies.
+    /// </summary>
+    /// <param name="configuration">The SDK configuration that defines the workload.</param>
+    /// <param name="comfyUIRootPath">Root path of the ComfyUI installation.</param>
+    /// <param name="progress">Reports per-item progress.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Summary message.</returns>
+    Task<string> RepairPipDependenciesAsync(
+        InstallationConfiguration configuration,
+        string comfyUIRootPath,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 }

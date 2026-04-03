@@ -33,8 +33,9 @@
     <Grid Grid.Row="0" ColumnDefinitions="Auto,*" IsVisible="{Binding IsServiceAvailable}">
 
       <!-- LEFT: Settings Panel -->
-      <ScrollViewer Grid.Column="0" Padding="16" Width="480">
-        <StackPanel Spacing="16">
+      <Grid Grid.Column="0" Width="480" RowDefinitions="*,Auto">
+      <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" Margin="16">
 
           <!-- Backend Selection -->
           <Border Background="#333333" CornerRadius="8" Padding="16">
@@ -51,72 +52,8 @@
                 </ComboBox.ItemTemplate>
               </ComboBox>
 
-              <!-- Backend Status -->
-              <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
-                <!-- Status indicator -->
-                <Panel Grid.Column="0" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,8,0">
-                  <Ellipse Width="12" Height="12" Fill="#4CAF50" IsVisible="{Binding IsBackendAvailable}"/>
-                  <Ellipse Width="12" Height="12" Fill="#FF6B6B" IsVisible="{Binding !IsBackendAvailable}"/>
-                </Panel>
-
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Ready"
-                           Foreground="#4CAF50" FontWeight="SemiBold"
-                           IsVisible="{Binding IsBackendAvailable}"/>
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Requirements failed"
-                           Foreground="#FF6B6B" FontWeight="SemiBold"
-                           IsVisible="{Binding HasMissingRequirements}"/>
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Unavailable"
-                           Foreground="#FF6B6B" FontWeight="SemiBold"
-                           IsVisible="{Binding !IsBackendAvailable}">
-                  <TextBlock.IsVisible>
-                    <MultiBinding Converter="{x:Static BoolConverters.And}">
-                      <Binding Path="!IsBackendAvailable"/>
-                      <Binding Path="!HasMissingRequirements"/>
-                    </MultiBinding>
-                  </TextBlock.IsVisible>
-                </TextBlock>
-
-                <Button Grid.Column="2" Content="Check" Padding="12,4"
-                        Command="{Binding CheckBackendAvailabilityCommand}"
-                        ToolTip.Tip="Check if the captioning backend is available"/>
-              </Grid>
-
-              <!-- Missing requirements detail -->
-              <Border Background="#2A1A1A" CornerRadius="6" Padding="12" Margin="0,4,0,0"
-                      IsVisible="{Binding HasMissingRequirements}">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="Missing Requirements:" FontWeight="SemiBold" FontSize="12"
-                             Foreground="#FF6B6B"/>
-                  <ItemsControl ItemsSource="{Binding BackendMissingRequirements}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
-                                   Foreground="#FFAB91" TextWrapping="Wrap" Margin="8,2,0,0"/>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-              </Border>
-
-              <!-- Backend warnings (non-blocking, e.g. model not yet downloaded) -->
-              <Border Background="#2A2210" CornerRadius="6" Padding="12" Margin="0,4,0,0"
-                      IsVisible="{Binding HasBackendWarnings}">
-                <StackPanel Spacing="4">
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <Ellipse Width="10" Height="10" Fill="#FF9800" VerticalAlignment="Center"/>
-                    <TextBlock Text="Warnings:" FontWeight="SemiBold" FontSize="12"
-                               Foreground="#FF9800"/>
-                  </StackPanel>
-                  <ItemsControl ItemsSource="{Binding BackendWarnings}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
-                                   Foreground="#FFD54F" TextWrapping="Wrap" Margin="8,2,0,0"/>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-              </Border>
+              <!-- ComfyUI Readiness Status (unified check) -->
+              <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
 
               <!-- Local inference model panel (hidden when ComfyUI is selected) -->
               <StackPanel Spacing="8" IsVisible="{Binding IsLocalInferenceBackend}">
@@ -383,8 +320,11 @@
             </StackPanel>
           </Border>
 
-          <!-- Action & Status -->
-          <Border Background="#333333" CornerRadius="8" Padding="16">
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- Action & Status (pinned at bottom, always visible) -->
+          <Border Grid.Row="1" Background="#333333" CornerRadius="8" Padding="16" Margin="16,4,16,8">
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto">
                 <Button Grid.Column="0"
@@ -411,7 +351,8 @@
                            Height="6"/>
               <TextBlock Text="{Binding CurrentProcessingStatus}"
                          Foreground="#4CAF50" FontSize="13"
-                         TextWrapping="Wrap"/>
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding CurrentProcessingStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
               <!-- Status Message -->
               <TextBlock Text="{Binding StatusMessage}"
@@ -420,8 +361,7 @@
                          IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}"/>
             </StackPanel>
           </Border>
-        </StackPanel>
-      </ScrollViewer>
+          </Grid>
 
       <!-- RIGHT: Preview Panel + Gallery -->
       <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto"

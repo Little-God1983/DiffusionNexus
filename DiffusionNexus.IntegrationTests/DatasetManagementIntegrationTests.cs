@@ -204,7 +204,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
             string modelName, DiffusionNexus.Civitai.Models.CivitaiModelVersion civitaiVersion,
-            IReadOnlyList<string> sourceFolders) =>
+            IReadOnlyList<string> sourceFolders, string? category = null) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
 
         public Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(

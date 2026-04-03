@@ -35,10 +35,11 @@ public partial class DownloadLoraVersionDialog : Window
     public DownloadLoraVersionDialog WithVersionInfo(
         string modelName,
         CivitaiModelVersion civitaiVersion,
-        IReadOnlyList<string> sourceFolders)
+        IReadOnlyList<string> sourceFolders,
+        string? category = null)
     {
         _viewModel = new DownloadLoraVersionDialogViewModel();
-        _viewModel.Initialize(modelName, civitaiVersion, sourceFolders);
+        _viewModel.Initialize(modelName, civitaiVersion, sourceFolders, category);
         DataContext = _viewModel;
         return this;
     }

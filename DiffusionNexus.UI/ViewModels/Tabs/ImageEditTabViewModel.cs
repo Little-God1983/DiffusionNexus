@@ -45,6 +45,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly IComfyUIReadinessService? _readinessService;
     private bool _disposed;
 
     private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
@@ -264,16 +265,18 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IDatasetState state,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
-        IThumbnailOrchestrator? thumbnailOrchestrator = null)
+        IThumbnailOrchestrator? thumbnailOrchestrator = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _backgroundRemovalService = backgroundRemovalService;
         _comfyUiService = comfyUiService;
         _thumbnailOrchestrator = thumbnailOrchestrator;
+        _readinessService = readinessService;
 
         // Create the image editor with background removal service
-        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService);
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService);
 
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;

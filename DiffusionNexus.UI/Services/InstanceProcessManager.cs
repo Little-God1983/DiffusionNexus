@@ -19,6 +19,13 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
     private readonly ConcurrentDictionary<string, ITrackedTaskHandle> _runningTasks = new();
     private readonly RunningInstancesSubject _runningSubject = new();
 
+    /// <summary>
+    /// Caches packageId → display name so that the OnProcessOutput fallback can
+    /// log with source "Instance: {name}" instead of "Instance:{id}". Without this,
+    /// the UnifiedConsole search filter (SearchText = tab.Name) excludes all output.
+    /// </summary>
+    private readonly ConcurrentDictionary<int, string> _packageNameCache = new();
+
     public InstanceProcessManager(
         PackageProcessManager processManager,
         IUnifiedLogger logger,
@@ -34,6 +41,34 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         _processManager.OutputReceived += OnProcessOutput;
         _processManager.RunningStateChanged += OnRunningStateChanged;
         _processManager.WebUrlDetected += OnWebUrlDetected;
+
+        // Pre-populate name cache so the very first output line uses the correct source
+        _ = PopulateNameCacheAsync();
+    }
+
+    /// <summary>
+    /// Loads all package names into the cache. Called once at startup so that
+    /// process output logged before RunningStateChanged can use the correct source.
+    /// </summary>
+    private async Task PopulateNameCacheAsync()
+    {
+        try
+        {
+            using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .CreateScope(_serviceProvider);
+            var repo = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .GetRequiredService<IInstallerPackageRepository>(scope.ServiceProvider);
+
+            var packages = await repo.GetAllAsync();
+            foreach (var p in packages)
+            {
+                _packageNameCache[p.Id] = p.Name;
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "InstanceProcessManager: Failed to pre-populate name cache");
+        }
     }
 
     /// <inheritdoc />
@@ -79,7 +114,10 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         _runningTasks[instanceId] = handle;
         handle.ReportIndeterminate("Starting...");
 
-        _processManager.Launch(packageId, fullPath, package.InstallationPath, package.Arguments);
+        // Ensure the name is cached for the fallback source path
+        _packageNameCache[packageId] = package.Name;
+
+        _processManager.Launch(packageId, fullPath, package.InstallationPath, package.Arguments, package.Type);
 
         return handle;
     }
@@ -144,8 +182,12 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         }
         else
         {
-            // Fallback: log directly
-            _logger.Log(level, LogCategory.InstanceManagement, $"Instance:{packageId}",
+            // Fallback: log directly, using the display name so the UnifiedConsole
+            // search filter (SearchText = tab.Name) can match the source.
+            var source = _packageNameCache.TryGetValue(packageId, out var name)
+                ? $"Instance: {name}"
+                : $"Instance:{packageId}";
+            _logger.Log(level, LogCategory.InstanceManagement, source,
                 line.Text, taskId: null);
         }
     }
@@ -154,6 +196,13 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
     {
         var instanceId = packageId.ToString();
 
+        // Ensure the name is cached for processes launched outside StartInstanceAsync
+        // (e.g. directly from UnifiedConsoleViewModel or InstallerManagerViewModel)
+        if (running && !_packageNameCache.ContainsKey(packageId))
+        {
+            _ = CachePackageNameAsync(packageId);
+        }
+
         if (!running && _runningTasks.TryRemove(instanceId, out var handle))
         {
             handle.Complete("Process exited");
@@ -161,6 +210,27 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         }
 
         EmitRunningSet();
+    }
+
+    private async Task CachePackageNameAsync(int packageId)
+    {
+        try
+        {
+            using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .CreateScope(_serviceProvider);
+            var repo = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .GetRequiredService<IInstallerPackageRepository>(scope.ServiceProvider);
+
+            var package = await repo.GetByIdAsync(packageId);
+            if (package is not null)
+            {
+                _packageNameCache[packageId] = package.Name;
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "InstanceProcessManager: Failed to cache name for package {Id}", packageId);
+        }
     }
 
     private void OnWebUrlDetected(int packageId, string url)

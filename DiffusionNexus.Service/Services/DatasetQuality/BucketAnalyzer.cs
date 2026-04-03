@@ -168,11 +168,12 @@ public sealed class BucketAnalyzer
     /// </para>
     ///
     /// <para>
-    /// When images span multiple buckets the score blends:
+    /// When images span multiple buckets the score blends three factors:
     /// </para>
     /// <list type="bullet">
-    ///   <item><description>Shannon Evenness (70% weight) — measures overall spread across buckets.</description></item>
-    ///   <item><description>Dominance penalty (30% weight) — penalises max bucket proportion vs. the ideal 1/n share.</description></item>
+    ///   <item><description>Shannon Evenness (40% weight) — measures overall spread across buckets.</description></item>
+    ///   <item><description>Dominance penalty (30% weight, cubic) — penalises max bucket proportion vs. the ideal 1/n share.</description></item>
+    ///   <item><description>Gini equality (30% weight) — penalises inequality in image counts across buckets.</description></item>
     /// </list>
     ///
     /// A score of 100 means images are perfectly evenly distributed (or all in one bucket).
@@ -192,9 +193,10 @@ public sealed class BucketAnalyzer
         if (distribution.Count == 1)
             return distribution[0].ImageCount > 0 ? 100 : 0;
 
+        int n = distribution.Count;
         int total = 0;
         int maxCount = 0;
-        for (int i = 0; i < distribution.Count; i++)
+        for (int i = 0; i < n; i++)
         {
             total += distribution[i].ImageCount;
             if (distribution[i].ImageCount > maxCount)
@@ -206,7 +208,7 @@ public sealed class BucketAnalyzer
 
         // Shannon Evenness component (0–1)
         double h = 0;
-        for (int i = 0; i < distribution.Count; i++)
+        for (int i = 0; i < n; i++)
         {
             if (distribution[i].ImageCount <= 0)
                 continue;
@@ -215,23 +217,41 @@ public sealed class BucketAnalyzer
             h -= p * Math.Log(p);
         }
 
-        double hMax = Math.Log(distribution.Count);
+        double hMax = Math.Log(n);
         double shannonEvenness = hMax > 0 ? h / hMax : 0;
 
-        // Dominance penalty (quadratic): how far the largest bucket's share is from ideal (1/n).
-        // Linear penalty is too lenient for heavy skew, so we square it.
+        // Dominance penalty (cubic): how far the largest bucket's share is from ideal (1/n).
+        // Cubic penalty is harsher than quadratic, catching heavy skew more aggressively.
         // When pMax == ideal the score is 1.0; when pMax == 1.0 the score is 0.0.
         double pMax = (double)maxCount / total;
-        double ideal = 1.0 / distribution.Count;
+        double ideal = 1.0 / n;
         double linearDominance = pMax <= ideal
             ? 1.0
             : Math.Max(0, 1.0 - (pMax - ideal) / (1.0 - ideal));
-        double dominanceScore = linearDominance * linearDominance;
+        double dominanceScore = linearDominance * linearDominance * linearDominance;
 
-        // Weighted blend: 70% Shannon, 30% dominance penalty
-        const double shannonWeight = 0.7;
+        // Gini equality component (0–1): measures how equal the image counts are.
+        // Sort counts ascending, compute the Gini coefficient, invert to a score.
+        // G = 0 means perfect equality → score 1.0; G = 1 means total inequality → score 0.0.
+        Span<int> sorted = stackalloc int[n];
+        for (int i = 0; i < n; i++)
+            sorted[i] = distribution[i].ImageCount;
+        sorted.Sort();
+
+        double weightedSum = 0;
+        for (int i = 0; i < n; i++)
+            weightedSum += (i + 1) * sorted[i];
+
+        double gini = (2.0 * weightedSum) / (n * total) - (n + 1.0) / n;
+        double giniEquality = Math.Max(0, 1.0 - gini);
+
+        // Weighted blend: 40% Shannon, 30% dominance, 30% Gini equality
+        const double shannonWeight = 0.4;
         const double dominanceWeight = 0.3;
-        double combined = shannonEvenness * shannonWeight + dominanceScore * dominanceWeight;
+        const double giniWeight = 0.3;
+        double combined = shannonEvenness * shannonWeight
+                        + dominanceScore * dominanceWeight
+                        + giniEquality * giniWeight;
 
         return Math.Round(combined * 100.0, 1);
     }

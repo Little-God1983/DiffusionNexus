@@ -20,9 +20,9 @@ internal sealed class ChildProcessJobObject : IDisposable
     private readonly SafeFileHandle _jobHandle;
     private bool _disposed;
 
-    public ChildProcessJobObject()
+    public ChildProcessJobObject(string? name = "DiffusionNexus_ChildProcessJob")
     {
-        _jobHandle = CreateJobObject(nint.Zero, "DiffusionNexus_ChildProcessJob");
+        _jobHandle = CreateJobObject(nint.Zero, name);
         if (_jobHandle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
@@ -86,6 +86,30 @@ internal sealed class ChildProcessJobObject : IDisposable
         }
     }
 
+    /// <summary>
+    /// Terminates all processes currently associated with this job object.
+    /// This is the most reliable way to kill an entire process tree on Windows,
+    /// as it works regardless of parent-PID tracking or process group boundaries.
+    /// All child processes that inherited the job are terminated atomically.
+    /// </summary>
+    /// <returns>True if the termination was initiated successfully.</returns>
+    public bool Terminate(uint exitCode = 1)
+    {
+        if (_disposed || _jobHandle.IsInvalid)
+            return false;
+
+        try
+        {
+            return TerminateJobObject(_jobHandle, exitCode);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex,
+                "ChildProcessJobObject: Failed to terminate job object");
+            return false;
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -140,7 +164,7 @@ internal sealed class ChildProcessJobObject : IDisposable
 
     [DllImport("kernel32.dll", EntryPoint = "CreateJobObjectW",
         SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern SafeFileHandle CreateJobObject(nint lpJobAttributes, string lpName);
+    private static extern SafeFileHandle CreateJobObject(nint lpJobAttributes, string? lpName);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -153,4 +177,8 @@ internal sealed class ChildProcessJobObject : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AssignProcessToJobObject(SafeFileHandle hJob, nint hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(SafeFileHandle hJob, uint uExitCode);
 }

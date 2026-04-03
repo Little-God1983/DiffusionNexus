@@ -36,6 +36,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public event EventHandler? UnifiedConsolePanelRequested;
 
+    /// <summary>
+    /// Raised when an installer package update state changes (started, completed, failed).
+    /// Other components (e.g., Unified Console) subscribe to keep their UI in sync.
+    /// </summary>
+    public event EventHandler<InstallerUpdateStateEventArgs>? InstallerUpdateStateChanged;
+
     [ObservableProperty]
     private string _welcomeMessage = "Welcome to the Installer Manager!";
 
@@ -46,12 +52,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// The collection of installer cards displayed in the view.
     /// </summary>
     public ObservableCollection<InstallerPackageCardViewModel> InstallerCards { get; } = [];
-
-    /// <summary>
-    /// Bottom tray with one tab per running process console.
-    /// </summary>
-    [Obsolete("Use the global UnifiedConsole in the StatusBar instead. Will be removed once migration is complete.")]
-    public ProcessConsoleTrayViewModel ConsoleTray { get; } = new();
 
     /// <summary>
     /// True when there are no installations to show.
@@ -252,17 +252,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
             if (card is null) return;
 
             card.IsRunning = running;
-
-            if (running)
-            {
-                // Auto-open a console tab when a process starts
-                ConsoleTray.OpenTab(card);
-            }
-            else
-            {
-                // Remove the tab when the process exits
-                ConsoleTray.CloseTab(card);
-            }
         });
     }
 
@@ -304,7 +293,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
 
         card.ConsoleLines.Clear();
-        _processManager.Launch(card.Id, fullPath, card.InstallationPath, card.Arguments);
+        _processManager.Launch(card.Id, fullPath, card.InstallationPath, card.Arguments, card.Type);
     }
 
     private async Task OnStopRequestedAsync(InstallerPackageCardViewModel card)
@@ -353,8 +342,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private Task OnConsoleRequestedAsync(InstallerPackageCardViewModel card)
     {
-        ConsoleTray.OpenTab(card);
-        ConsoleTray.IsPinned = true;
+        UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 
@@ -554,6 +542,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         card.UpdateStatusMessage = "Starting update...";
         _unifiedLogger.Info(LogCategory.Installation, card.Name, "Starting update...");
 
+        // Notify subscribers (e.g., Unified Console tabs) that update has started
+        InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
+            card.Id, IsUpdating: true, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
+
         var progress = new Progress<string>(msg =>
         {
             card.UpdateStatusMessage = msg;
@@ -585,12 +577,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                 _unifiedLogger.Info(LogCategory.Installation, card.Name,
                     $"Update complete: {result.Message}");
+
+                // Notify subscribers BEFORE the dialog so the Unified Console tabs
+                // update immediately instead of waiting for the user to dismiss it.
+                InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
+                    card.Id, IsUpdating: false, IsUpdateAvailable: false, UpdateSummary: "Up to date"));
+
                 await _dialogService.ShowMessageAsync("Update Complete", result.Message);
             }
             else
             {
                 _unifiedLogger.Error(LogCategory.Installation, card.Name,
                     $"Update failed: {result.Message}");
+
+                // Notify subscribers BEFORE the dialog
+                InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
+                    card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
+
                 await _dialogService.ShowMessageAsync("Update Failed", result.Message);
             }
         }
@@ -599,13 +602,39 @@ public partial class InstallerManagerViewModel : ViewModelBase
             Serilog.Log.Error(ex, "Failed to update installation {Name}", card.Name);
             _unifiedLogger.Error(LogCategory.Installation, card.Name,
                 $"Update error: {ex.Message}", ex);
+
+            // Notify subscribers BEFORE the dialog
+            InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
+                card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
+
             await _dialogService.ShowMessageAsync("Error", $"Update failed: {ex.Message}");
         }
         finally
         {
             card.IsUpdating = false;
             card.UpdateStatusMessage = null;
+
+            // Safety net: always ensure subscribers know updating has stopped,
+            // even if an earlier notification was missed.
+            InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
+                card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
         }
+    }
+
+    /// <summary>
+    /// Triggers an update for a package by its database ID.
+    /// Called by the Unified Console to ensure the same update logic is used regardless of entry point.
+    /// </summary>
+    public async Task UpdatePackageByIdAsync(int packageId)
+    {
+        var card = FindCard(packageId);
+        if (card is null)
+        {
+            Serilog.Log.Warning("UpdatePackageByIdAsync: No card found for package {Id}", packageId);
+            return;
+        }
+
+        await OnUpdateRequestedAsync(card);
     }
 
     /// <summary>
@@ -667,3 +696,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
         dirInfo.Delete(recursive: true);
     }
 }
+
+/// <summary>
+/// Event data for <see cref="InstallerManagerViewModel.InstallerUpdateStateChanged"/>.
+/// </summary>
+public sealed record InstallerUpdateStateEventArgs(
+    int PackageId,
+    bool IsUpdating,
+    bool IsUpdateAvailable,
+    string? UpdateSummary);

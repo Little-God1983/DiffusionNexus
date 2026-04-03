@@ -1,0 +1,147 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             mc:Ignorable="d"
+             x:Class="DiffusionNexus.UI.Views.Controls.ComfyUIReadinessPanel"
+             x:DataType="vm:ComfyUIReadinessViewModel">
+
+  <StackPanel Spacing="8">
+    <!-- Status row: indicator dot + text + Check button -->
+    <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
+      <!-- Status indicator dot -->
+      <Panel Grid.Column="0" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,8,0">
+        <!-- Green: ready and not currently re-checking -->
+        <Ellipse Width="12" Height="12" Fill="#4CAF50">
+          <Ellipse.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="IsReady"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </Ellipse.IsVisible>
+        </Ellipse>
+        <!-- Red: checked, not ready, not currently re-checking -->
+        <Ellipse Width="12" Height="12" Fill="#FF6B6B">
+          <Ellipse.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="HasChecked"/>
+              <Binding Path="IsNotReady"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </Ellipse.IsVisible>
+        </Ellipse>
+        <!-- Gray: never checked and not currently checking -->
+        <Ellipse Width="12" Height="12" Fill="#888">
+          <Ellipse.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="!HasChecked"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </Ellipse.IsVisible>
+        </Ellipse>
+        <!-- Yellow: currently checking -->
+        <Ellipse Width="12" Height="12" Fill="#FFC107"
+                 IsVisible="{Binding IsChecking}"/>
+      </Panel>
+
+      <!-- Status text — exactly one visible at a time -->
+      <Panel Grid.Column="1" VerticalAlignment="Center">
+        <!-- Checking (highest priority — suppresses all result states) -->
+        <TextBlock Text="Checking&#x2026;" Foreground="#FFC107" FontWeight="SemiBold"
+                   IsVisible="{Binding IsChecking}"/>
+        <!-- Ready -->
+        <TextBlock Text="Ready" Foreground="#4CAF50" FontWeight="SemiBold">
+          <TextBlock.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="IsReady"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </TextBlock.IsVisible>
+        </TextBlock>
+        <!-- Requirements failed -->
+        <TextBlock Text="Requirements failed" Foreground="#FF6B6B" FontWeight="SemiBold">
+          <TextBlock.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="HasChecked"/>
+              <Binding Path="HasMissingRequirements"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </TextBlock.IsVisible>
+        </TextBlock>
+        <!-- Server offline (not ready but no specific missing requirements) -->
+        <TextBlock Text="Server offline" Foreground="#FF6B6B" FontWeight="SemiBold">
+          <TextBlock.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="HasChecked"/>
+              <Binding Path="IsNotReady"/>
+              <Binding Path="!HasMissingRequirements"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </TextBlock.IsVisible>
+        </TextBlock>
+        <!-- Not checked yet -->
+        <TextBlock Text="Not checked" Foreground="#888" FontWeight="SemiBold">
+          <TextBlock.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="!HasChecked"/>
+              <Binding Path="!IsChecking"/>
+            </MultiBinding>
+          </TextBlock.IsVisible>
+        </TextBlock>
+      </Panel>
+
+      <!-- Check button -->
+      <Button Grid.Column="2" Content="Check" Padding="12,4"
+              Command="{Binding CheckReadinessCommand}"
+              ToolTip.Tip="Check if ComfyUI server is ready with all required nodes and models"/>
+    </Grid>
+
+    <!-- Missing requirements detail (hidden while checking) -->
+    <Border Background="#2A1A1A" CornerRadius="6" Padding="12" Margin="0,4,0,0">
+      <Border.IsVisible>
+        <MultiBinding Converter="{x:Static BoolConverters.And}">
+          <Binding Path="HasMissingRequirements"/>
+          <Binding Path="!IsChecking"/>
+        </MultiBinding>
+      </Border.IsVisible>
+      <StackPanel Spacing="4">
+        <TextBlock Text="Missing Requirements:" FontWeight="SemiBold" FontSize="12"
+                   Foreground="#FF6B6B"/>
+        <ItemsControl ItemsSource="{Binding MissingRequirements}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
+                         Foreground="#FFAB91" TextWrapping="Wrap" Margin="8,2,0,0"/>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <!-- Non-blocking warnings (hidden while checking) -->
+    <Border Background="#2A2210" CornerRadius="6" Padding="12" Margin="0,4,0,0">
+      <Border.IsVisible>
+        <MultiBinding Converter="{x:Static BoolConverters.And}">
+          <Binding Path="HasWarnings"/>
+          <Binding Path="!IsChecking"/>
+        </MultiBinding>
+      </Border.IsVisible>
+      <StackPanel Spacing="4">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Ellipse Width="10" Height="10" Fill="#FF9800" VerticalAlignment="Center"/>
+          <TextBlock Text="Warnings:" FontWeight="SemiBold" FontSize="12"
+                     Foreground="#FF9800"/>
+        </StackPanel>
+        <ItemsControl ItemsSource="{Binding Warnings}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}" FontSize="12" Opacity="0.8"
+                         Foreground="#FFD54F" TextWrapping="Wrap" Margin="8,2,0,0"/>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

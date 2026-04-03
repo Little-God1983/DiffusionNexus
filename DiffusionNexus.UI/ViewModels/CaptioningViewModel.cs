@@ -39,7 +39,7 @@ public partial class CaptioningViewModel : ObservableObject
     // Processing
     private bool _isProcessing;
     private double _totalProgress;
-    private string _currentProcessingStatus = "Ready";
+    private string _currentProcessingStatus = string.Empty;
 
     public CaptioningViewModel(
         ICaptioningService captioningService,

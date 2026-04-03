@@ -97,6 +97,9 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isBackupInProgress;
 
+    [ObservableProperty]
+    private bool _isDatasetQualityEnabled;
+
     /// <summary>
     /// Gets the application version from assembly metadata.
     /// </summary>

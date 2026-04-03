@@ -590,6 +590,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public IAsyncRelayCommand OpenViewerCommand { get; }
     public IRelayCommand<DatasetImageViewModel?> SendToImageEditCommand { get; }
     public IRelayCommand SendToBatchCropScaleCommand { get; }
+    public IRelayCommand<DatasetImageViewModel?> SendImageToBatchCropScaleCommand { get; }
     public IAsyncRelayCommand ExportDatasetCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
     public IRelayCommand GoToBackupSettingsCommand { get; }
@@ -679,6 +680,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         OpenViewerCommand = new AsyncRelayCommand(OpenViewerAsync, () => !HasNoImages);
         SendToImageEditCommand = new RelayCommand<DatasetImageViewModel?>(SendToImageEdit);
         SendToBatchCropScaleCommand = new RelayCommand(SendToBatchCropScale);
+        SendImageToBatchCropScaleCommand = new RelayCommand<DatasetImageViewModel?>(SendImageToBatchCropScale);
         ExportDatasetCommand = new AsyncRelayCommand(ExportDatasetAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
         GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
@@ -1768,6 +1770,22 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         StatusMessage = $"Sent to Captioning: {image.FullFileName}";
     }
 
+    /// <summary>
+    /// Sends the image to the Batch Upscale tab for single-image upscaling.
+    /// </summary>
+    [RelayCommand]
+    private void SendToBatchUpscale(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
+        {
+            ImagePath = image.ImagePath
+        });
+
+        StatusMessage = $"Sent to Batch Upscale: {image.FullFileName}";
+    }
+
     private void SendToBatchCropScale()
     {
         if (ActiveDataset is null) return;
@@ -1779,6 +1797,21 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         });
 
         StatusMessage = $"Sent '{ActiveDataset.Name}' V{ActiveDataset.CurrentVersion} to Batch Crop/Scale";
+    }
+
+    /// <summary>
+    /// Sends a single image to the Batch Crop/Scale tab.
+    /// </summary>
+    private void SendImageToBatchCropScale(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+
+        _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
+        {
+            ImagePath = image.ImagePath
+        });
+
+        StatusMessage = $"Sent to Batch Crop/Scale: {image.FullFileName}";
     }
 
     /// <summary>

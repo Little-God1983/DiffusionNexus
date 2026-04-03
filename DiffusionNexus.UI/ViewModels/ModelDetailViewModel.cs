@@ -35,6 +35,11 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     private CivitaiModel? _cachedCivitaiModel;
 
+    /// <summary>
+    /// Cancels any in-flight Civitai thumbnail download when the selected version tab changes.
+    /// </summary>
+    private CancellationTokenSource? _detailThumbnailCts;
+
     #region Observable Properties
 
     /// <summary>
@@ -299,7 +304,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (dialogService is null) return;
 
         var result = await dialogService.ShowDownloadLoraVersionDialogAsync(
-            ModelName, tab.CivitaiVersion, sourceFolders);
+            ModelName, tab.CivitaiVersion, sourceFolders, CategoryDisplay);
 
         if (!result.Confirmed || string.IsNullOrWhiteSpace(result.TargetFolder))
             return;
@@ -1224,20 +1229,27 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         else if (selected.CivitaiVersion.Images.Count > 0)
         {
+            // Cancel any in-flight thumbnail download from a previous version tab
+            _detailThumbnailCts?.Cancel();
+            _detailThumbnailCts?.Dispose();
+            _detailThumbnailCts = new CancellationTokenSource();
+
             // Load first image from Civitai version
-            _ = LoadCivitaiThumbnailAsync(selected.CivitaiVersion.Images[0]);
+            _ = LoadCivitaiThumbnailAsync(selected.CivitaiVersion.Images[0], _detailThumbnailCts.Token);
         }
     }
 
-    private async Task LoadCivitaiThumbnailAsync(CivitaiModelImage image)
+    private async Task LoadCivitaiThumbnailAsync(CivitaiModelImage image, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(image.Url)) return;
 
         try
         {
-            using var httpClient = new HttpClient();
-            var data = await httpClient.GetByteArrayAsync(image.Url);
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var data = await httpClient.GetByteArrayAsync(image.Url, ct);
             if (data.Length == 0) return;
+
+            ct.ThrowIfCancellationRequested();
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -1251,6 +1263,10 @@ public partial class ModelDetailViewModel : ViewModelBase
                     // Image decode failure — ignore
                 }
             });
+        }
+        catch (OperationCanceledException)
+        {
+            // Version tab changed while downloading — discard silently
         }
         catch (Exception ex)
         {

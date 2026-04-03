@@ -4,7 +4,6 @@ using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Domain.Services;
-#pragma warning disable CS0618 // UpscalingViewModel is deprecated but still referenced until full removal
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -68,9 +67,6 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Sub-ViewModel for background fill tool.</summary>
     public BackgroundFillViewModel BackgroundFill { get; }
-
-    /// <summary>Sub-ViewModel for AI upscaling tool.</summary>
-    public UpscalingViewModel Upscaling { get; }
 
     /// <summary>Sub-ViewModel for text tool.</summary>
     public TextToolViewModel TextTools { get; }
@@ -280,6 +276,9 @@ public partial class ImageEditorViewModel : ObservableObject
     public IRelayCommand FlipHorizontalCommand { get; }
     public IRelayCommand FlipVerticalCommand { get; }
 
+    /// <summary>Navigates to the Batch Upscale tab with the current image loaded.</summary>
+    public IRelayCommand SendToBatchUpscaleCommand { get; }
+
     #endregion
 
     #region Events (for View wiring)
@@ -316,7 +315,8 @@ public partial class ImageEditorViewModel : ObservableObject
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
-        EditorServices? services = null)
+        EditorServices? services = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator;
         _services = services ?? EditorServiceFactory.Create();
@@ -328,8 +328,7 @@ public partial class ImageEditorViewModel : ObservableObject
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
-        Upscaling = new UpscalingViewModel(() => HasImage, () => CurrentImagePath, DeactivateOtherTools, eventAggregator);
-        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator);
+        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
@@ -367,6 +366,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Rotate180Command = new RelayCommand(ExecuteRotate180, () => HasImage);
         FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
         FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
+        SendToBatchUpscaleCommand = new RelayCommand(ExecuteSendToBatchUpscale, () => HasImage && !string.IsNullOrEmpty(CurrentImagePath));
     }
 
     /// <summary>Wires internal coordination events from sub-ViewModels (status, tool state, services).</summary>
@@ -408,14 +408,6 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
         BackgroundFill.StatusMessageChanged += (_, msg) => StatusMessage = msg;
         BackgroundFill.ToolToggled += (_, args) =>
-        {
-            if (args.IsActive) _services.Tools.Activate(args.ToolId);
-            else _services.Tools.Deactivate(args.ToolId);
-        };
-
-        Upscaling.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
-        Upscaling.StatusMessageChanged += (_, msg) => StatusMessage = msg;
-        Upscaling.ToolToggled += (_, args) =>
         {
             if (args.IsActive) _services.Tools.Activate(args.ToolId);
             else _services.Tools.Deactivate(args.ToolId);
@@ -467,9 +459,6 @@ public partial class ImageEditorViewModel : ObservableObject
         if (exceptToolId != ToolIds.BackgroundFill)
             BackgroundFill.ClosePanel();
 
-        if (exceptToolId != ToolIds.Upscaling)
-            Upscaling.ClosePanel();
-
         if (exceptToolId != ToolIds.Inpainting)
             Inpainting.ClosePanel();
 
@@ -492,7 +481,6 @@ public partial class ImageEditorViewModel : ObservableObject
         TextTools.CloseAll();
         BackgroundRemoval.ClosePanel();
         BackgroundFill.ClosePanel();
-        Upscaling.ClosePanel();
         Inpainting.ClosePanel();
         Outpainting.ClosePanel();
     }
@@ -514,7 +502,6 @@ public partial class ImageEditorViewModel : ObservableObject
         LayerPanel.NotifyCommandsCanExecuteChanged();
         BackgroundRemoval.RefreshCommandStates();
         BackgroundFill.RefreshCommandStates();
-        Upscaling.RefreshCommandStates();
         Inpainting.RefreshCommandStates();
         Outpainting.RefreshCommandStates();
     }
@@ -537,6 +524,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Rotate180Command.NotifyCanExecuteChanged();
         FlipHorizontalCommand.NotifyCanExecuteChanged();
         FlipVerticalCommand.NotifyCanExecuteChanged();
+        SendToBatchUpscaleCommand.NotifyCanExecuteChanged();
 
         NotifyToolCommandsCanExecuteChanged();
         Rating.RefreshCommandStates();
@@ -999,6 +987,14 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteRotate180() => Rotate180Requested?.Invoke(this, EventArgs.Empty);
     private void ExecuteFlipHorizontal() => FlipHorizontalRequested?.Invoke(this, EventArgs.Empty);
     private void ExecuteFlipVertical() => FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
+
+    private void ExecuteSendToBatchUpscale()
+    {
+        if (string.IsNullOrEmpty(CurrentImagePath)) return;
+
+        _eventAggregator?.PublishNavigateToBatchUpscale(
+            new NavigateToBatchUpscaleEventArgs { ImagePaths = [CurrentImagePath] });
+    }
 
     #endregion
 }

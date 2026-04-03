@@ -256,7 +256,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(EffectiveTargetFolder))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
-    private bool _useIncrementVersion;
+    private bool _useIncrementVersion = true;
 
     [ObservableProperty]
     private int _nextVersionNumber;
@@ -412,9 +412,10 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// True if no target is specified (overwrite mode).
+    /// Version increment only counts when a dataset is actually selected.
     /// </summary>
     public bool IsOverwriteMode => 
-        string.IsNullOrWhiteSpace(TargetFolder) && !UseIncrementVersion;
+        string.IsNullOrWhiteSpace(TargetFolder) && !(UseIncrementVersion && CanIncrementVersion);
 
     /// <summary>
     /// True if a valid source is selected: single image, source folder, or dataset+version.

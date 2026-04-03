@@ -23,6 +23,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     private readonly ITaskTracker _taskTracker;
     private PackageProcessManager? _processManager;
     private IServiceProvider? _serviceProvider;
+    private Func<int, Task>? _updatePackageFunc;
     private readonly List<LogEntry> _allEntries = [];
     private readonly object _entriesLock = new();
     private IDisposable? _logSubscription;
@@ -82,6 +83,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private bool _hasInstances;
+
+    [ObservableProperty]
+    private bool _hasRunningInstances;
 
     #endregion
 
@@ -229,6 +233,21 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(TaskIdFilter) && entry.TaskId != TaskIdFilter)
             return false;
 
+        // Instance filter: when an instance tab is selected, match entries whose Source
+        // contains either "Instance:{id}" (fallback format) or the instance name
+        // (task-handle format). This replaces the old SearchText-based approach that
+        // broke because process stdout lines don't contain the package name.
+        if (SelectedInstance is not null)
+        {
+            var idPattern = $"Instance:{SelectedInstance.PackageId}";
+            var namePattern = SelectedInstance.Name;
+            if (!entry.Source.Contains(idPattern, StringComparison.OrdinalIgnoreCase) &&
+                !entry.Source.Contains(namePattern, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
         // Text search
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
@@ -277,6 +296,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     partial void OnCategoryFilterChanged(LogCategory? value) => ApplyFilters();
     partial void OnTaskIdFilterChanged(string? value) => ApplyFilters();
     partial void OnSearchTextChanged(string? value) => ApplyFilters();
+    partial void OnSelectedInstanceChanged(InstanceTabItem? value) => ApplyFilters();
 
     #endregion
 
@@ -483,6 +503,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                     InstanceTabs.Add(tab);
                 }
                 HasInstances = InstanceTabs.Count > 0;
+                HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
 
                 // Check for updates in the background after loading
                 _ = CheckAllForUpdatesAsync();
@@ -524,7 +545,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
             var fullPath = Path.Combine(package.InstallationPath, package.ExecutablePath);
             if (!File.Exists(fullPath)) return;
 
-            _processManager!.Launch(package.Id, fullPath, package.InstallationPath, package.Arguments);
+            _processManager!.Launch(package.Id, fullPath, package.InstallationPath, package.Arguments, package.Type);
         }
         catch (Exception ex)
         {
@@ -565,70 +586,52 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task UpdateInstanceAsync(InstanceTabItem? tab)
     {
-        if (tab is null || _serviceProvider is null) return;
+        if (tab is null) return;
 
-        var updateService = ResolveUpdateService(tab.Type);
-        if (updateService is null)
+        if (_updatePackageFunc is null)
         {
             _logger.Log(LogLevel.Warning, LogCategory.InstanceManagement, tab.Name,
-                "No update service available for this installer type.");
+                "Update delegate not configured — update cannot proceed.");
             return;
-        }
-
-        // Auto-stop the running instance before updating
-        if (tab.IsRunning)
-        {
-            _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name,
-                "Stopping running instance before update...");
-            if (_processManager is not null)
-                await _processManager.StopAsync(tab.PackageId);
-
-            // Brief wait to let the process exit cleanly
-            await Task.Delay(1000);
         }
 
         // Open the panel so the user can follow progress
         IsPanelOpen = true;
         PanelOpenRequested?.Invoke(this, EventArgs.Empty);
 
-        tab.IsUpdating = true;
-        _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name, "Starting update...");
+        // Delegate to the centralised update logic in InstallerManagerViewModel.
+        // State sync (IsUpdating, IsUpdateAvailable, etc.) flows back through
+        // the InstallerUpdateStateChanged event wired in App.axaml.cs.
+        await _updatePackageFunc(tab.PackageId);
+    }
 
-        var progress = new Progress<string>(msg =>
-            _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name, msg));
+    /// <summary>
+    /// Registers the delegate that performs the actual package update.
+    /// Wired in App.axaml.cs to route through <c>InstallerManagerViewModel.UpdatePackageByIdAsync</c>.
+    /// </summary>
+    public void SetUpdateDelegate(Func<int, Task> updateFunc)
+    {
+        _updatePackageFunc = updateFunc;
+    }
 
-        try
+    /// <summary>
+    /// Handles update state changes from the Installer Manager so the console tabs stay in sync.
+    /// </summary>
+    public void OnExternalUpdateStateChanged(InstallerUpdateStateEventArgs e)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+
+        Dispatcher.UIThread.Post(() =>
         {
-            var result = await updateService.UpdateAsync(tab.InstallationPath, progress);
+            var tab = InstanceTabs.FirstOrDefault(t => t.PackageId == e.PackageId);
+            if (tab is null) return;
 
-            if (result.Success)
-            {
-                tab.IsUpdateAvailable = false;
-                tab.UpdateSummary = "Up to date";
+            tab.IsUpdating = e.IsUpdating;
+            tab.IsUpdateAvailable = e.IsUpdateAvailable;
 
-                // Persist the new version hash to the database
-                if (result.NewHash is not null)
-                    await UpdatePackageVersionAsync(tab.PackageId, result.NewHash);
-
-                _logger.Log(LogLevel.Info, LogCategory.InstanceManagement, tab.Name,
-                    $"Update complete: {result.Message}");
-            }
-            else
-            {
-                _logger.Log(LogLevel.Error, LogCategory.InstanceManagement, tab.Name,
-                    $"Update failed: {result.Message}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "Update failed for {Name}", tab.Name);
-            _logger.Log(LogLevel.Error, LogCategory.InstanceManagement, tab.Name,
-                $"Update error: {ex.Message}");
-        }
-        finally
-        {
-            tab.IsUpdating = false;
-        }
+            if (e.UpdateSummary is not null)
+                tab.UpdateSummary = e.UpdateSummary;
+        });
     }
 
     /// <summary>
@@ -681,29 +684,6 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         return services.FirstOrDefault(s => s.SupportedTypes.Contains(type));
     }
 
-    private async Task UpdatePackageVersionAsync(int packageId, string newHash)
-    {
-        if (_serviceProvider is null) return;
-
-        try
-        {
-            using var scope = _serviceProvider.CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
-
-            var package = await unitOfWork.InstallerPackages.GetByIdAsync(packageId);
-            if (package is not null)
-            {
-                package.Version = newHash;
-                package.IsUpdateAvailable = false;
-                await unitOfWork.SaveChangesAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "Failed to persist new version for package {Id}", packageId);
-        }
-    }
-
     [RelayCommand]
     private void FilterByInstance(InstanceTabItem? tab)
     {
@@ -717,13 +697,15 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            // Select this tab and filter the log to its output
+            // Select this tab and filter the log to its output.
+            // SelectedInstance-based filtering in ShouldInclude matches entries
+            // by both "Instance:{id}" and "Instance: {name}" source patterns.
+            // SearchText is left clear so the user can still search within the output.
             foreach (var t in InstanceTabs) t.IsSelected = false;
             tab.IsSelected = true;
             SelectedInstance = tab;
             CategoryFilter = LogCategory.InstanceManagement;
-            // Search by package name – matches "Instance: {name}" source from TrackedTaskHandle
-            SearchText = tab.Name;
+            SearchText = null;
         }
     }
 
@@ -735,6 +717,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
             if (tab is null) return;
 
             tab.IsRunning = running;
+            HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
 
             if (running)
             {

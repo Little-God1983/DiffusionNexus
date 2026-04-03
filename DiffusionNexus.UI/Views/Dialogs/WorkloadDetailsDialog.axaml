@@ -36,6 +36,16 @@
             <Setter Property="Background" Value="#555555"/>
             <Setter Property="Foreground" Value="#888888"/>
         </Style>
+        <Style Selector="Button.repair-btn">
+            <Setter Property="Background" Value="#6A5ACD"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.repair-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#7B6EE0"/>
+        </Style>
     </Window.Styles>
 
     <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto,Auto">
@@ -175,6 +185,11 @@
         </Border>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button x:Name="RepairButton"
+                    Classes="repair-btn"
+                    Content="Repair Dependencies"
+                    ToolTip.Tip="Installs missing runtime pip packages for already-installed custom nodes"
+                    Click="OnRepairDependencies"/>
             <Button x:Name="InstallButton"
                     Classes="install-btn"
                     Content="Install Selected"

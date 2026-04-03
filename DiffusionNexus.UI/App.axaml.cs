@@ -279,7 +279,7 @@ public partial class App : Application
             var shippedDb = Path.Combine(AppContext.BaseDirectory, databaseFileName);
 
             // Runtime location: directly in %LocalAppData% (no subfolder)
-            // TODO: Linux Implementation — use XDG_DATA_HOME or ~/.local/share
+            // TODO: Linux Implementation ï¿½ use XDG_DATA_HOME or ~/.local/share
             var runtimeDb = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 databaseFileName);
@@ -296,7 +296,7 @@ public partial class App : Application
                 else
                 {
                     Serilog.Log.Warning(
-                        "InitializeSdkDatabase: No seed DB found at {Path} — " +
+                        "InitializeSdkDatabase: No seed DB found at {Path} ï¿½ " +
                         "database will be created empty from migrations only", shippedDb);
                 }
             }
@@ -306,6 +306,10 @@ public partial class App : Application
             Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
             sdkContext.Database.Migrate();
             Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+
+            // Log the resolved SDK database path to the unified activity log
+            var activityLog = Services!.GetService<IActivityLogService>();
+            activityLog?.LogInfo("Installer SDK", $"Database loaded from: {runtimeDb}");
         }
         catch (Exception ex)
         {
@@ -593,6 +597,12 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
+        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature)
+        services.AddSingleton<IComfyUIReadinessService>(sp =>
+            new ComfyUIReadinessService(
+                sp.GetRequiredService<IComfyUIWrapperService>(),
+                sp.GetRequiredService<IAppSettingsService>()));
+
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
 
@@ -600,13 +610,13 @@ public partial class App : Application
         services.AddCaptioningServices();
 
         // Captioning backends (strategy pattern - local inference + ComfyUI)
-        // NOTE: Local Inference is registered but hidden in the UI until fully implemented — do not delete
+        // NOTE: Local Inference is registered but hidden in the UI until fully implemented ï¿½ do not delete
         services.AddSingleton<ICaptioningBackend>(sp =>
             new LocalInferenceCaptioningBackend(sp.GetRequiredService<ICaptioningService>()));
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>()));
+                sp.GetService<IComfyUIReadinessService>()));
 
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
@@ -683,7 +693,8 @@ public partial class App : Application
             sp.GetService<IComfyUIWrapperService>(),
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
-            sp.GetService<BucketAnalyzer>()));
+            sp.GetService<BucketAnalyzer>(),
+            sp.GetService<IComfyUIReadinessService>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
@@ -714,6 +725,17 @@ public partial class App : Application
                 }
             });
         };
+
+        // Wire Unified Console â†” Installer Manager update synchronisation:
+        // 1. Console "Update" button delegates to the Installer Manager's centralised logic
+        // 2. Installer Manager state changes flow back to the console tabs
+        if (mainViewModel.StatusBar?.UnifiedConsole is { } unifiedConsole)
+        {
+            unifiedConsole.SetUpdateDelegate(installerManagerVm.UpdatePackageByIdAsync);
+
+            installerManagerVm.InstallerUpdateStateChanged += (_, e) =>
+                unifiedConsole.OnExternalUpdateStateChanged(e);
+        }
 
         // LoRA Dataset Helper module - default on startup
         var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
@@ -842,11 +864,11 @@ public partial class App : Application
     {
         try
         {
-            // Disclaimer + settings must complete first — other modules depend on them.
+            // Disclaimer + settings must complete first ï¿½ other modules depend on them.
             await mainViewModel.CheckDisclaimerStatusAsync();
             await settingsVm.LoadCommand.ExecuteAsync(null);
 
-            // Remaining modules are independent — load in parallel.
+            // Remaining modules are independent ï¿½ load in parallel.
             await Task.WhenAll(
                 loraViewerVm.RefreshCommand.ExecuteAsync(null),
                 generationGalleryVm.LoadMediaCommand.ExecuteAsync(null),

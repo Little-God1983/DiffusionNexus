@@ -71,6 +71,24 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     [ObservableProperty]
     private string _baseModel = string.Empty;
 
+    /// <summary>
+    /// Inferred category of the model (e.g., "Character", "Style", "Concept").
+    /// </summary>
+    [ObservableProperty]
+    private string _category = string.Empty;
+
+    /// <summary>
+    /// Whether to create a subfolder named after the base model inside the source folder.
+    /// </summary>
+    [ObservableProperty]
+    private bool _createBaseModelFolder = true;
+
+    /// <summary>
+    /// Whether to create a subfolder named after the category inside the base model folder.
+    /// </summary>
+    [ObservableProperty]
+    private bool _createCategoryFolder = true;
+
     #endregion
 
     #region Collections
@@ -91,6 +109,31 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
         (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder)) ||
         (IsDownloadToFolder && !string.IsNullOrWhiteSpace(CustomFolderPath));
 
+    /// <summary>
+    /// Preview path showing the resolved download destination with optional subfolders.
+    /// Only meaningful when "Download to existing source folder" is selected.
+    /// </summary>
+    public string PreviewPath
+    {
+        get
+        {
+            if (!IsDownloadToExisting || string.IsNullOrWhiteSpace(SelectedSourceFolder))
+                return string.Empty;
+
+            var path = SelectedSourceFolder;
+            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
+                path = Path.Combine(path, BaseModel);
+            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
+                path = Path.Combine(path, Category);
+            return path;
+        }
+    }
+
+    /// <summary>
+    /// Whether the preview path should be visible (existing folder selected with a valid path).
+    /// </summary>
+    public bool HasPreviewPath => IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder);
+
     #endregion
 
     #region Constructors
@@ -105,6 +148,7 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
         FileName = "example_v1.safetensors";
         FileSizeDisplay = "1.2 GB";
         BaseModel = "SDXL 1.0";
+        Category = "Character";
         SourceFolders.Add(@"C:\Models\Loras");
         SourceFolders.Add(@"D:\AI\Models\Loras");
         SelectedSourceFolder = SourceFolders[0];
@@ -128,11 +172,13 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     public void Initialize(
         string modelName,
         CivitaiModelVersion civitaiVersion,
-        IReadOnlyList<string> sourceFolders)
+        IReadOnlyList<string> sourceFolders,
+        string? category = null)
     {
         ModelName = modelName;
         VersionName = civitaiVersion.Name;
         BaseModel = civitaiVersion.BaseModel;
+        Category = category ?? string.Empty;
 
         var primaryFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
                           ?? civitaiVersion.Files.FirstOrDefault();
@@ -179,27 +225,51 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     {
         if (value) IsDownloadToFolder = false;
         OnPropertyChanged(nameof(CanDownload));
+        OnPropertyChanged(nameof(PreviewPath));
+        OnPropertyChanged(nameof(HasPreviewPath));
     }
 
     partial void OnIsDownloadToFolderChanged(bool value)
     {
         if (value) IsDownloadToExisting = false;
         OnPropertyChanged(nameof(CanDownload));
+        OnPropertyChanged(nameof(PreviewPath));
+        OnPropertyChanged(nameof(HasPreviewPath));
     }
 
-    partial void OnSelectedSourceFolderChanged(string? value) => OnPropertyChanged(nameof(CanDownload));
+    partial void OnSelectedSourceFolderChanged(string? value)
+    {
+        OnPropertyChanged(nameof(CanDownload));
+        OnPropertyChanged(nameof(PreviewPath));
+        OnPropertyChanged(nameof(HasPreviewPath));
+    }
+
     partial void OnCustomFolderPathChanged(string? value) => OnPropertyChanged(nameof(CanDownload));
+
+    partial void OnCreateBaseModelFolderChanged(bool value) => OnPropertyChanged(nameof(PreviewPath));
+
+    partial void OnCreateCategoryFolderChanged(bool value) => OnPropertyChanged(nameof(PreviewPath));
 
     #endregion
 
     #region Helpers
 
     /// <summary>
-    /// Gets the resolved target folder path based on the current selection.
+    /// Gets the resolved target folder path based on the current selection,
+    /// including optional base-model and category subfolders.
     /// </summary>
     public string? GetTargetFolder()
     {
-        if (IsDownloadToExisting) return SelectedSourceFolder;
+        if (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder))
+        {
+            var path = SelectedSourceFolder;
+            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
+                path = Path.Combine(path, BaseModel);
+            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
+                path = Path.Combine(path, Category);
+            return path;
+        }
+
         if (IsDownloadToFolder) return CustomFolderPath;
         return null;
     }

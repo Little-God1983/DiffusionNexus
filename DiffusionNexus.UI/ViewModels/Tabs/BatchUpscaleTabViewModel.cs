@@ -256,7 +256,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     // Processing state
     private bool _isProcessing;
     private double _totalProgress;
-    private string _currentProcessingStatus = "Ready";
+    private string _currentProcessingStatus = string.Empty;
     private int _completedCount;
     private int _totalImageCount;
 
@@ -271,16 +271,22 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// </summary>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for executing upscale workflows.</param>
     /// <param name="settingsService">Optional settings service for dataset storage path resolution.</param>
+    /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
     public BatchUpscaleTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IComfyUIWrapperService? comfyUiService = null,
-        IAppSettingsService? settingsService = null)
+        IAppSettingsService? settingsService = null,
+        IComfyUIReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _comfyUiService = comfyUiService;
         _settingsService = settingsService;
+
+        // Create readiness ViewModels for both upscale variants
+        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscale);
+        VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscaleVision);
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -295,6 +301,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         SelectCompareItemCommand = new RelayCommand<UpscaleImageItemViewModel>(SelectCompareItem);
         SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
         ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
+
+        // Re-evaluate start command when readiness changes
+        Readiness.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+        };
+        VisionReadiness.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+                StartUpscaleCommand.NotifyCanExecuteChanged();
+        };
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
     }
@@ -312,6 +330,25 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Gets or sets the dialog service for showing dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// Unified readiness state for the standard batch upscale workflow.
+    /// Bind to <c>Readiness.IsReady</c>, <c>Readiness.MissingRequirements</c>, etc.
+    /// </summary>
+    public ComfyUIReadinessViewModel Readiness { get; }
+
+    /// <summary>
+    /// Unified readiness state for the vision auto-prompt upscale workflow.
+    /// Has additional requirements (Qwen3_VQA node + model) compared to <see cref="Readiness"/>.
+    /// </summary>
+    public ComfyUIReadinessViewModel VisionReadiness { get; }
+
+    /// <summary>
+    /// Returns the readiness ViewModel that matches the currently selected <see cref="PromptMode"/>.
+    /// Vision Auto-Prompt requires <see cref="VisionReadiness"/>; all other modes use <see cref="Readiness"/>.
+    /// </summary>
+    public ComfyUIReadinessViewModel ActiveReadiness =>
+        PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
 
     /// <summary>
     /// Available datasets from shared state.
@@ -484,10 +521,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         set
         {
             if (SetProperty(ref _promptMode, value))
-            {
-                OnPropertyChanged(nameof(IsManualPromptMode));
-                OnPropertyChanged(nameof(PromptModeDescription));
-            }
+                {
+                    OnPropertyChanged(nameof(IsManualPromptMode));
+                    OnPropertyChanged(nameof(PromptModeDescription));
+                    OnPropertyChanged(nameof(ActiveReadiness));
+                    StartUpscaleCommand.NotifyCanExecuteChanged();
+                }
         }
     }
 
@@ -683,6 +722,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         if (IsProcessing || _comfyUiService is null) return false;
 
+        // Require ComfyUI readiness for the selected workflow
+        var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+        if (!requiredReadiness.IsReady) return false;
+
         if (IsSingleImageMode)
             return !string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath);
 
@@ -827,6 +870,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         string? newVersionPath,
         string? singleImageOutputPath)
     {
+        if (_comfyUiService is null) return;
+
         var isSingleImage = singleImageOutputPath is not null;
 
         // Resolve the workflow file.

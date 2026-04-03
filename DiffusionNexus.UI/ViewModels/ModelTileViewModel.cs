@@ -38,6 +38,11 @@ public partial class ModelTileViewModel : ViewModelBase
     #region Observable Properties
 
     /// <summary>
+    /// Cancels any in-flight thumbnail download/load when the selected version changes.
+    /// </summary>
+    private CancellationTokenSource? _thumbnailCts;
+
+    /// <summary>
     /// The model entity.
     /// </summary>
     [ObservableProperty]
@@ -921,6 +926,12 @@ public partial class ModelTileViewModel : ViewModelBase
 
     private void LoadThumbnailFromVersion()
     {
+        // Cancel any in-flight thumbnail operation from a previous version switch
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = new CancellationTokenSource();
+        var ct = _thumbnailCts.Token;
+
         if (SelectedVersion?.PrimaryImage?.ThumbnailData is { } data && data.Length > 0)
         {
             try
@@ -949,13 +960,13 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             // No BLOB cached yet — download from Civitai URL in background
             ThumbnailImage = null;
-            _ = DownloadThumbnailAsync(image);
+            _ = DownloadThumbnailAsync(image, ct);
         }
         else
         {
             // Last resort: try to find a local preview image next to the safetensors file
             ThumbnailImage = null;
-            _ = TryLoadLocalPreviewAsync();
+            _ = TryLoadLocalPreviewAsync(ct);
         }
     }
 
@@ -976,7 +987,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Looks for files sharing the same base name with common image extensions
     /// (e.g., mymodel.preview.png, mymodel.jpg).
     /// </summary>
-    private async Task TryLoadLocalPreviewAsync()
+    private async Task TryLoadLocalPreviewAsync(CancellationToken ct = default)
     {
         try
         {
@@ -1007,8 +1018,10 @@ public partial class ModelTileViewModel : ViewModelBase
                 $"Found local preview for '{DisplayName}': {Path.GetFileName(localImagePath)}");
 
             // Read and transcode to JPEG for BLOB storage + display
-            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
+            var imageBytes = await File.ReadAllBytesAsync(localImagePath, ct);
             if (imageBytes.Length == 0) return;
+
+            ct.ThrowIfCancellationRequested();
 
             byte[] thumbnailBytes;
             using (var skBitmap = SKBitmap.Decode(imageBytes))
@@ -1019,7 +1032,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 var targetWidth = 340;
                 var scale = (float)targetWidth / skBitmap.Width;
                 var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), SKFilterQuality.Medium);
+                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
                 if (resized is null) return;
 
                 using var skImage = SKImage.FromBitmap(resized);
@@ -1028,6 +1041,8 @@ public partial class ModelTileViewModel : ViewModelBase
             }
 
             if (thumbnailBytes.Length == 0) return;
+
+            ct.ThrowIfCancellationRequested();
 
             // Persist to DB: create or update the ModelImage entity with the thumbnail BLOB
             var version = SelectedVersion;
@@ -1040,7 +1055,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
                     var dbVersion = await dbContext.ModelVersions
                         .Include(v => v.Images)
-                        .FirstOrDefaultAsync(v => v.Id == version.Id);
+                        .FirstOrDefaultAsync(v => v.Id == version.Id, ct);
 
                     if (dbVersion is not null)
                     {
@@ -1060,11 +1075,15 @@ public partial class ModelTileViewModel : ViewModelBase
                         primaryImage.ThumbnailData = thumbnailBytes;
                         primaryImage.ThumbnailMimeType = "image/jpeg";
 
-                        await dbContext.SaveChangesAsync();
+                        await dbContext.SaveChangesAsync(ct);
 
                         logger?.Debug(LogCategory.General, "LocalPreview",
                             $"Persisted local thumbnail for '{DisplayName}' ({thumbnailBytes.Length / 1024.0:F1} KB)");
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // Re-throw so the outer catch handles it
                 }
                 catch (Exception ex)
                 {
@@ -1073,6 +1092,8 @@ public partial class ModelTileViewModel : ViewModelBase
                     // Non-fatal — still display the in-memory thumbnail below
                 }
             }
+
+            ct.ThrowIfCancellationRequested();
 
             // Display the thumbnail immediately
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -1087,6 +1108,10 @@ public partial class ModelTileViewModel : ViewModelBase
                     ThumbnailImage = null;
                 }
             });
+        }
+        catch (OperationCanceledException)
+        {
+            // Version changed while loading — discard silently
         }
         catch
         {
@@ -1153,7 +1178,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Downloads a thumbnail from a Civitai image URL and caches it as a BLOB.
     /// For video previews, downloads the video to a temp file and extracts the mid-frame.
     /// </summary>
-    private async Task DownloadThumbnailAsync(ModelImage image)
+    private async Task DownloadThumbnailAsync(ModelImage image, CancellationToken ct = default)
     {
         var logger = App.Services?.GetService<IUnifiedLogger>();
         var isVideo = IsVideoPreview(image);
@@ -1176,8 +1201,10 @@ public partial class ModelTileViewModel : ViewModelBase
             }
             else
             {
-                (thumbnailBytes, mimeType) = await DownloadImageThumbnailAsync(image.Url).ConfigureAwait(false);
+                (thumbnailBytes, mimeType) = await DownloadImageThumbnailAsync(image.Url, ct).ConfigureAwait(false);
             }
+
+            ct.ThrowIfCancellationRequested();
 
             if (thumbnailBytes.Length == 0)
             {
@@ -1195,6 +1222,8 @@ public partial class ModelTileViewModel : ViewModelBase
                 // EnsureDecodableBytes already logged the specific reason (video data, corrupt, etc.)
                 return;
             }
+
+            ct.ThrowIfCancellationRequested();
 
             logger?.Info(LogCategory.Network, "ThumbnailDownload",
                 $"Thumbnail ready for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB, ImageId={image.Id})");
@@ -1214,6 +1243,8 @@ public partial class ModelTileViewModel : ViewModelBase
                     $"Cannot persist thumbnail for '{displayName}': image.Id is 0 (not yet saved to DB)");
             }
 
+            ct.ThrowIfCancellationRequested();
+
             // Display the downloaded thumbnail
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -1229,6 +1260,10 @@ public partial class ModelTileViewModel : ViewModelBase
                     ThumbnailImage = null;
                 }
             });
+        }
+        catch (OperationCanceledException)
+        {
+            // Version changed while downloading — discard silently
         }
         catch (Exception ex)
         {
@@ -1263,7 +1298,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>
     /// Downloads an image thumbnail from a Civitai URL.
     /// </summary>
-    private static async Task<(byte[] Data, string MimeType)> DownloadImageThumbnailAsync(string url)
+    private static async Task<(byte[] Data, string MimeType)> DownloadImageThumbnailAsync(string url, CancellationToken ct = default)
     {
         // Civitai supports width parameter for resized images
         var thumbnailUrl = url.Contains('?')
@@ -1271,7 +1306,7 @@ public partial class ModelTileViewModel : ViewModelBase
             : $"{url}/width=300";
 
         using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl).ConfigureAwait(false);
+        var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl, ct).ConfigureAwait(false);
         return (bytes, "image/jpeg");
     }
 
