@@ -111,6 +111,36 @@
                         IsEnabled="{Binding IsDownloadToExisting}"
                         HorizontalAlignment="Stretch"
                         Margin="0,4,0,0"/>
+
+              <!-- Subfolder options -->
+              <StackPanel Spacing="4"
+                          Margin="0,4,0,0"
+                          IsVisible="{Binding IsDownloadToExisting}">
+                <CheckBox IsChecked="{Binding CreateBaseModelFolder, Mode=TwoWay}"
+                          Content="Create Base Model Folder"
+                          FontSize="13"/>
+                <CheckBox IsChecked="{Binding CreateCategoryFolder, Mode=TwoWay}"
+                          Content="Create Category Folder"
+                          FontSize="13"/>
+              </StackPanel>
+
+              <!-- Preview path -->
+              <Border Background="#111"
+                      CornerRadius="4"
+                      Padding="10,6"
+                      Margin="0,4,0,0"
+                      IsVisible="{Binding HasPreviewPath}">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Preview Path"
+                             Foreground="#888"
+                             FontSize="11"
+                             FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding PreviewPath}"
+                             Foreground="#FFCC00"
+                             FontSize="12"
+                             TextWrapping="Wrap"/>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Grid>
         </Border>

@@ -323,11 +323,13 @@ public interface IDialogService
     /// <param name="modelName">Display name of the model.</param>
     /// <param name="civitaiVersion">The Civitai version to download.</param>
     /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
+    /// <param name="category">Inferred category of the model (e.g., "Character", "Style").</param>
     /// <returns>Download result with target folder, or cancelled result.</returns>
     Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
         string modelName,
         CivitaiModelVersion civitaiVersion,
-        IReadOnlyList<string> sourceFolders);
+        IReadOnlyList<string> sourceFolders,
+        string? category = null);
 }
 
 /// <summary>

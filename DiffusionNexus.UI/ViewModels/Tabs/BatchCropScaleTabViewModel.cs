@@ -256,7 +256,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(CanStart))]
     [NotifyPropertyChangedFor(nameof(EffectiveTargetFolder))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
-    private bool _useIncrementVersion;
+    private bool _useIncrementVersion = true;
 
     [ObservableProperty]
     private int _nextVersionNumber;

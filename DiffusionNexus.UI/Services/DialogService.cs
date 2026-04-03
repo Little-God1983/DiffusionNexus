@@ -534,10 +534,11 @@ public class DialogService : IDialogService
     public async Task<DownloadLoraVersionResult> ShowDownloadLoraVersionDialogAsync(
         string modelName,
         CivitaiModelVersion civitaiVersion,
-        IReadOnlyList<string> sourceFolders)
+        IReadOnlyList<string> sourceFolders,
+        string? category = null)
     {
         var dialog = new DownloadLoraVersionDialog()
-            .WithVersionInfo(modelName, civitaiVersion, sourceFolders);
+            .WithVersionInfo(modelName, civitaiVersion, sourceFolders, category);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();

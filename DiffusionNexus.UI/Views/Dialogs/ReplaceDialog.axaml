@@ -12,10 +12,13 @@
         Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico">
   
   <Grid RowDefinitions="Auto,*,Auto">
-     <TextBlock Text="Replace Image" 
+      <StackPanel>
+	<TextBlock Text="Replace Image" 
                 FontSize="20" FontWeight="SemiBold" Foreground="#D4A574" 
                 Margin="0,20,0,10" HorizontalAlignment="Center"/>
-
+      <TextBlock Text="This will replace the selected Image keeping the captions and rating status" 
+                 FontSize="14" Foreground="#CCC" HorizontalAlignment="Center" Margin="0,0,0,20"/>	  
+      </StackPanel>
      <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*" Margin="20">
         <!-- Original File -->
         <Border Grid.Column="0" Background="#333" CornerRadius="8" Padding="15">

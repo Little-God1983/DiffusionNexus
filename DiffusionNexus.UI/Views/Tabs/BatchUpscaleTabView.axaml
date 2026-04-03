@@ -16,11 +16,11 @@
     <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="16" Margin="16">
 
-        <!-- ComfyUI Readiness -->
+        <!-- ComfyUI Readiness (switches between standard and vision readiness based on prompt mode) -->
         <Border Background="#333333" CornerRadius="8" Padding="16">
           <StackPanel Spacing="12">
             <TextBlock Text="ComfyUI Status" FontWeight="SemiBold" FontSize="14"/>
-            <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
+            <controls:ComfyUIReadinessPanel DataContext="{Binding ActiveReadiness}"/>
           </StackPanel>
         </Border>
 

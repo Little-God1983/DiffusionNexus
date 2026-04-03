@@ -344,6 +344,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     public ComfyUIReadinessViewModel VisionReadiness { get; }
 
     /// <summary>
+    /// Returns the readiness ViewModel that matches the currently selected <see cref="PromptMode"/>.
+    /// Vision Auto-Prompt requires <see cref="VisionReadiness"/>; all other modes use <see cref="Readiness"/>.
+    /// </summary>
+    public ComfyUIReadinessViewModel ActiveReadiness =>
+        PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+
+    /// <summary>
     /// Available datasets from shared state.
     /// </summary>
     public ObservableCollection<DatasetCardViewModel> AvailableDatasets => _state.Datasets;
@@ -517,6 +524,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     OnPropertyChanged(nameof(IsManualPromptMode));
                     OnPropertyChanged(nameof(PromptModeDescription));
+                    OnPropertyChanged(nameof(ActiveReadiness));
                     StartUpscaleCommand.NotifyCanExecuteChanged();
                 }
         }
