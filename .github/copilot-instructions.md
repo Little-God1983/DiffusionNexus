@@ -14,8 +14,8 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 
 ## Database Management
 - There are TWO separate databases in the DiffusionNexus project:
-  - **diffusion_nexus.db** — comes from the NuGet package `DiffusionNexus.Installer.SDK.Database`. Runtime location: `C:\Users\Little God\AppData\Local\diffusion_nexus.db` (directly in %LocalAppData%, NOT in a subfolder). Contains workload configurations from the SDK.
-  - **Diffusion_Nexus-core.db** — belongs to this solution (DiffusionNexus). Managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project. Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, etc.).
+  - **diffusion_nexus.db** — belongs to the Installer SDK (from the NuGet package `DiffusionNexus.Installer.SDK.Database`). Runtime location: `C:\Users\Little God\AppData\Local\diffusion_nexus.db` (directly in %LocalAppData%, NOT in a subfolder). Contains workload configurations from the SDK.
+  - **Diffusion_Nexus-core.db** — belongs to the DiffusionNexus application itself (managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project). Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, etc.).
 - Do NOT mix these up.
 
 ## Code Style
