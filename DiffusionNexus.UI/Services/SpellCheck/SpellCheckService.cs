@@ -69,6 +69,10 @@ public sealed class SpellCheckService : ISpellCheckService
                 i++;
             }
 
+            // Trim trailing hyphens/apostrophes so "word-" or "word'" don't pollute the token
+            while (i > start && text[i - 1] is '-' or '\'')
+                i--;
+
             var word = text.AsSpan(start, i - start);
 
             // Skip single characters, numbers, and words that start with a digit
@@ -149,5 +153,5 @@ public sealed class SpellCheckService : ISpellCheckService
         }
     }
 
-    private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '\'';
+    private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c is '\'' or '-';
 }

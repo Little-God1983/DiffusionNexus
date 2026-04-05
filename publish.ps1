@@ -154,6 +154,14 @@ if (Test-Path $onnxLib) {
     $artifactsRemoved++
 }
 
+# Remove PDB symbol files (debug symbols, not needed in release distribution)
+$pdbFiles = Get-ChildItem -Path $OutputDir -Filter "*.pdb" -ErrorAction SilentlyContinue
+foreach ($pdb in $pdbFiles) {
+    Remove-Item -Path $pdb.FullName -Force
+    Write-Host "Removed: $($pdb.Name)" -ForegroundColor Gray
+    $artifactsRemoved++
+}
+
 if ($artifactsRemoved -gt 0) {
     Write-Host "Cleaned up $artifactsRemoved unnecessary build artifacts." -ForegroundColor Green
 } else {
