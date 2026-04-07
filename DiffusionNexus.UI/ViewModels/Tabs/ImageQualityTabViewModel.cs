@@ -1,39 +1,37 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
 /// <summary>
-/// Row model for the per-image quality results table.
+/// Per-image quality result shown in the detail panel when an issue is selected.
+/// Shows the image with its scores and a human-readable verdict.
 /// </summary>
-public class ImageQualityRowViewModel
+public class ImageQualityItemViewModel : ObservableObject
 {
+    private bool _isExpanded;
+
     /// <summary>File name (no path).</summary>
     public required string FileName { get; init; }
 
-    /// <summary>Absolute file path.</summary>
+    /// <summary>Absolute file path (for image preview).</summary>
     public required string FilePath { get; init; }
 
-    /// <summary>Blur/sharpness score (0–100), or null if not checked.</summary>
-    public double? BlurScore { get; init; }
+    /// <summary>Paired image path for preview (same as FilePath for image checks).</summary>
+    public string ImagePath => FilePath;
 
-    /// <summary>Exposure score (0–100), or null if not checked.</summary>
-    public double? ExposureScore { get; init; }
-
-    /// <summary>Overall average score across all checks.</summary>
+    /// <summary>Overall score for this image (0–100).</summary>
     public required double OverallScore { get; init; }
 
-    /// <summary>Blur detail text.</summary>
-    public string? BlurDetail { get; init; }
+    /// <summary>Human-readable verdict (e.g. "Very blurry — replace with sharper source").</summary>
+    public required string Verdict { get; init; }
 
-    /// <summary>Exposure detail text.</summary>
-    public string? ExposureDetail { get; init; }
-
-    /// <summary>True when the overall score is below the warning threshold.</summary>
-    public bool HasWarning => OverallScore < 50;
+    /// <summary>Score breakdown lines (e.g. "Blur: 23/100 — Laplacian variance: 67").</summary>
+    public required IReadOnlyList<string> ScoreBreakdown { get; init; }
 
     /// <summary>Color hex for the overall score.</summary>
     public string ScoreColor => OverallScore switch
@@ -43,11 +41,34 @@ public class ImageQualityRowViewModel
         >= 40 => "#FFA726",
         _ => "#FF6B6B"
     };
+
+    /// <summary>Severity icon based on score.</summary>
+    public string SeverityIcon => OverallScore switch
+    {
+        >= 80 => "\u2714",  // checkmark
+        >= 40 => "\u26A0",  // warning
+        _ => "\u2716"       // cross
+    };
+
+    /// <summary>Whether this item is expanded to show the image preview.</summary>
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetProperty(ref _isExpanded, value);
+    }
+
+    /// <summary>Toggles the expanded state.</summary>
+    public IRelayCommand ToggleExpandCommand { get; }
+
+    public ImageQualityItemViewModel()
+    {
+        ToggleExpandCommand = new RelayCommand(() => IsExpanded = !IsExpanded);
+    }
 }
 
 /// <summary>
 /// ViewModel for the Image Quality detail section within the Image Analysis dashboard.
-/// Displays per-image blur and exposure scores from the latest analysis.
+/// Uses the same left (issue list) + right (detail with affected images) pattern as Caption Quality.
 /// </summary>
 public class ImageQualityTabViewModel : ObservableObject
 {
@@ -60,6 +81,10 @@ public class ImageQualityTabViewModel : ObservableObject
     private string _overallScoreLabel = string.Empty;
     private int _issueCount;
     private string _summaryText = "Not analyzed yet";
+    private Issue? _selectedIssue;
+
+    // Stores full per-image data for building the detail panel
+    private readonly Dictionary<string, ImageQualityItemViewModel> _imageItemsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a new <see cref="ImageQualityTabViewModel"/>.
@@ -79,11 +104,16 @@ public class ImageQualityTabViewModel : ObservableObject
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
     }
 
-    /// <summary>Per-image quality results.</summary>
-    public ObservableCollection<ImageQualityRowViewModel> ImageRows { get; } = [];
+    #region Observable Properties
 
-    /// <summary>Issues detected during analysis.</summary>
+    /// <summary>Issues from the analysis, shown in the left panel.</summary>
     public ObservableCollection<Issue> Issues { get; } = [];
+
+    /// <summary>Image items for the currently selected issue, shown in the right panel.</summary>
+    public ObservableCollection<ImageQualityItemViewModel> AffectedImages { get; } = [];
+
+    /// <summary>All images sorted by worst score, shown when "All Images" is selected.</summary>
+    public ObservableCollection<ImageQualityItemViewModel> AllImages { get; } = [];
 
     /// <summary>Whether analysis is running.</summary>
     public bool IsAnalyzing
@@ -109,7 +139,7 @@ public class ImageQualityTabViewModel : ObservableObject
     /// <summary>Can the analyze command execute.</summary>
     public bool CanAnalyze => !string.IsNullOrEmpty(_folderPath) && !IsAnalyzing;
 
-    /// <summary>Overall image quality score (average across all images).</summary>
+    /// <summary>Overall image quality score.</summary>
     public double OverallScore
     {
         get => _overallScore;
@@ -137,8 +167,35 @@ public class ImageQualityTabViewModel : ObservableObject
         private set => SetProperty(ref _summaryText, value);
     }
 
+    /// <summary>Currently selected issue in the left panel.</summary>
+    public Issue? SelectedIssue
+    {
+        get => _selectedIssue;
+        set
+        {
+            if (SetProperty(ref _selectedIssue, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedIssue));
+                OnPropertyChanged(nameof(ShowAllImages));
+                PopulateAffectedImages(value);
+            }
+        }
+    }
+
+    /// <summary>Whether an issue is selected.</summary>
+    public bool HasSelectedIssue => _selectedIssue is not null;
+
+    /// <summary>Whether to show all images (no specific issue selected).</summary>
+    public bool ShowAllImages => _selectedIssue is null && HasResults;
+
+    #endregion
+
+    #region Commands
+
     /// <summary>Analyze command.</summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
+
+    #endregion
 
     /// <summary>
     /// Raised when analysis completes, with (score, issueCount, label).
@@ -152,8 +209,11 @@ public class ImageQualityTabViewModel : ObservableObject
     {
         _folderPath = folderPath ?? string.Empty;
         HasResults = false;
-        ImageRows.Clear();
         Issues.Clear();
+        AffectedImages.Clear();
+        AllImages.Clear();
+        _imageItemsByPath.Clear();
+        SelectedIssue = null;
         SummaryText = "Not analyzed yet";
         OnPropertyChanged(nameof(CanAnalyze));
         AnalyzeCommand.NotifyCanExecuteChanged();
@@ -164,8 +224,10 @@ public class ImageQualityTabViewModel : ObservableObject
     /// </summary>
     public void ApplyResults(IReadOnlyList<ImageCheckResult> results)
     {
-        ImageRows.Clear();
         Issues.Clear();
+        AffectedImages.Clear();
+        AllImages.Clear();
+        _imageItemsByPath.Clear();
 
         if (results.Count == 0)
         {
@@ -197,7 +259,7 @@ public class ImageQualityTabViewModel : ObservableObject
                 Issues.Add(issue);
         }
 
-        // Build rows
+        // Build image items
         foreach (var (filePath, scores) in byFile)
         {
             var allScores = new List<double>();
@@ -205,28 +267,36 @@ public class ImageQualityTabViewModel : ObservableObject
             if (scores.exposure.HasValue) allScores.Add(scores.exposure.Value);
 
             double overall = allScores.Count > 0 ? allScores.Average() : 0;
+            overall = Math.Round(overall, 1);
 
-            ImageRows.Add(new ImageQualityRowViewModel
+            var breakdown = new List<string>();
+            if (scores.blur.HasValue)
+                breakdown.Add($"Sharpness: {scores.blur.Value:F0}/100 — {scores.blurDetail}");
+            if (scores.exposure.HasValue)
+                breakdown.Add($"Exposure: {scores.exposure.Value:F0}/100 — {scores.exposureDetail}");
+
+            string verdict = BuildVerdict(scores.blur, scores.exposure);
+
+            var item = new ImageQualityItemViewModel
             {
                 FileName = Path.GetFileName(filePath),
                 FilePath = filePath,
-                BlurScore = scores.blur,
-                ExposureScore = scores.exposure,
-                OverallScore = Math.Round(overall, 1),
-                BlurDetail = scores.blurDetail,
-                ExposureDetail = scores.exposureDetail
-            });
+                OverallScore = overall,
+                Verdict = verdict,
+                ScoreBreakdown = breakdown
+            };
+
+            _imageItemsByPath[filePath] = item;
         }
 
-        // Sort by worst score first
-        var sorted = ImageRows.OrderBy(r => r.OverallScore).ToList();
-        ImageRows.Clear();
-        foreach (var row in sorted)
-            ImageRows.Add(row);
+        // AllImages sorted by worst score first
+        var sorted = _imageItemsByPath.Values.OrderBy(i => i.OverallScore).ToList();
+        foreach (var item in sorted)
+            AllImages.Add(item);
 
         // Summary
         double avgScore = results.Average(r => r.Score);
-        int totalIssues = results.Sum(r => r.Issues.Count);
+        int totalIssues = Issues.Count;
         string label = avgScore switch
         {
             >= 85 => "Excellent",
@@ -241,10 +311,60 @@ public class ImageQualityTabViewModel : ObservableObject
         HasResults = true;
 
         SummaryText = totalIssues > 0
-            ? $"Score: {avgScore:F0} ({label}) · {totalIssues} issue{(totalIssues != 1 ? "s" : "")}"
-            : $"Score: {avgScore:F0} ({label}) · No issues";
+            ? $"Score: {avgScore:F0} ({label}) \u00b7 {totalIssues} issue{(totalIssues != 1 ? "s" : "")}"
+            : $"Score: {avgScore:F0} ({label}) \u00b7 No issues";
+
+        // Auto-select first issue if any
+        SelectedIssue = Issues.Count > 0 ? Issues[0] : null;
 
         AnalysisCompleted?.Invoke(avgScore, totalIssues, label);
+    }
+
+    private void PopulateAffectedImages(Issue? issue)
+    {
+        AffectedImages.Clear();
+
+        if (issue is null)
+            return;
+
+        foreach (var filePath in issue.AffectedFiles)
+        {
+            if (_imageItemsByPath.TryGetValue(filePath, out var item))
+            {
+                AffectedImages.Add(item);
+            }
+        }
+    }
+
+    private static string BuildVerdict(double? blur, double? exposure)
+    {
+        var parts = new List<string>();
+
+        if (blur.HasValue)
+        {
+            parts.Add(blur.Value switch
+            {
+                < 20 => "Extremely blurry \u2014 replace with a sharper image",
+                < 40 => "Very blurry \u2014 consider replacing",
+                < 65 => "Slightly soft \u2014 usable but may reduce output detail",
+                < 80 => "Acceptable sharpness",
+                _ => "Sharp"
+            });
+        }
+
+        if (exposure.HasValue)
+        {
+            parts.Add(exposure.Value switch
+            {
+                < 20 => "Severely mis-exposed \u2014 replace this image",
+                < 40 => "Poor exposure \u2014 consider replacing",
+                < 65 => "Exposure could be better \u2014 review",
+                < 80 => "Acceptable exposure",
+                _ => "Well exposed"
+            });
+        }
+
+        return parts.Count > 0 ? string.Join(" · ", parts) : "No checks run";
     }
 
     private async Task AnalyzeAsync()
@@ -255,7 +375,6 @@ public class ImageQualityTabViewModel : ObservableObject
         IsAnalyzing = true;
         try
         {
-            // Scan for images using the lightweight header reader approach
             var images = await Task.Run(() =>
             {
                 var imgList = new List<ImageFileInfo>();
@@ -263,9 +382,8 @@ public class ImageQualityTabViewModel : ObservableObject
 
                 foreach (var file in Directory.EnumerateFiles(_folderPath))
                 {
-                    if (!DiffusionNexus.Domain.Enums.SupportedMediaTypes.IsImageFile(file))
+                    if (!SupportedMediaTypes.IsImageFile(file))
                         continue;
-                    // Use file info as placeholder — dimensions come from checks
                     imgList.Add(new ImageFileInfo(file, 0, 0));
                 }
                 return imgList;
@@ -274,7 +392,7 @@ public class ImageQualityTabViewModel : ObservableObject
             var config = new DatasetConfig
             {
                 FolderPath = _folderPath,
-                LoraType = Domain.Enums.LoraType.Character // Default; checks use IsApplicable
+                LoraType = LoraType.Character
             };
 
             var results = new List<ImageCheckResult>();
