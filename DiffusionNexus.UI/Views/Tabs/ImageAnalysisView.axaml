@@ -97,6 +97,10 @@
         <views:BucketAnalysisView DataContext="{Binding BucketAnalysisTab}"/>
       </Panel>
 
+      <Panel IsVisible="{Binding IsImageQualitySelected}">
+        <views:ImageQualityView DataContext="{Binding ImageQualityTab}"/>
+      </Panel>
+
     </Panel>
 
   </Grid>

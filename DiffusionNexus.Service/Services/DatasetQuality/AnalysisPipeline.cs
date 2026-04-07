@@ -1,39 +1,53 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality.Scoring;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality;
 
 /// <summary>
 /// Orchestrates dataset quality analysis by discovering registered
-/// <see cref="IDatasetCheck"/> implementations, filtering by applicability,
-/// and running them in order against the loaded dataset.
+/// <see cref="IDatasetCheck"/> and <see cref="IImageQualityCheck"/>
+/// implementations, filtering by applicability, and running them in order
+/// against the loaded dataset. Computes a composite quality score from all results.
 /// </summary>
 public class AnalysisPipeline
 {
     private readonly IEnumerable<IDatasetCheck> _checks;
+    private readonly IEnumerable<IImageQualityCheck> _imageChecks;
     private readonly CaptionLoader _captionLoader;
+    private readonly BucketAnalyzer _bucketAnalyzer;
 
     /// <summary>
     /// Creates a new <see cref="AnalysisPipeline"/>.
     /// </summary>
-    /// <param name="checks">All registered check implementations (injected via DI).</param>
+    /// <param name="checks">All registered caption check implementations (injected via DI).</param>
+    /// <param name="imageChecks">All registered image check implementations (injected via DI).</param>
     /// <param name="captionLoader">Loader that reads caption files from disk.</param>
-    public AnalysisPipeline(IEnumerable<IDatasetCheck> checks, CaptionLoader captionLoader)
+    /// <param name="bucketAnalyzer">Bucket analyzer for resolution distribution scoring.</param>
+    public AnalysisPipeline(
+        IEnumerable<IDatasetCheck> checks,
+        IEnumerable<IImageQualityCheck> imageChecks,
+        CaptionLoader captionLoader,
+        BucketAnalyzer bucketAnalyzer)
     {
         ArgumentNullException.ThrowIfNull(checks);
+        ArgumentNullException.ThrowIfNull(imageChecks);
         ArgumentNullException.ThrowIfNull(captionLoader);
+        ArgumentNullException.ThrowIfNull(bucketAnalyzer);
 
         _checks = checks;
+        _imageChecks = imageChecks;
         _captionLoader = captionLoader;
+        _bucketAnalyzer = bucketAnalyzer;
     }
 
     /// <summary>
-    /// Runs all applicable checks against the dataset described by <paramref name="config"/>.
+    /// Runs all applicable caption checks against the dataset described by <paramref name="config"/>.
+    /// This is the original synchronous entry point for caption-only analysis.
     /// </summary>
     /// <param name="config">Dataset configuration (folder, trigger word, LoRA type).</param>
     /// <returns>An <see cref="AnalysisReport"/> containing all discovered issues.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="config"/> is null.</exception>
     public AnalysisReport Analyze(DatasetConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -49,12 +63,22 @@ public class AnalysisPipeline
 
         // Run each check and collect issues
         var allIssues = new List<Issue>();
+        var allCheckScores = new List<CheckScore>();
 
         foreach (var check in applicableChecks)
         {
             var issues = check.Run(captions, config);
             allIssues.AddRange(issues);
+
+            // Convert caption check issues to a numeric score
+            var checkIssues = issues.Where(i => i.CheckName == check.Name).ToList();
+            var score = CheckScoreAdapter.ScoreFromIssues(check.Name, checkIssues, captions.Count);
+            if (score != null)
+                allCheckScores.Add(score);
         }
+
+        // Completeness score (captions vs images)
+        allCheckScores.Add(CheckScoreAdapter.ScoreFromCompleteness(captions.Count, imageCount));
 
         // Sort: Critical first, then Warning, then Info
         var sortedIssues = allIssues
@@ -67,11 +91,129 @@ public class AnalysisPipeline
             imageCount,
             applicableChecks.Count);
 
+        var composite = CompositeScoreCalculator.Calculate(allCheckScores);
+
         return new AnalysisReport
         {
             Config = config,
             Issues = sortedIssues,
-            Summary = summary
+            Summary = summary,
+            CheckScores = allCheckScores,
+            CompositeScore = composite
+        };
+    }
+
+    /// <summary>
+    /// Runs the full analysis pipeline: caption checks, image quality checks,
+    /// and bucket analysis. Computes a composite score from all results.
+    /// </summary>
+    /// <param name="config">Dataset configuration.</param>
+    /// <param name="bucketConfig">Bucket analysis configuration, or null to skip bucket analysis.</param>
+    /// <param name="progress">Optional progress reporter (0.0 – 1.0).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A comprehensive analysis report with composite scoring.</returns>
+    public async Task<AnalysisReport> AnalyzeFullAsync(
+        DatasetConfig config,
+        BucketConfig? bucketConfig = null,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        // Load caption files
+        var (captions, imageCount) = _captionLoader.Load(config.FolderPath);
+
+        // Scan images for image-level checks
+        var images = _bucketAnalyzer.ScanFolder(config.FolderPath);
+
+        var allIssues = new List<Issue>();
+        var allCheckScores = new List<CheckScore>();
+        var imageCheckResults = new List<ImageCheckResult>();
+
+        // --- Caption checks (synchronous) ---
+        var applicableChecks = _checks
+            .Where(c => c.IsApplicable(config.LoraType))
+            .OrderBy(c => c.Order)
+            .ToList();
+
+        foreach (var check in applicableChecks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var issues = check.Run(captions, config);
+            allIssues.AddRange(issues);
+
+            var checkIssues = issues.Where(i => i.CheckName == check.Name).ToList();
+            var score = CheckScoreAdapter.ScoreFromIssues(check.Name, checkIssues, captions.Count);
+            if (score != null)
+                allCheckScores.Add(score);
+        }
+
+        // Completeness score
+        allCheckScores.Add(CheckScoreAdapter.ScoreFromCompleteness(captions.Count, imageCount));
+
+        // --- Bucket analysis (optional) ---
+        if (bucketConfig != null && images.Count > 0)
+        {
+            var bucketResult = BucketAnalyzer.Analyze(images, bucketConfig);
+            allIssues.AddRange(bucketResult.Issues);
+            allCheckScores.Add(CheckScoreAdapter.ScoreFromBucketAnalysis(bucketResult.DistributionScore));
+        }
+
+        // --- Image quality checks (async) ---
+        var applicableImageChecks = _imageChecks
+            .Where(c => c.IsApplicable(config.LoraType))
+            .OrderBy(c => c.Order)
+            .ToList();
+
+        int totalSteps = applicableImageChecks.Count;
+        int completedSteps = 0;
+
+        foreach (var imageCheck in applicableImageChecks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stepProgress = progress != null
+                ? new Progress<double>(p =>
+                    progress.Report((completedSteps + p) / Math.Max(totalSteps, 1)))
+                : null;
+
+            var result = await imageCheck.RunAsync(images, config, stepProgress, cancellationToken);
+            imageCheckResults.Add(result);
+            allIssues.AddRange(result.Issues);
+
+            allCheckScores.Add(new CheckScore
+            {
+                Score = result.Score,
+                CheckName = result.CheckName,
+                Category = imageCheck.Category,
+                Weight = 1.0
+            });
+
+            completedSteps++;
+            progress?.Report((double)completedSteps / Math.Max(totalSteps, 1));
+        }
+
+        // --- Build final report ---
+        var sortedIssues = allIssues
+            .OrderByDescending(i => i.Severity)
+            .ToList();
+
+        var summary = AnalysisReport.BuildSummary(
+            sortedIssues,
+            captions.Count,
+            imageCount,
+            applicableChecks.Count + applicableImageChecks.Count);
+
+        var composite = CompositeScoreCalculator.Calculate(allCheckScores);
+
+        return new AnalysisReport
+        {
+            Config = config,
+            Issues = sortedIssues,
+            Summary = summary,
+            CheckScores = allCheckScores,
+            CompositeScore = composite,
+            ImageCheckResults = imageCheckResults
         };
     }
 }

@@ -1,0 +1,118 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:models="using:DiffusionNexus.Domain.Models"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.Tabs.ImageQualityView"
+             x:DataType="vmTabs:ImageQualityTabViewModel">
+
+  <Grid RowDefinitions="Auto,Auto,*">
+
+    <!-- TOP BAR -->
+    <Border Grid.Row="0"
+            Background="#1E1E1E"
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Image Quality Analysis"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Opacity="0.8"
+                   VerticalAlignment="Center"/>
+
+        <Button Grid.Column="1"
+                Content="Analyze"
+                Command="{Binding AnalyzeCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"/>
+
+        <StackPanel Grid.Column="2"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    IsVisible="{Binding IsAnalyzing}">
+          <TextBlock Text="Analyzing..." FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- SCORE SUMMARY -->
+    <Border Grid.Row="1"
+            Background="#1A1A1A"
+            Padding="16,10"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1"
+            IsVisible="{Binding HasResults}">
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <TextBlock Text="{Binding SummaryText}"
+                   FontSize="13"
+                   Opacity="0.8"
+                   VerticalAlignment="Center"/>
+        <TextBlock Text="{Binding ImageRows.Count, StringFormat={}{0} images analyzed}"
+                   FontSize="12"
+                   Opacity="0.5"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+
+    <!-- MAIN CONTENT -->
+    <Panel Grid.Row="2">
+
+      <!-- Empty state -->
+      <StackPanel VerticalAlignment="Center"
+                  HorizontalAlignment="Center"
+                  Spacing="8"
+                  IsVisible="{Binding !HasResults}">
+        <TextBlock Text="No image quality results yet"
+                   FontSize="14" Opacity="0.5"
+                   HorizontalAlignment="Center"/>
+        <TextBlock Text="Click Analyze to check blur, exposure, and sharpness"
+                   FontSize="12" Opacity="0.3"
+                   HorizontalAlignment="Center"/>
+      </StackPanel>
+
+      <!-- Per-image results table -->
+      <DataGrid ItemsSource="{Binding ImageRows}"
+                IsVisible="{Binding HasResults}"
+                IsReadOnly="True"
+                CanUserReorderColumns="False"
+                CanUserResizeColumns="True"
+                CanUserSortColumns="True"
+                GridLinesVisibility="Horizontal"
+                Background="Transparent"
+                HeadersVisibility="Column"
+                BorderThickness="0">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="File"
+                              Binding="{Binding FileName}"
+                              Width="*"
+                              MinWidth="150"/>
+          <DataGridTextColumn Header="Blur"
+                              Binding="{Binding BlurScore, StringFormat={}{0:F0}}"
+                              Width="70"/>
+          <DataGridTextColumn Header="Exposure"
+                              Binding="{Binding ExposureScore, StringFormat={}{0:F0}}"
+                              Width="80"/>
+          <DataGridTextColumn Header="Overall"
+                              Binding="{Binding OverallScore, StringFormat={}{0:F0}}"
+                              Width="70"/>
+          <DataGridTextColumn Header="Blur Detail"
+                              Binding="{Binding BlurDetail}"
+                              Width="200"/>
+          <DataGridTextColumn Header="Exposure Detail"
+                              Binding="{Binding ExposureDetail}"
+                              Width="250"/>
+        </DataGrid.Columns>
+      </DataGrid>
+
+    </Panel>
+
+  </Grid>
+</UserControl>

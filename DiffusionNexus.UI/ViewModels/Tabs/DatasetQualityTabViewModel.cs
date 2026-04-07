@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
 
@@ -26,18 +27,28 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     private Issue? _selectedIssue;
     private AnalysisReport? _lastReport;
 
+    private double _compositeScore;
+    private string _compositeScoreLabel = string.Empty;
+    private string _compositeScoreColor = "#666";
+    private bool _hasCompositeScore;
+    private string _scoreCoverageText = string.Empty;
+
     /// <summary>
     /// Creates a new <see cref="DatasetQualityTabViewModel"/>.
     /// </summary>
     /// <param name="pipeline">The analysis pipeline for running quality checks.</param>
     /// <param name="bucketAnalyzer">Optional bucket analyzer for image bucketing analysis.</param>
-    public DatasetQualityTabViewModel(AnalysisPipeline pipeline, BucketAnalyzer? bucketAnalyzer = null)
+    /// <param name="imageChecks">Optional image quality check implementations.</param>
+    public DatasetQualityTabViewModel(
+        AnalysisPipeline pipeline,
+        BucketAnalyzer? bucketAnalyzer = null,
+        IEnumerable<IImageQualityCheck>? imageChecks = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         _pipeline = pipeline;
 
         ImageAnalysisTab = bucketAnalyzer is not null
-            ? new ImageAnalysisTabViewModel(bucketAnalyzer)
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
@@ -170,6 +181,56 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// Whether an issue is currently selected.
     /// </summary>
     public bool HasSelectedIssue => _selectedIssue is not null;
+
+    /// <summary>
+    /// Composite quality score value (0–100).
+    /// </summary>
+    public double CompositeScore
+    {
+        get => _compositeScore;
+        private set => SetProperty(ref _compositeScore, value);
+    }
+
+    /// <summary>
+    /// Human-readable label for the composite score (Poor/Fair/Good/Excellent).
+    /// </summary>
+    public string CompositeScoreLabel
+    {
+        get => _compositeScoreLabel;
+        private set => SetProperty(ref _compositeScoreLabel, value);
+    }
+
+    /// <summary>
+    /// Color hex for the composite score display.
+    /// </summary>
+    public string CompositeScoreColor
+    {
+        get => _compositeScoreColor;
+        private set => SetProperty(ref _compositeScoreColor, value);
+    }
+
+    /// <summary>
+    /// Whether a composite score is available.
+    /// </summary>
+    public bool HasCompositeScore
+    {
+        get => _hasCompositeScore;
+        private set => SetProperty(ref _hasCompositeScore, value);
+    }
+
+    /// <summary>
+    /// Coverage text (e.g. "Based on 2 of 4 categories").
+    /// </summary>
+    public string ScoreCoverageText
+    {
+        get => _scoreCoverageText;
+        private set => SetProperty(ref _scoreCoverageText, value);
+    }
+
+    /// <summary>
+    /// Category score breakdowns for the composite score display.
+    /// </summary>
+    public ObservableCollection<CategoryScoreViewModel> CategoryScores { get; } = [];
 
     #endregion
 
@@ -337,9 +398,64 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
         SelectedIssue = Issues.Count > 0 ? Issues[0] : null;
         SummaryText = FormatSummary(report.Summary);
+        ApplyCompositeScore(report.CompositeScore);
 
         OnPropertyChanged(nameof(HasResults));
     }
+
+    /// <summary>
+    /// Updates composite score display properties from a score result.
+    /// </summary>
+    private void ApplyCompositeScore(CompositeScoreResult? result)
+    {
+        CategoryScores.Clear();
+
+        if (result is null)
+        {
+            HasCompositeScore = false;
+            CompositeScore = 0;
+            CompositeScoreLabel = string.Empty;
+            CompositeScoreColor = "#666";
+            ScoreCoverageText = string.Empty;
+            return;
+        }
+
+        HasCompositeScore = true;
+        CompositeScore = result.Score;
+        CompositeScoreLabel = result.Label;
+        CompositeScoreColor = GetScoreColor(result.Score);
+        ScoreCoverageText = result.ParticipatingCategories < result.TotalCategories
+            ? $"Based on {result.ParticipatingCategories} of {result.TotalCategories} categories"
+            : $"All {result.TotalCategories} categories";
+
+        foreach (var cat in result.CategoryScores)
+        {
+            CategoryScores.Add(new CategoryScoreViewModel
+            {
+                CategoryName = FormatCategoryName(cat.Category),
+                Score = cat.Score,
+                ScoreColor = GetScoreColor(cat.Score),
+                Weight = $"{cat.Weight * 100:F0}%"
+            });
+        }
+    }
+
+    private static string GetScoreColor(double score) => score switch
+    {
+        >= 80 => "#4CAF50",  // Green
+        >= 65 => "#8BC34A",  // Light green
+        >= 40 => "#FFA726",  // Orange
+        _ => "#FF6B6B"       // Red
+    };
+
+    private static string FormatCategoryName(QualityScoreCategory category) => category switch
+    {
+        QualityScoreCategory.ImageTechnicalQuality => "Image Quality",
+        QualityScoreCategory.CaptionQuality => "Caption Quality",
+        QualityScoreCategory.DatasetConsistency => "Consistency",
+        QualityScoreCategory.DatasetCompleteness => "Completeness",
+        _ => category.ToString()
+    };
 
     /// <summary>
     /// Formats the summary line for the bottom status bar.
@@ -394,6 +510,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         Issues.Clear();
         SelectedIssue = null;
         SummaryText = string.Empty;
+        ApplyCompositeScore(null);
 
         OnPropertyChanged(nameof(HasDatasetContext));
         OnPropertyChanged(nameof(HasResults));
@@ -542,4 +659,22 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     }
 
     #endregion
+}
+
+/// <summary>
+/// Lightweight ViewModel for displaying a single category score in the composite breakdown.
+/// </summary>
+public class CategoryScoreViewModel
+{
+    /// <summary>Human-readable category name.</summary>
+    public required string CategoryName { get; init; }
+
+    /// <summary>Score value (0–100).</summary>
+    public required double Score { get; init; }
+
+    /// <summary>Color hex for the score display.</summary>
+    public required string ScoreColor { get; init; }
+
+    /// <summary>Category weight as percentage string (e.g. "30%").</summary>
+    public required string Weight { get; init; }
 }

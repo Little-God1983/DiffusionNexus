@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -12,8 +13,10 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 public enum ImageAnalysisSection
 {
     /// <summary>kohya_ss-style resolution bucketing analysis.</summary>
-    BucketAnalysis
-    // TODO: Linux Implementation for future analysis sections
+    BucketAnalysis,
+
+    /// <summary>Per-image technical quality (blur, exposure, noise).</summary>
+    ImageQuality
 }
 
 /// <summary>
@@ -74,13 +77,20 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     /// Creates a new <see cref="ImageAnalysisTabViewModel"/>.
     /// </summary>
     /// <param name="bucketAnalyzer">The bucket analyzer service.</param>
-    public ImageAnalysisTabViewModel(BucketAnalyzer bucketAnalyzer)
+    /// <param name="imageChecks">Optional image quality check implementations for the quality tab.</param>
+    public ImageAnalysisTabViewModel(BucketAnalyzer bucketAnalyzer, IEnumerable<IImageQualityCheck>? imageChecks = null)
     {
         ArgumentNullException.ThrowIfNull(bucketAnalyzer);
 
         BucketAnalysisTab = new BucketAnalysisTabViewModel(bucketAnalyzer);
         BucketAnalysisTab.AnalysisCompleted += OnBucketAnalysisCompleted;
         BucketAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
+
+        ImageQualityTab = imageChecks is not null
+            ? new ImageQualityTabViewModel(imageChecks)
+            : new ImageQualityTabViewModel();
+        ImageQualityTab.AnalysisCompleted += OnImageQualityAnalysisCompleted;
+
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
 
@@ -97,6 +107,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     public ImageAnalysisTabViewModel()
     {
         BucketAnalysisTab = new BucketAnalysisTabViewModel();
+        ImageQualityTab = new ImageQualityTabViewModel();
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
 
@@ -108,6 +119,9 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
 
     /// <summary>ViewModel for the Bucket Analysis detail section.</summary>
     public BucketAnalysisTabViewModel BucketAnalysisTab { get; }
+
+    /// <summary>ViewModel for the Image Quality detail section.</summary>
+    public ImageQualityTabViewModel ImageQualityTab { get; }
 
     /// <summary>Dashboard summary cards — one per analysis section.</summary>
     public ObservableCollection<AnalysisSectionCardViewModel> Cards { get; } = [];
@@ -122,6 +136,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(HasSelectedCard));
                 OnPropertyChanged(nameof(IsBucketAnalysisSelected));
+                OnPropertyChanged(nameof(IsImageQualitySelected));
             }
         }
     }
@@ -132,6 +147,10 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     /// <summary>Whether the Bucket Analysis section is currently active.</summary>
     public bool IsBucketAnalysisSelected =>
         _selectedCard?.Section == ImageAnalysisSection.BucketAnalysis;
+
+    /// <summary>Whether the Image Quality section is currently active.</summary>
+    public bool IsImageQualitySelected =>
+        _selectedCard?.Section == ImageAnalysisSection.ImageQuality;
 
     /// <summary>Command to select a dashboard card.</summary>
     public IRelayCommand<AnalysisSectionCardViewModel?> SelectCardCommand { get; }
@@ -151,6 +170,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     {
         _folderPath = folderPath ?? string.Empty;
         BucketAnalysisTab.RefreshContext(_folderPath);
+        ImageQualityTab.RefreshContext(_folderPath);
 
         // Reset card summaries when context changes
         foreach (var card in Cards)
@@ -188,9 +208,13 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
             Description = "kohya_ss-style resolution bucketing"
         });
 
-        // Future cards go here:
-        // Cards.Add(new AnalysisSectionCardViewModel { Title = "Image Quality", Icon = "🔍", ... });
-        // Cards.Add(new AnalysisSectionCardViewModel { Title = "Duplicate Detection", Icon = "👯", ... });
+        Cards.Add(new AnalysisSectionCardViewModel
+        {
+            Title = "Image Quality",
+            Icon = "\ud83d\udd0d",
+            Section = ImageAnalysisSection.ImageQuality,
+            Description = "Blur, exposure & sharpness analysis"
+        });
     }
 
     private void SelectCard(AnalysisSectionCardViewModel? card)
@@ -217,9 +241,28 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>
+    /// Updates the Image Quality dashboard card with the latest results.
+    /// </summary>
+    public void UpdateImageQualitySummary(double score, int issueCount, string scoreLabel)
+    {
+        var card = FindCard(ImageAnalysisSection.ImageQuality);
+        if (card is null) return;
+
+        card.Summary = issueCount > 0
+            ? $"Score: {score:F0} ({scoreLabel}) \u00b7 {issueCount} issue{(issueCount != 1 ? "s" : "")}"
+            : $"Score: {score:F0} ({scoreLabel}) \u00b7 No issues";
+        card.HasResults = true;
+    }
+
     private void OnBucketAnalysisCompleted(double score, int issueCount, string scoreLabel)
     {
         UpdateBucketAnalysisSummary(score, issueCount, scoreLabel);
+    }
+
+    private void OnImageQualityAnalysisCompleted(double score, int issueCount, string scoreLabel)
+    {
+        UpdateImageQualitySummary(score, issueCount, scoreLabel);
     }
 
     private void OnFixDistributionRequested()
