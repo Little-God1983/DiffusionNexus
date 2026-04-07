@@ -106,75 +106,100 @@ public class AnalysisPipeline
     /// <summary>
     /// Runs the full analysis pipeline: caption checks, image quality checks,
     /// and bucket analysis. Computes a composite score from all results.
+    /// All I/O-bound and CPU-bound synchronous work is offloaded to the thread
+    /// pool so the caller's context (typically the UI thread) stays responsive.
     /// </summary>
     /// <param name="config">Dataset configuration.</param>
     /// <param name="bucketConfig">Bucket analysis configuration, or null to skip bucket analysis.</param>
     /// <param name="progress">Optional progress reporter (0.0 – 1.0).</param>
+    /// <param name="statusProgress">Optional status text reporter for UI feedback.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A comprehensive analysis report with composite scoring.</returns>
     public async Task<AnalysisReport> AnalyzeFullAsync(
         DatasetConfig config,
         BucketConfig? bucketConfig = null,
         IProgress<double>? progress = null,
+        IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        // Load caption files
-        var (captions, imageCount) = _captionLoader.Load(config.FolderPath);
+        // --- Phase 1: Load captions and scan images (I/O-bound) ---
+        statusProgress?.Report("Loading caption files…");
+        progress?.Report(0.0);
 
-        // Scan images for image-level checks
-        var images = _bucketAnalyzer.ScanFolder(config.FolderPath);
+        var (captions, imageCount, images) = await Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var captionResult = _captionLoader.Load(config.FolderPath);
+            var imageResult = _bucketAnalyzer.ScanFolder(config.FolderPath);
+            return (captionResult.Captions, captionResult.ImageFileCount, imageResult);
+        }, cancellationToken);
 
         var allIssues = new List<Issue>();
         var allCheckScores = new List<CheckScore>();
         var imageCheckResults = new List<ImageCheckResult>();
 
-        // --- Caption checks (synchronous) ---
+        // --- Phase 2: Caption checks (CPU-bound, offloaded) ---
         var applicableChecks = _checks
             .Where(c => c.IsApplicable(config.LoraType))
             .OrderBy(c => c.Order)
             .ToList();
 
+        var applicableImageChecks = _imageChecks
+            .Where(c => c.IsApplicable(config.LoraType))
+            .OrderBy(c => c.Order)
+            .ToList();
+
+        // Total phases for overall progress: caption checks + bucket + image checks
+        int totalPhases = applicableChecks.Count
+            + (bucketConfig != null && images.Count > 0 ? 1 : 0)
+            + applicableImageChecks.Count;
+        int completedPhases = 0;
+
         foreach (var check in applicableChecks)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var issues = check.Run(captions, config);
+            statusProgress?.Report($"Running {check.Name}…");
+
+            var issues = await Task.Run(() => check.Run(captions, config), cancellationToken);
             allIssues.AddRange(issues);
 
             var checkIssues = issues.Where(i => i.CheckName == check.Name).ToList();
             var score = CheckScoreAdapter.ScoreFromIssues(check.Name, checkIssues, captions.Count);
             if (score != null)
                 allCheckScores.Add(score);
+
+            completedPhases++;
+            progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));
         }
 
         // Completeness score
         allCheckScores.Add(CheckScoreAdapter.ScoreFromCompleteness(captions.Count, imageCount));
 
-        // --- Bucket analysis (optional) ---
+        // --- Phase 3: Bucket analysis (optional, CPU-bound) ---
         if (bucketConfig != null && images.Count > 0)
         {
-            var bucketResult = BucketAnalyzer.Analyze(images, bucketConfig);
+            statusProgress?.Report("Analyzing bucket distribution…");
+
+            var bucketResult = await Task.Run(
+                () => BucketAnalyzer.Analyze(images, bucketConfig), cancellationToken);
             allIssues.AddRange(bucketResult.Issues);
             allCheckScores.Add(CheckScoreAdapter.ScoreFromBucketAnalysis(bucketResult.DistributionScore));
+
+            completedPhases++;
+            progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));
         }
 
-        // --- Image quality checks (async) ---
-        var applicableImageChecks = _imageChecks
-            .Where(c => c.IsApplicable(config.LoraType))
-            .OrderBy(c => c.Order)
-            .ToList();
-
-        int totalSteps = applicableImageChecks.Count;
-        int completedSteps = 0;
-
+        // --- Phase 4: Image quality checks (async) ---
         foreach (var imageCheck in applicableImageChecks)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            statusProgress?.Report($"Running {imageCheck.Name}…");
 
             var stepProgress = progress != null
                 ? new Progress<double>(p =>
-                    progress.Report((completedSteps + p) / Math.Max(totalSteps, 1)))
+                    progress.Report((completedPhases + p) / Math.Max(totalPhases, 1)))
                 : null;
 
             var result = await imageCheck.RunAsync(images, config, stepProgress, cancellationToken);
@@ -189,11 +214,13 @@ public class AnalysisPipeline
                 Weight = 1.0
             });
 
-            completedSteps++;
-            progress?.Report((double)completedSteps / Math.Max(totalSteps, 1));
+            completedPhases++;
+            progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));
         }
 
         // --- Build final report ---
+        statusProgress?.Report("Computing scores…");
+
         var sortedIssues = allIssues
             .OrderByDescending(i => i.Severity)
             .ToList();
@@ -205,6 +232,9 @@ public class AnalysisPipeline
             applicableChecks.Count + applicableImageChecks.Count);
 
         var composite = CompositeScoreCalculator.Calculate(allCheckScores);
+
+        progress?.Report(1.0);
+        statusProgress?.Report("Analysis complete");
 
         return new AnalysisReport
         {

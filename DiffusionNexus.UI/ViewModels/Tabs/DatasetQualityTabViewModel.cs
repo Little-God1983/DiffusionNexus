@@ -23,6 +23,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     private string _triggerWord = string.Empty;
     private LoraType _selectedLoraType = LoraType.Character;
     private bool _isAnalyzing;
+    private string _analysisStatusText = string.Empty;
+    private double _analysisProgress;
     private string _summaryText = string.Empty;
     private Issue? _selectedIssue;
     private AnalysisReport? _lastReport;
@@ -143,6 +145,24 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 AnalyzeAllCommand.NotifyCanExecuteChanged();
             }
         }
+    }
+
+    /// <summary>
+    /// Human-readable status text showing the current analysis phase (e.g. "Running Spell Check…").
+    /// </summary>
+    public string AnalysisStatusText
+    {
+        get => _analysisStatusText;
+        private set => SetProperty(ref _analysisStatusText, value);
+    }
+
+    /// <summary>
+    /// Overall analysis progress (0.0 – 1.0) across all pipeline phases.
+    /// </summary>
+    public double AnalysisProgress
+    {
+        get => _analysisProgress;
+        private set => SetProperty(ref _analysisProgress, value);
     }
 
     /// <summary>
@@ -336,9 +356,14 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         if (_pipeline is null || !HasDatasetContext) return;
 
         IsAnalyzing = true;
+        AnalysisStatusText = "Starting analysis…";
+        AnalysisProgress = 0.0;
         try
         {
             var config = BuildConfig();
+
+            var statusProgress = new Progress<string>(s => AnalysisStatusText = s);
+            var percentProgress = new Progress<double>(p => AnalysisProgress = p);
 
             // Run the full pipeline: captions + image quality + bucket scoring
             var report = await _pipeline.AnalyzeFullAsync(config, new BucketConfig
@@ -349,7 +374,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
                 MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
                 BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
-            });
+            }, percentProgress, statusProgress: statusProgress);
 
             // Apply caption issues + composite score
             ApplyReport(report);
@@ -361,11 +386,14 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             }
 
             // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated
+            AnalysisStatusText = "Populating bucket analysis UI…";
             await ImageAnalysisTab.BucketAnalysisTab.RunAnalysisAsync();
         }
         finally
         {
             IsAnalyzing = false;
+            AnalysisStatusText = string.Empty;
+            AnalysisProgress = 0.0;
         }
     }
 

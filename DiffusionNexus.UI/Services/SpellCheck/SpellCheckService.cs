@@ -98,6 +98,19 @@ public sealed class SpellCheckService : ISpellCheckService
     }
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<SpellCheckError>> CheckTextAsync(string text, CancellationToken cancellationToken = default)
+    {
+        if (_wordList is null || string.IsNullOrWhiteSpace(text))
+            return Task.FromResult<IReadOnlyList<SpellCheckError>>([]);
+
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return CheckText(text);
+        }, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public void AddToUserDictionary(string word)
     {
         _userDictionary.Add(word);
