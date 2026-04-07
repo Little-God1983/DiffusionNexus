@@ -292,6 +292,21 @@ public class BucketAnalysisTabViewModel : ObservableObject
         BatchSize = _batchSize
     };
 
+    /// <summary>
+    /// Runs bucket analysis using the configured parameters and applies results to the UI.
+    /// Called by Analyze All to include bucket analysis in the unified run.
+    /// </summary>
+    public async Task RunAnalysisAsync()
+    {
+        if (_analyzer is null || string.IsNullOrWhiteSpace(_folderPath))
+            return;
+
+        ClearResults();
+        var config = BuildConfig();
+        var result = await Task.Run(() => _analyzer.AnalyzeFolder(_folderPath, config));
+        ApplyResult(result);
+    }
+
     private void ApplyResult(BucketAnalysisResult result)
     {
         // Bar chart

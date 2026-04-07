@@ -53,6 +53,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -68,6 +69,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -138,6 +140,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             {
                 OnPropertyChanged(nameof(CanAnalyze));
                 AnalyzeCommand.NotifyCanExecuteChanged();
+                AnalyzeAllCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -275,9 +278,15 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region Commands
 
     /// <summary>
-    /// Runs the quality analysis pipeline on the active dataset version.
+    /// Runs the quality analysis pipeline on the active dataset version (caption checks only).
     /// </summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
+
+    /// <summary>
+    /// Runs the full analysis pipeline — captions, image quality, and bucket analysis
+    /// in one pass. Updates the composite score and propagates results to all sub-tabs.
+    /// </summary>
+    public IAsyncRelayCommand AnalyzeAllCommand { get; }
 
     /// <summary>
     /// Applies a single <see cref="FixSuggestion"/> then re-runs analysis.
@@ -315,6 +324,44 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             // Run analysis on a background thread to keep the UI responsive
             var report = await Task.Run(() => _pipeline.Analyze(config));
             ApplyReport(report);
+        }
+        finally
+        {
+            IsAnalyzing = false;
+        }
+    }
+
+    private async Task AnalyzeAllAsync()
+    {
+        if (_pipeline is null || !HasDatasetContext) return;
+
+        IsAnalyzing = true;
+        try
+        {
+            var config = BuildConfig();
+
+            // Run the full pipeline: captions + image quality + bucket scoring
+            var report = await _pipeline.AnalyzeFullAsync(config, new BucketConfig
+            {
+                BaseResolution = ImageAnalysisTab.BucketAnalysisTab.BaseResolution,
+                StepSize = ImageAnalysisTab.BucketAnalysisTab.StepSize,
+                MinDimension = ImageAnalysisTab.BucketAnalysisTab.MinDimension,
+                MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
+                MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
+                BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
+            });
+
+            // Apply caption issues + composite score
+            ApplyReport(report);
+
+            // Propagate image quality results to the Image Quality sub-tab
+            if (report.ImageCheckResults.Count > 0)
+            {
+                ImageAnalysisTab.ImageQualityTab.ApplyResults(report.ImageCheckResults);
+            }
+
+            // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated
+            await ImageAnalysisTab.BucketAnalysisTab.RunAnalysisAsync();
         }
         finally
         {
