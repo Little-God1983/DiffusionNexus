@@ -19,6 +19,7 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     private bool _isThumbnailLoading;
     private bool _isSelected;
     private bool _isFavorite;
+    private double _aspectRatio = 1.0;
 
     public GenerationGalleryMediaItemViewModel(
         string filePath,
@@ -77,6 +78,16 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     public string FolderGroupName { get; }
 
     /// <summary>
+    /// The width-to-height aspect ratio of the original image.
+    /// Defaults to 1.0 (square) before the thumbnail loads.
+    /// </summary>
+    public double AspectRatio
+    {
+        get => _aspectRatio;
+        private set => SetProperty(ref _aspectRatio, value);
+    }
+
+    /// <summary>
     /// Whether this item is selected in the gallery.
     /// </summary>
     public bool IsSelected
@@ -130,6 +141,10 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
         if (orchestrator.TryGetCached(FilePath, out var cached) && cached is not null)
         {
             Thumbnail = cached;
+            if (cached.PixelSize.Height > 0)
+            {
+                AspectRatio = (double)cached.PixelSize.Width / cached.PixelSize.Height;
+            }
             _isThumbnailLoading = false;
             return;
         }
@@ -142,12 +157,16 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
                 FilePath, owner, ThumbnailPriority.Normal).ConfigureAwait(false);
 
             if (bitmap is not null)
-            {
-                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    Thumbnail = bitmap;
-                    _isThumbnailLoading = false;
-                });
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        Thumbnail = bitmap;
+                        if (bitmap.PixelSize.Height > 0)
+                        {
+                            AspectRatio = (double)bitmap.PixelSize.Width / bitmap.PixelSize.Height;
+                        }
+                        _isThumbnailLoading = false;
+                    });
             }
             else
             {

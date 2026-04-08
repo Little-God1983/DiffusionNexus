@@ -109,6 +109,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public ObservableCollection<string> GroupingOptions { get; } = [];
 
+    public IReadOnlyList<string> LayoutModes { get; } = ["Showcase", "Grid"];
+
     public string ImageExtensionsDisplay => SupportedMediaTypes.ImageExtensionsDisplay;
 
     public string VideoExtensionsDisplay => SupportedMediaTypes.VideoExtensionsDisplay;
@@ -123,7 +125,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private string _selectedDateFilter = "Last 3 Months";
 
     [ObservableProperty]
-    private double _tileWidth = 220;
+    private double _tileHeight = 220;
 
     [ObservableProperty]
     private string? _noMediaMessage;
@@ -136,6 +138,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     [ObservableProperty]
     private bool _showFavoritesOnly;
+
+    private string _selectedLayoutMode = "Showcase";
+
+    public string SelectedLayoutMode
+    {
+        get => _selectedLayoutMode;
+        set
+        {
+            if (SetProperty(ref _selectedLayoutMode, value))
+            {
+                OnPropertyChanged(nameof(IsShowcaseLayout));
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the gallery uses the Showcase (aspect-ratio preserving) layout.
+    /// False selects the classic square Grid layout.
+    /// </summary>
+    public bool IsShowcaseLayout => SelectedLayoutMode == "Showcase";
 
     public int SelectionCount
     {
