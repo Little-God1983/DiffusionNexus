@@ -629,6 +629,10 @@ public partial class App : Application
             new SpellCheckService(sp.GetRequiredService<IUserDictionaryService>()));
         services.AddSingleton<IAutoCompleteService, AutoCompleteService>();
 
+        // Bridge UI spell check into the domain contract used by dataset quality checks
+        services.AddSingleton<ISpellChecker>(sp =>
+            new SpellCheckerAdapter(sp.GetRequiredService<ISpellCheckService>()));
+
         // Image favorites service (singleton - per-folder .favorites.json persistence)
         services.AddSingleton<IImageFavoritesService, ImageFavoritesService>();
 
@@ -694,7 +698,9 @@ public partial class App : Application
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
-            sp.GetService<IComfyUIReadinessService>()));
+            sp.GetService<IComfyUIReadinessService>(),
+            sp.GetServices<IImageQualityCheck>(),
+            sp.GetService<AnalysisRunStore>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

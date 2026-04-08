@@ -14,6 +14,7 @@ betwixt
 hitherto
 whereupon
 whence
+sci-fi
 thence
 nigh
 bespoke

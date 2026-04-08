@@ -52,4 +52,17 @@ public interface IDatasetCheck
     /// <param name="config">Dataset configuration (folder path, trigger word, LoRA type).</param>
     /// <returns>A list of issues found. Empty list means the check passed.</returns>
     List<Issue> Run(IReadOnlyList<CaptionFile> captions, DatasetConfig config);
+
+    /// <summary>
+    /// Executes the check with per-item progress reporting.
+    /// Implementations that process captions one-by-one can override this
+    /// to report their current item index via <paramref name="itemProgress"/>.
+    /// The default implementation delegates to <see cref="Run(IReadOnlyList{CaptionFile}, DatasetConfig)"/>.
+    /// </summary>
+    /// <param name="captions">All caption files loaded from the dataset folder.</param>
+    /// <param name="config">Dataset configuration (folder path, trigger word, LoRA type).</param>
+    /// <param name="itemProgress">Reports the 1-based index of the caption currently being processed.</param>
+    /// <returns>A list of issues found. Empty list means the check passed.</returns>
+    List<Issue> Run(IReadOnlyList<CaptionFile> captions, DatasetConfig config, IProgress<int>? itemProgress)
+        => Run(captions, config);
 }

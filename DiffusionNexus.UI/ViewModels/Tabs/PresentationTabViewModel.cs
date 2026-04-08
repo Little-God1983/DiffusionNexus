@@ -116,8 +116,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
     public IRelayCommand OpenFolderCommand { get; }
     public IRelayCommand RefreshCommand { get; }
     
-    // Placeholder commands for future features
-    public IRelayCommand UploadToCivitAICommand { get; }
+    // Placeholder command for future feature
     public IRelayCommand UploadToHuggingFaceCommand { get; }
 
     public PresentationTabViewModel(IDatasetEventAggregator eventAggregator)
@@ -132,8 +131,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         OpenFolderCommand = new RelayCommand(OpenFolder);
         RefreshCommand = new RelayCommand(LoadFiles);
         
-        // Placeholder commands - show coming soon message
-        UploadToCivitAICommand = new RelayCommand(ShowCivitAIComingSoon);
+        // Placeholder command - show coming soon message
         UploadToHuggingFaceCommand = new RelayCommand(ShowHuggingFaceComingSoon);
 
         // Subscribe to caption changes to refresh document list
@@ -525,11 +523,6 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         {
             StatusMessage = $"Error opening folder: {ex.Message}";
         }
-    }
-
-    private void ShowCivitAIComingSoon()
-    {
-        StatusMessage = "Upload to CivitAI - Coming Soon!";
     }
 
     private void ShowHuggingFaceComingSoon()

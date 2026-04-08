@@ -64,6 +64,37 @@ public enum CheckDomain
 }
 
 /// <summary>
+/// Scoring category for composite quality score calculation.
+/// Each check contributes to exactly one category.
+/// </summary>
+public enum QualityScoreCategory
+{
+    /// <summary>
+    /// Per-image technical quality: blur, noise, exposure, JPEG artifacts.
+    /// Weight: 30%.
+    /// </summary>
+    ImageTechnicalQuality = 0,
+
+    /// <summary>
+    /// Caption text quality: format, trigger words, synonyms, features, spelling.
+    /// Weight: 30%.
+    /// </summary>
+    CaptionQuality,
+
+    /// <summary>
+    /// Dataset-level consistency: bucket distribution, color consistency, duplicates.
+    /// Weight: 25%.
+    /// </summary>
+    DatasetConsistency,
+
+    /// <summary>
+    /// Structural completeness: missing captions, unpaired images.
+    /// Weight: 15%.
+    /// </summary>
+    DatasetCompleteness
+}
+
+/// <summary>
 /// Detected caption style — natural language prose vs. booru/danbooru tag lists.
 /// </summary>
 public enum CaptionStyle

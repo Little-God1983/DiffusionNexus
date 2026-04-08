@@ -311,9 +311,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = true;
             BusyMessage = "Syncing with Civitai...";
 
-            // Get API key — authenticated requests get higher rate limits on Civitai
-            var settings = await _settingsService.GetSettingsAsync();
-            var apiKey = _secureStorage?.Decrypt(settings.EncryptedCivitaiApiKey);
+            // Get API key — use a fresh DI scope so we read the latest value
+            // from the database, avoiding stale EF Core tracked entities.
+            string? apiKey;
+            {
+                using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+                apiKey = await freshSettings.GetCivitaiApiKeyAsync();
+            }
 
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
