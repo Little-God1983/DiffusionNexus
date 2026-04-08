@@ -23,6 +23,7 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
     private string? _videoPath;
     private string _timeDisplay = "00:00 / 00:00";
     private static bool s_coreInitialized;
+    private Task _pendingStopTask = Task.CompletedTask;
 
     public VideoPlayerViewModel()
     {
@@ -193,8 +194,14 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
         var player = _mediaPlayer;
         if (player is not null)
         {
-            // Unbind from VideoView BEFORE stopping — LibVLCSharp requirement
-            _mediaPlayer = null;
+            // Unbind from VideoView BEFORE stopping — LibVLCSharp requirement.
+            // Setting MediaPlayer = null fires PropertyChanged so the binding
+            // propagates to the VideoView, which calls Detach() synchronously
+            // while the player is still alive.
+            // NOTE: Do NOT set _mediaPlayer = null directly beforehand — that
+            // is the backing field used by SetProperty and would suppress the
+            // PropertyChanged notification, leaving the VideoView with a stale
+            // reference that crashes on Hwnd access after disposal.
             MediaPlayer = null;
 
             player.PositionChanged -= OnPositionChanged;
@@ -204,8 +211,11 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
             player.Paused -= OnPaused;
             player.Stopped -= OnStopped;
 
-            // Stop and dispose on a thread-pool thread to avoid VLC deadlock
-            ThreadPool.QueueUserWorkItem(_ =>
+            // Stop and dispose on a background thread to avoid VLC deadlock.
+            // Track the task so Dispose() can wait before destroying _libVLC.
+            // The VideoView has already detached synchronously above, so no
+            // further native calls will touch this player.
+            _pendingStopTask = Task.Run(() =>
             {
                 try
                 {
@@ -310,7 +320,7 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
         var player = _mediaPlayer;
         if (player is not null)
         {
-            _mediaPlayer = null;
+            // Unbind synchronously so VideoView detaches while player is alive.
             MediaPlayer = null;
 
             player.PositionChanged -= OnPositionChanged;
@@ -320,13 +330,17 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
             player.Paused -= OnPaused;
             player.Stopped -= OnStopped;
 
-            // Stop/dispose player, then dispose LibVLC on thread pool
+            // Stop/dispose player, then dispose LibVLC on a background thread
             // to avoid deadlocking the UI thread during VLC shutdown.
+            // Also wait for any prior pending stop (from a previous Stop() call)
+            // to finish before we touch _libVLC.
             var libVlc = _libVLC;
             _libVLC = null;
+            var priorStop = _pendingStopTask;
 
-            ThreadPool.QueueUserWorkItem(_ =>
+            Task.Run(async () =>
             {
+                try { await priorStop; } catch { /* prior stop already handled */ }
                 try
                 {
                     player.Stop();
@@ -340,8 +354,21 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
         }
         else
         {
-            _libVLC?.Dispose();
+            // A previous Stop() may still be disposing the player on a background
+            // thread. We must wait for that to finish before destroying _libVLC,
+            // otherwise the native player calls into a freed LibVLC instance
+            // causing System.ExecutionEngineException.
+            var libVlc = _libVLC;
             _libVLC = null;
+            if (libVlc is not null)
+            {
+                var pendingStop = _pendingStopTask;
+                Task.Run(async () =>
+                {
+                    try { await pendingStop; } catch { /* already logged by Stop */ }
+                    libVlc.Dispose();
+                });
+            }
         }
 
         IsPlaying = false;

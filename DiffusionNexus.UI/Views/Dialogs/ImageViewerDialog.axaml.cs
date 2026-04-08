@@ -19,10 +19,13 @@ public partial class ImageViewerDialog : Window
     public ImageViewerDialog()
     {
         InitializeComponent();
-        
+
         // Handle keyboard navigation
         KeyDown += OnKeyDown;
-        
+
+        // Stop video before visual tree teardown to avoid native access violation
+        Closing += OnClosing;
+
         // Dispose ViewModel when dialog closes
         Closed += OnClosed;
     }
@@ -60,6 +63,16 @@ public partial class ImageViewerDialog : Window
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
+    }
+
+    /// <summary>
+    /// Stops video playback before the window visual tree is torn down.
+    /// The VideoView accesses MediaPlayer.Hwnd during detachment, so the
+    /// player must be unbound first to prevent a native access violation.
+    /// </summary>
+    private void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        _viewModel?.VideoPlayer.Stop();
     }
 
     /// <summary>
