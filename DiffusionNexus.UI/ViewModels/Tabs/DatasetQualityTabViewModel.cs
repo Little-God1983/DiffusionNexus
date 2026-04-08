@@ -520,10 +520,14 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     {
         _lastReport = report;
 
+        // Only show caption-domain issues here; image issues are displayed in the Image Analysis tab
         Issues.Clear();
         foreach (var issue in report.Issues)
         {
-            Issues.Add(issue);
+            if (issue.Domain == CheckDomain.Caption)
+            {
+                Issues.Add(issue);
+            }
         }
 
         SelectedIssue = Issues.Count > 0 ? Issues[0] : null;
