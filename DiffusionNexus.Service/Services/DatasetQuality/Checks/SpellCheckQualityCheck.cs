@@ -48,6 +48,10 @@ public class SpellCheckQualityCheck : IDatasetCheck
 
     /// <inheritdoc />
     public List<Issue> Run(IReadOnlyList<CaptionFile> captions, DatasetConfig config)
+        => Run(captions, config, itemProgress: null);
+
+    /// <inheritdoc />
+    public List<Issue> Run(IReadOnlyList<CaptionFile> captions, DatasetConfig config, IProgress<int>? itemProgress)
     {
         ArgumentNullException.ThrowIfNull(captions);
         ArgumentNullException.ThrowIfNull(config);
@@ -61,8 +65,11 @@ public class SpellCheckQualityCheck : IDatasetCheck
         var allMisspelled = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var affectedFiles = new List<string>();
 
-        foreach (var caption in captions)
+        for (int i = 0; i < captions.Count; i++)
         {
+            var caption = captions[i];
+            itemProgress?.Report(i + 1);
+
             // Skip booru-tag captions — unconventional tokens are expected
             if (caption.DetectedStyle == CaptionStyle.BooruTags)
                 continue;

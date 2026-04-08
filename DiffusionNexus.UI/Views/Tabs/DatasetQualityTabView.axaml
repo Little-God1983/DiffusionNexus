@@ -640,6 +640,11 @@
         </Grid>
       </TabItem>
 
+      <!-- ═══════════ TAB 3: Test Runs ═══════════ -->
+      <TabItem Header="Test Runs">
+        <views:TestRunsView DataContext="{Binding TestRunsTab}"/>
+      </TabItem>
+
     </TabControl>
 
   </Grid>

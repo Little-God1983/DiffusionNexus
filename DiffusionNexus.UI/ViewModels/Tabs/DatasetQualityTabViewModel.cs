@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -17,10 +18,12 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly AnalysisPipeline? _pipeline;
+    private readonly AnalysisRunStore _runStore;
 
     private string _datasetFolderPath = string.Empty;
     private string _datasetLabel = string.Empty;
     private string _triggerWord = string.Empty;
+    private int _currentVersion;
     private LoraType _selectedLoraType = LoraType.Character;
     private bool _isAnalyzing;
     private string _analysisStatusText = string.Empty;
@@ -39,20 +42,26 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// Creates a new <see cref="DatasetQualityTabViewModel"/>.
     /// </summary>
     /// <param name="pipeline">The analysis pipeline for running quality checks.</param>
+    /// <param name="runStore">Store for persisting and loading analysis run history.</param>
     /// <param name="bucketAnalyzer">Optional bucket analyzer for image bucketing analysis.</param>
     /// <param name="imageChecks">Optional image quality check implementations.</param>
     public DatasetQualityTabViewModel(
         AnalysisPipeline pipeline,
+        AnalysisRunStore runStore,
         BucketAnalyzer? bucketAnalyzer = null,
         IEnumerable<IImageQualityCheck>? imageChecks = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(runStore);
         _pipeline = pipeline;
+        _runStore = runStore;
 
         ImageAnalysisTab = bucketAnalyzer is not null
             ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
+
+        TestRunsTab = new TestRunsTabViewModel(runStore);
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
@@ -67,8 +76,12 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// </summary>
     public DatasetQualityTabViewModel()
     {
+        _runStore = new AnalysisRunStore();
+
         ImageAnalysisTab = new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
+
+        TestRunsTab = new TestRunsTabViewModel();
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
@@ -89,6 +102,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// ViewModel for the embedded Image Analysis dashboard tab.
     /// </summary>
     public ImageAnalysisTabViewModel ImageAnalysisTab { get; }
+
+    /// <summary>
+    /// ViewModel for the Test Runs history sub-tab.
+    /// </summary>
+    public TestRunsTabViewModel TestRunsTab { get; }
 
     /// <summary>
     /// Raised when a child analysis tab requests navigation to Batch Crop/Scale.
@@ -361,8 +379,27 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         try
         {
             var config = BuildConfig();
+            var stopwatch = Stopwatch.StartNew();
 
-            var statusProgress = new Progress<string>(s => AnalysisStatusText = s);
+            var statusProgress = new Progress<string>(s =>
+            {
+                var elapsed = stopwatch.Elapsed;
+                var progress = AnalysisProgress;
+
+                if (progress > 0.05 && elapsed.TotalSeconds > 2)
+                {
+                    var totalEstimated = TimeSpan.FromTicks((long)(elapsed.Ticks / progress));
+                    var remaining = totalEstimated - elapsed;
+
+                    if (remaining.TotalSeconds >= 1)
+                    {
+                        AnalysisStatusText = $"{s} — ~{FormatTimeRemaining(remaining)} remaining";
+                        return;
+                    }
+                }
+
+                AnalysisStatusText = s;
+            });
             var percentProgress = new Progress<double>(p => AnalysisProgress = p);
 
             // Run the full pipeline: captions + image quality + bucket scoring
@@ -388,6 +425,24 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated
             AnalysisStatusText = "Populating bucket analysis UI…";
             await ImageAnalysisTab.BucketAnalysisTab.RunAnalysisAsync();
+
+            // Persist the run record for the Test Runs history tab
+            stopwatch.Stop();
+            AnalysisStatusText = "Saving run record…";
+            var runRecord = new AnalysisRunRecord
+            {
+                AnalyzedAtUtc = report.AnalyzedAt,
+                Version = _currentVersion,
+                DatasetLabel = DatasetLabel,
+                LoraType = SelectedLoraType,
+                Summary = report.Summary,
+                CompositeScore = report.CompositeScore,
+                CheckScores = report.CheckScores,
+                Issues = report.Issues.Select(RunIssueSnapshot.FromIssue).ToList(),
+                Duration = stopwatch.Elapsed
+            };
+            await _runStore.SaveAsync(_datasetFolderPath, runRecord);
+            await TestRunsTab.OnRunSavedAsync();
         }
         finally
         {
@@ -523,6 +578,16 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         _ => "#FF6B6B"       // Red
     };
 
+    /// <summary>
+    /// Formats a <see cref="TimeSpan"/> as a compact human-readable remaining time string.
+    /// </summary>
+    private static string FormatTimeRemaining(TimeSpan remaining)
+    {
+        if (remaining.TotalMinutes >= 1)
+            return $"{(int)remaining.TotalMinutes}m {remaining.Seconds}s";
+        return $"{Math.Max(1, (int)remaining.TotalSeconds)}s";
+    }
+
     private static string FormatCategoryName(QualityScoreCategory category) => category switch
     {
         QualityScoreCategory.ImageTechnicalQuality => "Image Quality",
@@ -570,6 +635,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public void RefreshContext(string? folderPath, string? datasetName, int version, string? categoryName)
     {
         _datasetFolderPath = folderPath ?? string.Empty;
+        _currentVersion = version;
         DatasetLabel = string.IsNullOrWhiteSpace(datasetName)
             ? string.Empty
             : $"{datasetName} — V{version}";
@@ -594,6 +660,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
         // Forward folder context to image analysis dashboard
         ImageAnalysisTab.RefreshContext(_datasetFolderPath);
+
+        // Load run history for the Test Runs tab
+        _ = TestRunsTab.RefreshContextAsync(_datasetFolderPath);
     }
 
     /// <summary>
@@ -719,7 +788,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         try
         {
             var config = BuildConfig();
-            var report = await Task.Run(() => _pipeline.Analyze(config)).ConfigureAwait(false);
+            var report = await Task.Run(() => _pipeline.Analyze(config));
             ApplyReport(report);
         }
         finally

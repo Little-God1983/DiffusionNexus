@@ -19,6 +19,7 @@ public static class DatasetQualityServiceExtensions
         // Core services
         services.AddSingleton<CaptionLoader>();
         services.AddSingleton<AnalysisPipeline>();
+        services.AddSingleton<AnalysisRunStore>();
 
         // Bucket analysis services
         services.AddSingleton<IImageDimensionReader, ImageHeaderReader>();

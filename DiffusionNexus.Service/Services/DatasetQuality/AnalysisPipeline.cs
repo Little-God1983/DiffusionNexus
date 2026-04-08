@@ -162,7 +162,15 @@ public class AnalysisPipeline
             cancellationToken.ThrowIfCancellationRequested();
             statusProgress?.Report($"Running {check.Name}…");
 
-            var issues = await Task.Run(() => check.Run(captions, config), cancellationToken);
+            var checkName = check.Name;
+            var captionCount = captions.Count;
+
+            IProgress<int>? itemProgress = statusProgress != null
+                ? new Progress<int>(current =>
+                    statusProgress.Report($"Running {checkName}… caption {current} of {captionCount}"))
+                : null;
+
+            var issues = await Task.Run(() => check.Run(captions, config, itemProgress), cancellationToken);
             allIssues.AddRange(issues);
 
             var checkIssues = issues.Where(i => i.CheckName == check.Name).ToList();
