@@ -123,7 +123,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private string _selectedDateFilter = "Last 3 Months";
 
     [ObservableProperty]
-    private double _tileWidth = 220;
+    private double _tileHeight = 220;
 
     [ObservableProperty]
     private string? _noMediaMessage;
