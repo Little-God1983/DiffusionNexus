@@ -58,7 +58,13 @@ public static class MediaFileExtensions
     public static bool IsCaptionFile(string filePath) => SupportedMediaTypes.IsCaptionFile(filePath);
 
     /// <summary>
-    /// Checks if a file is a video thumbnail (ends with _thumb.webp, _thumb.jpg, or _thumb.png).
+    /// Name of the hidden subfolder used to store video thumbnails.
+    /// </summary>
+    public const string ThumbnailsSubfolder = ".thumbnails";
+
+    /// <summary>
+    /// Checks if a file is a video thumbnail (ends with _thumb.webp, _thumb.jpg, or _thumb.png),
+    /// regardless of whether it lives in the <c>.thumbnails/</c> subfolder or the legacy same-directory location.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file is a video thumbnail.</returns>
@@ -75,10 +81,11 @@ public static class MediaFileExtensions
 
     /// <summary>
     /// Gets the expected thumbnail path for a video file.
-    /// Uses the naming convention: {videoname}_thumb.webp
+    /// Checks the <c>.thumbnails/</c> subfolder first, then falls back to the legacy same-directory location
+    /// for backwards compatibility.
     /// </summary>
     /// <param name="videoPath">Path to the video file.</param>
-    /// <returns>Expected thumbnail path.</returns>
+    /// <returns>Expected thumbnail path (prefers <c>.thumbnails/</c> subfolder if it exists).</returns>
     /// <exception cref="ArgumentException">Thrown when videoPath is null or whitespace.</exception>
     public static string GetVideoThumbnailPath(string videoPath)
     {
@@ -87,16 +94,48 @@ public static class MediaFileExtensions
 
         var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
-        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb.webp");
+        var thumbFileName = $"{fileNameWithoutExtension}_thumb.webp";
+
+        // Prefer .thumbnails/ subfolder
+        var newPath = Path.Combine(directory, ThumbnailsSubfolder, thumbFileName);
+        if (File.Exists(newPath))
+            return newPath;
+
+        // Fall back to legacy same-directory location
+        var legacyPath = Path.Combine(directory, thumbFileName);
+        if (File.Exists(legacyPath))
+            return legacyPath;
+
+        // Default to the new .thumbnails/ location for generation
+        return newPath;
     }
 
     /// <summary>
-    /// Checks if a media file should be included in listings (excludes video thumbnails).
+    /// Checks if a media file should be included in listings
+    /// (excludes video thumbnails and files inside the <c>.thumbnails/</c> subfolder).
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
     /// <returns>True if the file should be included in media listings.</returns>
     public static bool IsDisplayableMediaFile(string filePath)
     {
-        return IsMediaFile(filePath) && !IsVideoThumbnailFile(filePath);
+        return IsMediaFile(filePath) && !IsVideoThumbnailFile(filePath) && !IsInThumbnailsFolder(filePath);
+    }
+
+    /// <summary>
+    /// Checks if a file resides inside a <c>.thumbnails</c> directory.
+    /// </summary>
+    /// <param name="filePath">Path to the file.</param>
+    /// <returns>True if the file is inside a .thumbnails directory.</returns>
+    public static bool IsInThumbnailsFolder(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return false;
+
+        var directory = Path.GetDirectoryName(filePath);
+        if (string.IsNullOrEmpty(directory))
+            return false;
+
+        var dirName = Path.GetFileName(directory);
+        return string.Equals(dirName, ThumbnailsSubfolder, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -31,6 +31,9 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private bool _isFavorite;
 
+    /// <summary>Video player for playing video files in the lightbox viewer.</summary>
+    public VideoPlayerViewModel VideoPlayer { get; } = new();
+
     /// <summary>ViewModel for the generation metadata side panel.</summary>
     public ImageMetadataPanelViewModel MetadataPanel { get; } = new();
 
@@ -232,6 +235,16 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         IsFavorite = _isFavoriteCheck is not null && CurrentImage is not null
             && _isFavoriteCheck(CurrentImage.ImagePath);
 
+        // Load or stop video player based on whether the current item is a video
+        if (CurrentImage?.IsVideo == true)
+        {
+            VideoPlayer.LoadVideo(CurrentImage.ImagePath);
+        }
+        else
+        {
+            VideoPlayer.Stop();
+        }
+
         ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
         ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
     }
@@ -369,6 +382,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         if (disposing)
         {
             _allImages.CollectionChanged -= OnCollectionChanged;
+            VideoPlayer.Dispose();
         }
 
         _disposed = true;

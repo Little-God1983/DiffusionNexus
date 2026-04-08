@@ -74,8 +74,8 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             Directory.CreateDirectory(ffmpegDir);
             FFmpeg.SetExecutablesPath(ffmpegDir);
 
-            // TODO: Linux Implementation for FFmpeg binary name
-            var ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+            var ffmpegBinary = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+            var ffmpegExe = Path.Combine(ffmpegDir, ffmpegBinary);
             if (File.Exists(ffmpegExe))
             {
                 _logger.Information("FFmpeg already present at {Path}", ffmpegDir);
@@ -196,11 +196,22 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
     private static string GetDefaultThumbnailPath(string videoPath, ThumbnailFormat format)
     {
         var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
+        var thumbnailDir = Path.Combine(directory, ".thumbnails");
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
         var extension = GetFormatExtension(format);
-        
-        // Use _thumb suffix to clearly identify thumbnails
-        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb{extension}");
+
+        if (!Directory.Exists(thumbnailDir))
+        {
+            Directory.CreateDirectory(thumbnailDir);
+
+            // Set hidden attribute on Windows; .dot-prefix already hides on Linux/macOS
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(thumbnailDir, File.GetAttributes(thumbnailDir) | FileAttributes.Hidden);
+            }
+        }
+
+        return Path.Combine(thumbnailDir, $"{fileNameWithoutExtension}_thumb{extension}");
     }
 
     private static string GetFormatExtension(ThumbnailFormat format) => format switch

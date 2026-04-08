@@ -190,46 +190,46 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
         // Guard clauses
         if (string.IsNullOrEmpty(imagePath)) return null;
 
-        // Create black placeholder for MP4 files to avoid decoding errors
-        if (imagePath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+        // For video files, load the generated thumbnail from .thumbnails/ subfolder
+        if (DiffusionNexus.Domain.Enums.SupportedMediaTypes.IsVideoFile(imagePath))
         {
-            return CreateVideoPlaceholder(targetWidth);
+            var thumbPath = Utilities.MediaFileExtensions.GetVideoThumbnailPath(imagePath);
+            if (File.Exists(thumbPath))
+            {
+                var width = targetWidth > 0 ? targetWidth : 340;
+                var decoded = EfficientImageDecoder.DecodeThumbnail(thumbPath, width);
+                if (decoded is not null)
+                {
+                    Serilog.Log.Debug("[ThumbnailService] Decoded video thumbnail: {ThumbPath} ({W}x{H})",
+                        thumbPath, decoded.PixelSize.Width, decoded.PixelSize.Height);
+                    return decoded;
+                }
+
+                // EfficientImageDecoder failed — fall back to a direct Bitmap load.
+                // Video thumbnails are already small (≤320px) so a full decode is fine.
+                Serilog.Log.Warning("[ThumbnailService] EfficientImageDecoder returned null for {ThumbPath}, trying direct Bitmap load", thumbPath);
+                try
+                {
+                    decoded = new Bitmap(thumbPath);
+                    Serilog.Log.Information("[ThumbnailService] Direct Bitmap load succeeded for {ThumbPath} ({W}x{H})",
+                        thumbPath, decoded.PixelSize.Width, decoded.PixelSize.Height);
+                    return decoded;
+                }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Error(ex, "[ThumbnailService] Direct Bitmap load also failed for {ThumbPath}", thumbPath);
+                    return null;
+                }
+            }
+
+            Serilog.Log.Debug("[ThumbnailService] No video thumbnail file yet: {ThumbPath}", thumbPath);
+            // No thumbnail generated yet — return null so the UI shows the VIDEO placeholder.
+            // The background generator will call Invalidate + ReloadThumbnail when ready.
+            return null;
         }
 
-        var width = targetWidth > 0 ? targetWidth : 340;
-        return EfficientImageDecoder.DecodeThumbnail(imagePath, width);
-    }
-
-    /// <summary>
-    /// Creates a black placeholder bitmap for video files.
-    /// </summary>
-    private static Bitmap CreateVideoPlaceholder(int width)
-    {
-        // 16:9 aspect ratio
-        int height = Math.Max(1, width * 9 / 16);
-        
-        var bitmap = new WriteableBitmap(
-            new PixelSize(width, height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Opaque);
-
-        using var frameBuffer = bitmap.Lock();
-        
-        // Calculate total bytes
-        int totalBytes = frameBuffer.RowBytes * height;
-        var data = new byte[totalBytes];
-        
-        // Fill with opaque black (B=0, G=0, R=0, A=255)
-        // Bgra8888 -> [B, G, R, A]
-        for (int i = 3; i < data.Length; i += 4)
-        {
-            data[i] = 255;
-        }
-
-        Marshal.Copy(data, 0, frameBuffer.Address, totalBytes);
-        
-        return bitmap;
+        var w = targetWidth > 0 ? targetWidth : 340;
+        return EfficientImageDecoder.DecodeThumbnail(imagePath, w);
     }
 
     /// <summary>

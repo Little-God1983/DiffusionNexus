@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Serilog;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.Services;
@@ -74,8 +75,9 @@ internal static class EfficientImageDecoder
             // Use SKCodec subsampled decode for efficient thumbnail creation
             return DecodeWithCodec(codec, info, targetWidth);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "[EfficientImageDecoder] DecodeThumbnail failed for {Path}", imagePath);
             return null;
         }
     }
@@ -128,8 +130,9 @@ internal static class EfficientImageDecoder
 
             return DecodeWithCodec(codec, info, targetWidth);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "[EfficientImageDecoder] DecodeForDisplay failed for {Path}", imagePath);
             return null;
         }
     }
@@ -256,8 +259,9 @@ internal static class EfficientImageDecoder
         {
             return Bitmap.DecodeToWidth(stream, targetWidth, BitmapInterpolationMode.MediumQuality);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "[EfficientImageDecoder] FallbackDecode failed (targetWidth={Width})", targetWidth);
             return null;
         }
     }

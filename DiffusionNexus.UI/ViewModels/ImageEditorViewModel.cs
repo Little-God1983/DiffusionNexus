@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -29,11 +30,32 @@ public partial class ImageEditorViewModel : ObservableObject
     private long _fileSizeBytes;
     private string _cropResolutionText = string.Empty;
     private bool _cropAspectInverted;
+    private bool _isVideoMode;
 
     #region Sub-ViewModels
 
     /// <summary>Gets the editor services for use by the View layer.</summary>
     public EditorServices Services => _services;
+
+    /// <summary>Sub-ViewModel for video playback. Non-null when a video file is loaded.</summary>
+    public VideoPlayerViewModel VideoPlayer { get; } = new();
+
+    /// <summary>Whether the editor is currently in video playback mode (no image editing tools).</summary>
+    public bool IsVideoMode
+    {
+        get => _isVideoMode;
+        private set
+        {
+            if (SetProperty(ref _isVideoMode, value))
+            {
+                OnPropertyChanged(nameof(IsImageMode));
+                NotifyCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Whether the editor is in image editing mode (not video).</summary>
+    public bool IsImageMode => !_isVideoMode;
 
     /// <summary>
     /// Callback provided by the View to save the current editor image to a file path.
@@ -534,10 +556,26 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Public Methods (View wiring)
 
-    /// <summary>Loads an image from the specified file path.</summary>
+    /// <summary>Loads an image or video from the specified file path.</summary>
     public void LoadImage(string imagePath)
     {
-        CurrentImagePath = imagePath;
+        if (MediaFileExtensions.IsVideoFile(imagePath))
+        {
+            CloseAllTools();
+            VideoPlayer.LoadVideo(imagePath);
+            IsVideoMode = true;
+            CurrentImagePath = imagePath;
+        }
+        else
+        {
+            if (IsVideoMode)
+            {
+                VideoPlayer.Stop();
+                IsVideoMode = false;
+            }
+
+            CurrentImagePath = imagePath;
+        }
     }
 
     /// <summary>Updates the image dimensions displayed in the ViewModel.</summary>
@@ -679,6 +717,13 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteClearImage()
     {
         CloseAllTools();
+
+        if (IsVideoMode)
+        {
+            VideoPlayer.Stop();
+            IsVideoMode = false;
+        }
+
         CurrentImagePath = null;
         ImageWidth = 0;
         ImageHeight = 0;

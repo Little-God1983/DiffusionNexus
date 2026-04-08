@@ -3,6 +3,7 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        xmlns:uiControls="using:DiffusionNexus.UI.Controls"
         x:Class="DiffusionNexus.UI.Views.Dialogs.ImageViewerDialog"
         x:DataType="vm:ImageViewerViewModel"
         WindowState="Maximized"
@@ -180,41 +181,12 @@
                Margin="80,20"
                IsVisible="{Binding !IsVideo}"/>
         
-        <!-- Video thumbnail with overlay -->
+        <!-- Video player shown when a video file is loaded -->
         <Grid IsVisible="{Binding IsVideo}"
-              HorizontalAlignment="Center"
-              VerticalAlignment="Center">
-          <!-- Video thumbnail -->
-          <Image Source="{Binding CurrentImage.Thumbnail}"
-                 Stretch="Uniform"
-                 Margin="80,20"
-                 Opacity="0.5"/>
-          
-          <!-- Video playback message overlay -->
-          <Border Background="#80000000"
-                  CornerRadius="8"
-                  Padding="24,16"
-                  HorizontalAlignment="Center"
-                  VerticalAlignment="Center">
-            <StackPanel Spacing="8" HorizontalAlignment="Center">
-              <Border Background="#FF6B00" CornerRadius="8" Padding="16,8">
-                <TextBlock Text="VIDEO"
-                           FontSize="24"
-                           FontWeight="Bold"
-                           Foreground="White"
-                           HorizontalAlignment="Center"/>
-              </Border>
-              <TextBlock Text="Video Preview"
-                         FontSize="18"
-                         FontWeight="SemiBold"
-                         Foreground="White"
-                         HorizontalAlignment="Center"/>
-              <TextBlock Text="Video playback is not supported in the viewer."
-                         FontSize="13"
-                         Foreground="#AAA"
-                         HorizontalAlignment="Center"/>
-            </StackPanel>
-          </Border>
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch"
+              Margin="80,20">
+          <uiControls:VideoPlayerControl DataContext="{Binding VideoPlayer}"/>
         </Grid>
         
         <!-- Keyboard shortcuts help overlay -->
