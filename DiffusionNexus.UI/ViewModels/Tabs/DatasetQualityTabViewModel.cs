@@ -94,7 +94,15 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region IDialogServiceAware
 
     /// <inheritdoc />
-    public IDialogService? DialogService { get; set; }
+    public IDialogService? DialogService
+    {
+        get => field;
+        set
+        {
+            field = value;
+            TestRunsTab.DialogService = value;
+        }
+    }
 
     #endregion
 

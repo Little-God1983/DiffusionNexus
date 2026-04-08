@@ -78,6 +78,9 @@ public record RunIssueSnapshot
     /// <summary>Number of files affected.</summary>
     public int AffectedFileCount { get; init; }
 
+    /// <summary>Paths of files affected by this issue (stored for historical drill-down).</summary>
+    public IReadOnlyList<string> AffectedFiles { get; init; } = [];
+
     /// <summary>
     /// Creates a snapshot from a full <see cref="Issue"/>.
     /// </summary>
@@ -88,6 +91,7 @@ public record RunIssueSnapshot
         Details = issue.Details,
         Domain = issue.Domain,
         CheckName = issue.CheckName,
-        AffectedFileCount = issue.AffectedFiles.Count
+        AffectedFileCount = issue.AffectedFiles.Count,
+        AffectedFiles = issue.AffectedFiles.ToList()
     };
 }

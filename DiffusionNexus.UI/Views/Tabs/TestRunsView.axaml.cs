@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Input;
+using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.Views.Tabs;
 
@@ -11,5 +13,13 @@ public partial class TestRunsView : UserControl
     public TestRunsView()
     {
         InitializeComponent();
+    }
+
+    private void IssueRow_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Border { DataContext: ExpandableIssueViewModel vm } && vm.HasFiles)
+        {
+            vm.ToggleExpandedCommand.Execute(null);
+        }
     }
 }

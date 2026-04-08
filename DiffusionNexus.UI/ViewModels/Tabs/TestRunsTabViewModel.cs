@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -30,6 +32,7 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
+        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
 
     /// <summary>
@@ -41,7 +44,13 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
+        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
+
+    /// <summary>
+    /// Dialog service for showing confirmation dialogs.
+    /// </summary>
+    public IDialogService? DialogService { get; set; }
 
     #region Observable Properties
 
@@ -79,6 +88,11 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public bool HasRuns => Runs.Count > 0;
 
+    /// <summary>
+    /// Whether more than one run exists, enabling bulk deletion.
+    /// </summary>
+    public bool HasMultipleRuns => Runs.Count > 1;
+
     #endregion
 
     #region Collections
@@ -102,6 +116,11 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public IAsyncRelayCommand<TestRunViewModel?> DeleteRunCommand { get; }
 
+    /// <summary>
+    /// Deletes all runs except the most recent one.
+    /// </summary>
+    public IAsyncRelayCommand DeleteOlderRunsCommand { get; }
+
     #endregion
 
     /// <summary>
@@ -114,11 +133,11 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         Runs.Clear();
         SelectedRun = null;
-        OnPropertyChanged(nameof(HasRuns));
+        NotifyRunCountChanged();
 
         if (!string.IsNullOrWhiteSpace(_datasetFolderPath))
         {
-            await LoadRunsAsync().ConfigureAwait(false);
+            await LoadRunsAsync();
         }
     }
 
@@ -127,7 +146,7 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public async Task OnRunSavedAsync()
     {
-        await LoadRunsAsync().ConfigureAwait(false);
+        await LoadRunsAsync();
     }
 
     private async Task LoadRunsAsync()
@@ -138,18 +157,21 @@ public partial class TestRunsTabViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var records = await _store.LoadAllAsync(_datasetFolderPath).ConfigureAwait(false);
+            var records = await _store.LoadAllAsync(_datasetFolderPath);
 
-            Runs.Clear();
-            foreach (var record in records)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Runs.Add(TestRunViewModel.FromRecord(record));
-            }
+                Runs.Clear();
+                foreach (var record in records)
+                {
+                    Runs.Add(TestRunViewModel.FromRecord(record));
+                }
 
-            if (Runs.Count > 0)
-                SelectedRun = Runs[0];
+                if (Runs.Count > 0)
+                    SelectedRun = Runs[0];
 
-            OnPropertyChanged(nameof(HasRuns));
+                NotifyRunCountChanged();
+            });
         }
         finally
         {
@@ -162,13 +184,74 @@ public partial class TestRunsTabViewModel : ObservableObject
         if (runVm is null || string.IsNullOrWhiteSpace(_datasetFolderPath))
             return;
 
-        await Task.Run(() => _store.Delete(_datasetFolderPath, runVm.Record)).ConfigureAwait(false);
+        if (DialogService is not null)
+        {
+            var confirmed = await DialogService.ShowConfirmAsync(
+                "Delete Run",
+                $"Delete the run from {runVm.Timestamp}?\n\nThis action cannot be undone.");
 
-        Runs.Remove(runVm);
-        if (SelectedRun == runVm)
+            if (!confirmed)
+                return;
+        }
+
+        await Task.Run(() => _store.Delete(_datasetFolderPath, runVm.Record));
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Runs.Remove(runVm);
+            if (SelectedRun == runVm)
+                SelectedRun = Runs.Count > 0 ? Runs[0] : null;
+
+            NotifyRunCountChanged();
+        });
+    }
+
+    /// <summary>
+    /// Deletes all runs except the most recent one.
+    /// </summary>
+    private async Task DeleteOlderRunsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_datasetFolderPath) || Runs.Count <= 1)
+            return;
+
+        var count = Runs.Count - 1;
+        if (DialogService is not null)
+        {
+            var confirmed = await DialogService.ShowConfirmAsync(
+                "Delete Older Runs",
+                $"Delete {count} older run(s) and keep only the latest?\n\nThis action cannot be undone.");
+
+            if (!confirmed)
+                return;
+        }
+
+        var olderRuns = Runs.Skip(1).ToList();
+
+        await Task.Run(() =>
+        {
+            foreach (var run in olderRuns)
+            {
+                _store.Delete(_datasetFolderPath, run.Record);
+            }
+        });
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            foreach (var run in olderRuns)
+            {
+                Runs.Remove(run);
+            }
+
             SelectedRun = Runs.Count > 0 ? Runs[0] : null;
+            NotifyRunCountChanged();
+        });
+    }
 
+    private void NotifyRunCountChanged()
+    {
         OnPropertyChanged(nameof(HasRuns));
+        OnPropertyChanged(nameof(HasMultipleRuns));
+        DeleteOlderRunsCommand.NotifyCanExecuteChanged();
     }
 }
 
@@ -225,8 +308,17 @@ public class TestRunViewModel
     /// <summary>Per-category score breakdown for display.</summary>
     public IReadOnlyList<CategoryScoreViewModel> CategoryScores { get; init; } = [];
 
-    /// <summary>Issue snapshots from this run.</summary>
-    public IReadOnlyList<RunIssueSnapshot> Issues { get; init; } = [];
+    /// <summary>Expandable issue wrappers from this run.</summary>
+    public IReadOnlyList<ExpandableIssueViewModel> Issues { get; init; } = [];
+
+    /// <summary>Per-check score breakdowns (caption + image).</summary>
+    public IReadOnlyList<CheckScoreViewModel> CheckScores { get; init; } = [];
+
+    /// <summary>Number of auto-fixable issues.</summary>
+    public required int FixableIssueCount { get; init; }
+
+    /// <summary>Number of checks that were executed.</summary>
+    public required int ChecksRun { get; init; }
 
     /// <summary>
     /// Creates a <see cref="TestRunViewModel"/> from a stored <see cref="AnalysisRunRecord"/>.
@@ -248,6 +340,16 @@ public class TestRunViewModel
             })
             .ToList() ?? [];
 
+        var checkScoreVms = record.CheckScores
+            .Select(cs => new CheckScoreViewModel
+            {
+                CheckName = cs.CheckName,
+                Score = cs.Score,
+                ScoreColor = GetScoreColor(cs.Score),
+                CategoryName = FormatCategoryName(cs.Category)
+            })
+            .ToList();
+
         return new TestRunViewModel
         {
             Record = record,
@@ -268,7 +370,10 @@ public class TestRunViewModel
             ImageFiles = record.Summary.TotalImageFiles,
             DurationText = FormatDuration(record.Duration),
             CategoryScores = categoryVms,
-            Issues = record.Issues.ToList()
+            Issues = record.Issues.Select(ExpandableIssueViewModel.FromSnapshot).ToList(),
+            CheckScores = checkScoreVms,
+            FixableIssueCount = record.Summary.FixableIssueCount,
+            ChecksRun = record.Summary.ChecksRun
         };
     }
 
@@ -297,4 +402,63 @@ public class TestRunViewModel
             return $"{duration.TotalSeconds:F1}s";
         return $"{duration.TotalMilliseconds:F0}ms";
     }
+}
+
+/// <summary>
+/// ViewModel for displaying a single per-check score in the detail view.
+/// </summary>
+public class CheckScoreViewModel
+{
+    /// <summary>Name of the check (e.g. "Exposure Analysis").</summary>
+    public required string CheckName { get; init; }
+
+    /// <summary>Score value (0–100).</summary>
+    public required double Score { get; init; }
+
+    /// <summary>Color hex for the score display.</summary>
+    public required string ScoreColor { get; init; }
+
+    /// <summary>Human-readable category name.</summary>
+    public required string CategoryName { get; init; }
+}
+
+/// <summary>
+/// Wraps a <see cref="RunIssueSnapshot"/> with expand/collapse state so the
+/// Test Runs detail view can show affected files inline.
+/// </summary>
+public partial class ExpandableIssueViewModel : ObservableObject
+{
+    private bool _isExpanded;
+
+    /// <summary>The underlying issue snapshot.</summary>
+    public required RunIssueSnapshot Snapshot { get; init; }
+
+    /// <summary>Whether the affected-files list is expanded.</summary>
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetProperty(ref _isExpanded, value);
+    }
+
+    /// <summary>Whether this issue has affected files to show.</summary>
+    public bool HasFiles => Snapshot.AffectedFiles.Count > 0;
+
+    /// <summary>Display-friendly file names (just the file name, not the full path).</summary>
+    public IReadOnlyList<string> FileNames { get; private init; } = [];
+
+    /// <summary>Toggles the expanded state.</summary>
+    [RelayCommand]
+    private void ToggleExpanded() => IsExpanded = !IsExpanded;
+
+    /// <summary>
+    /// Creates an <see cref="ExpandableIssueViewModel"/> from a stored snapshot.
+    /// </summary>
+    public static ExpandableIssueViewModel FromSnapshot(RunIssueSnapshot snapshot) => new()
+    {
+        Snapshot = snapshot,
+        FileNames = snapshot.AffectedFiles
+            .Select(Path.GetFileName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToList()!
+    };
 }
