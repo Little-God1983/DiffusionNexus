@@ -24,6 +24,16 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class ModelTileViewModel : ViewModelBase
 {
     /// <summary>
+    /// Shared HttpClient for thumbnail downloads. Reusing a single instance avoids
+    /// socket exhaustion (TIME_WAIT accumulation) that caused OOM after ~100 downloads.
+    /// </summary>
+    private static readonly HttpClient s_thumbnailClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(60),
+        DefaultRequestHeaders = { { "User-Agent", "DiffusionNexus/1.0" } }
+    };
+
+    /// <summary>
     /// Raised after the model (and all its grouped versions) has been deleted from disk and DB.
     /// The parent view model should remove this tile from its collections.
     /// </summary>
@@ -1305,8 +1315,7 @@ public partial class ModelTileViewModel : ViewModelBase
             ? $"{url}&width=300"
             : $"{url}/width=300";
 
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        var bytes = await httpClient.GetByteArrayAsync(thumbnailUrl, ct).ConfigureAwait(false);
+        var bytes = await s_thumbnailClient.GetByteArrayAsync(thumbnailUrl, ct).ConfigureAwait(false);
         return (bytes, "image/jpeg");
     }
 
@@ -1349,12 +1358,16 @@ public partial class ModelTileViewModel : ViewModelBase
                 $"Downloading video to temp: {tempVideoPath}",
                 $"URL: {videoUrl}");
 
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-            var videoBytes = await httpClient.GetByteArrayAsync(videoUrl).ConfigureAwait(false);
-            await File.WriteAllBytesAsync(tempVideoPath, videoBytes).ConfigureAwait(false);
+            // Stream directly to file — avoids holding the entire video (2-10 MB) in RAM
+            await using (var responseStream = await s_thumbnailClient.GetStreamAsync(videoUrl).ConfigureAwait(false))
+            await using (var fileStream = new FileStream(tempVideoPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true))
+            {
+                await responseStream.CopyToAsync(fileStream).ConfigureAwait(false);
+            }
 
+            var videoFileLength = new FileInfo(tempVideoPath).Length;
             logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                $"Video downloaded ({videoBytes.Length / 1024.0:F0} KB), extracting mid-frame...");
+                $"Video downloaded ({videoFileLength / 1024.0:F0} KB), extracting mid-frame...");
 
             var result = await videoThumbnailService.GenerateThumbnailAsync(
                 tempVideoPath,

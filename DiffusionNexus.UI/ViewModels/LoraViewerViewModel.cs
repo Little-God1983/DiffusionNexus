@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -896,9 +897,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             var model = tile.ModelEntity;
             if (model is null) return false;
 
-            // Load all models so we can guard against unique constraint violations
-            var allDbModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-            var dbModel = allDbModels.FirstOrDefault(m => m.Id == model.Id);
+            // Load ONLY the target model — not the entire database
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
             if (dbModel is null) return false;
 
             var dirty = false;
@@ -909,13 +909,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             if (isCivitaiInfoFormat)
             {
-                dirty = ApplyCivitaiInfoFormat(root, dbModel, dbVersion, allDbModels, localPath);
+                dirty = await ApplyCivitaiInfoFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath);
             }
             else
             {
                 // .json may be model-level (has "modelVersions") or simple metadata (has "sd version")
                 dirty = root.TryGetProperty("modelVersions", out _)
-                    ? ApplyModelLevelJsonFormat(root, dbModel, dbVersion, allDbModels, localPath)
+                    ? await ApplyModelLevelJsonFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath)
                     : ApplySimpleJsonFormat(root, dbModel, dbVersion);
             }
 
@@ -928,9 +928,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 await unitOfWork.SaveChangesAsync();
 
-                // Reload and refresh the tile UI
-                var refreshedModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-                var refreshedModel = refreshedModels.FirstOrDefault(m => m.Id == model.Id);
+                // Reload ONLY this model after save
+                var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
                 if (refreshedModel is not null)
                 {
                     await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
@@ -955,11 +954,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Extracts: model name, NSFW, modelId → CivitaiId/CivitaiModelPageId,
     /// version id → CivitaiId, baseModel, trainedWords, image URLs, file hashes.
     /// </summary>
-    private bool ApplyCivitaiInfoFormat(
+    private async Task<bool> ApplyCivitaiInfoFormatAsync(
         System.Text.Json.JsonElement root,
         Model dbModel,
         ModelVersion? dbVersion,
-        IReadOnlyList<Model> allDbModels,
+        IModelRepository modelRepo,
         string localPath)
     {
         var dirty = false;
@@ -986,8 +985,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             dbModel.CivitaiModelPageId = civitaiModelId;
 
-            var civitaiIdOwner = allDbModels.FirstOrDefault(m => m.CivitaiId == civitaiModelId);
-            if (civitaiIdOwner is null || civitaiIdOwner.Id == dbModel.Id)
+            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
+            if (!civitaiIdTaken)
             {
                 dbModel.CivitaiId = civitaiModelId;
             }
@@ -1001,10 +1000,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // Version CivitaiId from top-level "id"
             if (root.TryGetProperty("id", out var versionIdProp) && versionIdProp.TryGetInt32(out var civitaiVersionId))
             {
-                var versionOwner = allDbModels
-                    .SelectMany(m => m.Versions)
-                    .FirstOrDefault(v => v.CivitaiId == civitaiVersionId);
-                if (versionOwner is null || versionOwner.Id == dbVersion.Id)
+                var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
+                if (!versionIdTaken)
                 {
                     dbVersion.CivitaiId = civitaiVersionId;
                     dirty = true;
@@ -1068,11 +1065,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// (has top-level id, name, type, nsfw, modelVersions[]).
     /// Finds the matching version by filename in the modelVersions array.
     /// </summary>
-    private bool ApplyModelLevelJsonFormat(
+    private async Task<bool> ApplyModelLevelJsonFormatAsync(
         System.Text.Json.JsonElement root,
         Model dbModel,
         ModelVersion? dbVersion,
-        IReadOnlyList<Model> allDbModels,
+        IModelRepository modelRepo,
         string localPath)
     {
         var dirty = false;
@@ -1097,8 +1094,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             dbModel.CivitaiModelPageId = civitaiModelId;
 
-            var civitaiIdOwner = allDbModels.FirstOrDefault(m => m.CivitaiId == civitaiModelId);
-            if (civitaiIdOwner is null || civitaiIdOwner.Id == dbModel.Id)
+            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
+            if (!civitaiIdTaken)
             {
                 dbModel.CivitaiId = civitaiModelId;
             }
@@ -1133,10 +1130,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 // Found the matching version — extract all data
                 if (versionElement.TryGetProperty("id", out var vIdProp) && vIdProp.TryGetInt32(out var civitaiVersionId))
                 {
-                    var versionOwner = allDbModels
-                        .SelectMany(m => m.Versions)
-                        .FirstOrDefault(v => v.CivitaiId == civitaiVersionId);
-                    if (versionOwner is null || versionOwner.Id == dbVersion.Id)
+                    var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
+                    if (!versionIdTaken)
                     {
                         dbVersion.CivitaiId = civitaiVersionId;
                         dirty = true;
@@ -1435,8 +1430,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var dbModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-            var dbModel = dbModels.FirstOrDefault(m => m.Id == tile.ModelEntity?.Id);
+            var modelId = tile.ModelEntity?.Id;
+            if (modelId is null or 0) return false;
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId.Value);
             var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
                 v.Files.Any(f => string.Equals(f.LocalPath, tile.SelectedVersion?.PrimaryFile?.LocalPath, StringComparison.OrdinalIgnoreCase)));
 
@@ -1502,7 +1498,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
+            // Only needs CivitaiId, CivitaiModelPageId, Name — no need for full includes
+            var allModels = await unitOfWork.Models.GetAllAsync();
 
             var dirty = false;
 
@@ -1573,9 +1570,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var model = tile.ModelEntity;
         if (model is null) return;
 
-        // Re-attach by loading from the scoped context
-        var dbModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-        var dbModel = dbModels.FirstOrDefault(m => m.Id == model.Id);
+        // Load ONLY the target model — not the entire database (was the #1 cause of OOM)
+        var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
         if (dbModel is null) return;
 
         // Update model-level fields from Civitai
@@ -1585,8 +1581,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbModel.CivitaiModelPageId = civitaiModel.Id;
 
             // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
-            var civitaiIdOwner = dbModels.FirstOrDefault(m => m.CivitaiId == civitaiModel.Id);
-            if (civitaiIdOwner is null || civitaiIdOwner.Id == dbModel.Id)
+            var civitaiIdTaken = await unitOfWork.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id);
+            if (!civitaiIdTaken)
             {
                 dbModel.CivitaiId = civitaiModel.Id;
             }
@@ -1594,7 +1590,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 _logger?.Warn(LogCategory.Network, "CivitaiSync",
                     $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
-                    $"already assigned to model '{civitaiIdOwner.Name}' (Id={civitaiIdOwner.Id})");
+                    "already assigned to another model");
             }
 
             dbModel.Name = civitaiModel.Name;
@@ -1618,10 +1614,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 }
                 else
                 {
-                    var existingCreator = dbModels
-                        .Select(m => m.Creator)
-                        .FirstOrDefault(c => c is not null &&
-                            string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+                    var existingCreator = await unitOfWork.Models
+                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
 
                     dbModel.Creator = existingCreator ?? new Creator
                     {
@@ -1639,10 +1633,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (dbVersion is not null)
         {
             // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
-            var versionCivitaiIdOwner = dbModels
-                .SelectMany(m => m.Versions)
-                .FirstOrDefault(v => v.CivitaiId == bestCivitaiVersion.Id);
-            if (versionCivitaiIdOwner is null || versionCivitaiIdOwner.Id == dbVersion.Id)
+            var versionIdTaken = await unitOfWork.Models
+                .IsVersionCivitaiIdTakenAsync(bestCivitaiVersion.Id, dbVersion.Id);
+            if (!versionIdTaken)
             {
                 dbVersion.CivitaiId = bestCivitaiVersion.Id;
             }
@@ -1650,7 +1643,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 _logger?.Warn(LogCategory.Network, "CivitaiSync",
                     $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
-                    $"already assigned to version '{versionCivitaiIdOwner.Name}' (Id={versionCivitaiIdOwner.Id})");
+                    "already assigned to another version");
             }
 
             dbVersion.Name = bestCivitaiVersion.Name;
@@ -1729,14 +1722,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // Sync tags from Civitai model response
         if (civitaiModel?.Tags is { Count: > 0 } civitaiTags)
         {
-            SyncTagsFromCivitai(dbModel, civitaiTags, dbModels);
+            var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
+            SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);
         }
 
         await unitOfWork.SaveChangesAsync();
 
-        // Reload model from DB after save to get generated IDs on new images
-        var refreshedModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-        var refreshedModel = refreshedModels.FirstOrDefault(m => m.Id == model.Id);
+        // Reload ONLY this model after save to get generated IDs on new images
+        var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
 
         // Refresh tile on UI thread with updated data — use RefreshModelData to
         // properly update _allGroupedModels and re-pick the primary entity.
@@ -1753,16 +1746,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private static void SyncTagsFromCivitai(
         Model dbModel,
         IReadOnlyList<string> civitaiTags,
-        IReadOnlyList<Model> allLoadedModels)
+        Dictionary<string, Tag> knownTags)
     {
-        // Build a lookup of Tag entities already tracked by the DbContext
-        var knownTags = allLoadedModels
-            .SelectMany(m => m.Tags)
-            .Select(mt => mt.Tag!)
-            .Where(t => t is not null)
-            .DistinctBy(t => t.NormalizedName)
-            .ToDictionary(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase);
-
         dbModel.Tags.Clear();
 
         foreach (var tagName in civitaiTags)

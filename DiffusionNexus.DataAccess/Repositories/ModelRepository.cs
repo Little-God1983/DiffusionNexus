@@ -50,4 +50,54 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }
+
+    /// <inheritdoc />
+    public async Task<Model?> GetByIdWithIncludesAsync(int id, CancellationToken cancellationToken = default)
+    {
+        return await Context.Models
+            .Include(m => m.Creator)
+            .Include(m => m.Tags)
+                .ThenInclude(mt => mt.Tag)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Images)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.TriggerWords)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> IsCivitaiIdTakenAsync(int civitaiId, int excludeModelId, CancellationToken cancellationToken = default)
+    {
+        return await Context.Models
+            .AnyAsync(m => m.CivitaiId == civitaiId && m.Id != excludeModelId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> IsVersionCivitaiIdTakenAsync(int civitaiVersionId, int excludeVersionId, CancellationToken cancellationToken = default)
+    {
+        return await Context.ModelVersions
+            .AnyAsync(v => v.CivitaiId == civitaiVersionId && v.Id != excludeVersionId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<Creator?> FindCreatorByUsernameAsync(string username, CancellationToken cancellationToken = default)
+    {
+        return await Context.Creators
+            .FirstOrDefaultAsync(c => c.Username.ToLower() == username.ToLower(), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<Dictionary<string, Tag>> GetAllTagsLookupAsync(CancellationToken cancellationToken = default)
+    {
+        return await Context.Tags
+            .ToDictionaryAsync(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase, cancellationToken)
+            .ConfigureAwait(false);
+    }
 }
