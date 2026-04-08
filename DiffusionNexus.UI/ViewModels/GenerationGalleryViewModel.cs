@@ -109,6 +109,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public ObservableCollection<string> GroupingOptions { get; } = [];
 
+    public IReadOnlyList<string> LayoutModes { get; } = ["Showcase", "Grid"];
+
     public string ImageExtensionsDisplay => SupportedMediaTypes.ImageExtensionsDisplay;
 
     public string VideoExtensionsDisplay => SupportedMediaTypes.VideoExtensionsDisplay;
@@ -136,6 +138,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     [ObservableProperty]
     private bool _showFavoritesOnly;
+
+    private string _selectedLayoutMode = "Showcase";
+
+    public string SelectedLayoutMode
+    {
+        get => _selectedLayoutMode;
+        set
+        {
+            if (SetProperty(ref _selectedLayoutMode, value))
+            {
+                OnPropertyChanged(nameof(IsShowcaseLayout));
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the gallery uses the Showcase (aspect-ratio preserving) layout.
+    /// False selects the classic square Grid layout.
+    /// </summary>
+    public bool IsShowcaseLayout => SelectedLayoutMode == "Showcase";
 
     public int SelectionCount
     {
