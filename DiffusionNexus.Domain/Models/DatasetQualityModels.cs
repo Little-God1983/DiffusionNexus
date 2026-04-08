@@ -201,6 +201,23 @@ public record AnalysisReport
     public DateTimeOffset AnalyzedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>
+    /// Per-check scores from all checks that ran (caption + image).
+    /// Empty when no scored checks participated.
+    /// </summary>
+    public IReadOnlyList<CheckScore> CheckScores { get; init; } = [];
+
+    /// <summary>
+    /// Composite quality score, or null if no scored checks ran.
+    /// </summary>
+    public CompositeScoreResult? CompositeScore { get; init; }
+
+    /// <summary>
+    /// Per-image quality results from image analysis checks.
+    /// Empty when no image checks were run.
+    /// </summary>
+    public IReadOnlyList<ImageCheckResult> ImageCheckResults { get; init; } = [];
+
+    /// <summary>
     /// Creates summary statistics from the issue list and file counts.
     /// </summary>
     public static AnalysisSummary BuildSummary(

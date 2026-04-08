@@ -69,11 +69,14 @@ public sealed class SpellCheckService : ISpellCheckService
                 i++;
             }
 
-            // Trim trailing hyphens/apostrophes so "word-" or "word'" don't pollute the token
-            while (i > start && text[i - 1] is '-' or '\'')
-                i--;
+            // Trim trailing hyphens/apostrophes so "word-" or "word'" don't pollute the token.
+            // Use a separate variable so i always stays past the consumed token,
+            // preventing the outer loop from revisiting the same characters.
+            int cleanEnd = i;
+            while (cleanEnd > start && text[cleanEnd - 1] is '-' or '\'')
+                cleanEnd--;
 
-            var word = text.AsSpan(start, i - start);
+            var word = text.AsSpan(start, cleanEnd - start);
 
             // Skip single characters, numbers, and words that start with a digit
             if (word.Length <= 1 || char.IsDigit(word[0]))
@@ -95,6 +98,19 @@ public sealed class SpellCheckService : ISpellCheckService
         }
 
         return errors;
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<SpellCheckError>> CheckTextAsync(string text, CancellationToken cancellationToken = default)
+    {
+        if (_wordList is null || string.IsNullOrWhiteSpace(text))
+            return Task.FromResult<IReadOnlyList<SpellCheckError>>([]);
+
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return CheckText(text);
+        }, cancellationToken);
     }
 
     /// <inheritdoc />

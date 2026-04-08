@@ -34,6 +34,12 @@ public interface ISpellCheckService
     IReadOnlyList<SpellCheckError> CheckText(string text);
 
     /// <summary>
+    /// Asynchronously scans the full text on a background thread and returns all
+    /// misspelled word positions. Supports cancellation for debounce scenarios.
+    /// </summary>
+    Task<IReadOnlyList<SpellCheckError>> CheckTextAsync(string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Adds a word to the user's custom dictionary so it is no longer flagged.
     /// </summary>
     void AddToUserDictionary(string word);

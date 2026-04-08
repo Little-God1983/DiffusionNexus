@@ -698,7 +698,9 @@ public partial class App : Application
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
-            sp.GetService<IComfyUIReadinessService>()));
+            sp.GetService<IComfyUIReadinessService>(),
+            sp.GetServices<IImageQualityCheck>(),
+            sp.GetService<AnalysisRunStore>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
