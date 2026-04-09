@@ -1810,7 +1810,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     [RelayCommand]
     private void SendToCaptioning(DatasetImageViewModel? image)
     {
-        if (image is null) return;
+        if (image is null || image.IsVideo) return;
 
         _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
         {
@@ -1826,7 +1826,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     [RelayCommand]
     private void SendToBatchUpscale(DatasetImageViewModel? image)
     {
-        if (image is null) return;
+        if (image is null || image.IsVideo) return;
 
         _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
         {
@@ -1854,7 +1854,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// </summary>
     private void SendImageToBatchCropScale(DatasetImageViewModel? image)
     {
-        if (image is null) return;
+        if (image is null || image.IsVideo) return;
 
         _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
         {

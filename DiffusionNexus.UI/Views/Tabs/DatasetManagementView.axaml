@@ -489,21 +489,25 @@
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToCaptioningCommand}"
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
+                                          IsEnabled="{Binding IsImage}"
                                           ToolTip.Tip="Send to Captioning"/>
                                   <Button Grid.Column="5" Content="&#x2B06;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToBatchUpscaleCommand}"
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
+                                          IsEnabled="{Binding IsImage}"
                                           ToolTip.Tip="Send to Batch Upscale"/>
                                   <Button Grid.Column="6" Content="&#x2702;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendImageToBatchCropScaleCommand}"
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
+                                          IsEnabled="{Binding IsImage}"
                                           ToolTip.Tip="Send to Batch Crop/Scale"/>
                                   <Button Grid.Column="7" Content="&#x270F;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).SendToImageEditCommand}"
                                           CommandParameter="{Binding}" Padding="8,6" FontSize="14" Background="#80444444"
                                           CornerRadius="4" Margin="0,0,2,0"
+                                          IsEnabled="{Binding IsImage}"
                                           ToolTip.Tip="Edit in Image Editor"/>
                                   <Button Grid.Column="8" Content="&#x2716;"
                                           Command="{Binding $parent[ItemsControl].((vmTabs:DatasetManagementViewModel)DataContext).DeleteImageCommand}"
