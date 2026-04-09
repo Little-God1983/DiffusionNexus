@@ -229,7 +229,25 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
         }
 
         var w = targetWidth > 0 ? targetWidth : 340;
-        return EfficientImageDecoder.DecodeThumbnail(imagePath, w);
+        var result = EfficientImageDecoder.DecodeThumbnail(imagePath, w);
+        if (result is not null)
+            return result;
+
+        // EfficientImageDecoder failed — fall back to a direct Bitmap load.
+        // This covers edge cases where the efficient decoder cannot handle
+        // the format (e.g., certain WebP variants).
+        try
+        {
+            result = new Bitmap(imagePath);
+            Serilog.Log.Debug("[ThumbnailService] Direct Bitmap fallback succeeded for {Path} ({W}x{H})",
+                imagePath, result.PixelSize.Width, result.PixelSize.Height);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "[ThumbnailService] All decode attempts failed for {Path}", imagePath);
+            return null;
+        }
     }
 
     /// <summary>

@@ -1288,6 +1288,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             ApplyFilter();
 
             StatusMessage = Datasets.Count == 0 ? null : $"Found {Datasets.Count} datasets";
+
+            // Generate video thumbnails for overview cards in the background.
+            // Video thumbnails are only created when a dataset is opened, so overview
+            // cards for video-only datasets would otherwise show a blank preview.
+            _ = GenerateOverviewVideoThumbnailsAsync();
         }
         catch (Exception ex)
         {
@@ -1386,7 +1391,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             foreach (var mediaPath in mediaFiles)
             {
-                var mediaVm = DatasetImageViewModel.FromFile(mediaPath, _eventAggregator);
+                var mediaVm = DatasetImageViewModel.FromFile(mediaPath, _eventAggregator, _thumbnailOrchestrator, OwnerToken);
 
                 if (mediaVm.IsVideo && _videoThumbnailService is not null)
                 {
@@ -1449,7 +1454,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     }
 
     /// <summary>
-    /// Ensures the sub-folders (Epochs, Notes, Presentation) exist within a version folder.
+    /// Generates a video thumbnail via FFmpeg and assigns it to the media ViewModel.
     /// </summary>
     private async Task GenerateVideoThumbnailAsync(DatasetImageViewModel mediaVm)
     {
@@ -1462,10 +1467,53 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 mediaVm.ThumbnailPath = result.ThumbnailPath;
             }
+            else if (!result.Success)
+            {
+                Serilog.Log.Warning("[DatasetManagement] Video thumbnail generation failed for {Path}: {Error}",
+                    mediaVm.ImagePath, result.ErrorMessage);
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore thumbnail generation errors
+            Serilog.Log.Warning(ex, "[DatasetManagement] Video thumbnail generation threw for {Path}", mediaVm.ImagePath);
+        }
+    }
+
+    /// <summary>
+    /// Generates video thumbnails for overview dataset cards in the background.
+    /// Cards whose <see cref="DatasetCardViewModel.ThumbnailPath"/> points to a video file
+    /// (meaning no .webp thumbnail exists yet) get their thumbnail generated asynchronously.
+    /// </summary>
+    private async Task GenerateOverviewVideoThumbnailsAsync()
+    {
+        if (_videoThumbnailService is null) return;
+
+        // Collect cards that need thumbnail generation (ThumbnailPath is a video file)
+        var cardsNeedingThumbnails = Datasets
+            .Where(c => c.HasVideos && c.ThumbnailPath is not null && MediaFileExtensions.IsVideoFile(c.ThumbnailPath))
+            .ToList();
+
+        if (cardsNeedingThumbnails.Count == 0) return;
+
+        foreach (var card in cardsNeedingThumbnails)
+        {
+            var videoPath = card.ThumbnailPath!;
+            try
+            {
+                var result = await _videoThumbnailService.GenerateThumbnailAsync(videoPath);
+                if (result.Success && result.ThumbnailPath is not null)
+                {
+                    // Update the card on the UI thread so the thumbnail appears
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    {
+                        card.ThumbnailPath = result.ThumbnailPath;
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Debug(ex, "[DatasetManagement] Overview thumbnail generation failed for {Path}", videoPath);
+            }
         }
     }
 
@@ -1964,7 +2012,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 
                 _datasetStorageService.CopyFile(sourcePath, uniquePath, false);
                 
-                var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator);
+                var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator, _thumbnailOrchestrator, OwnerToken);
                 if (newImageVm.IsVideo && _videoThumbnailService != null)
                 {
                     await GenerateVideoThumbnailAsync(newImageVm);

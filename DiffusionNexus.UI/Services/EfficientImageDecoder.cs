@@ -48,32 +48,40 @@ internal static class EfficientImageDecoder
             if (!File.Exists(imagePath))
                 return null;
 
-            using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (stream.Length == 0)
-                return null;
-
-            // Peek at the image dimensions without full decode
-            using var codec = SKCodec.Create(stream);
-            if (codec is null)
+            // Read dimensions via SKCodec first. SKCodec.Create may take ownership
+            // of the stream (especially for WebP), so we must open a separate stream
+            // for any fallback decode.
+            int width;
+            int height;
+            using (var probeStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                // Fallback: codec creation failed, try normal Avalonia decode
-                stream.Position = 0;
-                return FallbackDecode(stream, targetWidth);
+                if (probeStream.Length == 0)
+                    return null;
+
+                using var codec = SKCodec.Create(probeStream);
+                if (codec is null)
+                {
+                    // Codec creation failed — fall back to Avalonia decode
+                    return FallbackDecode(imagePath, targetWidth);
+                }
+
+                var info = codec.Info;
+                if (info.Width <= 0 || info.Height <= 0)
+                    return null;
+
+                width = info.Width;
+                height = info.Height;
+
+                // If the image is large enough to benefit from subsampled decode, do it now
+                // while the codec is still alive.
+                if (width > targetWidth * SmallImageMultiplier)
+                {
+                    return DecodeWithCodec(codec, info, targetWidth);
+                }
             }
 
-            var info = codec.Info;
-            if (info.Width <= 0 || info.Height <= 0)
-                return null;
-
-            // If the image is already small enough, use normal decode
-            if (info.Width <= targetWidth * SmallImageMultiplier)
-            {
-                stream.Position = 0;
-                return FallbackDecode(stream, targetWidth);
-            }
-
-            // Use SKCodec subsampled decode for efficient thumbnail creation
-            return DecodeWithCodec(codec, info, targetWidth);
+            // Image is small enough — use normal Avalonia decode with a fresh stream
+            return FallbackDecode(imagePath, targetWidth);
         }
         catch (Exception ex)
         {
@@ -100,35 +108,38 @@ internal static class EfficientImageDecoder
             if (!File.Exists(imagePath))
                 return null;
 
-            using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (stream.Length == 0)
-                return null;
-
-            using var codec = SKCodec.Create(stream);
-            if (codec is null)
+            // Probe with SKCodec in its own stream scope. SKCodec.Create may take
+            // ownership of the stream (especially for WebP), so a fresh stream is
+            // needed for any fallback / full-res decode.
+            using (var probeStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                // Fallback: load full resolution via Avalonia
-                stream.Position = 0;
-                return new Bitmap(stream);
+                if (probeStream.Length == 0)
+                    return null;
+
+                using var codec = SKCodec.Create(probeStream);
+                if (codec is null)
+                {
+                    // Fallback: load full resolution via Avalonia with a fresh stream
+                    return new Bitmap(imagePath);
+                }
+
+                var info = codec.Info;
+                if (info.Width <= 0 || info.Height <= 0)
+                    return null;
+
+                // If the image exceeds the cap, decode at reduced resolution now
+                if (info.Width > maxDimension || info.Height > maxDimension)
+                {
+                    var targetWidth = info.Width >= info.Height
+                        ? maxDimension
+                        : (int)((float)maxDimension / info.Height * info.Width);
+
+                    return DecodeWithCodec(codec, info, targetWidth);
+                }
             }
 
-            var info = codec.Info;
-            if (info.Width <= 0 || info.Height <= 0)
-                return null;
-
-            // If within the cap, load at full resolution
-            if (info.Width <= maxDimension && info.Height <= maxDimension)
-            {
-                stream.Position = 0;
-                return new Bitmap(stream);
-            }
-
-            // Determine target dimension based on which axis exceeds the cap
-            var targetWidth = info.Width >= info.Height
-                ? maxDimension
-                : (int)((float)maxDimension / info.Height * info.Width);
-
-            return DecodeWithCodec(codec, info, targetWidth);
+            // Within the cap — load at full resolution with a fresh stream
+            return new Bitmap(imagePath);
         }
         catch (Exception ex)
         {
@@ -251,17 +262,19 @@ internal static class EfficientImageDecoder
 
     /// <summary>
     /// Fallback to Avalonia's built-in <see cref="Bitmap.DecodeToWidth"/> for small images
-    /// or when SKCodec creation fails.
+    /// or when SKCodec creation fails. Opens its own stream to avoid issues with
+    /// <see cref="SKCodec"/> taking ownership of the previous stream.
     /// </summary>
-    private static Bitmap? FallbackDecode(Stream stream, int targetWidth)
+    private static Bitmap? FallbackDecode(string imagePath, int targetWidth)
     {
         try
         {
+            using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             return Bitmap.DecodeToWidth(stream, targetWidth, BitmapInterpolationMode.MediumQuality);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[EfficientImageDecoder] FallbackDecode failed (targetWidth={Width})", targetWidth);
+            Log.Warning(ex, "[EfficientImageDecoder] FallbackDecode failed for {Path} (targetWidth={Width})", imagePath, targetWidth);
             return null;
         }
     }
