@@ -181,12 +181,35 @@
                Margin="80,20"
                IsVisible="{Binding !IsVideo}"/>
         
-        <!-- Video player shown when a video file is loaded -->
+        <!-- Video area: poster thumbnail swaps with native VideoPlayerControl -->
         <Grid IsVisible="{Binding IsVideo}"
               HorizontalAlignment="Stretch"
               VerticalAlignment="Stretch"
               Margin="80,20">
-          <uiControls:VideoPlayerControl DataContext="{Binding VideoPlayer}"/>
+
+          <!-- Poster shown before first play (no NativeControlHost in tree) -->
+          <Grid IsVisible="{Binding !VideoPlayer.HasStartedPlayback}">
+            <Image Source="{Binding VideoThumbnailPath, Converter={StaticResource PathToBitmapConverter}, ConverterParameter=full}"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"/>
+            <!-- Click-to-play overlay -->
+            <Button Command="{Binding VideoPlayer.PlayPauseCommand}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#80000000"
+                    Foreground="White"
+                    CornerRadius="40"
+                    Padding="28,20"
+                    FontSize="40"
+                    Content="&#x25B6;"
+                    ToolTip.Tip="Play (Space)"
+                    IsVisible="{Binding VideoPlayer.HasVideo}"/>
+          </Grid>
+
+          <!-- Native video player shown once playback has started -->
+          <uiControls:VideoPlayerControl DataContext="{Binding VideoPlayer}"
+                                         IsVisible="{Binding HasStartedPlayback}"/>
         </Grid>
         
         <!-- Keyboard shortcuts help overlay -->

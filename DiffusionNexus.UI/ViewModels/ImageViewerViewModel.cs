@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -60,6 +61,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(IsRejected));
                 OnPropertyChanged(nameof(IsVideo));
                 OnPropertyChanged(nameof(IsImage));
+                OnPropertyChanged(nameof(VideoThumbnailPath));
                 OnPropertyChanged(nameof(PositionText));
                 OnPropertyChanged(nameof(TotalCount));
                 MetadataPanel.LoadMetadata(value?.ImagePath);
@@ -87,6 +89,20 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public string PositionText => TotalCount > 0 ? $"{CurrentIndex + 1} / {TotalCount}" : "0 / 0";
     public bool HasCurrentImage => _currentImage is not null;
     public string? ImagePath => _currentImage?.ImagePath;
+
+    /// <summary>Path to the video thumbnail image file, or null when the current item is not a video or no thumbnail exists.</summary>
+    public string? VideoThumbnailPath
+    {
+        get
+        {
+            if (_currentImage?.IsVideo != true || string.IsNullOrEmpty(_currentImage.ImagePath))
+                return null;
+
+            var thumbPath = MediaFileExtensions.GetVideoThumbnailPath(_currentImage.ImagePath);
+            return File.Exists(thumbPath) ? thumbPath : null;
+        }
+    }
+
     public string? FileName => _currentImage?.FullFileName;
     public string? Caption => _currentImage?.Caption;
     public bool HasCaption => !string.IsNullOrWhiteSpace(_currentImage?.Caption);

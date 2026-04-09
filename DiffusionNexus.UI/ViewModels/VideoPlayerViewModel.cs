@@ -17,6 +17,7 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private bool _isPlaying;
     private bool _hasVideo;
+    private bool _hasStartedPlayback;
     private double _position;
     private long _duration;
     private int _volume = 75;
@@ -50,6 +51,17 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
     {
         get => _isPlaying;
         private set => SetProperty(ref _isPlaying, value);
+    }
+
+    /// <summary>
+    /// Whether playback has been initiated at least once for the current video.
+    /// Set to true when VLC starts playing, reset when a new video is loaded or stopped.
+    /// Used to swap between the poster thumbnail and the native VideoView.
+    /// </summary>
+    public bool HasStartedPlayback
+    {
+        get => _hasStartedPlayback;
+        private set => SetProperty(ref _hasStartedPlayback, value);
     }
 
     /// <summary>
@@ -229,6 +241,7 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
         }
 
         IsPlaying = false;
+        HasStartedPlayback = false;
         Position = 0;
         Duration = 0;
         TimeDisplay = "00:00 / 00:00";
@@ -264,7 +277,9 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
 
     private void OnPlaying(object? sender, EventArgs e)
     {
-        if (!_disposed) IsPlaying = true;
+        if (_disposed) return;
+        IsPlaying = true;
+        HasStartedPlayback = true;
     }
 
     private void OnPaused(object? sender, EventArgs e)
