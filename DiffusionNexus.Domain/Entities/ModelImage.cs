@@ -143,6 +143,24 @@ public class ModelImage
 
     #endregion
 
+    #region Lightweight Loading Support
+
+    /// <summary>
+    /// Sentinel byte array assigned by lightweight queries to signal "a thumbnail exists in
+    /// the database but the BLOB was not loaded to save memory". The tile can detect this and
+    /// lazy-load the real data on demand via <c>GetImageThumbnailDataAsync</c>.
+    /// </summary>
+    public static readonly byte[] ThumbnailNotLoadedSentinel = [0xFF];
+
+    /// <summary>
+    /// Returns <c>true</c> when ThumbnailData is the sentinel marker, meaning a real
+    /// thumbnail exists in the DB but was deliberately not loaded to save memory.
+    /// </summary>
+    public bool IsThumbnailDeferred =>
+        ReferenceEquals(ThumbnailData, ThumbnailNotLoadedSentinel);
+
+    #endregion
+
     #region Computed Properties
 
     /// <summary>Aspect ratio of the original image.</summary>
@@ -155,7 +173,7 @@ public class ModelImage
     public bool IsLandscape => Width > Height;
 
     /// <summary>Whether a thumbnail is available for instant display.</summary>
-    public bool HasThumbnail => ThumbnailData is { Length: > 0 };
+    public bool HasThumbnail => ThumbnailData is { Length: > 0 } && !IsThumbnailDeferred;
 
     /// <summary>Whether the preview is a video (MP4, WebM, etc.).</summary>
     public bool IsVideo => string.Equals(MediaType, "video", StringComparison.OrdinalIgnoreCase);

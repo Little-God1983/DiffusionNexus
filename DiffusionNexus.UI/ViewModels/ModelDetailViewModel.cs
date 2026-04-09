@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -474,15 +475,14 @@ public partial class ModelDetailViewModel : ViewModelBase
 
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
 
-            // Find the model that owns the file we just downloaded
-            var refreshedModel = allModels.FirstOrDefault(m =>
-                m.Versions.Any(v => v.Files.Any(f =>
-                    string.Equals(f.LocalPath, downloadedFilePath, StringComparison.OrdinalIgnoreCase))));
+            // Find the model that owns the file we just downloaded (targeted query, not full DB load)
+            var refreshedModel = await unitOfWork.Models.FindByLocalFilePathAsync(downloadedFilePath);
 
             // Fallback: match by existing tile model ID
-            refreshedModel ??= allModels.FirstOrDefault(m => m.Id == sourceTile.ModelEntity?.Id);
+            refreshedModel ??= sourceTile.ModelEntity?.Id is > 0
+                ? await unitOfWork.Models.GetByIdWithIncludesAsync(sourceTile.ModelEntity.Id)
+                : null;
 
             if (refreshedModel is not null)
             {
@@ -618,22 +618,9 @@ public partial class ModelDetailViewModel : ViewModelBase
                           ?? civitaiVersion.Files.FirstOrDefault();
 
             // --- Check if a model already exists (grouping) ---
-            // Load with full includes so Versions, Tags, Files etc. are available.
-            var allModels = await unitOfWork.Models.GetAllWithIncludesAsync();
-            Model? model = null;
+            // Targeted query — avoids loading ALL 11K models just to find one.
+            var model = await unitOfWork.Models.FindByModelPageIdOrIdAsync(modelPageId, existingModelId);
             bool isExistingModel = false;
-
-            if (modelPageId.HasValue)
-            {
-                model = allModels.FirstOrDefault(m => m.CivitaiModelPageId == modelPageId.Value);
-            }
-
-            // Fallback: find by the source tile's model ID (covers locally-discovered
-            // models that don't have CivitaiModelPageId yet).
-            if (model is null && existingModelId.HasValue)
-            {
-                model = allModels.FirstOrDefault(m => m.Id == existingModelId.Value);
-            }
 
             if (model is not null)
             {
@@ -667,10 +654,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                         }
                         else
                         {
-                            var existingCreator = allModels
-                                .Select(m => m.Creator)
-                                .FirstOrDefault(c => c is not null &&
-                                    string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+                            var existingCreator = await unitOfWork.Models
+                                .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
 
                             model.Creator = existingCreator ?? new Creator
                             {
@@ -710,10 +695,8 @@ public partial class ModelDetailViewModel : ViewModelBase
 
                     if (civitaiModel.Creator is not null)
                     {
-                        var existingCreator = allModels
-                            .Select(m => m.Creator)
-                            .FirstOrDefault(c => c is not null &&
-                                string.Equals(c.Username, civitaiModel.Creator.Username, StringComparison.OrdinalIgnoreCase));
+                        var existingCreator = await unitOfWork.Models
+                            .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
 
                         model.Creator = existingCreator ?? new Creator
                         {
@@ -821,13 +804,8 @@ public partial class ModelDetailViewModel : ViewModelBase
             // on Tags.NormalizedName (same approach as SyncTagsFromCivitai).
             if (civitaiModel?.Tags is { Count: > 0 } tags)
             {
-                // Build lookup of Tag entities already tracked by this DbContext
-                var knownTags = allModels
-                    .SelectMany(m => m.Tags)
-                    .Select(mt => mt.Tag!)
-                    .Where(t => t is not null)
-                    .DistinctBy(t => t.NormalizedName)
-                    .ToDictionary(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase);
+                // Load tag lookup from DB — avoids loading all models just for tag deduplication
+                var knownTags = await unitOfWork.Models.GetAllTagsLookupAsync();
 
                 model.Tags.Clear();
 
