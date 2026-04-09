@@ -1860,7 +1860,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             eventAggregator: _eventAggregator,
             onSendToImageEditor: img => SendToImageEdit(img),
             onSendToCaptioning: img => SendToCaptioning(img),
-            onDeleteRequested: OnImageDeleteRequested);
+            onDeleteRequested: OnImageDeleteRequested,
+            videoThumbnailService: _videoThumbnailService);
     }
 
     private async void OnImageDeleteRequested(DatasetImageViewModel image)

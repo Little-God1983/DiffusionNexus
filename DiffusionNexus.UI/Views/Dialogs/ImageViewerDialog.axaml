@@ -189,7 +189,7 @@
 
           <!-- Poster shown before first play (no NativeControlHost in tree) -->
           <Grid IsVisible="{Binding !VideoPlayer.HasStartedPlayback}">
-            <Image Source="{Binding VideoThumbnailPath, Converter={StaticResource PathToBitmapConverter}, ConverterParameter=full}"
+            <Image Source="{Binding CurrentImage.Thumbnail, TargetNullValue={x:Null}}"
                    Stretch="Uniform"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"/>

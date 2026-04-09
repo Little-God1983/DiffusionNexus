@@ -651,7 +651,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             index,
             showRatingControls: false,
             onToggleFavorite: toggleFavorite,
-            isFavoriteCheck: isFavoriteCheck);
+            isFavoriteCheck: isFavoriteCheck,
+            videoThumbnailService: _videoThumbnailService);
     }
 
     private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)

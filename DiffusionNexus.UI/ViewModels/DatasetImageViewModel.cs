@@ -85,6 +85,10 @@ public class DatasetImageViewModel : ObservableObject
             if (SetProperty(ref _thumbnailPath, value))
             {
                 OnPropertyChanged(nameof(HasThumbnail));
+                // Reset loaded bitmap so Thumbnail re-loads from the new path
+                _thumbnail = null;
+                _isThumbnailLoading = false;
+                OnPropertyChanged(nameof(Thumbnail));
             }
         }
     }

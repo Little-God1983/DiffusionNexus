@@ -173,9 +173,12 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Toggles between play and pause.
+    /// When starting the first playback, sets <see cref="HasStartedPlayback"/> and
+    /// yields to let Avalonia lay out the <c>VideoPlayerControl</c> (NativeControlHost)
+    /// so VLC has a valid render surface before <c>Play()</c> is called.
     /// </summary>
     [RelayCommand(CanExecute = nameof(HasVideo))]
-    private void PlayPause()
+    private async Task PlayPauseAsync()
     {
         if (_mediaPlayer is null) return;
 
@@ -183,13 +186,22 @@ public sealed partial class VideoPlayerViewModel : ObservableObject, IDisposable
         {
             _mediaPlayer.Pause();
         }
-        else if (_mediaPlayer.State == VLCState.Ended)
-        {
-            _mediaPlayer.Stop();
-            _mediaPlayer.Play();
-        }
         else
         {
+            if (!HasStartedPlayback)
+            {
+                // Show the VideoPlayerControl first so VLC has a render surface (HWND)
+                HasStartedPlayback = true;
+                // Yield to let Avalonia complete the layout pass and create the NativeControlHost HWND
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                    () => { }, Avalonia.Threading.DispatcherPriority.Loaded);
+            }
+
+            if (_mediaPlayer.State == VLCState.Ended)
+            {
+                _mediaPlayer.Stop();
+            }
+
             _mediaPlayer.Play();
         }
     }

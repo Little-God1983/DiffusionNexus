@@ -2,8 +2,10 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -26,11 +28,13 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
     private readonly Func<string, Task<bool>>? _onToggleFavorite;
     private readonly Func<string, bool>? _isFavoriteCheck;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
 
     private DatasetImageViewModel? _currentImage;
     private int _currentIndex;
     private bool _disposed;
     private bool _isFavorite;
+    private CancellationTokenSource? _thumbnailCts;
 
     /// <summary>Video player for playing video files in the lightbox viewer.</summary>
     public VideoPlayerViewModel VideoPlayer { get; } = new();
@@ -61,7 +65,6 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(IsRejected));
                 OnPropertyChanged(nameof(IsVideo));
                 OnPropertyChanged(nameof(IsImage));
-                OnPropertyChanged(nameof(VideoThumbnailPath));
                 OnPropertyChanged(nameof(PositionText));
                 OnPropertyChanged(nameof(TotalCount));
                 MetadataPanel.LoadMetadata(value?.ImagePath);
@@ -89,19 +92,6 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public string PositionText => TotalCount > 0 ? $"{CurrentIndex + 1} / {TotalCount}" : "0 / 0";
     public bool HasCurrentImage => _currentImage is not null;
     public string? ImagePath => _currentImage?.ImagePath;
-
-    /// <summary>Path to the video thumbnail image file, or null when the current item is not a video or no thumbnail exists.</summary>
-    public string? VideoThumbnailPath
-    {
-        get
-        {
-            if (_currentImage?.IsVideo != true || string.IsNullOrEmpty(_currentImage.ImagePath))
-                return null;
-
-            var thumbPath = MediaFileExtensions.GetVideoThumbnailPath(_currentImage.ImagePath);
-            return File.Exists(thumbPath) ? thumbPath : null;
-        }
-    }
 
     public string? FileName => _currentImage?.FullFileName;
     public string? Caption => _currentImage?.Caption;
@@ -157,7 +147,8 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null)
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null)
     {
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
@@ -167,6 +158,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         _onToggleFavorite = onToggleFavorite;
         ShowRatingControls = showRatingControls;
         _isFavoriteCheck = isFavoriteCheck;
+        _videoThumbnailService = videoThumbnailService;
 
         // Subscribe to collection changes to handle external deletions
         _allImages.CollectionChanged += OnCollectionChanged;
@@ -255,6 +247,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         if (CurrentImage?.IsVideo == true)
         {
             VideoPlayer.LoadVideo(CurrentImage.ImagePath);
+            EnsureVideoThumbnail(CurrentImage.ImagePath);
         }
         else
         {
@@ -370,6 +363,80 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         IsFavorite = await _onToggleFavorite(_currentImage.ImagePath);
     }
 
+    /// <summary>
+    /// Ensures the current video has a thumbnail for the poster area.
+    /// If a thumbnail already exists on disk, <see cref="DatasetImageViewModel.ThumbnailPath"/>
+    /// already returns it and the <c>Thumbnail</c> bitmap loads lazily via the orchestrator.
+    /// When no thumbnail exists and <see cref="_videoThumbnailService"/> is available,
+    /// one is generated on-demand and then <see cref="DatasetImageViewModel.ThumbnailPath"/> is set
+    /// so the Thumbnail property re-evaluates.
+    /// </summary>
+    private void EnsureVideoThumbnail(string videoPath)
+    {
+        // DatasetImageViewModel.ThumbnailPath already returns the path if the file exists,
+        // and .Thumbnail loads it lazily — nothing to do.
+        if (CurrentImage?.ThumbnailPath is not null)
+            return;
+
+        // No thumbnail file on disk — generate one if possible
+        GenerateVideoThumbnailAsync(videoPath);
+    }
+
+    /// <summary>
+    /// Generates a video thumbnail on-demand via FFmpeg, then sets
+    /// <see cref="DatasetImageViewModel.ThumbnailPath"/> so the <c>Thumbnail</c>
+    /// bitmap property re-evaluates and the poster image appears.
+    /// </summary>
+    private async void GenerateVideoThumbnailAsync(string videoPath)
+    {
+        if (_videoThumbnailService is null)
+        {
+            Log.Information("[ImageViewer] No thumbnail service available — cannot generate thumbnail");
+            return;
+        }
+
+        // Cancel any previous in-flight generation
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = new CancellationTokenSource();
+        var ct = _thumbnailCts.Token;
+
+        try
+        {
+            var result = await _videoThumbnailService.GenerateThumbnailAsync(videoPath, cancellationToken: ct);
+
+            if (ct.IsCancellationRequested || _disposed)
+                return;
+
+            if (!result.Success)
+            {
+                Log.Warning("[ImageViewer] Video thumbnail generation failed for {Path}: {Error}",
+                    videoPath, result.ErrorMessage);
+                return;
+            }
+
+            var thumbPath = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
+            if (File.Exists(thumbPath) && CurrentImage is not null)
+            {
+                Log.Information("[ImageViewer] Generated video thumbnail at {ThumbPath}", thumbPath);
+                // Setting ThumbnailPath resets the Thumbnail bitmap and raises PropertyChanged
+                CurrentImage.ThumbnailPath = thumbPath;
+            }
+            else
+            {
+                Log.Warning("[ImageViewer] Generation reported success but file not found at {ThumbPath}", thumbPath);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when navigating away before generation finishes
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ImageViewer] Failed to generate video thumbnail for {Path}", videoPath);
+        }
+    }
+
     /// <summary>Refreshes the display after external changes.</summary>
     public void RefreshCurrentImage()
     {
@@ -397,6 +464,8 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
 
         if (disposing)
         {
+            _thumbnailCts?.Cancel();
+            _thumbnailCts?.Dispose();
             _allImages.CollectionChanged -= OnCollectionChanged;
             VideoPlayer.Dispose();
         }
