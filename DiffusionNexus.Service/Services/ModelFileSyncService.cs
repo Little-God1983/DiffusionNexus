@@ -36,8 +36,11 @@ public class ModelFileSyncService : IModelSyncService
     /// <inheritdoc />
     public async Task<IReadOnlyList<Model>> LoadCachedModelsAsync(CancellationToken cancellationToken = default)
     {
+        // Use the lightweight query that excludes ThumbnailData BLOBs from SQLite.
+        // With 11K+ models this prevents SQLite OOM (Error 7). Thumbnails are
+        // lazy-loaded per-tile on demand.
         return await _unitOfWork.Models
-            .GetModelsWithLocalFilesAsync(cancellationToken)
+            .GetModelsWithLocalFilesLightAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
