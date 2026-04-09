@@ -234,10 +234,11 @@ public class DialogService : IDialogService
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null)
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService);
 
         await dialog.ShowDialog(_window);
     }

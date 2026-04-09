@@ -202,10 +202,10 @@ public class MediaFileExtensionsTests
     #region GetVideoThumbnailPath Tests
 
     [Fact]
-    public void GetVideoThumbnailPath_WhenValidPath_ReturnsThumbnailPath()
+    public void GetVideoThumbnailPath_WhenNoThumbnailExists_ReturnsNewSubfolderPath()
     {
         var videoPath = Path.Combine("folder", "video.mp4");
-        var expected = Path.Combine("folder", "video_thumb.webp");
+        var expected = Path.Combine("folder", ".thumbnails", "video_thumb.webp");
 
         var result = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
 
@@ -213,10 +213,10 @@ public class MediaFileExtensionsTests
     }
 
     [Fact]
-    public void GetVideoThumbnailPath_WhenNoDirectory_ReturnsThumbnailInSameLocation()
+    public void GetVideoThumbnailPath_WhenNoDirectory_ReturnsSubfolderPath()
     {
         var videoPath = "video.mp4";
-        var expected = "video_thumb.webp";
+        var expected = Path.Combine(".thumbnails", "video_thumb.webp");
 
         var result = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
 
@@ -224,10 +224,10 @@ public class MediaFileExtensionsTests
     }
 
     [Fact]
-    public void GetVideoThumbnailPath_WhenAbsolutePath_ReturnsThumbnailPath()
+    public void GetVideoThumbnailPath_WhenAbsolutePath_ReturnsSubfolderPath()
     {
         var videoPath = Path.Combine("C:", "Users", "Test", "Videos", "clip.mov");
-        var expected = Path.Combine("C:", "Users", "Test", "Videos", "clip_thumb.webp");
+        var expected = Path.Combine("C:", "Users", "Test", "Videos", ".thumbnails", "clip_thumb.webp");
 
         var result = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
 
@@ -244,6 +244,40 @@ public class MediaFileExtensionsTests
 
         act.Should().Throw<ArgumentException>()
            .WithParameterName("videoPath");
+    }
+
+    #endregion
+
+    #region IsInThumbnailsFolder Tests
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    public void IsInThumbnailsFolder_WhenNullOrEmpty_ReturnsFalse(string? filePath, bool expected)
+    {
+        var result = MediaFileExtensions.IsInThumbnailsFolder(filePath!);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void IsInThumbnailsFolder_WhenInThumbnailsDir_ReturnsTrue()
+    {
+        var filePath = Path.Combine("gallery", ".thumbnails", "video_thumb.webp");
+        MediaFileExtensions.IsInThumbnailsFolder(filePath).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsInThumbnailsFolder_WhenNotInThumbnailsDir_ReturnsFalse()
+    {
+        var filePath = Path.Combine("gallery", "image.png");
+        MediaFileExtensions.IsInThumbnailsFolder(filePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsInThumbnailsFolder_WhenNoDirectory_ReturnsFalse()
+    {
+        MediaFileExtensions.IsInThumbnailsFolder("image.png").Should().BeFalse();
     }
 
     #endregion
@@ -269,6 +303,13 @@ public class MediaFileExtensionsTests
         result.Should().Be(expected);
     }
 
+    [Fact]
+    public void IsDisplayableMediaFile_WhenInThumbnailsFolder_ReturnsFalse()
+    {
+        var filePath = Path.Combine("gallery", ".thumbnails", "video_thumb.webp");
+        MediaFileExtensions.IsDisplayableMediaFile(filePath).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("caption.txt", false)]
     [InlineData("document.pdf", false)]
@@ -291,6 +332,12 @@ public class MediaFileExtensionsTests
     #endregion
 
     #region Extension Arrays Tests
+
+    [Fact]
+    public void ThumbnailsSubfolder_IsDotThumbnails()
+    {
+        MediaFileExtensions.ThumbnailsSubfolder.Should().Be(".thumbnails");
+    }
 
     [Fact]
     public void ImageExtensions_ContainsExpectedExtensions()

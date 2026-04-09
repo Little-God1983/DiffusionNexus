@@ -46,12 +46,22 @@
             <TextBlock Text="⏳" FontSize="24" Opacity="0.4"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
-          <Image Source="{Binding Thumbnail, TargetNullValue={x:Null}}"
-                 Stretch="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).IsShowcaseLayout, Converter={StaticResource BoolToStretchConverter}}"
-                 IsVisible="{Binding IsImage}"/>
-          <Border Background="Black" IsVisible="{Binding IsVideo}">
+          <!-- Video placeholder (rendered below Image in Z-order; covered when thumbnail loads) -->
+          <Border Background="Black"
+                  IsVisible="{Binding IsVideo}">
             <TextBlock Text="VIDEO" Foreground="White" FontWeight="Bold"
                        HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7"/>
+          </Border>
+          <!-- Thumbnail image (higher Z-order, covers VIDEO placeholder when loaded) -->
+          <Image Source="{Binding Thumbnail, TargetNullValue={x:Null}}"
+                 Stretch="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).IsShowcaseLayout, Converter={StaticResource BoolToStretchConverter}}"
+                 IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+          <!-- Play icon badge for videos (always on top when item is a video) -->
+          <Border Background="#88000000" CornerRadius="20" Width="36" Height="36"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  IsVisible="{Binding IsVideo}" ZIndex="6" IsHitTestVisible="False">
+            <TextBlock Text="▶" Foreground="White" FontSize="16"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
 
           <!-- File Extension Label (Top Left) -->

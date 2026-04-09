@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vlc="using:LibVLCSharp.Avalonia"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Controls.VideoPlayerControl"
+             x:DataType="vm:VideoPlayerViewModel">
+  <Grid RowDefinitions="*,Auto" Background="#1A1A1A">
+    <vlc:VideoView x:Name="VideoView" MediaPlayer="{Binding MediaPlayer}" Grid.Row="0"/>
+    <Border Grid.Row="1" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,1,0,0">
+      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto">
+        <Slider Grid.Row="0" Grid.ColumnSpan="3" Minimum="0" Maximum="1" Value="{Binding Position, Mode=TwoWay}" IsEnabled="{Binding HasVideo}" Margin="0,0,0,6"/>
+        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <Button Command="{Binding PlayPauseCommand}" Padding="10,6" MinWidth="60" HorizontalContentAlignment="Center">
+            <Panel>
+              <TextBlock Text="&#x25B6;" IsVisible="{Binding !IsPlaying}" FontSize="14"/>
+              <TextBlock Text="&#x23F8;" IsVisible="{Binding IsPlaying}" FontSize="14"/>
+            </Panel>
+          </Button>
+          <Button Command="{Binding StopCommand}" Content="&#x23F9;" Padding="10,6" FontSize="14"/>
+          <TextBlock Text="{Binding TimeDisplay}" VerticalAlignment="Center" FontSize="12" Opacity="0.8" Margin="8,0,0,0" FontFamily="Consolas"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <Button Command="{Binding ToggleMuteCommand}" Content="&#x1F50A;" Padding="8,6" FontSize="12"/>
+          <Slider Minimum="0" Maximum="100" Value="{Binding Volume, Mode=TwoWay}" Width="100" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

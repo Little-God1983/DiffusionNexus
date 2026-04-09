@@ -159,6 +159,7 @@ public interface IDialogService
     /// <param name="showRatingControls">Whether to show rating controls.</param>
     /// <param name="onToggleFavorite">Optional callback to toggle favorite state. Returns the new state. When null, favorite controls are hidden.</param>
     /// <param name="isFavoriteCheck">Optional callback to check if a file is currently favorited.</param>
+    /// <param name="videoThumbnailService">Optional video thumbnail service for on-demand thumbnail generation.</param>
     Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
@@ -168,7 +169,8 @@ public interface IDialogService
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null);
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null);
 
     /// <summary>
     /// Shows the Save As dialog for saving an image with a new name and optional rating.
