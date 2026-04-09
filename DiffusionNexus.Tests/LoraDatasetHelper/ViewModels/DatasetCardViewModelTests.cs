@@ -632,7 +632,7 @@ public class DatasetCardViewModelTests : IDisposable
     public void GetVideoThumbnailPath_ReturnsCorrectPath()
     {
         var result = DatasetCardViewModel.GetVideoThumbnailPath(Path.Combine("folder", "video.mp4"));
-        result.Should().Be(Path.Combine("folder", "video_thumb.webp"));
+        result.Should().Be(Path.Combine("folder", ".thumbnails", "video_thumb.webp"));
     }
 
     #endregion

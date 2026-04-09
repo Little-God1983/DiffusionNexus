@@ -66,6 +66,9 @@
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
     <!-- Pin transitive dependency to fix NU1903 (GHSA-xrw6-gwf8-vvr9) -->
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <PackageReference Include="LibVLCSharp" Version="3.9.6" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.6" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23" Condition="'$(RuntimeIdentifier)' == 'win-x64' OR '$(OS)' == 'Windows_NT'" />
   </ItemGroup>
 
   <ItemGroup>

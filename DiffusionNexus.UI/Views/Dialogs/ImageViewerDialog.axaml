@@ -3,6 +3,7 @@
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:converters="using:DiffusionNexus.UI.Converters"
         xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        xmlns:uiControls="using:DiffusionNexus.UI.Controls"
         x:Class="DiffusionNexus.UI.Views.Dialogs.ImageViewerDialog"
         x:DataType="vm:ImageViewerViewModel"
         WindowState="Maximized"
@@ -180,41 +181,35 @@
                Margin="80,20"
                IsVisible="{Binding !IsVideo}"/>
         
-        <!-- Video thumbnail with overlay -->
+        <!-- Video area: poster thumbnail swaps with native VideoPlayerControl -->
         <Grid IsVisible="{Binding IsVideo}"
-              HorizontalAlignment="Center"
-              VerticalAlignment="Center">
-          <!-- Video thumbnail -->
-          <Image Source="{Binding CurrentImage.Thumbnail}"
-                 Stretch="Uniform"
-                 Margin="80,20"
-                 Opacity="0.5"/>
-          
-          <!-- Video playback message overlay -->
-          <Border Background="#80000000"
-                  CornerRadius="8"
-                  Padding="24,16"
-                  HorizontalAlignment="Center"
-                  VerticalAlignment="Center">
-            <StackPanel Spacing="8" HorizontalAlignment="Center">
-              <Border Background="#FF6B00" CornerRadius="8" Padding="16,8">
-                <TextBlock Text="VIDEO"
-                           FontSize="24"
-                           FontWeight="Bold"
-                           Foreground="White"
-                           HorizontalAlignment="Center"/>
-              </Border>
-              <TextBlock Text="Video Preview"
-                         FontSize="18"
-                         FontWeight="SemiBold"
-                         Foreground="White"
-                         HorizontalAlignment="Center"/>
-              <TextBlock Text="Video playback is not supported in the viewer."
-                         FontSize="13"
-                         Foreground="#AAA"
-                         HorizontalAlignment="Center"/>
-            </StackPanel>
-          </Border>
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch"
+              Margin="80,20">
+
+          <!-- Poster shown before first play (no NativeControlHost in tree) -->
+          <Grid IsVisible="{Binding !VideoPlayer.HasStartedPlayback}">
+            <Image Source="{Binding VideoPosterBitmap}"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"/>
+            <!-- Click-to-play overlay -->
+            <Button Command="{Binding VideoPlayer.PlayPauseCommand}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#80000000"
+                    Foreground="White"
+                    CornerRadius="40"
+                    Padding="28,20"
+                    FontSize="40"
+                    Content="&#x25B6;"
+                    ToolTip.Tip="Play (Space)"
+                    IsVisible="{Binding VideoPlayer.HasVideo}"/>
+          </Grid>
+
+          <!-- Native video player shown once playback has started -->
+          <uiControls:VideoPlayerControl DataContext="{Binding VideoPlayer}"
+                                         IsVisible="{Binding HasStartedPlayback}"/>
         </Grid>
         
         <!-- Keyboard shortcuts help overlay -->
