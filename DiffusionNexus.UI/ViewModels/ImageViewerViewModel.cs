@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -35,6 +36,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private bool _isFavorite;
     private CancellationTokenSource? _thumbnailCts;
+    private Bitmap? _videoPosterBitmap;
 
     /// <summary>Video player for playing video files in the lightbox viewer.</summary>
     public VideoPlayerViewModel VideoPlayer { get; } = new();
@@ -103,6 +105,17 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public bool CanGoPrevious => _currentIndex > 0;
     public bool CanGoNext => _currentIndex < _allImages.Count - 1;
     public bool ShowRatingControls { get; }
+
+    /// <summary>
+    /// Poster bitmap for the current video, loaded directly from the thumbnail file.
+    /// Bypasses the DatasetImageViewModel.Thumbnail orchestrator chain which uses a
+    /// different code path than the gallery and fails silently for video thumbnails.
+    /// </summary>
+    public Bitmap? VideoPosterBitmap
+    {
+        get => _videoPosterBitmap;
+        private set => SetProperty(ref _videoPosterBitmap, value);
+    }
 
     /// <summary>Whether the current image is marked as a favorite.</summary>
     public bool IsFavorite
@@ -247,11 +260,12 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         if (CurrentImage?.IsVideo == true)
         {
             VideoPlayer.LoadVideo(CurrentImage.ImagePath);
-            EnsureVideoThumbnail(CurrentImage.ImagePath);
+            _ = LoadVideoPosterAsync(CurrentImage.ImagePath);
         }
         else
         {
             VideoPlayer.Stop();
+            VideoPosterBitmap = null;
         }
 
         ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
@@ -364,76 +378,64 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Ensures the current video has a thumbnail for the poster area.
-    /// If a thumbnail already exists on disk, <see cref="DatasetImageViewModel.ThumbnailPath"/>
-    /// already returns it and the <c>Thumbnail</c> bitmap loads lazily via the orchestrator.
-    /// When no thumbnail exists and <see cref="_videoThumbnailService"/> is available,
-    /// one is generated on-demand and then <see cref="DatasetImageViewModel.ThumbnailPath"/> is set
-    /// so the Thumbnail property re-evaluates.
+    /// Loads the video poster bitmap directly from the thumbnail file.
+    /// Generates the thumbnail on-demand if it doesn't exist yet.
+    /// Uses direct file I/O instead of the DatasetImageViewModel.Thumbnail orchestrator
+    /// chain, which passes the .webp path and bypasses ThumbnailService's video-special
+    /// handling (the gallery passes the .mp4 path, which triggers that handling correctly).
     /// </summary>
-    private void EnsureVideoThumbnail(string videoPath)
+    private async Task LoadVideoPosterAsync(string videoPath)
     {
-        // DatasetImageViewModel.ThumbnailPath already returns the path if the file exists,
-        // and .Thumbnail loads it lazily — nothing to do.
-        if (CurrentImage?.ThumbnailPath is not null)
-            return;
-
-        // No thumbnail file on disk — generate one if possible
-        GenerateVideoThumbnailAsync(videoPath);
-    }
-
-    /// <summary>
-    /// Generates a video thumbnail on-demand via FFmpeg, then sets
-    /// <see cref="DatasetImageViewModel.ThumbnailPath"/> so the <c>Thumbnail</c>
-    /// bitmap property re-evaluates and the poster image appears.
-    /// </summary>
-    private async void GenerateVideoThumbnailAsync(string videoPath)
-    {
-        if (_videoThumbnailService is null)
-        {
-            Log.Information("[ImageViewer] No thumbnail service available — cannot generate thumbnail");
-            return;
-        }
-
-        // Cancel any previous in-flight generation
+        // Cancel any previous in-flight poster load
         _thumbnailCts?.Cancel();
         _thumbnailCts?.Dispose();
         _thumbnailCts = new CancellationTokenSource();
         var ct = _thumbnailCts.Token;
 
+        VideoPosterBitmap = null;
+
         try
         {
-            var result = await _videoThumbnailService.GenerateThumbnailAsync(videoPath, cancellationToken: ct);
-
-            if (ct.IsCancellationRequested || _disposed)
-                return;
-
-            if (!result.Success)
-            {
-                Log.Warning("[ImageViewer] Video thumbnail generation failed for {Path}: {Error}",
-                    videoPath, result.ErrorMessage);
-                return;
-            }
-
             var thumbPath = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
-            if (File.Exists(thumbPath) && CurrentImage is not null)
+
+            // Generate thumbnail if it doesn't exist yet
+            if (!File.Exists(thumbPath) && _videoThumbnailService is not null)
             {
-                Log.Information("[ImageViewer] Generated video thumbnail at {ThumbPath}", thumbPath);
-                // Setting ThumbnailPath resets the Thumbnail bitmap and raises PropertyChanged
-                CurrentImage.ThumbnailPath = thumbPath;
+                var result = await _videoThumbnailService.GenerateThumbnailAsync(videoPath, cancellationToken: ct);
+                if (ct.IsCancellationRequested || _disposed) return;
+
+                if (!result.Success)
+                {
+                    Log.Warning("[ImageViewer] Poster generation failed for {Path}: {Error}",
+                        videoPath, result.ErrorMessage);
+                    return;
+                }
+
+                // Re-resolve — generation may have written to legacy or new location
+                thumbPath = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
             }
-            else
+
+            if (!File.Exists(thumbPath) || ct.IsCancellationRequested || _disposed)
+                return;
+
+            // Load bitmap directly on a background thread
+            var bitmap = await Task.Run(() =>
             {
-                Log.Warning("[ImageViewer] Generation reported success but file not found at {ThumbPath}", thumbPath);
-            }
+                ct.ThrowIfCancellationRequested();
+                using var stream = File.OpenRead(thumbPath);
+                return new Bitmap(stream);
+            }, ct);
+
+            if (!ct.IsCancellationRequested && !_disposed)
+                VideoPosterBitmap = bitmap;
         }
         catch (OperationCanceledException)
         {
-            // Expected when navigating away before generation finishes
+            // Expected when navigating away before loading finishes
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[ImageViewer] Failed to generate video thumbnail for {Path}", videoPath);
+            Log.Warning(ex, "[ImageViewer] Failed to load poster for {Path}", videoPath);
         }
     }
 
