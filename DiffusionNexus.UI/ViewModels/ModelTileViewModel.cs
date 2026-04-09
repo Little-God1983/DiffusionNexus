@@ -942,41 +942,102 @@ public partial class ModelTileViewModel : ViewModelBase
         _thumbnailCts = new CancellationTokenSource();
         var ct = _thumbnailCts.Token;
 
-        if (SelectedVersion?.PrimaryImage?.ThumbnailData is { } data && data.Length > 0)
+        var primaryImage = SelectedVersion?.PrimaryImage;
+
+        if (primaryImage?.ThumbnailData is { Length: > 0 } data && !primaryImage.IsThumbnailDeferred)
         {
-            try
-            {
-                // Use SkiaSharp to decode (handles WebP, JPEG, PNG, etc.)
-                using var skBitmap = SKBitmap.Decode(data);
-                if (skBitmap is not null)
-                {
-                    using var skImage = SKImage.FromBitmap(skBitmap);
-                    using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
-                    using var stream = new MemoryStream(encoded.ToArray());
-                    ThumbnailImage = new Bitmap(stream);
-                }
-                else
-                {
-                    ThumbnailImage = null;
-                }
-            }
-            catch
-            {
-                ThumbnailImage = null;
-            }
+            // Thumbnail BLOB already in memory — decode and display
+            DecodeThumbnailFromBytes(data);
         }
-        else if (SelectedVersion?.PrimaryImage is { } image && !string.IsNullOrEmpty(image.Url)
-                 && !image.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        else if (primaryImage is not null && primaryImage.IsThumbnailDeferred)
+        {
+            // Thumbnail exists in DB but was not loaded (lightweight query) — fetch it on demand
+            ThumbnailImage = null;
+            _ = LazyLoadThumbnailFromDbAsync(primaryImage, ct);
+        }
+        else if (primaryImage is not null && !string.IsNullOrEmpty(primaryImage.Url)
+                 && !primaryImage.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
         {
             // No BLOB cached yet — download from Civitai URL in background
             ThumbnailImage = null;
-            _ = DownloadThumbnailAsync(image, ct);
+            _ = DownloadThumbnailAsync(primaryImage, ct);
         }
         else
         {
             // Last resort: try to find a local preview image next to the safetensors file
             ThumbnailImage = null;
             _ = TryLoadLocalPreviewAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Decodes thumbnail bytes into a displayable Bitmap via SkiaSharp.
+    /// </summary>
+    private void DecodeThumbnailFromBytes(byte[] data)
+    {
+        try
+        {
+            using var skBitmap = SKBitmap.Decode(data);
+            if (skBitmap is not null)
+            {
+                using var skImage = SKImage.FromBitmap(skBitmap);
+                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+                using var stream = new MemoryStream(encoded.ToArray());
+                ThumbnailImage = new Bitmap(stream);
+            }
+            else
+            {
+                ThumbnailImage = null;
+            }
+        }
+        catch
+        {
+            ThumbnailImage = null;
+        }
+    }
+
+    /// <summary>
+    /// Lazy-loads a thumbnail BLOB from the database for a single image.
+    /// Called when the bulk query deferred loading to save memory at scale.
+    /// </summary>
+    private async Task LazyLoadThumbnailFromDbAsync(ModelImage image, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            var (data, mimeType) = await unitOfWork.Models
+                .GetImageThumbnailDataAsync(image.Id, ct)
+                .ConfigureAwait(false);
+
+            ct.ThrowIfCancellationRequested();
+
+            if (data is { Length: > 0 })
+            {
+                // Update the in-memory entity so subsequent accesses don't re-fetch
+                image.ThumbnailData = data;
+                image.ThumbnailMimeType = mimeType;
+
+                await Dispatcher.UIThread.InvokeAsync(() => DecodeThumbnailFromBytes(data));
+            }
+            else
+            {
+                // Sentinel was wrong or data was deleted — clear it and fall through
+                image.ThumbnailData = null;
+                // Try download from URL as fallback
+                if (!string.IsNullOrEmpty(image.Url)
+                    && !image.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+                {
+                    await DownloadThumbnailAsync(image, ct);
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            var logger = App.Services?.GetService<IUnifiedLogger>();
+            logger?.Debug(LogCategory.General, "ThumbnailLazyLoad",
+                $"Failed to lazy-load thumbnail for image {image.Id}: {ex.Message}");
         }
     }
 
