@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -190,4 +192,238 @@ public class ExportTrainingRunsResult
     /// Creates a cancelled result.
     /// </summary>
     public static ExportTrainingRunsResult Cancelled() => new() { Confirmed = false };
+}
+
+/// <summary>
+/// Export entry for a single training run.
+/// </summary>
+public class TrainingRunExportEntry
+{
+    /// <summary>
+    /// The source training run view model.
+    /// </summary>
+    public required TrainingRunCardViewModel Source { get; init; }
+
+    /// <summary>
+    /// Full paths of selected epoch files.
+    /// </summary>
+    public List<string> EpochPaths { get; init; } = [];
+
+    /// <summary>
+    /// Full paths of selected image files.
+    /// </summary>
+    public List<string> ImagePaths { get; init; } = [];
+
+    /// <summary>
+    /// Whether to include a model card.
+    /// </summary>
+    public bool IncludeModelCard { get; init; }
+
+    /// <summary>
+    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
+    /// </summary>
+    public bool BakeMetadata { get; init; }
+}
+
+/// <summary>
+/// Wraps a single training run for multi-select export.
+/// Contains selectable epochs, images, and model card toggle.
+/// </summary>
+public partial class ExportableTrainingRun : ObservableObject
+{
+    private bool _isSelected = true;
+    private bool _isExpanded;
+    private bool _includeModelCard = true;
+    private bool _bakeMetadata;
+
+    /// <summary>
+    /// The underlying training run card view model.
+    /// </summary>
+    public TrainingRunCardViewModel Source { get; }
+
+    /// <summary>
+    /// Display name of the training run.
+    /// </summary>
+    public string Name => Source.Name;
+
+    /// <summary>
+    /// Whether this training run is selected for export.
+    /// </summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(TotalSelectedCount));
+                SelectionChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the detail panel (epochs/images) is expanded.
+    /// </summary>
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetProperty(ref _isExpanded, value);
+    }
+
+    /// <summary>
+    /// Whether to include a model card (README.md).
+    /// </summary>
+    public bool IncludeModelCard
+    {
+        get => _includeModelCard;
+        set
+        {
+            if (SetProperty(ref _includeModelCard, value))
+            {
+                OnPropertyChanged(nameof(TotalSelectedCount));
+                SelectionChanged?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
+    /// </summary>
+    public bool BakeMetadata
+    {
+        get => _bakeMetadata;
+        set => SetProperty(ref _bakeMetadata, value);
+    }
+
+    /// <summary>
+    /// Selectable epoch files for this run.
+    /// </summary>
+    public ObservableCollection<SelectableExportItem> Epochs { get; } = [];
+
+    /// <summary>
+    /// Selectable image files for this run.
+    /// </summary>
+    public ObservableCollection<SelectableExportItem> Images { get; } = [];
+
+    /// <summary>
+    /// Number of selected epochs.
+    /// </summary>
+    public int SelectedEpochCount => Epochs.Count(e => e.IsSelected);
+
+    /// <summary>
+    /// Number of selected images.
+    /// </summary>
+    public int SelectedImageCount => Images.Count(i => i.IsSelected);
+
+    /// <summary>
+    /// Total count of items to export in this run.
+    /// </summary>
+    public int TotalSelectedCount => SelectedEpochCount + SelectedImageCount + (IncludeModelCard ? 1 : 0);
+
+    /// <summary>
+    /// Summary text for this run's selection.
+    /// </summary>
+    public string ItemSummary
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (SelectedEpochCount > 0)
+                parts.Add($"{SelectedEpochCount} epoch{(SelectedEpochCount == 1 ? "" : "s")}");
+            if (SelectedImageCount > 0)
+                parts.Add($"{SelectedImageCount} image{(SelectedImageCount == 1 ? "" : "s")}");
+            if (IncludeModelCard)
+                parts.Add("model card");
+            return parts.Count > 0 ? string.Join(", ", parts) : "nothing";
+        }
+    }
+
+    /// <summary>
+    /// Raised when any selection state changes.
+    /// </summary>
+    public event Action? SelectionChanged;
+
+    // ── Commands ──
+
+    public IRelayCommand SelectAllEpochsCommand { get; }
+    public IRelayCommand ClearAllEpochsCommand { get; }
+    public IRelayCommand SelectAllImagesCommand { get; }
+    public IRelayCommand ClearAllImagesCommand { get; }
+    public IRelayCommand ToggleExpandedCommand { get; }
+
+    public ExportableTrainingRun(TrainingRunCardViewModel source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        Source = source;
+
+        // Scan epochs directly from disk (sub-tabs may not be initialized yet)
+        var epochsFolder = source.EpochsFolderPath;
+        if (Directory.Exists(epochsFolder))
+        {
+            foreach (var filePath in Directory.EnumerateFiles(epochsFolder)
+                         .Where(EpochFileItem.IsEpochFile)
+                         .OrderBy(Path.GetFileName))
+            {
+                var epochItem = EpochFileItem.FromFile(filePath);
+                var item = new SelectableExportItem(epochItem.FileName, epochItem.FilePath, epochItem.FileSizeDisplay)
+                {
+                    IsSelected = true
+                };
+                item.SelectionChanged += OnItemChanged;
+                Epochs.Add(item);
+            }
+        }
+
+        // Scan presentation media directly from disk
+        var presentationFolder = source.PresentationFolderPath;
+        if (Directory.Exists(presentationFolder))
+        {
+            foreach (var filePath in Directory.EnumerateFiles(presentationFolder)
+                         .Where(PresentationFileItem.IsMediaFile)
+                         .OrderBy(Path.GetFileName))
+            {
+                var fileName = Path.GetFileName(filePath);
+                var item = new SelectableExportItem(fileName, filePath, null)
+                {
+                    IsSelected = true
+                };
+                item.SelectionChanged += OnItemChanged;
+                Images.Add(item);
+            }
+        }
+
+        SelectAllEpochsCommand = new RelayCommand(() => SetAll(Epochs, true));
+        ClearAllEpochsCommand = new RelayCommand(() => SetAll(Epochs, false));
+        SelectAllImagesCommand = new RelayCommand(() => SetAll(Images, true));
+        ClearAllImagesCommand = new RelayCommand(() => SetAll(Images, false));
+        ToggleExpandedCommand = new RelayCommand(() => IsExpanded = !IsExpanded);
+    }
+
+    private void OnItemChanged()
+    {
+        OnPropertyChanged(nameof(SelectedEpochCount));
+        OnPropertyChanged(nameof(SelectedImageCount));
+        OnPropertyChanged(nameof(TotalSelectedCount));
+        OnPropertyChanged(nameof(ItemSummary));
+        SelectionChanged?.Invoke();
+    }
+
+    private static void SetAll(ObservableCollection<SelectableExportItem> items, bool selected)
+    {
+        foreach (var item in items)
+            item.IsSelected = selected;
+    }
+
+    /// <summary>
+    /// Gets file paths of selected epochs.
+    /// </summary>
+    public List<string> GetSelectedEpochPaths() =>
+        Epochs.Where(e => e.IsSelected).Select(e => e.FilePath).ToList();
+
+    /// <summary>
+    /// Gets file paths of selected images.
+    /// </summary>
+    public List<string> GetSelectedImagePaths() =>
+        Images.Where(i => i.IsSelected).Select(i => i.FilePath).ToList();
 }

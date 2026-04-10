@@ -124,23 +124,6 @@ public interface IDialogService
         IEnumerable<InstallerPackage>? aiToolkitInstances = null);
 
     /// <summary>
-    /// Shows the unified export dialog combining dataset and training run export into a single tabbed UI.
-    /// </summary>
-    /// <param name="datasetName">Name of the dataset being exported.</param>
-    /// <param name="datasetVersion">Current version number of the dataset.</param>
-    /// <param name="mediaFiles">All media files in the dataset.</param>
-    /// <param name="trainingRuns">Training runs available for export.</param>
-    /// <param name="aiToolkitInstances">Available AI Toolkit installations for direct export.</param>
-    /// <returns>Unified export result with dataset and training run selections, or cancelled result.</returns>
-    [Obsolete("Use ShowExportDialogAsync and ShowExportTrainingRunsDialogAsync separately instead.")]
-    Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
-        string datasetName,
-        int datasetVersion,
-        IEnumerable<DatasetImageViewModel> mediaFiles,
-        IEnumerable<TrainingRunCardViewModel> trainingRuns,
-        IEnumerable<InstallerPackage>? aiToolkitInstances = null);
-
-    /// <summary>
     /// Shows the training runs export dialog for selecting which runs and artifacts to export.
     /// </summary>
     /// <param name="datasetName">Name of the dataset whose training runs are being exported.</param>
