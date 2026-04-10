@@ -45,6 +45,56 @@ public partial class ExportTrainingRunsDialogViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Total number of safetensor files selected across all runs.
+    /// </summary>
+    private int TotalSafetensorCount => TrainingRuns.Where(r => r.IsSelected).Sum(r => r.SelectedEpochCount);
+
+    /// <summary>
+    /// Total number of media files selected across all runs.
+    /// </summary>
+    private int TotalMediaCount => TrainingRuns.Where(r => r.IsSelected).Sum(r => r.SelectedImageCount);
+
+    /// <summary>
+    /// Total number of model cards selected across all runs.
+    /// </summary>
+    private int TotalModelCardCount => TrainingRuns.Count(r => r.IsSelected && r.IncludeModelCard);
+
+    /// <summary>
+    /// Total number of files to export (epochs + images + model cards).
+    /// </summary>
+    private int TotalFileCount => TotalSafetensorCount + TotalMediaCount + TotalModelCardCount;
+
+    /// <summary>
+    /// Display text for runs (e.g. "2 Runs").
+    /// </summary>
+    public string ExportRunsText =>
+        $"{SelectedRunCount} {(SelectedRunCount == 1 ? "Run" : "Runs")}";
+
+    /// <summary>
+    /// Display text for model cards (e.g. "2 Model cards").
+    /// </summary>
+    public string ExportModelCardsText =>
+        $"{TotalModelCardCount} Model {(TotalModelCardCount == 1 ? "card" : "cards")}";
+
+    /// <summary>
+    /// Display text for safetensor files (e.g. "5 Safetensor files").
+    /// </summary>
+    public string ExportSafetensorText =>
+        $"{TotalSafetensorCount} Safetensor {(TotalSafetensorCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for media files (e.g. "8 Media files").
+    /// </summary>
+    public string ExportMediaText =>
+        $"{TotalMediaCount} Media {(TotalMediaCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for total file count (e.g. "15 Files in total").
+    /// </summary>
+    public string ExportTotalText =>
+        $"{TotalFileCount} {(TotalFileCount == 1 ? "File" : "Files")} in total";
+
+    /// <summary>
     /// Whether there is anything to export.
     /// </summary>
     public bool CanExport => TrainingRuns.Any(r => r.IsSelected && r.TotalSelectedCount > 0);
@@ -113,6 +163,11 @@ public partial class ExportTrainingRunsDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedRunCount));
         OnPropertyChanged(nameof(ExportSummary));
         OnPropertyChanged(nameof(CanExport));
+        OnPropertyChanged(nameof(ExportRunsText));
+        OnPropertyChanged(nameof(ExportModelCardsText));
+        OnPropertyChanged(nameof(ExportSafetensorText));
+        OnPropertyChanged(nameof(ExportMediaText));
+        OnPropertyChanged(nameof(ExportTotalText));
     }
 }
 
