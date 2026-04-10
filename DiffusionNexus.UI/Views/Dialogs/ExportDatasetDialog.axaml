@@ -134,11 +134,14 @@
                    Text="Will be exported:" 
                    FontWeight="SemiBold"
                    VerticalAlignment="Center"/>
-        <TextBlock Grid.Column="1" 
-                   Text="{Binding ToExportText}" 
-                   FontWeight="Bold"
-                   FontSize="16"
-                   HorizontalAlignment="Right"/>
+        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="2">
+          <TextBlock Text="{Binding ToExportMediaText}" 
+                     FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ToExportCaptionText}" 
+                     FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ToExportText}" 
+                     FontWeight="Bold" FontSize="16" HorizontalAlignment="Right" Margin="0,2,0,0"/>
+        </StackPanel>
       </Grid>
     </Border>
     

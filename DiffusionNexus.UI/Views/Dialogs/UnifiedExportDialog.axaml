@@ -101,7 +101,11 @@
                       IsVisible="{Binding CanExport}">
                 <Grid ColumnDefinitions="*,Auto">
                   <TextBlock Grid.Column="0" Text="Will be exported:" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                  <TextBlock Grid.Column="1" Text="{Binding ToExportText}" FontWeight="Bold" FontSize="14"/>
+                  <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="1">
+                    <TextBlock Text="{Binding ToExportMediaText}" FontWeight="Bold" FontSize="13" HorizontalAlignment="Right"/>
+                    <TextBlock Text="{Binding ToExportCaptionText}" FontWeight="Bold" FontSize="13" HorizontalAlignment="Right"/>
+                    <TextBlock Text="{Binding ToExportText}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right" Margin="0,2,0,0"/>
+                  </StackPanel>
                 </Grid>
               </Border>
               <Border Background="#7D2D2D" CornerRadius="6" Padding="12,8" Margin="0,8,0,0"
