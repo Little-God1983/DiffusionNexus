@@ -208,12 +208,10 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IReadOnlyList<string> sourceFolders, string? category = null) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
 
-        public Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+        public Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
             string datasetName,
             int datasetVersion,
-            IEnumerable<DatasetImageViewModel> mediaFiles,
-            IEnumerable<TrainingRunCardViewModel> trainingRuns,
-            IEnumerable<InstallerPackage>? aiToolkitInstances = null) =>
-            Task.FromResult(UnifiedExportResult.Cancelled());
+            IEnumerable<TrainingRunCardViewModel> trainingRuns) =>
+            Task.FromResult(ExportTrainingRunsResult.Cancelled());
     }
 }

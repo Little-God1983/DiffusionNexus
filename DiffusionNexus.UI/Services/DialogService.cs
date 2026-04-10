@@ -202,18 +202,16 @@ public class DialogService : IDialogService
         return dialog.Result ?? ExportDatasetResult.Cancelled();
     }
 
-    public async Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+    public async Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
         string datasetName,
         int datasetVersion,
-        IEnumerable<DatasetImageViewModel> mediaFiles,
-        IEnumerable<TrainingRunCardViewModel> trainingRuns,
-        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
+        IEnumerable<TrainingRunCardViewModel> trainingRuns)
     {
-        var dialog = new UnifiedExportDialog()
-            .WithData(datasetName, datasetVersion, mediaFiles, trainingRuns, aiToolkitInstances);
+        var dialog = new ExportTrainingRunsDialog()
+            .WithData(datasetName, datasetVersion, trainingRuns);
 
         await dialog.ShowDialog(_window);
-        return dialog.Result ?? UnifiedExportResult.Cancelled();
+        return dialog.Result ?? ExportTrainingRunsResult.Cancelled();
     }
 
     public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)

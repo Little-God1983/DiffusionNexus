@@ -217,6 +217,10 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             if (SetProperty(ref _exportProductionReady, value))
             {
                 OnPropertyChanged(nameof(ToExportCount));
+                OnPropertyChanged(nameof(ToExportCaptionCount));
+                OnPropertyChanged(nameof(ToExportFileCount));
+                OnPropertyChanged(nameof(ToExportMediaText));
+                OnPropertyChanged(nameof(ToExportCaptionText));
                 OnPropertyChanged(nameof(ToExportText));
                 OnPropertyChanged(nameof(CanExport));
             }
@@ -235,6 +239,10 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             if (SetProperty(ref _exportUnrated, value))
             {
                 OnPropertyChanged(nameof(ToExportCount));
+                OnPropertyChanged(nameof(ToExportCaptionCount));
+                OnPropertyChanged(nameof(ToExportFileCount));
+                OnPropertyChanged(nameof(ToExportMediaText));
+                OnPropertyChanged(nameof(ToExportCaptionText));
                 OnPropertyChanged(nameof(ToExportText));
                 OnPropertyChanged(nameof(CanExport));
             }
@@ -253,6 +261,10 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
             if (SetProperty(ref _exportTrash, value))
             {
                 OnPropertyChanged(nameof(ToExportCount));
+                OnPropertyChanged(nameof(ToExportCaptionCount));
+                OnPropertyChanged(nameof(ToExportFileCount));
+                OnPropertyChanged(nameof(ToExportMediaText));
+                OnPropertyChanged(nameof(ToExportCaptionText));
                 OnPropertyChanged(nameof(ToExportText));
                 OnPropertyChanged(nameof(CanExport));
             }
@@ -291,19 +303,30 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
         get
         {
             var count = 0;
-            
+
             if (_exportProductionReady)
                 count += ProductionReadyCount;
-            
+
             if (_exportUnrated)
                 count += UnratedCount;
-            
+
             if (_exportTrash)
                 count += TrashCount;
-            
+
             return count;
         }
     }
+
+    /// <summary>
+    /// Number of caption files that will be exported alongside media files.
+    /// </summary>
+    public int ToExportCaptionCount => GetFilesToExport()
+        .Count(f => File.Exists(f.CaptionFilePath));
+
+    /// <summary>
+    /// Total number of files that will be exported (media files + companion caption files).
+    /// </summary>
+    public int ToExportFileCount => ToExportCount + ToExportCaptionCount;
 
     /// <summary>
     /// Display text for total count.
@@ -326,9 +349,19 @@ public partial class ExportDatasetDialogViewModel : ObservableObject
     public string UnratedText => FormatCount(UnratedCount, "unrated");
 
     /// <summary>
-    /// Display text for to-export count.
+    /// Display text for media files to export (e.g. "49 Media files").
     /// </summary>
-    public string ToExportText => FormatCount(ToExportCount, "to export");
+    public string ToExportMediaText => $"{ToExportCount} Media {(ToExportCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for caption files to export (e.g. "49 Captions").
+    /// </summary>
+    public string ToExportCaptionText => $"{ToExportCaptionCount} {(ToExportCaptionCount == 1 ? "Caption" : "Captions")}";
+
+    /// <summary>
+    /// Display text for total file count to export (e.g. "98 Files in total").
+    /// </summary>
+    public string ToExportText => $"{ToExportFileCount} {(ToExportFileCount == 1 ? "File" : "Files")} in total";
 
     /// <summary>
     /// Whether export is possible (at least one file to export).

@@ -39,7 +39,13 @@ public partial class ExportTrainingRunDialogViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _includeModelCard, value))
+            {
                 OnPropertyChanged(nameof(TotalSelectedCount));
+                OnPropertyChanged(nameof(HasSelection));
+                OnPropertyChanged(nameof(ExportModelCardText));
+                OnPropertyChanged(nameof(ShowModelCardLine));
+                OnPropertyChanged(nameof(ExportTotalText));
+            }
         }
     }
 
@@ -64,22 +70,32 @@ public partial class ExportTrainingRunDialogViewModel : ObservableObject
     public bool HasSelection => TotalSelectedCount > 0;
 
     /// <summary>
-    /// Summary of what will be exported.
+    /// Display text for safetensor files to export (e.g. "3 Safetensor files").
     /// </summary>
-    public string ExportSummary
-    {
-        get
-        {
-            var parts = new List<string>();
-            if (SelectedEpochCount > 0)
-                parts.Add($"{SelectedEpochCount} epoch{(SelectedEpochCount == 1 ? "" : "s")}");
-            if (SelectedImageCount > 0)
-                parts.Add($"{SelectedImageCount} image{(SelectedImageCount == 1 ? "" : "s")}");
-            if (IncludeModelCard)
-                parts.Add("model card");
-            return parts.Count > 0 ? string.Join(", ", parts) : "Nothing selected";
-        }
-    }
+    public string ExportSafetensorText =>
+        $"{SelectedEpochCount} Safetensor {(SelectedEpochCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for media files to export (e.g. "5 Media files").
+    /// </summary>
+    public string ExportMediaText =>
+        $"{SelectedImageCount} Media {(SelectedImageCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for model card inclusion (e.g. "1 Model card").
+    /// </summary>
+    public string ExportModelCardText => IncludeModelCard ? "1 Model card" : "0 Model cards";
+
+    /// <summary>
+    /// Whether to show the model card line in the summary.
+    /// </summary>
+    public bool ShowModelCardLine => IncludeModelCard;
+
+    /// <summary>
+    /// Display text for total file count to export (e.g. "9 Files in total").
+    /// </summary>
+    public string ExportTotalText =>
+        $"{TotalSelectedCount} {(TotalSelectedCount == 1 ? "File" : "Files")} in total";
 
     // ── Commands ──
 
@@ -143,7 +159,9 @@ public partial class ExportTrainingRunDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedImageCount));
         OnPropertyChanged(nameof(TotalSelectedCount));
         OnPropertyChanged(nameof(HasSelection));
-        OnPropertyChanged(nameof(ExportSummary));
+        OnPropertyChanged(nameof(ExportSafetensorText));
+        OnPropertyChanged(nameof(ExportMediaText));
+        OnPropertyChanged(nameof(ExportTotalText));
     }
 
     private static void SetAll(ObservableCollection<SelectableExportItem> items, bool selected)
