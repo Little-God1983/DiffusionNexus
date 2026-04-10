@@ -24,6 +24,20 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class ModelTileViewModel : ViewModelBase
 {
     /// <summary>
+    /// Maximum thumbnail BLOB size (1 MB). Images exceeding this limit are resized
+    /// down to <see cref="MaxThumbnailWidth"/> pixels wide before being persisted to
+    /// the database. Prevents DB bloat when the Civitai CDN ignores the width parameter
+    /// and returns full-resolution images (up to 25 MB seen in production).
+    /// </summary>
+    private const int MaxThumbnailBytes = 1_048_576;
+
+    /// <summary>
+    /// Target width (in pixels) used when a downloaded thumbnail exceeds
+    /// <see cref="MaxThumbnailBytes"/> and must be resized.
+    /// </summary>
+    private const int MaxThumbnailWidth = 640;
+
+    /// <summary>
     /// Shared HttpClient for thumbnail downloads. Reusing a single instance avoids
     /// socket exhaustion (TIME_WAIT accumulation) that caused OOM after ~100 downloads.
     /// </summary>
@@ -1014,6 +1028,22 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (data is { Length: > 0 })
             {
+                // Gradual self-healing: resize legacy oversized BLOBs on first read
+                if (data.Length > MaxThumbnailBytes)
+                {
+                    var logger = App.Services?.GetService<IUnifiedLogger>();
+                    var (resizedData, resizedMime) = ResizeIfOversized(
+                        data, mimeType ?? "image/jpeg", logger, $"ImageId={image.Id}");
+
+                    if (resizedData.Length < data.Length)
+                    {
+                        data = resizedData;
+                        mimeType = resizedMime;
+                        // Re-persist the smaller BLOB so subsequent loads are fast
+                        await PersistThumbnailAsync(image.Id, data, mimeType);
+                    }
+                }
+
                 // Update the in-memory entity so subsequent accesses don't re-fetch
                 image.ThumbnailData = data;
                 image.ThumbnailMimeType = mimeType;
@@ -1296,6 +1326,10 @@ public partial class ModelTileViewModel : ViewModelBase
 
             ct.ThrowIfCancellationRequested();
 
+            // Cap oversized thumbnails before persisting (Civitai CDN sometimes ignores
+            // the width=300 parameter and returns full-resolution images up to 25 MB).
+            (thumbnailBytes, mimeType) = ResizeIfOversized(thumbnailBytes, mimeType, logger, displayName);
+
             logger?.Info(LogCategory.Network, "ThumbnailDownload",
                 $"Thumbnail ready for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB, ImageId={image.Id})");
 
@@ -1551,13 +1585,84 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Resizes thumbnail bytes if they exceed <see cref="MaxThumbnailBytes"/>.
+    /// Uses SkiaSharp to decode, scale to <see cref="MaxThumbnailWidth"/> pixels wide
+    /// (preserving aspect ratio), and re-encode as JPEG.
+    /// Returns the original bytes unchanged when already within the limit.
+    /// </summary>
+    private static (byte[] Data, string MimeType) ResizeIfOversized(
+        byte[] data, string mimeType, IUnifiedLogger? logger, string displayName)
+    {
+        if (data.Length <= MaxThumbnailBytes)
+            return (data, mimeType);
+
+        try
+        {
+            using var original = SKBitmap.Decode(data);
+            if (original is null)
+            {
+                logger?.Warn(LogCategory.General, "ThumbnailResize",
+                    $"Cannot resize oversized thumbnail for '{displayName}' ({data.Length / 1024.0:F1} KB) — SkiaSharp decode failed");
+                return (data, mimeType);
+            }
+
+            var scaleFactor = (float)MaxThumbnailWidth / original.Width;
+            var targetHeight = (int)(original.Height * scaleFactor);
+
+            // Only downscale; if the image is somehow already narrower, keep it as-is
+            if (scaleFactor >= 1.0f)
+            {
+                // Width is fine but bytes are huge — re-encode at lower quality
+                using var reEncoded = SKImage.FromBitmap(original);
+                using var reEncodedData = reEncoded.Encode(SKEncodedImageFormat.Jpeg, 80);
+                var reEncodedBytes = reEncodedData.ToArray();
+
+                logger?.Info(LogCategory.General, "ThumbnailResize",
+                    $"Re-encoded oversized thumbnail for '{displayName}' without scaling " +
+                    $"({data.Length / 1024.0:F1} KB → {reEncodedBytes.Length / 1024.0:F1} KB)");
+
+                return (reEncodedBytes, "image/jpeg");
+            }
+
+            using var resized = original.Resize(new SKImageInfo(MaxThumbnailWidth, targetHeight), SKFilterQuality.Medium);
+            if (resized is null)
+            {
+                logger?.Warn(LogCategory.General, "ThumbnailResize",
+                    $"SkiaSharp resize failed for '{displayName}' — persisting original ({data.Length / 1024.0:F1} KB)");
+                return (data, mimeType);
+            }
+
+            using var image = SKImage.FromBitmap(resized);
+            using var encoded = image.Encode(SKEncodedImageFormat.Jpeg, 85);
+            var jpegBytes = encoded.ToArray();
+
+            logger?.Info(LogCategory.General, "ThumbnailResize",
+                $"Resized oversized thumbnail for '{displayName}': " +
+                $"{original.Width}x{original.Height} → {MaxThumbnailWidth}x{targetHeight}, " +
+                $"{data.Length / 1024.0:F1} KB → {jpegBytes.Length / 1024.0:F1} KB");
+
+            return (jpegBytes, "image/jpeg");
+        }
+        catch (Exception ex)
+        {
+            logger?.Warn(LogCategory.General, "ThumbnailResize",
+                $"Failed to resize oversized thumbnail for '{displayName}' ({data.Length / 1024.0:F1} KB): {ex.Message}");
+            return (data, mimeType);
+        }
+    }
+
+    /// <summary>
     /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
+    /// Applies <see cref="ResizeIfOversized"/> as a safety net before writing to DB.
     /// </summary>
     private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
     {
         var logger = App.Services?.GetService<IUnifiedLogger>();
         try
         {
+            // Safety net: resize if somehow oversized bytes reach persist directly
+            (thumbnailData, mimeType) = ResizeIfOversized(thumbnailData, mimeType, logger, $"ImageId={imageId}");
+
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DataAccess.Data.DiffusionNexusCoreDbContext>();
             var dbImage = await dbContext.ModelImages.FindAsync(imageId);
