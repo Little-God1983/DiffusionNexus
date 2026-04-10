@@ -9,6 +9,7 @@ namespace DiffusionNexus.UI.Views.Dialogs;
 /// <summary>
 /// Unified export dialog combining dataset export and training run export into a single tabbed UI.
 /// </summary>
+[Obsolete("Use ExportDatasetDialog and ExportTrainingRunsDialog separately instead.")]
 public partial class UnifiedExportDialog : Window
 {
     private UnifiedExportDialogViewModel? _viewModel;

@@ -12,6 +12,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// ViewModel for the unified export dialog that combines dataset export and training run export
 /// into a single tabbed interface.
 /// </summary>
+[Obsolete("Use ExportDatasetDialogViewModel and ExportTrainingRunsDialogViewModel separately instead.")]
 public partial class UnifiedExportDialogViewModel : ObservableObject
 {
     private int _selectedTabIndex;
@@ -369,6 +370,7 @@ public partial class ExportableTrainingRun : ObservableObject
 /// <summary>
 /// Combined result from the unified export dialog.
 /// </summary>
+[Obsolete("Use ExportDatasetResult and ExportTrainingRunsResult separately instead.")]
 public class UnifiedExportResult
 {
     /// <summary>

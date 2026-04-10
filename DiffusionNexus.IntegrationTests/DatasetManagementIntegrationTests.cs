@@ -215,5 +215,11 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IEnumerable<TrainingRunCardViewModel> trainingRuns,
             IEnumerable<InstallerPackage>? aiToolkitInstances = null) =>
             Task.FromResult(UnifiedExportResult.Cancelled());
+
+        public Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
+            string datasetName,
+            int datasetVersion,
+            IEnumerable<TrainingRunCardViewModel> trainingRuns) =>
+            Task.FromResult(ExportTrainingRunsResult.Cancelled());
     }
 }

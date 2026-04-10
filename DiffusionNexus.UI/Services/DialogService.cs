@@ -216,6 +216,18 @@ public class DialogService : IDialogService
         return dialog.Result ?? UnifiedExportResult.Cancelled();
     }
 
+    public async Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
+        string datasetName,
+        int datasetVersion,
+        IEnumerable<TrainingRunCardViewModel> trainingRuns)
+    {
+        var dialog = new ExportTrainingRunsDialog()
+            .WithData(datasetName, datasetVersion, trainingRuns);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? ExportTrainingRunsResult.Cancelled();
+    }
+
     public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)
     {
         var dialog = new CreateDatasetDialog()
