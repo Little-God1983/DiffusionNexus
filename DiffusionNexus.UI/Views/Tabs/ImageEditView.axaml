@@ -166,6 +166,8 @@
                   <Separator/>
                   <MenuItem Header="Export as PNG" Command="{Binding ImageEditor.ExportAsPngCommand}"
                             ToolTip.Tip="Export a flattened PNG to any location"/>
+                  <MenuItem Header="Export as JPEG" Command="{Binding ImageEditor.ExportAsJpegCommand}"
+                            ToolTip.Tip="Export as JPEG without metadata"/>
                   <MenuItem Header="Export as Layered TIFF" Command="{Binding ImageEditor.ExportAsLayeredTiffCommand}"
                             ToolTip.Tip="Export all layers as a multi-page TIFF"/>
                 </MenuFlyout>

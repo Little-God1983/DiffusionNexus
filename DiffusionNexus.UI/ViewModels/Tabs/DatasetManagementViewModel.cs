@@ -2628,13 +2628,24 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         foreach (var imagePath in entry.ImagePaths)
                         {
                             if (!File.Exists(imagePath)) continue;
-                            var destPath = Path.Combine(imagesDir, Path.GetFileName(imagePath));
+
+                            var isPng = Path.GetExtension(imagePath).Equals(".png", StringComparison.OrdinalIgnoreCase);
+                            var convertToJpeg = result.CompressImagesToJpeg && isPng;
+
+                            var destFileName = convertToJpeg
+                                ? Path.ChangeExtension(Path.GetFileName(imagePath), ".jpg")
+                                : Path.GetFileName(imagePath);
+                            var destPath = Path.Combine(imagesDir, destFileName);
 
                             // Read companion .txt caption
                             var captionPath = Path.ChangeExtension(imagePath, ".txt");
                             var captionText = File.Exists(captionPath) ? await File.ReadAllTextAsync(captionPath) : null;
 
-                            if (entry.BakeMetadata && !string.IsNullOrEmpty(captionText))
+                            if (convertToJpeg)
+                            {
+                                ConvertPngToJpeg(imagePath, destPath);
+                            }
+                            else if (entry.BakeMetadata && !string.IsNullOrEmpty(captionText))
                             {
                                 // Format caption as A1111-style parameters so Civitai and other tools can parse it
                                 var formatted = PngMetadataWriter.FormatAsA1111Parameters(captionText, imagePath);
@@ -2683,6 +2694,18 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Converts a PNG image to JPEG without metadata, using SkiaSharp.
+    /// </summary>
+    private static void ConvertPngToJpeg(string sourcePath, string destPath, int quality = 95)
+    {
+        using var bitmap = SkiaSharp.SKBitmap.Decode(sourcePath);
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, quality);
+        using var stream = File.OpenWrite(destPath);
+        data.SaveTo(stream);
     }
 
     /// <summary>
