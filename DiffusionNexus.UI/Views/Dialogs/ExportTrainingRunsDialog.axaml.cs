@@ -70,7 +70,8 @@ public partial class ExportTrainingRunsDialog : Window
         Result = new ExportTrainingRunsResult
         {
             Confirmed = true,
-            TrainingRunResults = trainingRunResults
+            TrainingRunResults = trainingRunResults,
+            CompressImagesToJpeg = _viewModel.CompressImagesToJpeg
         };
         Close(true);
     }

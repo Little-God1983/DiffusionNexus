@@ -10,7 +10,7 @@
         CanResize="False"
         Background="#252526">
 
-  <Grid Margin="24" RowDefinitions="Auto,*,Auto,Auto">
+  <Grid Margin="24" RowDefinitions="Auto,*,Auto,Auto,Auto">
 
     <!-- Title -->
     <TextBlock Grid.Row="0"
@@ -52,6 +52,7 @@
                       <TextBlock Text="Model Card" FontSize="11"/>
                     </CheckBox>
                     <CheckBox Grid.Column="3" IsChecked="{Binding BakeMetadata}"
+                              IsEnabled="{Binding !$parent[Window].((vm:ExportTrainingRunsDialogViewModel)DataContext).CompressImagesToJpeg}"
                               VerticalAlignment="Center" Margin="0,0,8,0"
                               ToolTip.Tip="Embed captions into PNG metadata (A1111 style), overriding existing image metadata">
                       <TextBlock Text="Bake Metadata" FontSize="11"/>
@@ -117,8 +118,14 @@
       </StackPanel>
     </ScrollViewer>
 
+    <!-- Compress images option -->
+    <CheckBox Grid.Row="2" IsChecked="{Binding CompressImagesToJpeg}" Margin="0,12,0,12"
+              ToolTip.Tip="Convert PNG images to JPEG during export (without metadata)">
+      <TextBlock Text="Compress images to JPEG" FontSize="12"/>
+    </CheckBox>
+
     <!-- Will be exported (highlighted) -->
-    <Border Grid.Row="2" Background="#2D7D46" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+    <Border Grid.Row="3" Background="#2D7D46" CornerRadius="8" Padding="16" Margin="0,0,0,20"
             IsVisible="{Binding CanExport}">
       <Grid ColumnDefinitions="*,Auto">
         <TextBlock Grid.Column="0" Text="Will be exported:" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -131,13 +138,13 @@
         </StackPanel>
       </Grid>
     </Border>
-    <Border Grid.Row="2" Background="#7D2D2D" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+    <Border Grid.Row="3" Background="#7D2D2D" CornerRadius="8" Padding="16" Margin="0,0,0,20"
             IsVisible="{Binding !CanExport}">
       <TextBlock Text="Select at least one run to export." HorizontalAlignment="Center" FontWeight="SemiBold"/>
     </Border>
 
     <!-- Buttons -->
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
       <Button Content="Cancel" Width="100" Click="OnCancelClick"/>
       <Button Content="Export" Width="100" Background="#2D7D46" IsEnabled="{Binding CanExport}" Click="OnExportClick"/>
     </StackPanel>

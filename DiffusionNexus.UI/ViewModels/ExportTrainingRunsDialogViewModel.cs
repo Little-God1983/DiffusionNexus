@@ -101,6 +101,27 @@ public partial class ExportTrainingRunsDialogViewModel : ObservableObject
     /// </summary>
     public bool CanExport => TrainingRuns.Any(r => r.IsSelected && r.TotalSelectedCount > 0);
 
+    /// <summary>
+    /// When enabled, exported PNG images will be converted to JPEG (without metadata).
+    /// </summary>
+    [ObservableProperty]
+    private bool _compressImagesToJpeg;
+
+    /// <summary>
+    /// Unchecks BakeMetadata on all runs when JPEG compression is enabled,
+    /// since JPEG does not support PNG text metadata chunks.
+    /// </summary>
+    partial void OnCompressImagesToJpegChanged(bool value)
+    {
+        if (value)
+        {
+            foreach (var run in TrainingRuns)
+            {
+                run.BakeMetadata = false;
+            }
+        }
+    }
+
     // ── Commands ──
 
     /// <summary>
@@ -187,6 +208,11 @@ public class ExportTrainingRunsResult
     /// Training run export entries for each selected run.
     /// </summary>
     public List<TrainingRunExportEntry> TrainingRunResults { get; init; } = [];
+
+    /// <summary>
+    /// When true, exported PNG images should be converted to JPEG (without metadata).
+    /// </summary>
+    public bool CompressImagesToJpeg { get; init; }
 
     /// <summary>
     /// Creates a cancelled result.
