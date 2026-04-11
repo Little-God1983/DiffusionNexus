@@ -64,6 +64,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public Func<string, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
+    /// Callback provided by the View to save the current editor image as JPEG (no metadata).
+    /// Returns true if the save succeeded.
+    /// </summary>
+    public Func<string, bool>? SaveJpegFunc { get; set; }
+
+    /// <summary>
     /// Callback provided by the View to save a layered TIFF to a file path.
     /// Returns true if the save succeeded.
     /// </summary>
@@ -287,6 +293,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
     public IAsyncRelayCommand ExportAsPngCommand { get; }
+    public IAsyncRelayCommand ExportAsJpegCommand { get; }
     public IAsyncRelayCommand ExportAsLayeredTiffCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
@@ -378,6 +385,7 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
         ExportAsPngCommand = new AsyncRelayCommand(ExecuteExportAsPngAsync, () => HasImage);
+        ExportAsJpegCommand = new AsyncRelayCommand(ExecuteExportAsJpegAsync, () => HasImage);
         ExportAsLayeredTiffCommand = new AsyncRelayCommand(ExecuteExportAsLayeredTiffAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
@@ -536,6 +544,7 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveOverwriteCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
         ExportAsPngCommand.NotifyCanExecuteChanged();
+        ExportAsJpegCommand.NotifyCanExecuteChanged();
         ExportAsLayeredTiffCommand.NotifyCanExecuteChanged();
         ZoomInCommand.NotifyCanExecuteChanged();
         ZoomOutCommand.NotifyCanExecuteChanged();
@@ -909,6 +918,29 @@ public partial class ImageEditorViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"Error exporting PNG: {ex.Message}";
+        }
+    }
+
+    private async Task ExecuteExportAsJpegAsync()
+    {
+        if (CurrentImagePath is null || SaveJpegFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_export.jpg";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveJpegFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export JPEG.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting JPEG: {ex.Message}";
         }
     }
 

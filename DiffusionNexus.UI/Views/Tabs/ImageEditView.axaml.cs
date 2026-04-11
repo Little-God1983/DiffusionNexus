@@ -830,6 +830,12 @@ public partial class ImageEditView : UserControl
             return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
         };
 
+        imageEditor.SaveJpegFunc = path =>
+        {
+            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95) ?? false;
+        };
+
         imageEditor.SaveLayeredTiffFunc = path =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
