@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using System.Threading.Tasks;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -18,6 +19,7 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
 {
     private readonly IDatasetState? _datasetState;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly IDialogService? _dialogService;
     private ImageCompareItem? _selectedLeftImage;
     private ImageCompareItem? _selectedRightImage;
 
@@ -33,10 +35,13 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     /// Runtime constructor with dataset state service.
     /// </summary>
     /// <param name="datasetState">The dataset state service for loading real datasets.</param>
-    public ImageCompareViewModel(IDatasetState? datasetState, IThumbnailOrchestrator? thumbnailOrchestrator = null)
+    /// <param name="thumbnailOrchestrator">Optional thumbnail orchestrator for lazy loading.</param>
+    /// <param name="dialogService">Optional dialog service for folder picker.</param>
+    public ImageCompareViewModel(IDatasetState? datasetState, IThumbnailOrchestrator? thumbnailOrchestrator = null, IDialogService? dialogService = null)
     {
         _datasetState = datasetState;
         _thumbnailOrchestrator = thumbnailOrchestrator;
+        _dialogService = dialogService;
 
         DatasetOptions = [];
         LeftVersionOptions = [];
@@ -47,6 +52,8 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         SwapCommand = new RelayCommand(SwapImages, () => SelectedLeftImage is not null || SelectedRightImage is not null);
         ResetSliderCommand = new RelayCommand(ResetSlider);
         AssignImageCommand = new RelayCommand<ImageCompareItem?>(AssignImage);
+        LoadLeftFolderCommand = new AsyncRelayCommand(LoadLeftFolderAsync);
+        LoadRightFolderCommand = new AsyncRelayCommand(LoadRightFolderAsync);
 
         AssignSide = CompareAssignSide.Left;
         FitMode = CompareFitMode.Fit;
@@ -77,6 +84,16 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     public IRelayCommand ResetSliderCommand { get; }
 
     public IRelayCommand<ImageCompareItem?> AssignImageCommand { get; }
+
+    /// <summary>
+    /// Opens a folder picker and loads images from the selected folder for the left side.
+    /// </summary>
+    public IAsyncRelayCommand LoadLeftFolderCommand { get; }
+
+    /// <summary>
+    /// Opens a folder picker and loads images from the selected folder for the right side.
+    /// </summary>
+    public IAsyncRelayCommand LoadRightFolderCommand { get; }
 
     [ObservableProperty]
     private DatasetCardViewModel? _selectedLeftDataset;
@@ -227,6 +244,26 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
     /// The temporary dataset used for external images.
     /// </summary>
     private DatasetCardViewModel? _tempDataset;
+
+    /// <summary>
+    /// Folder-loaded images for the left side.
+    /// </summary>
+    private List<ImageCompareItem> _leftFolderImages = [];
+
+    /// <summary>
+    /// Folder-loaded images for the right side.
+    /// </summary>
+    private List<ImageCompareItem> _rightFolderImages = [];
+
+    /// <summary>
+    /// The temporary dataset created for the left folder.
+    /// </summary>
+    private DatasetCardViewModel? _leftFolderDataset;
+
+    /// <summary>
+    /// The temporary dataset created for the right folder.
+    /// </summary>
+    private DatasetCardViewModel? _rightFolderDataset;
 
     /// <summary>
     /// Loads images from external sources (e.g., Generation Gallery).
@@ -583,6 +620,10 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         {
             images = ExternalImages;
         }
+        else if (GetFolderImages(SelectedLeftDataset) is { } folderImages)
+        {
+            images = folderImages;
+        }
         else
         {
             images = LoadImagesFromDataset(SelectedLeftDataset, SelectedLeftVersion);
@@ -609,6 +650,11 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
             images = ExternalImages;
             // For right, default to second image if available
             SelectedRightImage = images.Count > 1 ? images[1] : images.FirstOrDefault();
+        }
+        else if (GetFolderImages(dataset) is { } folderImages)
+        {
+            images = folderImages;
+            SelectedRightImage = images.FirstOrDefault();
         }
         else
         {
@@ -678,6 +724,10 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         {
             images = ExternalImages;
         }
+        else if (GetFolderImages(dataset) is { } folderImages)
+        {
+            images = folderImages;
+        }
         else
         {
             images = LoadImagesFromDataset(dataset, version);
@@ -717,6 +767,126 @@ public partial class ImageCompareViewModel : ViewModelBase, IThumbnailAware
         var dataset = string.IsNullOrWhiteSpace(datasetName) ? fallback : $"{datasetName} V{versionStr}";
         var image = string.IsNullOrWhiteSpace(imageName) ? "Unassigned" : imageName;
         return $"{dataset} / {image}";
+    }
+
+    /// <summary>
+    /// Opens a folder picker for the left side and loads images from the selected folder.
+    /// </summary>
+    private async Task LoadLeftFolderAsync()
+    {
+        var folderPath = await PickFolderAsync();
+        if (folderPath is null) return;
+
+        var images = LoadImagesFromFolder(folderPath);
+        if (images.Count == 0) return;
+
+        _leftFolderImages = images;
+
+        // Remove previous left folder dataset if any
+        RemoveFolderDataset(ref _leftFolderDataset);
+
+        _leftFolderDataset = CreateFolderDataset(folderPath, images.Count);
+        DatasetOptions.Insert(0, _leftFolderDataset);
+
+        SelectedLeftDataset = _leftFolderDataset;
+        IsTrayOpen = true;
+    }
+
+    /// <summary>
+    /// Opens a folder picker for the right side and loads images from the selected folder.
+    /// </summary>
+    private async Task LoadRightFolderAsync()
+    {
+        var folderPath = await PickFolderAsync();
+        if (folderPath is null) return;
+
+        var images = LoadImagesFromFolder(folderPath);
+        if (images.Count == 0) return;
+
+        _rightFolderImages = images;
+
+        // Remove previous right folder dataset if any
+        RemoveFolderDataset(ref _rightFolderDataset);
+
+        _rightFolderDataset = CreateFolderDataset(folderPath, images.Count);
+        DatasetOptions.Insert(0, _rightFolderDataset);
+
+        // Ensure different-datasets mode so right side has its own selector
+        IsSingleDatasetMode = false;
+        SelectedRightDataset = _rightFolderDataset;
+        IsTrayOpen = true;
+    }
+
+    /// <summary>
+    /// Shows the folder picker dialog and returns the selected path, or null if cancelled.
+    /// </summary>
+    private async Task<string?> PickFolderAsync()
+    {
+        if (_dialogService is null) return null;
+        return await _dialogService.ShowOpenFolderDialogAsync("Select Image Folder");
+    }
+
+    /// <summary>
+    /// Loads image files from a disk folder into <see cref="ImageCompareItem"/> entries.
+    /// </summary>
+    private static List<ImageCompareItem> LoadImagesFromFolder(string folderPath)
+    {
+        var items = new List<ImageCompareItem>();
+        if (!Directory.Exists(folderPath)) return items;
+
+        var imageFiles = Directory.EnumerateFiles(folderPath)
+            .Where(f => MediaFileExtensions.IsImageFile(f) && !MediaFileExtensions.IsVideoThumbnailFile(f))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var imagePath in imageFiles)
+        {
+            items.Add(new ImageCompareItem(imagePath, Path.GetFileName(imagePath)));
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// Creates a temporary <see cref="DatasetCardViewModel"/> representing a folder loaded from disk.
+    /// </summary>
+    private static DatasetCardViewModel CreateFolderDataset(string folderPath, int imageCount)
+    {
+        var folderName = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        return new DatasetCardViewModel
+        {
+            Name = $"📂 {folderName}",
+            FolderPath = folderPath,
+            IsVersionedStructure = false,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = imageCount,
+            TotalImageCountAllVersions = imageCount,
+            IsTemporary = true
+        };
+    }
+
+    /// <summary>
+    /// Removes a folder-based temporary dataset from the options list.
+    /// </summary>
+    private void RemoveFolderDataset(ref DatasetCardViewModel? folderDataset)
+    {
+        if (folderDataset is not null)
+        {
+            DatasetOptions.Remove(folderDataset);
+            folderDataset = null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the folder-loaded images for a given temporary dataset, if any.
+    /// </summary>
+    internal List<ImageCompareItem>? GetFolderImages(DatasetCardViewModel? dataset)
+    {
+        if (dataset is null) return null;
+        if (dataset == _leftFolderDataset && _leftFolderImages.Count > 0) return _leftFolderImages;
+        if (dataset == _rightFolderDataset && _rightFolderImages.Count > 0) return _rightFolderImages;
+        return null;
     }
 }
 
