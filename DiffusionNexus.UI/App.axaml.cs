@@ -784,7 +784,8 @@ public partial class App : Application
         // Image Comparer module
         var datasetState = Services!.GetRequiredService<IDatasetState>();
         var thumbnailOrchestrator = Services!.GetService<IThumbnailOrchestrator>();
-        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator);
+        var dialogService = Services!.GetRequiredService<IDialogService>();
+        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator, dialogService);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
         var imageComparerModule = new ModuleItem(
