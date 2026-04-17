@@ -1,1 +1,383 @@
-<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs" xmlns:models="using:DiffusionNexus.Domain.Models" mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600" x:Class="DiffusionNexus.UI.Views.Tabs.DuplicateDetectionView" x:DataType="vmTabs:DuplicateDetectionTabViewModel"><Grid RowDefinitions="Auto,*"><Border Grid.Row="0" Background="#1E1E1E" Padding="16,12" BorderBrush="#333" BorderThickness="0,0,0,1"><Grid ColumnDefinitions="*,Auto,Auto"><TextBlock Grid.Column="0" Text="Duplicate Detection" FontSize="14" FontWeight="SemiBold" Opacity="0.8" VerticalAlignment="Center"/><Button Grid.Column="1" Content="Analyze" Command="{Binding AnalyzeCommand}" Padding="14,8" Margin="0,0,8,0" Background="#4CAF50" Foreground="White" FontWeight="SemiBold" CornerRadius="4"/><TextBlock Grid.Column="2" Text="{Binding SummaryText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center" IsVisible="{Binding HasResults}"/></Grid></Border><Grid Grid.Row="1" ColumnDefinitions="300,*"><Border Grid.Column="0" Background="#1A1A1A" BorderBrush="#333" BorderThickness="0,0,1,0" Padding="8"><Grid RowDefinitions="Auto,Auto,*"><StackPanel Grid.Row="0" Spacing="4" Margin="8,8,8,12" IsVisible="{Binding HasResults}"><TextBlock FontSize="12" Opacity="0.7" Text="{Binding TotalImagesScanned, StringFormat=Total images: {0}}"/><TextBlock FontSize="12" Opacity="0.7" Text="{Binding ExactDuplicateCount, StringFormat=Exact duplicate groups: {0}}"/><TextBlock FontSize="12" Opacity="0.7" Text="{Binding NearDuplicateCount, StringFormat=Near-duplicate groups: {0}}"/></StackPanel><TextBlock Grid.Row="1" Text="Issues" FontSize="13" FontWeight="SemiBold" Opacity="0.6" Margin="8,0,8,6"/><TextBlock Grid.Row="2" Text="Run analysis to detect duplicates" FontSize="12" Opacity="0.4" Margin="8" IsVisible="{Binding !HasResults}"/></Grid></Border><ScrollViewer Grid.Column="1" Padding="12"><StackPanel Spacing="8"><TextBlock Text="No results yet. Click Analyze to scan for duplicates." FontSize="13" Opacity="0.4" Margin="8" IsVisible="{Binding !HasResults}"/><ItemsControl ItemsSource="{Binding Clusters}"><ItemsControl.ItemTemplate><DataTemplate x:DataType="vmTabs:DuplicateClusterItemViewModel"><Border Background="#222" CornerRadius="6" Padding="12" Margin="0,0,0,8"><StackPanel Spacing="8"><Grid ColumnDefinitions="Auto,*,Auto"><StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6"><TextBlock Text="{Binding SeverityIcon}" FontSize="14" VerticalAlignment="Center"/><TextBlock Text="{Binding GroupLabel}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding SimilarityDisplay}" FontSize="11" Opacity="0.6" VerticalAlignment="Center" HorizontalAlignment="Center"/><Button Grid.Column="2" Command="{Binding ToggleExpandCommand}" Padding="8,4" FontSize="11" CornerRadius="3" Content="Toggle"/></Grid><ItemsControl ItemsSource="{Binding FileNames}"><ItemsControl.ItemTemplate><DataTemplate x:DataType="x:String"><TextBlock Text="{Binding}" FontSize="11" Opacity="0.7" Margin="20,1,0,1"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><ItemsControl ItemsSource="{Binding ImagePaths}" IsVisible="{Binding IsExpanded}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate x:DataType="x:String"><Border Background="#1A1A1A" CornerRadius="4" Padding="4" Margin="4"><Image Source="{Binding}" MaxWidth="160" MaxHeight="160" Stretch="Uniform"/></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></ScrollViewer></Grid></Grid></UserControl>
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
+             xmlns:models="using:DiffusionNexus.Domain.Models"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             mc:Ignorable="d"
+             x:Class="DiffusionNexus.UI.Views.Tabs.DuplicateDetectionView"
+             x:DataType="vmTabs:DuplicateDetectionTabViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.severity-critical">
+      <Setter Property="Foreground" Value="#FF6B6B"/>
+    </Style>
+    <Style Selector="TextBlock.severity-warning">
+      <Setter Property="Foreground" Value="#FFA726"/>
+    </Style>
+    <Style Selector="TextBlock.severity-info">
+      <Setter Property="Foreground" Value="#4CAF50"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- TOP BAR -->
+    <Border Grid.Row="0"
+            Background="#1E1E1E"
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Duplicate Detection"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Opacity="0.8"
+                   VerticalAlignment="Center"/>
+
+        <Button Grid.Column="1"
+                Content="Analyze"
+                Command="{Binding AnalyzeCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"/>
+
+        <Button Grid.Column="2"
+                Content="Fix Issues"
+                Command="{Binding OpenFixerCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#FF9800"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"/>
+
+        <StackPanel Grid.Column="3"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    IsVisible="{Binding IsAnalyzing}">
+          <TextBlock Text="Analyzing..." FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- MAIN CONTENT (Left + Right) -->
+    <Grid Grid.Row="1" ColumnDefinitions="350,*">
+
+      <!-- LEFT PANEL: Issue List -->
+      <Border Grid.Column="0"
+              Background="#1A1A1A"
+              BorderBrush="#333"
+              BorderThickness="0,0,1,0">
+        <Grid RowDefinitions="Auto,*">
+
+          <Border Grid.Row="0" Padding="12,10" Background="#222" BorderBrush="#333" BorderThickness="0,0,0,1">
+            <TextBlock Text="Issues" FontSize="14" FontWeight="SemiBold" Opacity="0.9"/>
+          </Border>
+
+          <!-- Empty state -->
+          <StackPanel Grid.Row="1"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center"
+                      Spacing="8"
+                      IsVisible="{Binding !HasResults}">
+            <TextBlock Text="No analysis results yet"
+                       FontSize="14" Opacity="0.5"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="Click Analyze to scan for duplicates"
+                       FontSize="12" Opacity="0.3"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       MaxWidth="280"/>
+          </StackPanel>
+
+          <!-- Issue list -->
+          <ListBox Grid.Row="1"
+                   ItemsSource="{Binding Issues}"
+                   SelectedItem="{Binding SelectedIssue, Mode=TwoWay}"
+                   Background="Transparent"
+                   IsVisible="{Binding HasResults}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="models:Issue">
+                <Border Padding="10,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+                  <Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Severity, Converter={x:Static vmTabs:SeverityIconConverter.Instance}}"
+                               FontSize="16"
+                               VerticalAlignment="Top"
+                               Margin="0,2,10,0"
+                               Classes.severity-critical="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.CriticalInstance}}"
+                               Classes.severity-warning="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.WarningInstance}}"
+                               Classes.severity-info="{Binding Severity, Converter={x:Static vmTabs:SeverityMatchConverter.InfoInstance}}"/>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                      <TextBlock Text="{Binding CheckName}"
+                                 FontSize="11"
+                                 Opacity="0.5"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Message}"
+                                 FontSize="13"
+                                 TextWrapping="Wrap"
+                                 MaxLines="3"/>
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+
+      <!-- RIGHT PANEL: Detail with Clusters -->
+      <Border Grid.Column="1" Background="#1E1E1E">
+        <Grid RowDefinitions="*">
+
+          <!-- No results -->
+          <StackPanel VerticalAlignment="Center"
+                      HorizontalAlignment="Center"
+                      Spacing="8"
+                      IsVisible="{Binding !HasResults}">
+            <TextBlock Text="Run analysis to see results"
+                       FontSize="14" Opacity="0.4"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <!-- No issue selected but have results — show all clusters -->
+          <ScrollViewer IsVisible="{Binding ShowAllImages}" Padding="20">
+            <StackPanel Spacing="12">
+              <TextBlock Text="All Duplicate Clusters (sorted by severity)"
+                         FontSize="15" FontWeight="SemiBold" Opacity="0.8"/>
+              <TextBlock Text="Select an issue on the left to filter, or browse all clusters below."
+                         FontSize="12" Opacity="0.5" TextWrapping="Wrap"/>
+              <ItemsControl ItemsSource="{Binding AllImages}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vmTabs:DuplicateClusterItemViewModel">
+                    <Border Background="#222" CornerRadius="6" Padding="0" Margin="0,3">
+                      <StackPanel>
+                        <!-- Clickable header -->
+                        <Button Command="{Binding ToggleExpandCommand}"
+                                Padding="12,10"
+                                MinHeight="44"
+                                Background="Transparent"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                CornerRadius="6"
+                                Cursor="Hand">
+                          <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding SeverityIcon}"
+                                       FontSize="14"
+                                       Foreground="{Binding SeverityColor}"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                              <TextBlock Text="{Binding GroupLabel}"
+                                         FontSize="13"
+                                         FontWeight="SemiBold"
+                                         TextTrimming="CharacterEllipsis"/>
+                              <TextBlock Text="{Binding SimilarityDisplay}"
+                                         FontSize="11"
+                                         Opacity="0.6"
+                                         TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding SimilarityPercent, StringFormat={}{0:F0}%}"
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Foreground="{Binding SeverityColor}"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0,4,0"/>
+                          </Grid>
+                        </Button>
+
+                        <!-- Expanded: file list + image previews -->
+                        <Border IsVisible="{Binding IsExpanded}"
+                                Padding="12,8,12,12"
+                                BorderBrush="#333"
+                                BorderThickness="0,1,0,0">
+                          <StackPanel Spacing="8">
+                            <ItemsControl ItemsSource="{Binding FileNames}">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                  <TextBlock Text="{Binding}"
+                                             FontSize="12"
+                                             FontFamily="Consolas,Courier New,monospace"
+                                             Opacity="0.8"
+                                             Margin="0,1"/>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ImagePaths}">
+                              <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                  <WrapPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                  <Border Background="#1A1A1A" CornerRadius="4" Padding="4" Margin="4">
+                                    <Image Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                                           MaxWidth="160" MaxHeight="160" Stretch="Uniform"/>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </StackPanel>
+                        </Border>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- Issue selected — show detail + affected clusters -->
+          <ScrollViewer IsVisible="{Binding HasSelectedIssue}" Padding="20">
+            <StackPanel Spacing="16"
+                        DataContext="{Binding}"
+                        x:CompileBindings="True"
+                        x:DataType="vmTabs:DuplicateDetectionTabViewModel">
+
+              <!-- Severity badge + Check Name -->
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Border Padding="8,4" CornerRadius="4"
+                        Background="{Binding SelectedIssue.Severity, Converter={x:Static vmTabs:SeverityBackgroundConverter.Instance}}">
+                  <TextBlock Text="{Binding SelectedIssue.Severity}"
+                             FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                </Border>
+                <TextBlock Text="{Binding SelectedIssue.CheckName}"
+                           FontSize="14" Opacity="0.7"
+                           VerticalAlignment="Center"/>
+              </StackPanel>
+
+              <TextBlock Text="{Binding SelectedIssue.Message}"
+                         FontSize="16" FontWeight="SemiBold"
+                         TextWrapping="Wrap"/>
+
+              <TextBlock Text="{Binding SelectedIssue.Details}"
+                         FontSize="13" Opacity="0.8"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding SelectedIssue.Details, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+              <!-- Affected Clusters -->
+              <Border Background="#222" CornerRadius="8" Padding="12" Margin="0,4,0,0">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding AffectedImages.Count, StringFormat=Affected Clusters ({0})}"
+                             FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+
+                  <ItemsControl ItemsSource="{Binding AffectedImages}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vmTabs:DuplicateClusterItemViewModel">
+                        <Border Background="#1A1A1A" CornerRadius="4" Padding="0" Margin="0,3">
+                          <StackPanel>
+                            <!-- Clickable header -->
+                            <Button Command="{Binding ToggleExpandCommand}"
+                                    Padding="12,10"
+                                    MinHeight="44"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    CornerRadius="4"
+                                    Cursor="Hand">
+                              <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding SeverityIcon}"
+                                           FontSize="14"
+                                           Foreground="{Binding SeverityColor}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0"/>
+                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                  <TextBlock Text="{Binding GroupLabel}"
+                                             FontSize="13"
+                                             FontWeight="SemiBold"
+                                             TextTrimming="CharacterEllipsis"/>
+                                  <TextBlock Text="{Binding SimilarityDisplay}"
+                                             FontSize="11"
+                                             Opacity="0.6"
+                                             TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding SimilarityPercent, StringFormat={}{0:F0}%}"
+                                           FontSize="16"
+                                           FontWeight="Bold"
+                                           Foreground="{Binding SeverityColor}"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,4,0"/>
+                              </Grid>
+                            </Button>
+
+                            <!-- Expanded: file list + image previews -->
+                            <Border IsVisible="{Binding IsExpanded}"
+                                    Padding="12,8,12,12"
+                                    BorderBrush="#333"
+                                    BorderThickness="0,1,0,0">
+                              <StackPanel Spacing="8">
+                                <ItemsControl ItemsSource="{Binding FileNames}">
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                      <TextBlock Text="{Binding}"
+                                                 FontSize="12"
+                                                 FontFamily="Consolas,Courier New,monospace"
+                                                 Opacity="0.8"
+                                                 Margin="0,1"/>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding ImagePaths}">
+                                  <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                      <WrapPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                  </ItemsControl.ItemsPanel>
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                      <Border Background="#1A1A1A" CornerRadius="4" Padding="4" Margin="4">
+                                        <Image Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                                               MaxWidth="160" MaxHeight="160" Stretch="Uniform"/>
+                                      </Border>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </StackPanel>
+                            </Border>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- BOTTOM STATUS BAR -->
+    <Border Grid.Row="2"
+            Background="#1A1A1A"
+            Padding="16,8"
+            BorderBrush="#333"
+            BorderThickness="0,1,0,0"
+            IsVisible="{Binding HasResults}">
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <TextBlock Text="{Binding SummaryText}"
+                   FontSize="13"
+                   Opacity="0.7"
+                   VerticalAlignment="Center"/>
+        <TextBlock Text="{Binding TotalImagesScanned, StringFormat={}{0} images scanned}"
+                   FontSize="12"
+                   Opacity="0.5"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+
+  </Grid>
+</UserControl>

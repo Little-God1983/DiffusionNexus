@@ -7,6 +7,8 @@ using System.Collections.ObjectModel;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 
+using DiffusionNexus.UI.ViewModels.Tabs;
+
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
 /// Inject this interface to enable testable UI dialogs.
@@ -328,6 +330,13 @@ public interface IDialogService
         CivitaiModelVersion civitaiVersion,
         IReadOnlyList<string> sourceFolders,
         string? category = null);
+
+    /// <summary>
+    /// Shows the duplicate fixer window for resolving duplicate image clusters.
+    /// </summary>
+    /// <param name="clusters">Duplicate clusters to resolve.</param>
+    /// <returns>Number of images deleted during the session.</returns>
+    Task<int> ShowDuplicateFixerAsync(IEnumerable<DuplicateClusterItemViewModel> clusters);
 }
 
 /// <summary>

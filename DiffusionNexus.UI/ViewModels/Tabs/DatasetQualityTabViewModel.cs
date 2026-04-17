@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -49,7 +50,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         AnalysisPipeline pipeline,
         AnalysisRunStore runStore,
         BucketAnalyzer? bucketAnalyzer = null,
-        IEnumerable<IImageQualityCheck>? imageChecks = null)
+        IEnumerable<IImageQualityCheck>? imageChecks = null,
+        DuplicateDetector? duplicateDetector = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(runStore);
@@ -57,7 +59,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         _runStore = runStore;
 
         ImageAnalysisTab = bucketAnalyzer is not null
-            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks)
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 

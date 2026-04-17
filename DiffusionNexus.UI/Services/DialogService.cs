@@ -543,4 +543,14 @@ public class DialogService : IDialogService
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
 
+    public async Task<int> ShowDuplicateFixerAsync(IEnumerable<ViewModels.Tabs.DuplicateClusterItemViewModel> clusters)
+    {
+        var viewModel = new ViewModels.Dialogs.DuplicateFixerViewModel();
+        viewModel.LoadClusters(clusters);
+
+        var dialog = new DuplicateFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.DeletedCount;
+    }
+
     }

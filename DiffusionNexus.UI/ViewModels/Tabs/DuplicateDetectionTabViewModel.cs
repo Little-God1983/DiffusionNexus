@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -64,8 +65,10 @@ public class DuplicateClusterItemViewModel : ObservableObject
 /// ViewModel for the Duplicate Detection detail section within the Image Analysis dashboard.
 /// Shows duplicate clusters with side-by-side thumbnails and similarity information.
 /// </summary>
-public class DuplicateDetectionTabViewModel : ObservableObject
+public class DuplicateDetectionTabViewModel : ObservableObject, IDialogServiceAware
 {
+    /// <inheritdoc />
+    public IDialogService? DialogService { get; set; }
     private readonly DuplicateDetector? _detector;
 
     private string _folderPath = string.Empty;
@@ -78,6 +81,10 @@ public class DuplicateDetectionTabViewModel : ObservableObject
     private int _exactDuplicateCount;
     private int _nearDuplicateCount;
     private int _totalImagesScanned;
+    private Issue? _selectedIssue;
+
+    // Maps file paths to cluster items for issue-to-cluster lookup
+    private readonly Dictionary<string, DuplicateClusterItemViewModel> _clusterItemsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a new <see cref="DuplicateDetectionTabViewModel"/> with a detector.
@@ -87,6 +94,7 @@ public class DuplicateDetectionTabViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(detector);
         _detector = detector;
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     /// <summary>
@@ -95,6 +103,7 @@ public class DuplicateDetectionTabViewModel : ObservableObject
     public DuplicateDetectionTabViewModel()
     {
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     #region Observable Properties
@@ -104,6 +113,12 @@ public class DuplicateDetectionTabViewModel : ObservableObject
 
     /// <summary>Issues from the analysis.</summary>
     public ObservableCollection<Issue> Issues { get; } = [];
+
+    /// <summary>Cluster items for the currently selected issue, shown in the right panel.</summary>
+    public ObservableCollection<DuplicateClusterItemViewModel> AffectedImages { get; } = [];
+
+    /// <summary>All clusters sorted by severity, shown when no issue is selected.</summary>
+    public ObservableCollection<DuplicateClusterItemViewModel> AllImages { get; } = [];
 
     /// <summary>Whether analysis is running.</summary>
     public bool IsAnalyzing
@@ -123,7 +138,14 @@ public class DuplicateDetectionTabViewModel : ObservableObject
     public bool HasResults
     {
         get => _hasResults;
-        private set => SetProperty(ref _hasResults, value);
+        private set
+        {
+            if (SetProperty(ref _hasResults, value))
+            {
+                OnPropertyChanged(nameof(CanOpenFixer));
+                OpenFixerCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
 
     /// <summary>Can the analyze command execute.</summary>
@@ -178,12 +200,39 @@ public class DuplicateDetectionTabViewModel : ObservableObject
         private set => SetProperty(ref _totalImagesScanned, value);
     }
 
+    /// <summary>Currently selected issue in the left panel.</summary>
+    public Issue? SelectedIssue
+    {
+        get => _selectedIssue;
+        set
+        {
+            if (SetProperty(ref _selectedIssue, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedIssue));
+                OnPropertyChanged(nameof(ShowAllImages));
+                PopulateAffectedImages(value);
+            }
+        }
+    }
+
+    /// <summary>Whether an issue is selected.</summary>
+    public bool HasSelectedIssue => _selectedIssue is not null;
+
+    /// <summary>Whether to show all clusters (no specific issue selected).</summary>
+    public bool ShowAllImages => _selectedIssue is null && HasResults;
+
+    /// <summary>Can the fixer be opened (issues exist to fix).</summary>
+    public bool CanOpenFixer => HasResults && Issues.Count > 0;
+
     #endregion
 
     #region Commands
 
     /// <summary>Analyze command.</summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
+
+    /// <summary>Opens the duplicate fixer window.</summary>
+    public IAsyncRelayCommand OpenFixerCommand { get; }
 
     #endregion
 
@@ -201,6 +250,10 @@ public class DuplicateDetectionTabViewModel : ObservableObject
         HasResults = false;
         Issues.Clear();
         Clusters.Clear();
+        AffectedImages.Clear();
+        AllImages.Clear();
+        _clusterItemsByPath.Clear();
+        SelectedIssue = null;
         SummaryText = "Not analyzed yet";
         ExactDuplicateCount = 0;
         NearDuplicateCount = 0;
@@ -219,6 +272,9 @@ public class DuplicateDetectionTabViewModel : ObservableObject
 
         Issues.Clear();
         Clusters.Clear();
+        AffectedImages.Clear();
+        AllImages.Clear();
+        _clusterItemsByPath.Clear();
 
         foreach (var issue in result.Issues)
             Issues.Add(issue);
@@ -240,15 +296,25 @@ public class DuplicateDetectionTabViewModel : ObservableObject
                 label = $"Near-Duplicate Group {nearIdx}";
             }
 
-            Clusters.Add(new DuplicateClusterItemViewModel
+            var clusterVm = new DuplicateClusterItemViewModel
             {
                 GroupLabel = label,
                 HammingDistance = cluster.HammingDistance,
                 SimilarityPercent = cluster.SimilarityPercent,
                 IsExactDuplicate = cluster.IsExactDuplicate,
                 ImagePaths = cluster.ImagePaths
-            });
+            };
+
+            Clusters.Add(clusterVm);
+
+            // Index by each image path for issue-to-cluster lookup
+            foreach (var path in cluster.ImagePaths)
+                _clusterItemsByPath[path] = clusterVm;
         }
+
+        // AllImages: exact duplicates first, then near-duplicates
+        foreach (var clusterVm in Clusters.OrderBy(c => c.IsExactDuplicate ? 0 : 1).ThenByDescending(c => c.SimilarityPercent))
+            AllImages.Add(clusterVm);
 
         ExactDuplicateCount = clusters.Count(c => c.IsExactDuplicate);
         NearDuplicateCount = clusters.Count(c => !c.IsExactDuplicate);
@@ -271,7 +337,36 @@ public class DuplicateDetectionTabViewModel : ObservableObject
             ? $"Score: {result.Score:F0} ({label2}) \u00b7 {Issues.Count} issue{(Issues.Count != 1 ? "s" : "")}"
             : $"Score: {result.Score:F0} ({label2}) \u00b7 No duplicates found";
 
+        // Auto-select first issue if any
+        SelectedIssue = Issues.Count > 0 ? Issues[0] : null;
+
         AnalysisCompleted?.Invoke(result.Score, Issues.Count, label2);
+    }
+
+    private void PopulateAffectedImages(Issue? issue)
+    {
+        AffectedImages.Clear();
+
+        if (issue is null)
+            return;
+
+        // Find clusters that contain any of the affected files
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var filePath in issue.AffectedFiles)
+        {
+            if (_clusterItemsByPath.TryGetValue(filePath, out var cluster) && seen.Add(cluster.GroupLabel))
+            {
+                AffectedImages.Add(cluster);
+            }
+        }
+    }
+
+    private async Task OpenFixerAsync()
+    {
+        if (DialogService is null || Clusters.Count == 0)
+            return;
+
+        await DialogService.ShowDuplicateFixerAsync(Clusters);
     }
 
     private async Task AnalyzeAsync()

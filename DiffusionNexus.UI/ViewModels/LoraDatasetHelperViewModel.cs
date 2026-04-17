@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -175,7 +176,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         BucketAnalyzer? bucketAnalyzer = null,
         IComfyUIReadinessService? readinessService = null,
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
-        AnalysisRunStore? analysisRunStore = null)
+        AnalysisRunStore? analysisRunStore = null,
+        DuplicateDetector? duplicateDetector = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -199,7 +201,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             analysisPipeline,
             bucketAnalyzer,
             imageQualityChecks,
-            analysisRunStore);
+            analysisRunStore,
+            duplicateDetector);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService);
