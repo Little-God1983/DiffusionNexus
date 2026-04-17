@@ -20,6 +20,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly AnalysisPipeline? _pipeline;
     private readonly AnalysisRunStore _runStore;
+    private readonly DuplicateDetector? _duplicateDetector;
 
     private string _datasetFolderPath = string.Empty;
     private string _datasetLabel = string.Empty;
@@ -57,6 +58,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         ArgumentNullException.ThrowIfNull(runStore);
         _pipeline = pipeline;
         _runStore = runStore;
+        _duplicateDetector = duplicateDetector;
 
         ImageAnalysisTab = bucketAnalyzer is not null
             ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector)
@@ -430,6 +432,17 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             if (report.ImageCheckResults.Count > 0)
             {
                 ImageAnalysisTab.ImageQualityTab.ApplyResults(report.ImageCheckResults);
+            }
+
+            // Propagate duplicate detection results to the Duplicate Detection sub-tab
+            if (_duplicateDetector is not null)
+            {
+                var dupResult = report.ImageCheckResults
+                    .FirstOrDefault(r => r.CheckName == DuplicateDetector.CheckDisplayName);
+                if (dupResult is not null)
+                {
+                    ImageAnalysisTab.DuplicateDetectionTab.ApplyResults(dupResult, _duplicateDetector.LastClusters);
+                }
             }
 
             // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated

@@ -235,6 +235,12 @@ public class BucketAnalysisTabViewModel : ObservableObject
     public event Action<double, int, string>? AnalysisCompleted;
 
     /// <summary>
+    /// Raised when analysis begins running.
+    /// Used by the parent dashboard to show a running indicator on the card.
+    /// </summary>
+    public event Action? AnalysisStarted;
+
+    /// <summary>
     /// Raised when the user clicks the "Open in Batch Crop/Scale" button.
     /// The parent ViewModel chain handles navigation.
     /// </summary>
@@ -268,6 +274,7 @@ public class BucketAnalysisTabViewModel : ObservableObject
             return;
 
         IsAnalyzing = true;
+        AnalysisStarted?.Invoke();
         ClearResults();
 
         try

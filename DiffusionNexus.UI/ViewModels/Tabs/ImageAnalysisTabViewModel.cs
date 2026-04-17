@@ -32,6 +32,8 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
     private string _summary = "Not analyzed yet";
     private bool _hasResults;
     private bool _isSelected;
+    private bool _isAnalyzing;
+    private double _score;
 
     /// <summary>Display title shown on the card.</summary>
     public required string Title { get; init; }
@@ -56,7 +58,13 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
     public bool HasResults
     {
         get => _hasResults;
-        set => SetProperty(ref _hasResults, value);
+        set
+        {
+            if (SetProperty(ref _hasResults, value))
+            {
+                OnPropertyChanged(nameof(ScoreBorderColor));
+            }
+        }
     }
 
     /// <summary>Whether this card is currently selected in the dashboard.</summary>
@@ -65,6 +73,41 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
     }
+
+    /// <summary>Whether analysis is currently running for this section.</summary>
+    public bool IsAnalyzing
+    {
+        get => _isAnalyzing;
+        set => SetProperty(ref _isAnalyzing, value);
+    }
+
+    /// <summary>Last analysis score (0–100). Used to determine border color.</summary>
+    public double Score
+    {
+        get => _score;
+        set
+        {
+            if (SetProperty(ref _score, value))
+            {
+                OnPropertyChanged(nameof(ScoreBorderColor));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Border color based on score thresholds:
+    /// &lt; 50 = red, 50–70 = orange, 70–90 = yellow, &gt; 90 = green.
+    /// Returns transparent when no results are available.
+    /// </summary>
+    public string ScoreBorderColor => !_hasResults
+        ? "Transparent"
+        : _score switch
+        {
+            > 90 => "#4CAF50",
+            > 70 => "#FFC107",
+            > 50 => "#FF9800",
+            _ => "#F44336"
+        };
 }
 
 /// <summary>
@@ -88,17 +131,20 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
 
         BucketAnalysisTab = new BucketAnalysisTabViewModel(bucketAnalyzer);
         BucketAnalysisTab.AnalysisCompleted += OnBucketAnalysisCompleted;
+        BucketAnalysisTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.BucketAnalysis);
         BucketAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         ImageQualityTab = imageChecks is not null
             ? new ImageQualityTabViewModel(imageChecks)
             : new ImageQualityTabViewModel();
         ImageQualityTab.AnalysisCompleted += OnImageQualityAnalysisCompleted;
+        ImageQualityTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.ImageQuality);
 
         DuplicateDetectionTab = duplicateDetector is not null
             ? new DuplicateDetectionTabViewModel(duplicateDetector)
             : new DuplicateDetectionTabViewModel();
         DuplicateDetectionTab.AnalysisCompleted += OnDuplicateDetectionCompleted;
+        DuplicateDetectionTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.DuplicateDetection);
 
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
@@ -196,6 +242,8 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         {
             card.Summary = "Not analyzed yet";
             card.HasResults = false;
+            card.IsAnalyzing = false;
+            card.Score = 0;
         }
     }
 
@@ -214,6 +262,8 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         card.Summary = issueCount > 0
             ? $"Score: {score:F0} ({scoreLabel}) · {issueCount} issue{(issueCount != 1 ? "s" : "")}"
             : $"Score: {score:F0} ({scoreLabel}) · No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
         card.HasResults = true;
     }
 
@@ -279,6 +329,8 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         card.Summary = issueCount > 0
             ? $"Score: {score:F0} ({scoreLabel}) \u00b7 {issueCount} issue{(issueCount != 1 ? "s" : "")}"
             : $"Score: {score:F0} ({scoreLabel}) \u00b7 No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
         card.HasResults = true;
     }
 
@@ -308,11 +360,22 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         card.Summary = issueCount > 0
             ? $"Score: {score:F0} ({scoreLabel}) \u00b7 {issueCount} issue{(issueCount != 1 ? "s" : "")}"
             : $"Score: {score:F0} ({scoreLabel}) \u00b7 No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
         card.HasResults = true;
     }
 
     private void OnFixDistributionRequested()
     {
         FixDistributionRequested?.Invoke();
+    }
+
+    private void OnAnalysisStarted(ImageAnalysisSection section)
+    {
+        var card = FindCard(section);
+        if (card is not null)
+        {
+            card.IsAnalyzing = true;
+        }
     }
 }
