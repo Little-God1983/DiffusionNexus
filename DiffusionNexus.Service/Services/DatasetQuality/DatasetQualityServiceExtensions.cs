@@ -36,6 +36,11 @@ public static class DatasetQualityServiceExtensions
         // Image quality checks — each registered as IImageQualityCheck
         services.AddSingleton<IImageQualityCheck, BlurDetector>();
         services.AddSingleton<IImageQualityCheck, ExposureAnalyzer>();
+        services.AddSingleton<IImageQualityCheck, JpegArtifactDetector>();
+        services.AddSingleton<IImageQualityCheck, DuplicateDetector>();
+
+        // Expose DuplicateDetector directly for the UI (cluster data access)
+        services.AddSingleton<DuplicateDetector>();
 
         return services;
     }

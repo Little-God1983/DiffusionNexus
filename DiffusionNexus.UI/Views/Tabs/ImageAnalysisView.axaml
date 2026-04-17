@@ -101,6 +101,10 @@
         <views:ImageQualityView DataContext="{Binding ImageQualityTab}"/>
       </Panel>
 
+      <Panel IsVisible="{Binding IsDuplicateDetectionSelected}">
+        <views:DuplicateDetectionView DataContext="{Binding DuplicateDetectionTab}"/>
+      </Panel>
+
     </Panel>
 
   </Grid>
