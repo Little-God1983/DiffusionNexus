@@ -34,59 +34,67 @@
 
     <!-- MIDDLE: Keep / Delete Action Bar -->
     <Border Grid.Row="1" Background="#222" Padding="12,8" BorderBrush="#333" BorderThickness="0,1,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto,*">
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
-          <Button Command="{Binding KeepLeftCommand}"
-                  Padding="16,8"
-                  Background="#4CAF50"
-                  Foreground="White"
-                  FontWeight="SemiBold"
-                  CornerRadius="4"
-                  ToolTip.Tip="Keep the left image and delete the right one">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBlock Text="&#x2190;" FontSize="14"/>
-              <TextBlock Text="Keep Left"/>
-              <TextBlock Text="{Binding SelectedLeftImage.FileName, FallbackValue=''}"
-                         FontSize="11" Opacity="0.7" VerticalAlignment="Center"
-                         MaxWidth="200" TextTrimming="CharacterEllipsis"/>
-              <Border Background="{Binding SelectedLeftImage.RatingColor, FallbackValue=Transparent}"
-                      CornerRadius="3" Padding="6,2"
-                      IsVisible="{Binding SelectedLeftImage.HasRating, FallbackValue=False}"
-                      VerticalAlignment="Center">
-                <TextBlock Text="{Binding SelectedLeftImage.RatingLabel}"
-                           FontSize="10" FontWeight="Bold" Foreground="White"/>
-              </Border>
-            </StackPanel>
-          </Button>
-        </StackPanel>
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,*" VerticalAlignment="Center">
 
-        <TextBlock Grid.Column="2" Text="or" Opacity="0.4" FontSize="13"
+        <!-- Left rating badge -->
+        <Border Grid.Column="1"
+                Background="{Binding SelectedLeftImage.RatingColor, FallbackValue=Transparent}"
+                CornerRadius="3" Padding="8,4" Margin="0,0,8,0"
+                IsVisible="{Binding SelectedLeftImage.HasRating, FallbackValue=False}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedLeftImage.RatingLabel}"
+                     FontSize="11" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+        <!-- Keep Left button -->
+        <Button Grid.Column="2"
+                Command="{Binding KeepLeftCommand}"
+                Padding="16,8"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Keep the left image and delete the right one">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="&#x2190;" FontSize="14"/>
+            <TextBlock Text="Keep Left"/>
+            <TextBlock Text="{Binding SelectedLeftImage.FileName, FallbackValue=''}"
+                       FontSize="11" Opacity="0.7" VerticalAlignment="Center"
+                       MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </Button>
+
+        <TextBlock Grid.Column="3" Text="or" Opacity="0.4" FontSize="13"
                    VerticalAlignment="Center" Margin="16,0"/>
 
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="12">
-          <Button Command="{Binding KeepRightCommand}"
-                  Padding="16,8"
-                  Background="#4CAF50"
-                  Foreground="White"
-                  FontWeight="SemiBold"
-                  CornerRadius="4"
-                  ToolTip.Tip="Keep the right image and delete the left one">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBlock Text="Keep Right"/>
-              <TextBlock Text="{Binding SelectedRightImage.FileName, FallbackValue=''}"
-                         FontSize="11" Opacity="0.7" VerticalAlignment="Center"
-                         MaxWidth="200" TextTrimming="CharacterEllipsis"/>
-              <Border Background="{Binding SelectedRightImage.RatingColor, FallbackValue=Transparent}"
-                      CornerRadius="3" Padding="6,2"
-                      IsVisible="{Binding SelectedRightImage.HasRating, FallbackValue=False}"
-                      VerticalAlignment="Center">
-                <TextBlock Text="{Binding SelectedRightImage.RatingLabel}"
-                           FontSize="10" FontWeight="Bold" Foreground="White"/>
-              </Border>
-              <TextBlock Text="&#x2192;" FontSize="14"/>
-            </StackPanel>
-          </Button>
-        </StackPanel>
+        <!-- Keep Right button -->
+        <Button Grid.Column="4"
+                Command="{Binding KeepRightCommand}"
+                Padding="16,8"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Keep the right image and delete the left one">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Keep Right"/>
+            <TextBlock Text="{Binding SelectedRightImage.FileName, FallbackValue=''}"
+                       FontSize="11" Opacity="0.7" VerticalAlignment="Center"
+                       MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="&#x2192;" FontSize="14"/>
+          </StackPanel>
+        </Button>
+
+        <!-- Right rating badge -->
+        <Border Grid.Column="5"
+                Background="{Binding SelectedRightImage.RatingColor, FallbackValue=Transparent}"
+                CornerRadius="3" Padding="8,4" Margin="8,0,0,0"
+                IsVisible="{Binding SelectedRightImage.HasRating, FallbackValue=False}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedRightImage.RatingLabel}"
+                     FontSize="11" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
       </Grid>
     </Border>
 
