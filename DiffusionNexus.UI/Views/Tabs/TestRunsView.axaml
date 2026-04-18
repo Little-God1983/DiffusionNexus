@@ -43,8 +43,18 @@
             BorderThickness="0,0,0,1"
             IsVisible="{Binding HasTrendData}">
       <StackPanel Spacing="6">
-        <TextBlock Text="Score Trend" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="Score Trend" FontSize="13" FontWeight="SemiBold" Opacity="0.8"
+                     VerticalAlignment="Center"/>
+          <CheckBox Grid.Column="1"
+                    Content="Show all versions"
+                    IsChecked="{Binding ShowAllVersions}"
+                    FontSize="11"
+                    Opacity="0.7"
+                    VerticalAlignment="Center"/>
+        </Grid>
         <controls:ScoreTrendChart DataPoints="{Binding TrendDataPoints}"
+                                  SeriesData="{Binding AllVersionTrendSeries}"
                                   Height="120"
                                   HorizontalAlignment="Stretch"/>
       </StackPanel>
