@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Views.Controls;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -17,11 +18,15 @@ public partial class TestRunsTabViewModel : ObservableObject
 {
     private readonly AnalysisRunStore _store;
 
+    private static readonly string[] VersionLineColors =
+        ["#81D4FA", "#CE93D8", "#FFD54F", "#A5D6A7", "#FF8A65", "#90CAF9", "#F48FB1", "#80CBC4"];
+
     private string _datasetFolderPath = string.Empty;
     private bool _isLoading;
     private TestRunViewModel? _selectedRun;
     private bool _isLiveAnalyzing;
     private string _currentCheckName = string.Empty;
+    private bool _showAllVersions;
 
     /// <summary>
     /// Creates a new <see cref="TestRunsTabViewModel"/>.
@@ -34,7 +39,6 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
-        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
 
     /// <summary>
@@ -46,7 +50,6 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
-        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
 
     /// <summary>
@@ -91,9 +94,22 @@ public partial class TestRunsTabViewModel : ObservableObject
     public bool HasRuns => Runs.Count > 0;
 
     /// <summary>
-    /// Whether more than one run exists, enabling bulk deletion.
+    /// Whether enough data points exist to render the score trend chart (at least 2 runs).
     /// </summary>
-    public bool HasMultipleRuns => Runs.Count > 1;
+    public bool HasTrendData => TrendDataPoints.Count >= 2;
+
+    /// <summary>
+    /// When true, the trend chart shows lines for all dataset versions side by side.
+    /// </summary>
+    public bool ShowAllVersions
+    {
+        get => _showAllVersions;
+        set
+        {
+            if (SetProperty(ref _showAllVersions, value))
+                _ = RebuildTrendSeriesAsync();
+        }
+    }
 
     /// <summary>
     /// Whether a live analysis is currently in progress.
@@ -127,6 +143,16 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<TestRunViewModel> Runs { get; } = [];
 
+    /// <summary>
+    /// Score trend data points for the trend line chart (oldest first).
+    /// </summary>
+    public ObservableCollection<ScoreTrendDataPoint> TrendDataPoints { get; } = [];
+
+    /// <summary>
+    /// Multi-version trend series for the chart. Populated when <see cref="ShowAllVersions"/> is true.
+    /// </summary>
+    public ObservableCollection<ScoreTrendSeries> AllVersionTrendSeries { get; } = [];
+
     #endregion
 
     #region Commands
@@ -141,11 +167,6 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public IAsyncRelayCommand<TestRunViewModel?> DeleteRunCommand { get; }
 
-    /// <summary>
-    /// Deletes all runs except the most recent one.
-    /// </summary>
-    public IAsyncRelayCommand DeleteOlderRunsCommand { get; }
-
     #endregion
 
     /// <summary>
@@ -155,6 +176,9 @@ public partial class TestRunsTabViewModel : ObservableObject
     public async Task RefreshContextAsync(string? folderPath)
     {
         _datasetFolderPath = folderPath ?? string.Empty;
+        _showAllVersions = false;
+        OnPropertyChanged(nameof(ShowAllVersions));
+        AllVersionTrendSeries.Clear();
 
         Runs.Clear();
         SelectedRun = null;
@@ -195,6 +219,7 @@ public partial class TestRunsTabViewModel : ObservableObject
                 if (Runs.Count > 0)
                     SelectedRun = Runs[0];
 
+                RebuildTrendData();
                 NotifyRunCountChanged();
             });
         }
@@ -227,47 +252,7 @@ public partial class TestRunsTabViewModel : ObservableObject
             if (SelectedRun == runVm)
                 SelectedRun = Runs.Count > 0 ? Runs[0] : null;
 
-            NotifyRunCountChanged();
-        });
-    }
-
-    /// <summary>
-    /// Deletes all runs except the most recent one.
-    /// </summary>
-    private async Task DeleteOlderRunsAsync()
-    {
-        if (string.IsNullOrWhiteSpace(_datasetFolderPath) || Runs.Count <= 1)
-            return;
-
-        var count = Runs.Count - 1;
-        if (DialogService is not null)
-        {
-            var confirmed = await DialogService.ShowConfirmAsync(
-                "Delete Older Runs",
-                $"Delete {count} older run(s) and keep only the latest?\n\nThis action cannot be undone.");
-
-            if (!confirmed)
-                return;
-        }
-
-        var olderRuns = Runs.Skip(1).ToList();
-
-        await Task.Run(() =>
-        {
-            foreach (var run in olderRuns)
-            {
-                _store.Delete(_datasetFolderPath, run.Record);
-            }
-        });
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            foreach (var run in olderRuns)
-            {
-                Runs.Remove(run);
-            }
-
-            SelectedRun = Runs.Count > 0 ? Runs[0] : null;
+            RebuildTrendData();
             NotifyRunCountChanged();
         });
     }
@@ -340,8 +325,81 @@ public partial class TestRunsTabViewModel : ObservableObject
     private void NotifyRunCountChanged()
     {
         OnPropertyChanged(nameof(HasRuns));
-        OnPropertyChanged(nameof(HasMultipleRuns));
-        DeleteOlderRunsCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasTrendData));
+    }
+
+    /// <summary>
+    /// Rebuilds the trend data points from the current run list (oldest first).
+    /// </summary>
+    private void RebuildTrendData()
+    {
+        TrendDataPoints.Clear();
+        foreach (var run in Runs.Reverse())
+        {
+            if (run.CompositeScore is not { } score)
+                continue;
+
+            var dateLabel = run.Record.AnalyzedAtUtc.ToLocalTime().ToString("dd MMM");
+            var tooltip = $"{score:F0} — {run.Timestamp}";
+            TrendDataPoints.Add(new ScoreTrendDataPoint(score, dateLabel, tooltip));
+        }
+
+        // Refresh multi-version series if the toggle is on
+        if (_showAllVersions)
+            _ = RebuildTrendSeriesAsync();
+        else
+            AllVersionTrendSeries.Clear();
+    }
+
+    /// <summary>
+    /// Loads trend data for all sibling version folders and builds per-version series.
+    /// </summary>
+    private async Task RebuildTrendSeriesAsync()
+    {
+        AllVersionTrendSeries.Clear();
+
+        if (!_showAllVersions || string.IsNullOrWhiteSpace(_datasetFolderPath))
+            return;
+
+        // The dataset folder is e.g. ".../V3". Parent holds all version folders.
+        var parentDir = Path.GetDirectoryName(_datasetFolderPath);
+        if (parentDir is null || !Directory.Exists(parentDir))
+            return;
+
+        var versionDirs = Directory.GetDirectories(parentDir, "V*")
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var seriesList = new List<ScoreTrendSeries>();
+        var colorIndex = 0;
+
+        foreach (var versionDir in versionDirs)
+        {
+            var records = await _store.LoadAllAsync(versionDir);
+            var points = records
+                .Where(r => r.CompositeScore is not null)
+                .OrderBy(r => r.AnalyzedAtUtc)
+                .Select(r => new ScoreTrendDataPoint(
+                    r.CompositeScore!.Score,
+                    r.AnalyzedAtUtc.ToLocalTime().ToString("dd MMM"),
+                    $"{r.CompositeScore.Score:F0} — V{r.Version}"))
+                .ToList();
+
+            if (points.Count < 2)
+                continue;
+
+            var versionName = Path.GetFileName(versionDir);
+            var color = VersionLineColors[colorIndex % VersionLineColors.Length];
+            seriesList.Add(new ScoreTrendSeries(versionName, color, points));
+            colorIndex++;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            AllVersionTrendSeries.Clear();
+            foreach (var s in seriesList)
+                AllVersionTrendSeries.Add(s);
+        });
     }
 }
 
