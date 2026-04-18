@@ -174,16 +174,69 @@
       <!-- RIGHT PANEL: Run Detail -->
       <Border Grid.Column="1" Background="#1E1E1E">
 
-        <!-- Empty state -->
+        <!-- Empty state (hidden during live analysis) -->
         <StackPanel VerticalAlignment="Center"
                     HorizontalAlignment="Center"
                     Spacing="8"
                     IsVisible="{Binding !HasSelectedRun}">
           <TextBlock Text="Select a run to see details"
                      FontSize="14" Opacity="0.4"
-                     HorizontalAlignment="Center"/>
+                     HorizontalAlignment="Center"
+                     IsVisible="{Binding !IsLiveAnalyzing}"/>
         </StackPanel>
       </Border>
+
+      <!-- Live analysis overlay (visible during Analyze All) -->
+      <ScrollViewer Grid.Column="1"
+                    IsVisible="{Binding IsLiveAnalyzing}"
+                    Padding="20">
+        <StackPanel Spacing="16"
+                    x:CompileBindings="True"
+                    x:DataType="vmTabs:TestRunsTabViewModel">
+
+          <!-- Header -->
+          <StackPanel Spacing="4">
+            <TextBlock Text="Analysis in Progress…" FontSize="18" FontWeight="Bold" Foreground="#81D4FA"/>
+            <TextBlock Text="{Binding CurrentCheckName, StringFormat='Running: {0}'}"
+                       FontSize="13" Opacity="0.6"
+                       IsVisible="{Binding CurrentCheckName.Length}"/>
+          </StackPanel>
+
+          <!-- Live check scores -->
+          <Border Background="#222" CornerRadius="8" Padding="16">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Individual Check Scores" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+              <ItemsControl ItemsSource="{Binding LiveCheckScores}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vmTabs:LiveCheckScoreViewModel">
+                    <Grid ColumnDefinitions="160,Auto,*,40" Margin="0,3">
+                      <TextBlock Grid.Column="0" Text="{Binding CheckName}"
+                                 FontSize="12" Opacity="0.7" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="1" Text="{Binding CategoryName}"
+                                 FontSize="10" Opacity="0.4" VerticalAlignment="Center"
+                                 Margin="0,0,8,0"/>
+                      <!-- Indeterminate bar while running, value bar when done -->
+                      <ProgressBar Grid.Column="2" Minimum="0" Maximum="100"
+                                   IsIndeterminate="{Binding IsRunning}"
+                                   Value="{Binding Score}"
+                                   Height="8" CornerRadius="4"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                      <TextBlock Grid.Column="3"
+                                 Text="{Binding Score, StringFormat={}{0:F0}}"
+                                 FontSize="12" FontWeight="SemiBold"
+                                 Foreground="{Binding ScoreColor}"
+                                 VerticalAlignment="Center" MinWidth="30"
+                                 TextAlignment="Right"
+                                 IsVisible="{Binding !IsRunning}"/>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
 
       <!-- Detail scroll view (overlays empty state when visible) -->
       <ScrollViewer Grid.Column="1"
@@ -298,7 +351,7 @@
               <ItemsControl ItemsSource="{Binding CheckScores}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vmTabs:CheckScoreViewModel">
-                    <Grid ColumnDefinitions="160,Auto,*,Auto" Margin="0,3">
+                    <Grid ColumnDefinitions="160,Auto,*,40" Margin="0,3">
                       <TextBlock Grid.Column="0" Text="{Binding CheckName}"
                                  FontSize="12" Opacity="0.7" VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis"/>

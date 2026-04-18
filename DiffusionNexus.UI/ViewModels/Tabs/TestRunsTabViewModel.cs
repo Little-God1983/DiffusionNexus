@@ -20,6 +20,8 @@ public partial class TestRunsTabViewModel : ObservableObject
     private string _datasetFolderPath = string.Empty;
     private bool _isLoading;
     private TestRunViewModel? _selectedRun;
+    private bool _isLiveAnalyzing;
+    private string _currentCheckName = string.Empty;
 
     /// <summary>
     /// Creates a new <see cref="TestRunsTabViewModel"/>.
@@ -92,6 +94,29 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// Whether more than one run exists, enabling bulk deletion.
     /// </summary>
     public bool HasMultipleRuns => Runs.Count > 1;
+
+    /// <summary>
+    /// Whether a live analysis is currently in progress.
+    /// </summary>
+    public bool IsLiveAnalyzing
+    {
+        get => _isLiveAnalyzing;
+        private set => SetProperty(ref _isLiveAnalyzing, value);
+    }
+
+    /// <summary>
+    /// Name of the check currently being executed.
+    /// </summary>
+    public string CurrentCheckName
+    {
+        get => _currentCheckName;
+        private set => SetProperty(ref _currentCheckName, value);
+    }
+
+    /// <summary>
+    /// Check scores that have completed during the live analysis.
+    /// </summary>
+    public ObservableCollection<LiveCheckScoreViewModel> LiveCheckScores { get; } = [];
 
     #endregion
 
@@ -247,6 +272,71 @@ public partial class TestRunsTabViewModel : ObservableObject
         });
     }
 
+    /// <summary>
+    /// Starts a live analysis session, clearing previous live scores.
+    /// </summary>
+    public void BeginLiveAnalysis()
+    {
+        LiveCheckScores.Clear();
+        CurrentCheckName = string.Empty;
+        SelectedRun = null;
+        IsLiveAnalyzing = true;
+    }
+
+    /// <summary>
+    /// Reports that a check has started running.
+    /// </summary>
+    public void OnCheckStarted(string checkName)
+    {
+        CurrentCheckName = checkName;
+
+        // Add a placeholder entry for the running check
+        var existing = LiveCheckScores.FirstOrDefault(c => c.CheckName == checkName);
+        if (existing is null)
+        {
+            LiveCheckScores.Add(new LiveCheckScoreViewModel
+            {
+                CheckName = checkName,
+                IsRunning = true
+            });
+        }
+    }
+
+    /// <summary>
+    /// Reports a completed check score during live analysis.
+    /// </summary>
+    public void OnCheckScoreReported(CheckScore score)
+    {
+        var existing = LiveCheckScores.FirstOrDefault(c => c.CheckName == score.CheckName);
+        if (existing is not null)
+        {
+            existing.Score = score.Score;
+            existing.CategoryName = score.Category.ToString();
+            existing.ScoreColor = TestRunViewModel.GetScoreColor(score.Score);
+            existing.IsRunning = false;
+        }
+        else
+        {
+            LiveCheckScores.Add(new LiveCheckScoreViewModel
+            {
+                CheckName = score.CheckName,
+                Score = score.Score,
+                CategoryName = score.Category.ToString(),
+                ScoreColor = TestRunViewModel.GetScoreColor(score.Score),
+                IsRunning = false
+            });
+        }
+    }
+
+    /// <summary>
+    /// Ends the live analysis session.
+    /// </summary>
+    public void EndLiveAnalysis()
+    {
+        IsLiveAnalyzing = false;
+        CurrentCheckName = string.Empty;
+    }
+
     private void NotifyRunCountChanged()
     {
         OnPropertyChanged(nameof(HasRuns));
@@ -377,7 +467,7 @@ public class TestRunViewModel
         };
     }
 
-    private static string GetScoreColor(double score) => score switch
+    internal static string GetScoreColor(double score) => score switch
     {
         >= 80 => "#4CAF50",
         >= 65 => "#8BC34A",
@@ -420,6 +510,48 @@ public class CheckScoreViewModel
 
     /// <summary>Human-readable category name.</summary>
     public required string CategoryName { get; init; }
+}
+
+/// <summary>
+/// Observable ViewModel for a check score during live analysis, supporting in-progress state.
+/// </summary>
+public partial class LiveCheckScoreViewModel : ObservableObject
+{
+    private double _score;
+    private string _categoryName = string.Empty;
+    private string _scoreColor = "#888";
+    private bool _isRunning = true;
+
+    /// <summary>Name of the check.</summary>
+    public required string CheckName { get; init; }
+
+    /// <summary>Score value (0–100), updated when the check completes.</summary>
+    public double Score
+    {
+        get => _score;
+        set => SetProperty(ref _score, value);
+    }
+
+    /// <summary>Human-readable category name.</summary>
+    public string CategoryName
+    {
+        get => _categoryName;
+        set => SetProperty(ref _categoryName, value);
+    }
+
+    /// <summary>Color hex for the score display.</summary>
+    public string ScoreColor
+    {
+        get => _scoreColor;
+        set => SetProperty(ref _scoreColor, value);
+    }
+
+    /// <summary>Whether this check is still running.</summary>
+    public bool IsRunning
+    {
+        get => _isRunning;
+        set => SetProperty(ref _isRunning, value);
+    }
 }
 
 /// <summary>

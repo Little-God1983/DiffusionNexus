@@ -120,6 +120,7 @@ public class AnalysisPipeline
         BucketConfig? bucketConfig = null,
         IProgress<double>? progress = null,
         IProgress<string>? statusProgress = null,
+        IProgress<CheckScore>? checkScoreProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -176,14 +177,19 @@ public class AnalysisPipeline
             var checkIssues = issues.Where(i => i.CheckName == check.Name).ToList();
             var score = CheckScoreAdapter.ScoreFromIssues(check.Name, checkIssues, captions.Count);
             if (score != null)
+            {
                 allCheckScores.Add(score);
+                checkScoreProgress?.Report(score);
+            }
 
             completedPhases++;
             progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));
         }
 
         // Completeness score
-        allCheckScores.Add(CheckScoreAdapter.ScoreFromCompleteness(captions.Count, imageCount));
+        var completenessScore = CheckScoreAdapter.ScoreFromCompleteness(captions.Count, imageCount);
+        allCheckScores.Add(completenessScore);
+        checkScoreProgress?.Report(completenessScore);
 
         // --- Phase 3: Bucket analysis (optional, CPU-bound) ---
         if (bucketConfig != null && images.Count > 0)
@@ -193,7 +199,9 @@ public class AnalysisPipeline
             var bucketResult = await Task.Run(
                 () => BucketAnalyzer.Analyze(images, bucketConfig), cancellationToken);
             allIssues.AddRange(bucketResult.Issues);
-            allCheckScores.Add(CheckScoreAdapter.ScoreFromBucketAnalysis(bucketResult.DistributionScore));
+            var bucketScore = CheckScoreAdapter.ScoreFromBucketAnalysis(bucketResult.DistributionScore);
+            allCheckScores.Add(bucketScore);
+            checkScoreProgress?.Report(bucketScore);
 
             completedPhases++;
             progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));
@@ -214,13 +222,15 @@ public class AnalysisPipeline
             imageCheckResults.Add(result);
             allIssues.AddRange(result.Issues);
 
-            allCheckScores.Add(new CheckScore
+            var imageCheckScore = new CheckScore
             {
                 Score = result.Score,
                 CheckName = result.CheckName,
                 Category = imageCheck.Category,
                 Weight = 1.0
-            });
+            };
+            allCheckScores.Add(imageCheckScore);
+            checkScoreProgress?.Report(imageCheckScore);
 
             completedPhases++;
             progress?.Report((double)completedPhases / Math.Max(totalPhases, 1));

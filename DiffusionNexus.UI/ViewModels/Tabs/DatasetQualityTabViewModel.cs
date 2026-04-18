@@ -34,6 +34,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     private Issue? _selectedIssue;
     private AnalysisReport? _lastReport;
 
+    private int _selectedTabIndex;
     private double _compositeScore;
     private string _compositeScoreLabel = string.Empty;
     private string _compositeScoreColor = "#666";
@@ -127,6 +128,15 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public event Action? FixDistributionRequested;
 
     #region Observable Properties
+
+    /// <summary>
+    /// Index of the currently selected sub-tab (0 = Image Analysis, 1 = Caption Quality, 2 = Test Runs).
+    /// </summary>
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => SetProperty(ref _selectedTabIndex, value);
+    }
 
     /// <summary>
     /// Display label showing the active dataset name and version (e.g. "Ahkasha — V8").
@@ -385,9 +395,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     {
         if (_pipeline is null || !HasDatasetContext) return;
 
+        SelectedTabIndex = 2;
         IsAnalyzing = true;
         AnalysisStatusText = "Starting analysis…";
         AnalysisProgress = 0.0;
+        TestRunsTab.BeginLiveAnalysis();
         try
         {
             var config = BuildConfig();
@@ -397,6 +409,13 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             {
                 var elapsed = stopwatch.Elapsed;
                 var progress = AnalysisProgress;
+
+                // Only notify TestRunsTab for top-level check starts (e.g. "Running Spell Check…")
+                // Skip per-item progress like "Running Spell Check… caption 3 of 126"
+                if (s.StartsWith("Running ", StringComparison.Ordinal) && s.EndsWith('…') && !s.Contains(" of ", StringComparison.Ordinal))
+                {
+                    TestRunsTab.OnCheckStarted(s[8..^1]); // strip "Running " prefix and "…" suffix
+                }
 
                 if (progress > 0.05 && elapsed.TotalSeconds > 2)
                 {
@@ -413,6 +432,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 AnalysisStatusText = s;
             });
             var percentProgress = new Progress<double>(p => AnalysisProgress = p);
+            var checkScoreProgress = new Progress<CheckScore>(score =>
+                TestRunsTab.OnCheckScoreReported(score));
 
             // Run the full pipeline: captions + image quality + bucket scoring
             var report = await _pipeline.AnalyzeFullAsync(config, new BucketConfig
@@ -423,7 +444,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
                 MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
                 BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
-            }, percentProgress, statusProgress: statusProgress);
+            }, percentProgress, statusProgress: statusProgress, checkScoreProgress: checkScoreProgress);
 
             // Apply caption issues + composite score
             ApplyReport(report);
@@ -469,6 +490,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         }
         finally
         {
+            TestRunsTab.EndLiveAnalysis();
             IsAnalyzing = false;
             AnalysisStatusText = string.Empty;
             AnalysisProgress = 0.0;

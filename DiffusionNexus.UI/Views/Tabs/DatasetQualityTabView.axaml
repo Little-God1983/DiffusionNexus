@@ -134,7 +134,7 @@
     </Border>
 
     <!-- TABBED CONTENT -->
-    <TabControl Grid.Row="1" Padding="0">
+    <TabControl Grid.Row="1" Padding="0" SelectedIndex="{Binding SelectedTabIndex}">
 
       <!-- ═══════════ TAB 1: Image Analysis ═══════════ -->
       <TabItem Header="Image Analysis">
