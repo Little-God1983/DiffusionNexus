@@ -19,6 +19,12 @@ public class AnalysisRunStore
     /// </summary>
     private const string RunsFolderName = ".quality-runs";
 
+    /// <summary>
+    /// Maximum number of run files retained per dataset. Oldest runs beyond this limit
+    /// are automatically deleted after each save.
+    /// </summary>
+    private const int MaxRunsPerDataset = 50;
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         WriteIndented = true,
@@ -51,6 +57,8 @@ public class AnalysisRunStore
 
         var json = JsonSerializer.Serialize(record, SerializerOptions);
         await File.WriteAllTextAsync(filePath, json, cancellationToken).ConfigureAwait(false);
+
+        PruneOldRuns(runsDir);
 
         return filePath;
     }
@@ -131,4 +139,29 @@ public class AnalysisRunStore
 
     private static string GetRunsDirectory(string datasetFolderPath) =>
         Path.Combine(datasetFolderPath, RunsFolderName);
+
+    /// <summary>
+    /// Deletes the oldest run files when the total exceeds <see cref="MaxRunsPerDataset"/>.
+    /// </summary>
+    private static void PruneOldRuns(string runsDir)
+    {
+        var files = Directory.GetFiles(runsDir, "*-run.json")
+            .OrderByDescending(f => f)
+            .ToArray();
+
+        if (files.Length <= MaxRunsPerDataset)
+            return;
+
+        foreach (var file in files.Skip(MaxRunsPerDataset))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup; skip locked files
+            }
+        }
+    }
 }

@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Views.Controls;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -34,7 +35,6 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
-        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
 
     /// <summary>
@@ -46,7 +46,6 @@ public partial class TestRunsTabViewModel : ObservableObject
 
         RefreshCommand = new AsyncRelayCommand(LoadRunsAsync);
         DeleteRunCommand = new AsyncRelayCommand<TestRunViewModel?>(DeleteRunAsync);
-        DeleteOlderRunsCommand = new AsyncRelayCommand(DeleteOlderRunsAsync, () => HasMultipleRuns);
     }
 
     /// <summary>
@@ -91,9 +90,9 @@ public partial class TestRunsTabViewModel : ObservableObject
     public bool HasRuns => Runs.Count > 0;
 
     /// <summary>
-    /// Whether more than one run exists, enabling bulk deletion.
+    /// Whether enough data points exist to render the score trend chart (at least 2 runs).
     /// </summary>
-    public bool HasMultipleRuns => Runs.Count > 1;
+    public bool HasTrendData => TrendDataPoints.Count >= 2;
 
     /// <summary>
     /// Whether a live analysis is currently in progress.
@@ -127,6 +126,11 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<TestRunViewModel> Runs { get; } = [];
 
+    /// <summary>
+    /// Score trend data points for the trend line chart (oldest first).
+    /// </summary>
+    public ObservableCollection<ScoreTrendDataPoint> TrendDataPoints { get; } = [];
+
     #endregion
 
     #region Commands
@@ -140,11 +144,6 @@ public partial class TestRunsTabViewModel : ObservableObject
     /// Deletes a specific run from disk and the list.
     /// </summary>
     public IAsyncRelayCommand<TestRunViewModel?> DeleteRunCommand { get; }
-
-    /// <summary>
-    /// Deletes all runs except the most recent one.
-    /// </summary>
-    public IAsyncRelayCommand DeleteOlderRunsCommand { get; }
 
     #endregion
 
@@ -195,6 +194,7 @@ public partial class TestRunsTabViewModel : ObservableObject
                 if (Runs.Count > 0)
                     SelectedRun = Runs[0];
 
+                RebuildTrendData();
                 NotifyRunCountChanged();
             });
         }
@@ -227,47 +227,7 @@ public partial class TestRunsTabViewModel : ObservableObject
             if (SelectedRun == runVm)
                 SelectedRun = Runs.Count > 0 ? Runs[0] : null;
 
-            NotifyRunCountChanged();
-        });
-    }
-
-    /// <summary>
-    /// Deletes all runs except the most recent one.
-    /// </summary>
-    private async Task DeleteOlderRunsAsync()
-    {
-        if (string.IsNullOrWhiteSpace(_datasetFolderPath) || Runs.Count <= 1)
-            return;
-
-        var count = Runs.Count - 1;
-        if (DialogService is not null)
-        {
-            var confirmed = await DialogService.ShowConfirmAsync(
-                "Delete Older Runs",
-                $"Delete {count} older run(s) and keep only the latest?\n\nThis action cannot be undone.");
-
-            if (!confirmed)
-                return;
-        }
-
-        var olderRuns = Runs.Skip(1).ToList();
-
-        await Task.Run(() =>
-        {
-            foreach (var run in olderRuns)
-            {
-                _store.Delete(_datasetFolderPath, run.Record);
-            }
-        });
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            foreach (var run in olderRuns)
-            {
-                Runs.Remove(run);
-            }
-
-            SelectedRun = Runs.Count > 0 ? Runs[0] : null;
+            RebuildTrendData();
             NotifyRunCountChanged();
         });
     }
@@ -340,8 +300,24 @@ public partial class TestRunsTabViewModel : ObservableObject
     private void NotifyRunCountChanged()
     {
         OnPropertyChanged(nameof(HasRuns));
-        OnPropertyChanged(nameof(HasMultipleRuns));
-        DeleteOlderRunsCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasTrendData));
+    }
+
+    /// <summary>
+    /// Rebuilds the trend data points from the current run list (oldest first).
+    /// </summary>
+    private void RebuildTrendData()
+    {
+        TrendDataPoints.Clear();
+        foreach (var run in Runs.Reverse())
+        {
+            if (run.CompositeScore is not { } score)
+                continue;
+
+            var dateLabel = run.Record.AnalyzedAtUtc.ToLocalTime().ToString("dd MMM");
+            var tooltip = $"{score:F0} — {run.Timestamp}";
+            TrendDataPoints.Add(new ScoreTrendDataPoint(score, dateLabel, tooltip));
+        }
     }
 }
 

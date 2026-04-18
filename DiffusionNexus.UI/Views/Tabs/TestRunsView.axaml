@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:models="using:DiffusionNexus.Domain.Models"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.TestRunsView"
              x:DataType="vmTabs:TestRunsTabViewModel">
@@ -45,18 +46,8 @@
         <Grid RowDefinitions="Auto,*">
 
           <Border Grid.Row="0" Padding="12,10" Background="#222" BorderBrush="#333" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*">
               <TextBlock Grid.Column="0" Text="Runs" FontSize="14" FontWeight="SemiBold" Opacity="0.9"/>
-              <Button Grid.Column="1"
-                      Content="Delete Older"
-                      Command="{Binding DeleteOlderRunsCommand}"
-                      Padding="8,4"
-                      FontSize="11"
-                      Background="#5C2828"
-                      Foreground="#FF8A8A"
-                      CornerRadius="3"
-                      VerticalAlignment="Center"
-                      ToolTip.Tip="Delete all runs except the most recent one"/>
             </Grid>
           </Border>
 
@@ -276,36 +267,49 @@
             </StackPanel>
           </Grid>
 
-          <!-- Category scores -->
-          <Border Background="#222" CornerRadius="8" Padding="16" Margin="0,4,0,0">
-            <StackPanel Spacing="10">
-              <TextBlock Text="Category Scores" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
-              <ItemsControl ItemsSource="{Binding CategoryScores}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vmTabs:CategoryScoreViewModel">
-                    <Grid ColumnDefinitions="120,*,Auto,Auto" Margin="0,3">
-                      <TextBlock Grid.Column="0" Text="{Binding CategoryName}"
-                                 FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
-                      <ProgressBar Grid.Column="1" Minimum="0" Maximum="100"
-                                   Value="{Binding Score}"
-                                   Height="10" CornerRadius="5"
-                                   VerticalAlignment="Center" Margin="8,0"/>
-                      <TextBlock Grid.Column="2"
-                                 Text="{Binding Score, StringFormat={}{0:F0}}"
-                                 FontSize="12" FontWeight="SemiBold"
-                                 Foreground="{Binding ScoreColor}"
-                                 VerticalAlignment="Center" MinWidth="30"
-                                 TextAlignment="Right"/>
-                      <TextBlock Grid.Column="3"
-                                 Text="{Binding Weight}"
-                                 FontSize="10" Opacity="0.4"
-                                 VerticalAlignment="Center" Margin="8,0,0,0"/>
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </Border>
+          <!-- Radar chart + Category scores side by side -->
+          <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
+            <!-- Radar chart -->
+            <Border Grid.Column="0" Background="#222" CornerRadius="8" Padding="16" Margin="0,0,4,0">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Category Radar" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+                <controls:RadarChart DataPoints="{Binding CategoryScores}"
+                                     Height="220"
+                                     HorizontalAlignment="Stretch"/>
+              </StackPanel>
+            </Border>
+
+            <!-- Category scores -->
+            <Border Grid.Column="1" Background="#222" CornerRadius="8" Padding="16" Margin="4,0,0,0">
+              <StackPanel Spacing="10" VerticalAlignment="Center">
+                <TextBlock Text="Category Scores" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+                <ItemsControl ItemsSource="{Binding CategoryScores}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vmTabs:CategoryScoreViewModel">
+                      <Grid ColumnDefinitions="120,*,Auto,Auto" Margin="0,3">
+                        <TextBlock Grid.Column="0" Text="{Binding CategoryName}"
+                                   FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Column="1" Minimum="0" Maximum="100"
+                                     Value="{Binding Score}"
+                                     Height="10" CornerRadius="5"
+                                     VerticalAlignment="Center" Margin="8,0"/>
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding Score, StringFormat={}{0:F0}}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{Binding ScoreColor}"
+                                   VerticalAlignment="Center" MinWidth="30"
+                                   TextAlignment="Right"/>
+                        <TextBlock Grid.Column="3"
+                                   Text="{Binding Weight}"
+                                   FontSize="10" Opacity="0.4"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+          </Grid>
 
                     <!-- Summary stats -->
           <Border Background="#222" CornerRadius="8" Padding="16">
@@ -444,6 +448,17 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <!-- Score trend line chart -->
+          <Border Background="#222" CornerRadius="8" Padding="16"
+                  IsVisible="{Binding $parent[UserControl].((vmTabs:TestRunsTabViewModel)DataContext).HasTrendData}">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Score Trend" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+              <controls:ScoreTrendChart DataPoints="{Binding $parent[UserControl].((vmTabs:TestRunsTabViewModel)DataContext).TrendDataPoints}"
+                                        Height="180"
+                                        HorizontalAlignment="Stretch"/>
             </StackPanel>
           </Border>
 
