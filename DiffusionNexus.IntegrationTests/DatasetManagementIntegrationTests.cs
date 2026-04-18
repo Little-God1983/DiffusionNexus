@@ -216,5 +216,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<int> ShowDuplicateFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.DuplicateClusterItemViewModel> clusters) =>
             Task.FromResult(0);
+
+        public Task<int> ShowColorFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.ColorDistributionItemViewModel> images) =>
+            Task.FromResult(0);
     }
 }

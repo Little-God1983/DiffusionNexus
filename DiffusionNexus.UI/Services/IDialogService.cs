@@ -337,6 +337,13 @@ public interface IDialogService
     /// <param name="clusters">Duplicate clusters to resolve.</param>
     /// <returns>Number of images deleted during the session.</returns>
     Task<int> ShowDuplicateFixerAsync(IEnumerable<DuplicateClusterItemViewModel> clusters);
+
+    /// <summary>
+    /// Shows the color fixer window for resolving color distribution issues.
+    /// </summary>
+    /// <param name="images">Images with color issues to fix.</param>
+    /// <returns>Number of images fixed during the session.</returns>
+    Task<int> ShowColorFixerAsync(IEnumerable<ColorDistributionItemViewModel> images);
 }
 
 /// <summary>

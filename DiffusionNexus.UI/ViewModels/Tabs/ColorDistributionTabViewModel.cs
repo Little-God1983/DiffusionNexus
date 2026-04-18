@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -66,8 +67,10 @@ public class ColorDistributionItemViewModel : ObservableObject
 /// ViewModel for the Color Distribution detail section within the Image Analysis dashboard.
 /// Shows color consistency issues: grayscale mixing, color-cast, palette outliers.
 /// </summary>
-public class ColorDistributionTabViewModel : ObservableObject
+public class ColorDistributionTabViewModel : ObservableObject, IDialogServiceAware
 {
+    /// <inheritdoc />
+    public IDialogService? DialogService { get; set; }
     private readonly ColorDistributionAnalyzer? _analyzer;
 
     private string _folderPath = string.Empty;
@@ -89,6 +92,7 @@ public class ColorDistributionTabViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(analyzer);
         _analyzer = analyzer;
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     /// <summary>
@@ -97,6 +101,7 @@ public class ColorDistributionTabViewModel : ObservableObject
     public ColorDistributionTabViewModel()
     {
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     #region Observable Properties
@@ -128,8 +133,18 @@ public class ColorDistributionTabViewModel : ObservableObject
     public bool HasResults
     {
         get => _hasResults;
-        private set => SetProperty(ref _hasResults, value);
+        private set
+        {
+            if (SetProperty(ref _hasResults, value))
+            {
+                OnPropertyChanged(nameof(CanOpenFixer));
+                OpenFixerCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
+
+    /// <summary>Can the fixer be opened (issues exist to fix).</summary>
+    public bool CanOpenFixer => HasResults && Issues.Count > 0;
 
     /// <summary>Can the analyze command execute.</summary>
     public bool CanAnalyze => !string.IsNullOrEmpty(_folderPath) && !IsAnalyzing;
@@ -189,6 +204,9 @@ public class ColorDistributionTabViewModel : ObservableObject
 
     /// <summary>Analyze command.</summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
+
+    /// <summary>Opens the color fixer window.</summary>
+    public IAsyncRelayCommand OpenFixerCommand { get; }
 
     #endregion
 
@@ -285,6 +303,22 @@ public class ColorDistributionTabViewModel : ObservableObject
             if (_imageItemsByPath.TryGetValue(filePath, out var item))
                 AffectedImages.Add(item);
         }
+    }
+
+    private async Task OpenFixerAsync()
+    {
+        if (DialogService is null || !HasResults || Issues.Count == 0)
+            return;
+
+        var problematicImages = _imageItemsByPath.Values
+            .Where(i => i.Score < 80)
+            .OrderBy(i => i.Score)
+            .ToList();
+
+        if (problematicImages.Count == 0)
+            return;
+
+        await DialogService.ShowColorFixerAsync(problematicImages);
     }
 
     private async Task AnalyzeAsync()

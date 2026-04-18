@@ -1,0 +1,162 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.ColorFixerWindow"
+        x:DataType="vm:ColorFixerViewModel"
+        Title="Fix Color Issues"
+        Width="1100" Height="700"
+        MinWidth="800" MinHeight="500"
+        WindowStartupLocation="CenterOwner"
+        Background="#1A1A1A">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- TOP: Action Bar -->
+    <Border Grid.Row="0" Background="#222" Padding="16,12" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Fix Color Issues"
+                   FontSize="16" FontWeight="SemiBold"
+                   Opacity="0.9"
+                   VerticalAlignment="Center"/>
+
+        <Button Grid.Column="1"
+                Content="Fix All Remaining"
+                Command="{Binding FixAllCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Automatically fix all remaining images"/>
+
+        <TextBlock Grid.Column="2"
+                   Text="{Binding ProgressText}"
+                   FontSize="13"
+                   Opacity="0.6"
+                   VerticalAlignment="Center"
+                   Margin="8,0,0,0"/>
+      </Grid>
+    </Border>
+
+    <!-- MAIN: Left image list + Right preview -->
+    <Grid Grid.Row="1" ColumnDefinitions="350,*">
+
+      <!-- LEFT: Image List -->
+      <Border Grid.Column="0" Background="#1A1A1A" BorderBrush="#333" BorderThickness="0,0,1,0">
+        <ListBox ItemsSource="{Binding Images}"
+                 SelectedItem="{Binding SelectedImage, Mode=TwoWay}"
+                 Background="Transparent">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:ColorFixerImageItem">
+              <Border Padding="10,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <TextBlock Text="✓" FontSize="14" Foreground="#4CAF50"
+                               IsVisible="{Binding IsFixed}"/>
+                    <TextBlock Text="—" FontSize="14" Foreground="#666"
+                               IsVisible="{Binding IsSkipped}"/>
+                    <TextBlock Text="●" FontSize="10" Foreground="#FFA726"
+                               IsVisible="{Binding !IsResolved}"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="{Binding FileName}"
+                               FontSize="12" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Detail}"
+                               FontSize="11" Opacity="0.6"
+                               TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding Score, StringFormat={}{0:F0}}"
+                             FontSize="14" FontWeight="Bold"
+                             Foreground="{Binding ScoreColor}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0"/>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+
+      <!-- RIGHT: Preview + Actions -->
+      <Border Grid.Column="1" Background="#1E1E1E">
+        <Panel>
+          <!-- No selection -->
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                      IsVisible="{Binding !HasSelectedImage}">
+            <TextBlock Text="Select an image to preview and fix"
+                       Opacity="0.4" FontSize="14" HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <!-- Selected image detail -->
+          <Grid RowDefinitions="*,Auto" IsVisible="{Binding HasSelectedImage}">
+            <!-- Image preview -->
+            <ScrollViewer Grid.Row="0" Padding="20">
+              <StackPanel Spacing="12" HorizontalAlignment="Center">
+                <TextBlock Text="{Binding SelectedImage.FileName}"
+                           FontSize="16" FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding SelectedImage.Detail}"
+                           FontSize="13" Opacity="0.7"
+                           TextWrapping="Wrap"
+                           MaxWidth="500"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"/>
+                <Border Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8">
+                  <Image Source="{Binding SelectedImage.FilePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                         MaxWidth="500" MaxHeight="400" Stretch="Uniform"/>
+                </Border>
+              </StackPanel>
+            </ScrollViewer>
+
+            <!-- Action buttons for selected image -->
+            <Border Grid.Row="1" Background="#222" Padding="16,10"
+                    BorderBrush="#333" BorderThickness="0,1,0,0">
+              <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                <Button Command="{Binding FixSelectedCommand}"
+                        Padding="20,10"
+                        Background="#4CAF50"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Auto-correct white balance and brightness">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="🔧"/>
+                    <TextBlock Text="Auto-Fix This Image"/>
+                  </StackPanel>
+                </Button>
+                <Button Command="{Binding SkipSelectedCommand}"
+                        Padding="20,10"
+                        Background="#555"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Skip this image without changes">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="⏭"/>
+                    <TextBlock Text="Skip"/>
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Panel>
+      </Border>
+    </Grid>
+
+    <!-- BOTTOM: Status -->
+    <Border Grid.Row="2" Background="#1A1A1A" Padding="16,8"
+            BorderBrush="#333" BorderThickness="0,1,0,0">
+      <TextBlock Text="{Binding ProgressText}"
+                 FontSize="13" Opacity="0.6"/>
+    </Border>
+
+  </Grid>
+</Window>
