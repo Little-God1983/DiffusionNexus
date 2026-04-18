@@ -53,7 +53,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         AnalysisRunStore runStore,
         BucketAnalyzer? bucketAnalyzer = null,
         IEnumerable<IImageQualityCheck>? imageChecks = null,
-        DuplicateDetector? duplicateDetector = null)
+        DuplicateDetector? duplicateDetector = null,
+        ColorDistributionAnalyzer? colorDistributionAnalyzer = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(runStore);
@@ -62,7 +63,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         _duplicateDetector = duplicateDetector;
 
         ImageAnalysisTab = bucketAnalyzer is not null
-            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector)
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector, colorDistributionAnalyzer)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
@@ -464,6 +465,14 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 {
                     ImageAnalysisTab.DuplicateDetectionTab.ApplyResults(dupResult, _duplicateDetector.LastClusters);
                 }
+            }
+
+            // Propagate color distribution results to the Color Distribution sub-tab
+            var colorResult = report.ImageCheckResults
+                .FirstOrDefault(r => r.CheckName == ColorDistributionAnalyzer.CheckDisplayName);
+            if (colorResult is not null)
+            {
+                ImageAnalysisTab.ColorDistributionTab.ApplyResults(colorResult);
             }
 
             // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated

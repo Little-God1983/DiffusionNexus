@@ -242,7 +242,7 @@ public class ImageQualityTabViewModel : ObservableObject
         }
 
         // Collect all per-image scores by file path
-        var byFile = new Dictionary<string, (double? blur, string? blurDetail, double? exposure, string? exposureDetail)>(
+        var byFile = new Dictionary<string, (double? blur, string? blurDetail, double? exposure, string? exposureDetail, double? noise, string? noiseDetail, double? color, string? colorDetail)>(
             StringComparer.OrdinalIgnoreCase);
 
         foreach (var result in results)
@@ -250,12 +250,16 @@ public class ImageQualityTabViewModel : ObservableObject
             foreach (var pis in result.PerImageScores)
             {
                 if (!byFile.TryGetValue(pis.FilePath, out var entry))
-                    entry = (null, null, null, null);
+                    entry = (null, null, null, null, null, null, null, null);
 
                 if (result.CheckName == "Blur Detection")
-                    entry = (pis.Score, pis.Detail, entry.exposure, entry.exposureDetail);
+                    entry = (pis.Score, pis.Detail, entry.exposure, entry.exposureDetail, entry.noise, entry.noiseDetail, entry.color, entry.colorDetail);
                 else if (result.CheckName == "Exposure Analysis")
-                    entry = (entry.blur, entry.blurDetail, pis.Score, pis.Detail);
+                    entry = (entry.blur, entry.blurDetail, pis.Score, pis.Detail, entry.noise, entry.noiseDetail, entry.color, entry.colorDetail);
+                else if (result.CheckName == "Noise Estimation")
+                    entry = (entry.blur, entry.blurDetail, entry.exposure, entry.exposureDetail, pis.Score, pis.Detail, entry.color, entry.colorDetail);
+                else if (result.CheckName == "Color Distribution")
+                    entry = (entry.blur, entry.blurDetail, entry.exposure, entry.exposureDetail, entry.noise, entry.noiseDetail, pis.Score, pis.Detail);
 
                 byFile[pis.FilePath] = entry;
             }
@@ -270,6 +274,8 @@ public class ImageQualityTabViewModel : ObservableObject
             var allScores = new List<double>();
             if (scores.blur.HasValue) allScores.Add(scores.blur.Value);
             if (scores.exposure.HasValue) allScores.Add(scores.exposure.Value);
+            if (scores.noise.HasValue) allScores.Add(scores.noise.Value);
+            if (scores.color.HasValue) allScores.Add(scores.color.Value);
 
             double overall = allScores.Count > 0 ? allScores.Average() : 0;
             overall = Math.Round(overall, 1);
@@ -279,8 +285,12 @@ public class ImageQualityTabViewModel : ObservableObject
                 breakdown.Add($"Sharpness: {scores.blur.Value:F0}/100 — {scores.blurDetail}");
             if (scores.exposure.HasValue)
                 breakdown.Add($"Exposure: {scores.exposure.Value:F0}/100 — {scores.exposureDetail}");
+            if (scores.noise.HasValue)
+                breakdown.Add($"Noise: {scores.noise.Value:F0}/100 — {scores.noiseDetail}");
+            if (scores.color.HasValue)
+                breakdown.Add($"Color: {scores.color.Value:F0}/100 — {scores.colorDetail}");
 
-            string verdict = BuildVerdict(scores.blur, scores.exposure);
+            string verdict = BuildVerdict(scores.blur, scores.exposure, scores.noise, scores.color);
 
             var item = new ImageQualityItemViewModel
             {
@@ -341,7 +351,7 @@ public class ImageQualityTabViewModel : ObservableObject
         }
     }
 
-    private static string BuildVerdict(double? blur, double? exposure)
+    private static string BuildVerdict(double? blur, double? exposure, double? noise, double? color)
     {
         var parts = new List<string>();
 
@@ -366,6 +376,27 @@ public class ImageQualityTabViewModel : ObservableObject
                 < 65 => "Exposure could be better \u2014 review",
                 < 80 => "Acceptable exposure",
                 _ => "Well exposed"
+            });
+        }
+
+        if (noise.HasValue)
+        {
+            parts.Add(noise.Value switch
+            {
+                < 20 => "Very noisy \u2014 denoise or replace",
+                < 40 => "Noisy \u2014 consider denoising",
+                < 70 => "Slight noise \u2014 acceptable",
+                _ => "Clean"
+            });
+        }
+
+        if (color.HasValue)
+        {
+            parts.Add(color.Value switch
+            {
+                < 50 => "Color issues detected \u2014 review",
+                < 75 => "Minor color concerns",
+                _ => "Good color distribution"
             });
         }
 

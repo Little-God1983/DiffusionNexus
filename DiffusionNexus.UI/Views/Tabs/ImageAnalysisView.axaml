@@ -123,6 +123,10 @@
         <views:DuplicateDetectionView DataContext="{Binding DuplicateDetectionTab}"/>
       </Panel>
 
+      <Panel IsVisible="{Binding IsColorDistributionSelected}">
+        <views:ColorDistributionView DataContext="{Binding ColorDistributionTab}"/>
+      </Panel>
+
     </Panel>
 
   </Grid>
