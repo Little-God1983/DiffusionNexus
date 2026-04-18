@@ -23,6 +23,11 @@
     <Style Selector="Button.dashboard-card:pointerover">
       <Setter Property="Background" Value="#2A2A2A"/>
     </Style>
+    <Style Selector="Button.dashboard-card[Tag=True]">
+      <Setter Property="Background" Value="#2A3A2A"/>
+      <Setter Property="BorderBrush" Value="#4CAF50"/>
+      <Setter Property="BorderThickness" Value="2"/>
+    </Style>
 
     <!-- Indeterminate progress bar for analyzing state -->
     <Style Selector="ProgressBar.card-progress">
