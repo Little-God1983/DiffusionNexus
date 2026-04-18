@@ -8,8 +8,8 @@
         x:Class="DiffusionNexus.UI.Views.Dialogs.ColorFixerWindow"
         x:DataType="vm:ColorFixerViewModel"
         Title="Fix Color Issues"
-        Width="1100" Height="700"
-        MinWidth="800" MinHeight="500"
+        Width="1300" Height="750"
+        MinWidth="900" MinHeight="550"
         WindowStartupLocation="CenterOwner"
         Background="#1A1A1A">
 
@@ -106,10 +106,49 @@
                 <TextBlock Text="{Binding SelectedImage.Detail}"
                            FontSize="13" Opacity="0.7"
                            TextWrapping="Wrap"
-                           MaxWidth="500"
+                           MaxWidth="700"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"/>
-                <Border Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8">
+
+                <!-- Loading indicator while preview generates -->
+                <StackPanel Orientation="Horizontal" Spacing="8"
+                            HorizontalAlignment="Center"
+                            IsVisible="{Binding SelectedImage.IsGeneratingPreview}">
+                  <TextBlock Text="Generating preview…" FontSize="13" Opacity="0.5"/>
+                </StackPanel>
+
+                <!-- Side-by-side Before / After -->
+                <Grid ColumnDefinitions="*,Auto,*" Margin="0,8"
+                      IsVisible="{Binding SelectedImage.HasPreview}">
+                  <!-- Before -->
+                  <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Before" FontSize="14" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Opacity="0.7"/>
+                    <Border Background="#1A1A1A" CornerRadius="8" Padding="4">
+                      <Image Source="{Binding SelectedImage.BeforeBitmap}"
+                             MaxHeight="350" Stretch="Uniform"/>
+                    </Border>
+                  </StackPanel>
+
+                  <!-- Arrow separator -->
+                  <TextBlock Grid.Column="1" Text="→" FontSize="24"
+                             VerticalAlignment="Center" Margin="12,20,12,0"
+                             Opacity="0.4"/>
+
+                  <!-- After -->
+                  <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="After" FontSize="14" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Foreground="#4CAF50"/>
+                    <Border Background="#1A1A1A" CornerRadius="8" Padding="4">
+                      <Image Source="{Binding SelectedImage.AfterBitmap}"
+                             MaxHeight="350" Stretch="Uniform"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+
+                <!-- Fallback: show original image while preview loads -->
+                <Border Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8"
+                        IsVisible="{Binding !SelectedImage.HasPreview}">
                   <Image Source="{Binding SelectedImage.FilePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
                          MaxWidth="500" MaxHeight="400" Stretch="Uniform"/>
                 </Border>

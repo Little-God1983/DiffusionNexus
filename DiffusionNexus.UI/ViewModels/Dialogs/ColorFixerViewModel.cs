@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
@@ -78,6 +79,24 @@ public partial class ColorFixerImageItem : ObservableObject
 
     /// <summary>Status color for display.</summary>
     public string StatusColor => IsFixed ? "#4CAF50" : IsSkipped ? "#666" : "#FFA726";
+
+    /// <summary>Avalonia bitmap of the original image (before any fix).</summary>
+    [ObservableProperty]
+    private Bitmap? _beforeBitmap;
+
+    /// <summary>Avalonia bitmap showing the predicted result after auto-fix.</summary>
+    [ObservableProperty]
+    private Bitmap? _afterBitmap;
+
+    /// <summary>Whether the preview has been generated.</summary>
+    public bool HasPreview => BeforeBitmap is not null && AfterBitmap is not null;
+
+    /// <summary>Notifies the UI that the preview state has changed.</summary>
+    public void NotifyPreviewChanged() => OnPropertyChanged(nameof(HasPreview));
+
+    /// <summary>Whether the preview is currently being generated.</summary>
+    [ObservableProperty]
+    private bool _isGeneratingPreview;
 }
 
 /// <summary>
@@ -108,6 +127,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasSelectedImage));
                 FixSelectedCommand.NotifyCanExecuteChanged();
                 SkipSelectedCommand.NotifyCanExecuteChanged();
+                _ = GeneratePreviewAsync(value);
             }
         }
     }
@@ -241,79 +261,7 @@ public partial class ColorFixerViewModel : ObservableObject
             await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
-
-                // Compute per-channel averages to detect color cast
-                long totalR = 0, totalG = 0, totalB = 0;
-                long pixelCount = 0;
-
-                image.ProcessPixelRows(accessor =>
-                {
-                    for (int y = 0; y < accessor.Height; y++)
-                    {
-                        var row = accessor.GetRowSpan(y);
-                        for (int x = 0; x < row.Length; x++)
-                        {
-                            var pixel = row[x];
-                            totalR += pixel.R;
-                            totalG += pixel.G;
-                            totalB += pixel.B;
-                            pixelCount++;
-                        }
-                    }
-                });
-
-                if (pixelCount == 0) return;
-
-                double avgR = totalR / (double)pixelCount;
-                double avgG = totalG / (double)pixelCount;
-                double avgB = totalB / (double)pixelCount;
-                double avgGray = (avgR + avgG + avgB) / 3.0;
-
-                // White balance correction: scale channels toward neutral gray
-                float scaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
-                float scaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
-                float scaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
-
-                bool needsWhiteBalance = Math.Abs(scaleR - 1) > 0.05 || Math.Abs(scaleG - 1) > 0.05 || Math.Abs(scaleB - 1) > 0.05;
-
-                // Brightness correction: normalize if too dark or too bright
-                bool isDark = avgGray < 38; // ~0.15 * 255
-                bool isBright = avgGray > 230; // ~0.9 * 255
-
-                if (needsWhiteBalance)
-                {
-                    image.ProcessPixelRows(accessor =>
-                    {
-                        for (int y = 0; y < accessor.Height; y++)
-                        {
-                            var row = accessor.GetRowSpan(y);
-                            for (int x = 0; x < row.Length; x++)
-                            {
-                                ref var pixel = ref row[x];
-                                pixel.R = ClampByte(pixel.R * scaleR);
-                                pixel.G = ClampByte(pixel.G * scaleG);
-                                pixel.B = ClampByte(pixel.B * scaleB);
-                            }
-                        }
-                    });
-                }
-
-                if (isDark)
-                {
-                    // Increase brightness
-                    float brightnessFactor = (float)(128.0 / Math.Max(avgGray, 1));
-                    brightnessFactor = Math.Min(brightnessFactor, 2.5f); // Cap at 2.5x
-                    image.Mutate(ctx => ctx.Brightness(brightnessFactor));
-                }
-                else if (isBright)
-                {
-                    // Reduce brightness
-                    float brightnessFactor = (float)(200.0 / Math.Max(avgGray, 1));
-                    brightnessFactor = Math.Max(brightnessFactor, 0.5f); // Floor at 0.5x
-                    image.Mutate(ctx => ctx.Brightness(brightnessFactor));
-                }
-
-                // Save back (overwrite original)
+                ApplyColorCorrection(image);
                 image.Save(item.FilePath);
             });
 
@@ -331,6 +279,130 @@ public partial class ColorFixerViewModel : ObservableObject
         finally
         {
             item.IsProcessing = false;
+        }
+    }
+
+    /// <summary>
+    /// Generates before/after preview bitmaps for the selected image.
+    /// The "after" preview applies the same correction algorithm without saving.
+    /// </summary>
+    private async Task GeneratePreviewAsync(ColorFixerImageItem? item)
+    {
+        if (item is null || !File.Exists(item.FilePath))
+            return;
+
+        if (item.HasPreview)
+            return;
+
+        item.IsGeneratingPreview = true;
+        try
+        {
+            var (before, after) = await Task.Run(() =>
+            {
+                using var image = Image.Load<Rgba32>(item.FilePath);
+
+                // Generate "before" bitmap
+                using var beforeStream = new MemoryStream();
+                image.SaveAsPng(beforeStream);
+                beforeStream.Position = 0;
+                var beforeBmp = new Bitmap(beforeStream);
+
+                // Apply the same color correction to a copy for "after"
+                using var corrected = image.Clone();
+                ApplyColorCorrection(corrected);
+
+                using var afterStream = new MemoryStream();
+                corrected.SaveAsPng(afterStream);
+                afterStream.Position = 0;
+                var afterBmp = new Bitmap(afterStream);
+
+                return (beforeBmp, afterBmp);
+            });
+
+            item.BeforeBitmap = before;
+            item.AfterBitmap = after;
+            item.NotifyPreviewChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to generate preview for {FilePath}", item.FilePath);
+        }
+        finally
+        {
+            item.IsGeneratingPreview = false;
+        }
+    }
+
+    /// <summary>
+    /// Applies white balance and brightness correction to an image in-place.
+    /// Shared logic between preview generation and actual fixing.
+    /// </summary>
+    private static void ApplyColorCorrection(Image<Rgba32> image)
+    {
+        long totalR = 0, totalG = 0, totalB = 0;
+        long pixelCount = 0;
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    var pixel = row[x];
+                    totalR += pixel.R;
+                    totalG += pixel.G;
+                    totalB += pixel.B;
+                    pixelCount++;
+                }
+            }
+        });
+
+        if (pixelCount == 0) return;
+
+        double avgR = totalR / (double)pixelCount;
+        double avgG = totalG / (double)pixelCount;
+        double avgB = totalB / (double)pixelCount;
+        double avgGray = (avgR + avgG + avgB) / 3.0;
+
+        float scaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
+        float scaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
+        float scaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
+
+        bool needsWhiteBalance = Math.Abs(scaleR - 1) > 0.05 || Math.Abs(scaleG - 1) > 0.05 || Math.Abs(scaleB - 1) > 0.05;
+
+        bool isDark = avgGray < 38;
+        bool isBright = avgGray > 230;
+
+        if (needsWhiteBalance)
+        {
+            image.ProcessPixelRows(accessor =>
+            {
+                for (int y = 0; y < accessor.Height; y++)
+                {
+                    var row = accessor.GetRowSpan(y);
+                    for (int x = 0; x < row.Length; x++)
+                    {
+                        ref var pixel = ref row[x];
+                        pixel.R = ClampByte(pixel.R * scaleR);
+                        pixel.G = ClampByte(pixel.G * scaleG);
+                        pixel.B = ClampByte(pixel.B * scaleB);
+                    }
+                }
+            });
+        }
+
+        if (isDark)
+        {
+            float brightnessFactor = (float)(128.0 / Math.Max(avgGray, 1));
+            brightnessFactor = Math.Min(brightnessFactor, 2.5f);
+            image.Mutate(ctx => ctx.Brightness(brightnessFactor));
+        }
+        else if (isBright)
+        {
+            float brightnessFactor = (float)(200.0 / Math.Max(avgGray, 1));
+            brightnessFactor = Math.Max(brightnessFactor, 0.5f);
+            image.Mutate(ctx => ctx.Brightness(brightnessFactor));
         }
     }
 
