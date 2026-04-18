@@ -1,0 +1,177 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.DuplicateFixerWindow"
+        x:DataType="vm:DuplicateFixerViewModel"
+        Title="Fix Duplicate Issues"
+        Width="1200" Height="800"
+        MinWidth="800" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#1A1A1A">
+
+  <Grid RowDefinitions="*,Auto,Auto">
+
+    <!-- TOP: Image Comparer -->
+    <Panel Grid.Row="0">
+      <controls:ImageCompareControl
+          LeftImagePath="{Binding LeftComparePath}"
+          RightImagePath="{Binding RightComparePath}"
+          SliderValue="50"
+          IsVisible="{Binding HasSelectedCluster}"/>
+
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                  IsVisible="{Binding !HasSelectedCluster}">
+        <TextBlock Text="&#x1F5BC;" FontSize="64" Opacity="0.2" HorizontalAlignment="Center"/>
+        <TextBlock Text="Select a duplicate cluster below to compare images"
+                   Opacity="0.3" HorizontalAlignment="Center" FontSize="14" Margin="0,8,0,0"/>
+      </StackPanel>
+    </Panel>
+
+    <!-- MIDDLE: Keep / Delete Action Bar -->
+    <Border Grid.Row="1" Background="#222" Padding="12,8" BorderBrush="#333" BorderThickness="0,1,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,*" VerticalAlignment="Center">
+
+        <!-- Left rating badge -->
+        <Border Grid.Column="1"
+                Background="{Binding SelectedLeftImage.RatingColor, FallbackValue=Transparent}"
+                CornerRadius="3" Padding="8,4" Margin="0,0,8,0"
+                IsVisible="{Binding SelectedLeftImage.HasRating, FallbackValue=False}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedLeftImage.RatingLabel}"
+                     FontSize="11" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+        <!-- Keep Left button -->
+        <Button Grid.Column="2"
+                Command="{Binding KeepLeftCommand}"
+                Padding="16,8"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Keep the left image and delete the right one">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="&#x2190;" FontSize="14"/>
+            <TextBlock Text="Keep Left"/>
+            <TextBlock Text="{Binding SelectedLeftImage.FileName, FallbackValue=''}"
+                       FontSize="11" Opacity="0.7" VerticalAlignment="Center"
+                       MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </Button>
+
+        <TextBlock Grid.Column="3" Text="or" Opacity="0.4" FontSize="13"
+                   VerticalAlignment="Center" Margin="16,0"/>
+
+        <!-- Keep Right button -->
+        <Button Grid.Column="4"
+                Command="{Binding KeepRightCommand}"
+                Padding="16,8"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Keep the right image and delete the left one">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Keep Right"/>
+            <TextBlock Text="{Binding SelectedRightImage.FileName, FallbackValue=''}"
+                       FontSize="11" Opacity="0.7" VerticalAlignment="Center"
+                       MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="&#x2192;" FontSize="14"/>
+          </StackPanel>
+        </Button>
+
+        <!-- Right rating badge -->
+        <Border Grid.Column="5"
+                Background="{Binding SelectedRightImage.RatingColor, FallbackValue=Transparent}"
+                CornerRadius="3" Padding="8,4" Margin="8,0,0,0"
+                IsVisible="{Binding SelectedRightImage.HasRating, FallbackValue=False}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedRightImage.RatingLabel}"
+                     FontSize="11" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+      </Grid>
+    </Border>
+
+    <!-- BOTTOM: Cluster List -->
+    <Border Grid.Row="2" Background="#1E1E1E" Padding="8" MaxHeight="240"
+            BorderBrush="#333" BorderThickness="0,0,0,0">
+      <Grid RowDefinitions="Auto,*">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="8,0,8,8">
+          <TextBlock Grid.Column="0" Text="Duplicate Clusters" FontWeight="SemiBold" FontSize="14"/>
+          <TextBlock Grid.Column="1"
+                     Text="{Binding DeletedCount, StringFormat={}{0} image(s) deleted}"
+                     FontSize="12" Opacity="0.5" VerticalAlignment="Center"/>
+        </Grid>
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+          <ListBox ItemsSource="{Binding Clusters}"
+                   SelectedItem="{Binding SelectedCluster, Mode=TwoWay}"
+                   Background="Transparent">
+            <ListBox.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="8"/>
+              </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:DuplicateFixerClusterItem">
+                <Border Background="#333" CornerRadius="6" Padding="10" Width="200">
+                  <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                      <TextBlock Grid.Column="0"
+                                 Text="{Binding SeverityIcon}"
+                                 FontSize="14"
+                                 Foreground="{Binding SeverityColor}"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,8,0"/>
+                      <StackPanel Grid.Column="1" Spacing="1">
+                        <TextBlock Text="{Binding GroupLabel}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding SimilarityDisplay}"
+                                   FontSize="10" Opacity="0.6"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="2"
+                                 Text="{Binding SimilarityPercent, StringFormat={}{0:F0}%}"
+                                 FontSize="14" FontWeight="Bold"
+                                 Foreground="{Binding SeverityColor}"
+                                 VerticalAlignment="Center"
+                                 Margin="8,0,0,0"/>
+                    </Grid>
+
+                    <TextBlock Text="&#x2713; Resolved" FontSize="11" Foreground="#4CAF50"
+                               IsVisible="{Binding IsResolved}" HorizontalAlignment="Center"/>
+
+                    <ItemsControl ItemsSource="{Binding Images}" IsVisible="{Binding !IsResolved}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <StackPanel Orientation="Horizontal" Spacing="4"/>
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:DuplicateFixerImageItem">
+                          <Border Background="#1A1A1A" CornerRadius="3" Padding="2">
+                            <ToolTip.Tip>
+                              <TextBlock Text="{Binding FileName}"/>
+                            </ToolTip.Tip>
+                            <Image Source="{Binding FilePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
+                                   Width="50" Height="50" Stretch="Uniform"/>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

@@ -213,5 +213,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             int datasetVersion,
             IEnumerable<TrainingRunCardViewModel> trainingRuns) =>
             Task.FromResult(ExportTrainingRunsResult.Cancelled());
+
+        public Task<int> ShowDuplicateFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.DuplicateClusterItemViewModel> clusters) =>
+            Task.FromResult(0);
     }
 }

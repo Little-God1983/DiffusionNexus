@@ -14,6 +14,7 @@ using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
@@ -700,7 +701,8 @@ public partial class App : Application
             sp.GetService<BucketAnalyzer>(),
             sp.GetService<IComfyUIReadinessService>(),
             sp.GetServices<IImageQualityCheck>(),
-            sp.GetService<AnalysisRunStore>()));
+            sp.GetService<AnalysisRunStore>(),
+            sp.GetService<DuplicateDetector>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

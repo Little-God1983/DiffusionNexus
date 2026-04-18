@@ -203,6 +203,11 @@ public class ImageQualityTabViewModel : ObservableObject
     public event Action<double, int, string>? AnalysisCompleted;
 
     /// <summary>
+    /// Raised when analysis begins running.
+    /// </summary>
+    public event Action? AnalysisStarted;
+
+    /// <summary>
     /// Updates the dataset folder path and resets state.
     /// </summary>
     public void RefreshContext(string folderPath)
@@ -373,6 +378,7 @@ public class ImageQualityTabViewModel : ObservableObject
             return;
 
         IsAnalyzing = true;
+        AnalysisStarted?.Invoke();
         try
         {
             var images = await Task.Run(() =>

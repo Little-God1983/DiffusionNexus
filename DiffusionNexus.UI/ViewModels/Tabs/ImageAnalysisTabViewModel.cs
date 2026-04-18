@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -15,8 +16,11 @@ public enum ImageAnalysisSection
     /// <summary>kohya_ss-style resolution bucketing analysis.</summary>
     BucketAnalysis,
 
-    /// <summary>Per-image technical quality (blur, exposure, noise).</summary>
-    ImageQuality
+    /// <summary>Per-image technical quality (blur, exposure, noise, JPEG artifacts).</summary>
+    ImageQuality,
+
+    /// <summary>Exact and near-duplicate image detection (SHA-256 + pHash).</summary>
+    DuplicateDetection
 }
 
 /// <summary>
@@ -28,6 +32,8 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
     private string _summary = "Not analyzed yet";
     private bool _hasResults;
     private bool _isSelected;
+    private bool _isAnalyzing;
+    private double _score;
 
     /// <summary>Display title shown on the card.</summary>
     public required string Title { get; init; }
@@ -52,7 +58,13 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
     public bool HasResults
     {
         get => _hasResults;
-        set => SetProperty(ref _hasResults, value);
+        set
+        {
+            if (SetProperty(ref _hasResults, value))
+            {
+                OnPropertyChanged(nameof(ScoreBorderColor));
+            }
+        }
     }
 
     /// <summary>Whether this card is currently selected in the dashboard.</summary>
@@ -61,6 +73,41 @@ public partial class AnalysisSectionCardViewModel : ObservableObject
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
     }
+
+    /// <summary>Whether analysis is currently running for this section.</summary>
+    public bool IsAnalyzing
+    {
+        get => _isAnalyzing;
+        set => SetProperty(ref _isAnalyzing, value);
+    }
+
+    /// <summary>Last analysis score (0–100). Used to determine border color.</summary>
+    public double Score
+    {
+        get => _score;
+        set
+        {
+            if (SetProperty(ref _score, value))
+            {
+                OnPropertyChanged(nameof(ScoreBorderColor));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Border color based on score thresholds:
+    /// &lt; 50 = red, 50–70 = orange, 70–90 = yellow, &gt; 90 = green.
+    /// Returns transparent when no results are available.
+    /// </summary>
+    public string ScoreBorderColor => !_hasResults
+        ? "Transparent"
+        : _score switch
+        {
+            > 90 => "#4CAF50",
+            > 70 => "#FFC107",
+            > 50 => "#FF9800",
+            _ => "#F44336"
+        };
 }
 
 /// <summary>
@@ -78,18 +125,26 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     /// </summary>
     /// <param name="bucketAnalyzer">The bucket analyzer service.</param>
     /// <param name="imageChecks">Optional image quality check implementations for the quality tab.</param>
-    public ImageAnalysisTabViewModel(BucketAnalyzer bucketAnalyzer, IEnumerable<IImageQualityCheck>? imageChecks = null)
+    public ImageAnalysisTabViewModel(BucketAnalyzer bucketAnalyzer, IEnumerable<IImageQualityCheck>? imageChecks = null, DuplicateDetector? duplicateDetector = null)
     {
         ArgumentNullException.ThrowIfNull(bucketAnalyzer);
 
         BucketAnalysisTab = new BucketAnalysisTabViewModel(bucketAnalyzer);
         BucketAnalysisTab.AnalysisCompleted += OnBucketAnalysisCompleted;
+        BucketAnalysisTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.BucketAnalysis);
         BucketAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
         ImageQualityTab = imageChecks is not null
             ? new ImageQualityTabViewModel(imageChecks)
             : new ImageQualityTabViewModel();
         ImageQualityTab.AnalysisCompleted += OnImageQualityAnalysisCompleted;
+        ImageQualityTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.ImageQuality);
+
+        DuplicateDetectionTab = duplicateDetector is not null
+            ? new DuplicateDetectionTabViewModel(duplicateDetector)
+            : new DuplicateDetectionTabViewModel();
+        DuplicateDetectionTab.AnalysisCompleted += OnDuplicateDetectionCompleted;
+        DuplicateDetectionTab.AnalysisStarted += () => OnAnalysisStarted(ImageAnalysisSection.DuplicateDetection);
 
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
@@ -108,6 +163,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     {
         BucketAnalysisTab = new BucketAnalysisTabViewModel();
         ImageQualityTab = new ImageQualityTabViewModel();
+        DuplicateDetectionTab = new DuplicateDetectionTabViewModel();
         InitializeCards();
         SelectCardCommand = new RelayCommand<AnalysisSectionCardViewModel?>(SelectCard);
 
@@ -123,6 +179,9 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     /// <summary>ViewModel for the Image Quality detail section.</summary>
     public ImageQualityTabViewModel ImageQualityTab { get; }
 
+    /// <summary>ViewModel for the Duplicate Detection detail section.</summary>
+    public DuplicateDetectionTabViewModel DuplicateDetectionTab { get; }
+
     /// <summary>Dashboard summary cards — one per analysis section.</summary>
     public ObservableCollection<AnalysisSectionCardViewModel> Cards { get; } = [];
 
@@ -137,6 +196,7 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasSelectedCard));
                 OnPropertyChanged(nameof(IsBucketAnalysisSelected));
                 OnPropertyChanged(nameof(IsImageQualitySelected));
+                OnPropertyChanged(nameof(IsDuplicateDetectionSelected));
             }
         }
     }
@@ -151,6 +211,10 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
     /// <summary>Whether the Image Quality section is currently active.</summary>
     public bool IsImageQualitySelected =>
         _selectedCard?.Section == ImageAnalysisSection.ImageQuality;
+
+    /// <summary>Whether the Duplicate Detection section is currently active.</summary>
+    public bool IsDuplicateDetectionSelected =>
+        _selectedCard?.Section == ImageAnalysisSection.DuplicateDetection;
 
     /// <summary>Command to select a dashboard card.</summary>
     public IRelayCommand<AnalysisSectionCardViewModel?> SelectCardCommand { get; }
@@ -171,12 +235,15 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         _folderPath = folderPath ?? string.Empty;
         BucketAnalysisTab.RefreshContext(_folderPath);
         ImageQualityTab.RefreshContext(_folderPath);
+        DuplicateDetectionTab.RefreshContext(_folderPath);
 
         // Reset card summaries when context changes
         foreach (var card in Cards)
         {
             card.Summary = "Not analyzed yet";
             card.HasResults = false;
+            card.IsAnalyzing = false;
+            card.Score = 0;
         }
     }
 
@@ -195,6 +262,8 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         card.Summary = issueCount > 0
             ? $"Score: {score:F0} ({scoreLabel}) · {issueCount} issue{(issueCount != 1 ? "s" : "")}"
             : $"Score: {score:F0} ({scoreLabel}) · No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
         card.HasResults = true;
     }
 
@@ -214,6 +283,14 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
             Icon = "\ud83d\udd0d",
             Section = ImageAnalysisSection.ImageQuality,
             Description = "Blur, exposure & sharpness analysis"
+        });
+
+        Cards.Add(new AnalysisSectionCardViewModel
+        {
+            Title = "Duplicate Detection",
+            Icon = "\ud83d\udd17",
+            Section = ImageAnalysisSection.DuplicateDetection,
+            Description = "Exact & near-duplicate image detection"
         });
     }
 
@@ -252,6 +329,8 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         card.Summary = issueCount > 0
             ? $"Score: {score:F0} ({scoreLabel}) \u00b7 {issueCount} issue{(issueCount != 1 ? "s" : "")}"
             : $"Score: {score:F0} ({scoreLabel}) \u00b7 No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
         card.HasResults = true;
     }
 
@@ -265,8 +344,38 @@ public partial class ImageAnalysisTabViewModel : ObservableObject
         UpdateImageQualitySummary(score, issueCount, scoreLabel);
     }
 
+    private void OnDuplicateDetectionCompleted(double score, int issueCount, string scoreLabel)
+    {
+        UpdateDuplicateDetectionSummary(score, issueCount, scoreLabel);
+    }
+
+    /// <summary>
+    /// Updates the Duplicate Detection dashboard card with the latest results.
+    /// </summary>
+    public void UpdateDuplicateDetectionSummary(double score, int issueCount, string scoreLabel)
+    {
+        var card = FindCard(ImageAnalysisSection.DuplicateDetection);
+        if (card is null) return;
+
+        card.Summary = issueCount > 0
+            ? $"Score: {score:F0} ({scoreLabel}) \u00b7 {issueCount} issue{(issueCount != 1 ? "s" : "")}"
+            : $"Score: {score:F0} ({scoreLabel}) \u00b7 No issues";
+        card.Score = score;
+        card.IsAnalyzing = false;
+        card.HasResults = true;
+    }
+
     private void OnFixDistributionRequested()
     {
         FixDistributionRequested?.Invoke();
+    }
+
+    private void OnAnalysisStarted(ImageAnalysisSection section)
+    {
+        var card = FindCard(section);
+        if (card is not null)
+        {
+            card.IsAnalyzing = true;
+        }
     }
 }

@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -19,6 +20,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly AnalysisPipeline? _pipeline;
     private readonly AnalysisRunStore _runStore;
+    private readonly DuplicateDetector? _duplicateDetector;
 
     private string _datasetFolderPath = string.Empty;
     private string _datasetLabel = string.Empty;
@@ -32,6 +34,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     private Issue? _selectedIssue;
     private AnalysisReport? _lastReport;
 
+    private int _selectedTabIndex;
     private double _compositeScore;
     private string _compositeScoreLabel = string.Empty;
     private string _compositeScoreColor = "#666";
@@ -49,15 +52,17 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         AnalysisPipeline pipeline,
         AnalysisRunStore runStore,
         BucketAnalyzer? bucketAnalyzer = null,
-        IEnumerable<IImageQualityCheck>? imageChecks = null)
+        IEnumerable<IImageQualityCheck>? imageChecks = null,
+        DuplicateDetector? duplicateDetector = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(runStore);
         _pipeline = pipeline;
         _runStore = runStore;
+        _duplicateDetector = duplicateDetector;
 
         ImageAnalysisTab = bucketAnalyzer is not null
-            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks)
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
@@ -123,6 +128,15 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public event Action? FixDistributionRequested;
 
     #region Observable Properties
+
+    /// <summary>
+    /// Index of the currently selected sub-tab (0 = Image Analysis, 1 = Caption Quality, 2 = Test Runs).
+    /// </summary>
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => SetProperty(ref _selectedTabIndex, value);
+    }
 
     /// <summary>
     /// Display label showing the active dataset name and version (e.g. "Ahkasha — V8").
@@ -381,9 +395,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     {
         if (_pipeline is null || !HasDatasetContext) return;
 
+        SelectedTabIndex = 2;
         IsAnalyzing = true;
         AnalysisStatusText = "Starting analysis…";
         AnalysisProgress = 0.0;
+        TestRunsTab.BeginLiveAnalysis();
         try
         {
             var config = BuildConfig();
@@ -393,6 +409,13 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             {
                 var elapsed = stopwatch.Elapsed;
                 var progress = AnalysisProgress;
+
+                // Only notify TestRunsTab for top-level check starts (e.g. "Running Spell Check…")
+                // Skip per-item progress like "Running Spell Check… caption 3 of 126"
+                if (s.StartsWith("Running ", StringComparison.Ordinal) && s.EndsWith('…') && !s.Contains(" of ", StringComparison.Ordinal))
+                {
+                    TestRunsTab.OnCheckStarted(s[8..^1]); // strip "Running " prefix and "…" suffix
+                }
 
                 if (progress > 0.05 && elapsed.TotalSeconds > 2)
                 {
@@ -409,6 +432,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 AnalysisStatusText = s;
             });
             var percentProgress = new Progress<double>(p => AnalysisProgress = p);
+            var checkScoreProgress = new Progress<CheckScore>(score =>
+                TestRunsTab.OnCheckScoreReported(score));
 
             // Run the full pipeline: captions + image quality + bucket scoring
             var report = await _pipeline.AnalyzeFullAsync(config, new BucketConfig
@@ -419,7 +444,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
                 MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
                 BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
-            }, percentProgress, statusProgress: statusProgress);
+            }, percentProgress, statusProgress: statusProgress, checkScoreProgress: checkScoreProgress);
 
             // Apply caption issues + composite score
             ApplyReport(report);
@@ -428,6 +453,17 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             if (report.ImageCheckResults.Count > 0)
             {
                 ImageAnalysisTab.ImageQualityTab.ApplyResults(report.ImageCheckResults);
+            }
+
+            // Propagate duplicate detection results to the Duplicate Detection sub-tab
+            if (_duplicateDetector is not null)
+            {
+                var dupResult = report.ImageCheckResults
+                    .FirstOrDefault(r => r.CheckName == DuplicateDetector.CheckDisplayName);
+                if (dupResult is not null)
+                {
+                    ImageAnalysisTab.DuplicateDetectionTab.ApplyResults(dupResult, _duplicateDetector.LastClusters);
+                }
             }
 
             // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated
@@ -454,6 +490,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         }
         finally
         {
+            TestRunsTab.EndLiveAnalysis();
             IsAnalyzing = false;
             AnalysisStatusText = string.Empty;
             AnalysisProgress = 0.0;
