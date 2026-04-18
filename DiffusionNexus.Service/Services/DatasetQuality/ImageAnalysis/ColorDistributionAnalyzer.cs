@@ -157,15 +157,15 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             double score = ComputePerImageScore(data, outlierFiles.Contains(data.FilePath));
 
             var detailParts = new List<string>();
-            if (data.IsGrayscale) detailParts.Add("Grayscale");
-            if (data.HasColorCast) detailParts.Add($"Color-cast (dominant hue: {data.DominantHueFraction:P0})");
-            if (data.IsVeryDark) detailParts.Add($"Very dark (V mean: {data.ValueMean:F2})");
-            if (data.IsVeryBright) detailParts.Add($"Very bright (V mean: {data.ValueMean:F2})");
-            if (outlierFiles.Contains(data.FilePath)) detailParts.Add("Histogram outlier");
+            if (data.IsGrayscale) detailParts.Add("Black & white image in a color dataset — consider converting to color or removing");
+            if (data.HasColorCast) detailParts.Add($"Strong color tint detected ({data.DominantHueFraction:P0} of pixels share the same hue) — try adjusting white balance");
+            if (data.IsVeryDark) detailParts.Add("Image is very dark / underexposed — try increasing brightness or re-shooting");
+            if (data.IsVeryBright) detailParts.Add("Image is very bright / overexposed — try reducing brightness or re-shooting");
+            if (outlierFiles.Contains(data.FilePath)) detailParts.Add("Colors look very different from the rest of the dataset — review if this image belongs");
 
             string detail = detailParts.Count > 0
                 ? string.Join("; ", detailParts)
-                : $"S mean: {data.SaturationMean:F2}, V mean: {data.ValueMean:F2}";
+                : "Colors look good — no issues detected";
 
             perImageScores.Add(new PerImageScore(data.FilePath, Math.Round(score, 1), detail));
         }
@@ -178,9 +178,11 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Warning,
-                Message = $"{colorCastFiles.Count} image(s) have a dominant color-cast.",
-                Details = "A single hue dominates >60% of saturated pixels, indicating a color-cast "
-                        + "(e.g. strong orange/blue tint). This can bias the model toward that tint.",
+                Message = $"{colorCastFiles.Count} image(s) have a strong color tint.",
+                Details = "These images are dominated by a single color (e.g. everything looks orange or blue). "
+                        + "This usually happens with bad lighting or white balance. It can make the AI learn that tint as part of the subject.\n\n"
+                        + "How to fix: Open the image in an editor and adjust the white balance or color temperature, "
+                        + "or remove these images if the tint is too strong.",
                 Domain = CheckDomain.Image,
                 CheckName = Name,
                 AffectedFiles = colorCastFiles
@@ -197,9 +199,11 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Warning,
-                Message = $"Mixed grayscale/color dataset: {grayscaleCount} grayscale + {colorCount} color images.",
-                Details = "The dataset is predominantly one type (>80%) with a minority of the other. "
-                        + "This inconsistency can confuse training. Consider making the dataset all-color or all-grayscale.",
+                Message = $"Dataset mixes black & white and color images ({grayscaleCount} B&W + {colorCount} color).",
+                Details = "Most of your images are one type but a few are the other. "
+                        + "Mixing B&W and color images confuses training — the AI won't know if the subject should be colorful or not.\n\n"
+                        + "How to fix: Either remove the minority images, or convert them to match the majority "
+                        + "(e.g. colorize the B&W ones, or desaturate the color ones).",
                 Domain = CheckDomain.Image,
                 CheckName = Name,
                 AffectedFiles = minorityFiles
@@ -211,9 +215,10 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Info,
-                Message = $"{veryDarkFiles.Count} image(s) are very dark (V mean < {VeryDarkThreshold:F2}).",
-                Details = "These images have very low brightness, which may indicate underexposure or "
-                        + "intentionally dark scenes. Review to ensure they're appropriate for training.",
+                Message = $"{veryDarkFiles.Count} image(s) are very dark or underexposed.",
+                Details = "These images are almost entirely dark. The AI may struggle to learn details from them.\n\n"
+                        + "How to fix: Increase the brightness/exposure in an image editor, "
+                        + "or remove them if the subject isn't clearly visible.",
                 Domain = CheckDomain.Image,
                 CheckName = Name,
                 AffectedFiles = veryDarkFiles
@@ -225,9 +230,11 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Info,
-                Message = $"{veryBrightFiles.Count} image(s) are very bright (V mean > {VeryBrightThreshold:F2}).",
-                Details = "These images have very high brightness, which may indicate overexposure or "
-                        + "washed-out processing.",
+                Message = $"{veryBrightFiles.Count} image(s) are very bright or overexposed.",
+                Details = "These images are nearly washed out. Details are lost in the highlights, "
+                        + "making it hard for the AI to learn from them.\n\n"
+                        + "How to fix: Reduce the brightness/exposure in an image editor, "
+                        + "or remove them if the subject is barely visible.",
                 Domain = CheckDomain.Image,
                 CheckName = Name,
                 AffectedFiles = veryBrightFiles
@@ -239,9 +246,11 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
             issues.Add(new Issue
             {
                 Severity = IssueSeverity.Warning,
-                Message = $"{outlierFiles.Count} image(s) have color distributions that differ significantly from the dataset.",
-                Details = "These images are >2 standard deviations from the mean color histogram, "
-                        + "suggesting they may not belong to the same visual domain as the rest of the dataset.",
+                Message = $"{outlierFiles.Count} image(s) have colors that don't match the rest of the dataset.",
+                Details = "These images look very different from the others in terms of colors and tones. "
+                        + "They may be from a different scene, lighting, or camera setting.\n\n"
+                        + "How to fix: Review these images — if they're unrelated or from a different session, "
+                        + "consider removing them. If they belong, try color-correcting them to match the others.",
                 Domain = CheckDomain.Image,
                 CheckName = Name,
                 AffectedFiles = outlierFiles

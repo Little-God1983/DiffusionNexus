@@ -114,7 +114,7 @@ public class ColorDistributionAnalyzerTests : IDisposable
         var result = await _analyzer.RunAsync(images, config);
 
         // Should detect mixed dataset
-        result.Issues.Should().Contain(i => i.Message.Contains("Mixed grayscale/color"));
+        result.Issues.Should().Contain(i => i.Message.Contains("mixes black & white and color"));
     }
 
     [Fact]
@@ -151,7 +151,7 @@ public class ColorDistributionAnalyzerTests : IDisposable
         var result = await _analyzer.RunAsync(images, config);
 
         result.Issues.Should().Contain(i =>
-            i.Message.Contains("differ significantly") && i.AffectedFiles.Contains(outlierPath));
+            i.Message.Contains("don't match the rest") && i.AffectedFiles.Contains(outlierPath));
     }
 
     [Theory]
