@@ -80,16 +80,12 @@ public partial class ColorFixerImageItem : ObservableObject
     /// <summary>Status color for display.</summary>
     public string StatusColor => IsFixed ? "#4CAF50" : IsSkipped ? "#666" : "#FFA726";
 
-    /// <summary>Avalonia bitmap of the original image (before any fix).</summary>
-    [ObservableProperty]
-    private Bitmap? _beforeBitmap;
-
     /// <summary>Avalonia bitmap showing the predicted result after auto-fix.</summary>
     [ObservableProperty]
     private Bitmap? _afterBitmap;
 
     /// <summary>Whether the preview has been generated.</summary>
-    public bool HasPreview => BeforeBitmap is not null && AfterBitmap is not null;
+    public bool HasPreview => AfterBitmap is not null;
 
     /// <summary>Notifies the UI that the preview state has changed.</summary>
     public void NotifyPreviewChanged() => OnPropertyChanged(nameof(HasPreview));
@@ -297,30 +293,21 @@ public partial class ColorFixerViewModel : ObservableObject
         item.IsGeneratingPreview = true;
         try
         {
-            var (before, after) = await Task.Run(() =>
+            var afterBmp = await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
 
-                // Generate "before" bitmap
-                using var beforeStream = new MemoryStream();
-                image.SaveAsPng(beforeStream);
-                beforeStream.Position = 0;
-                var beforeBmp = new Bitmap(beforeStream);
-
-                // Apply the same color correction to a copy for "after"
+                // Apply the color correction to a copy for the "after" preview
                 using var corrected = image.Clone();
                 ApplyColorCorrection(corrected);
 
                 using var afterStream = new MemoryStream();
                 corrected.SaveAsPng(afterStream);
                 afterStream.Position = 0;
-                var afterBmp = new Bitmap(afterStream);
-
-                return (beforeBmp, afterBmp);
+                return new Bitmap(afterStream);
             });
 
-            item.BeforeBitmap = before;
-            item.AfterBitmap = after;
+            item.AfterBitmap = afterBmp;
             item.NotifyPreviewChanged();
         }
         catch (Exception ex)
