@@ -9,7 +9,7 @@
              x:Class="DiffusionNexus.UI.Views.Tabs.TestRunsView"
              x:DataType="vmTabs:TestRunsTabViewModel">
 
-  <Grid RowDefinitions="Auto,*">
+  <Grid RowDefinitions="Auto,Auto,*">
 
     <!-- TOP BAR -->
     <Border Grid.Row="0"
@@ -35,8 +35,23 @@
       </Grid>
     </Border>
 
+    <!-- SCORE TREND (spans full width, visible when 2+ runs exist) -->
+    <Border Grid.Row="1"
+            Background="#1A1A1A"
+            Padding="16,10"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1"
+            IsVisible="{Binding HasTrendData}">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Score Trend" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
+        <controls:ScoreTrendChart DataPoints="{Binding TrendDataPoints}"
+                                  Height="120"
+                                  HorizontalAlignment="Stretch"/>
+      </StackPanel>
+    </Border>
+
     <!-- MAIN CONTENT: Left run list + Right detail -->
-    <Grid Grid.Row="1" ColumnDefinitions="380,*">
+    <Grid Grid.Row="2" ColumnDefinitions="380,*">
 
       <!-- LEFT PANEL: Run List -->
       <Border Grid.Column="0"
@@ -448,17 +463,6 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-            </StackPanel>
-          </Border>
-
-          <!-- Score trend line chart -->
-          <Border Background="#222" CornerRadius="8" Padding="16"
-                  IsVisible="{Binding $parent[UserControl].((vmTabs:TestRunsTabViewModel)DataContext).HasTrendData}">
-            <StackPanel Spacing="8">
-              <TextBlock Text="Score Trend" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
-              <controls:ScoreTrendChart DataPoints="{Binding $parent[UserControl].((vmTabs:TestRunsTabViewModel)DataContext).TrendDataPoints}"
-                                        Height="180"
-                                        HorizontalAlignment="Stretch"/>
             </StackPanel>
           </Border>
 
