@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
@@ -80,12 +79,12 @@ public partial class ColorFixerImageItem : ObservableObject
     /// <summary>Status color for display.</summary>
     public string StatusColor => IsFixed ? "#4CAF50" : IsSkipped ? "#666" : "#FFA726";
 
-    /// <summary>Avalonia bitmap showing the predicted result after auto-fix.</summary>
+    /// <summary>Temp file path for the corrected preview image.</summary>
     [ObservableProperty]
-    private Bitmap? _afterBitmap;
+    private string? _afterPreviewPath;
 
     /// <summary>Whether the preview has been generated.</summary>
-    public bool HasPreview => AfterBitmap is not null;
+    public bool HasPreview => !string.IsNullOrEmpty(AfterPreviewPath);
 
     /// <summary>Notifies the UI that the preview state has changed.</summary>
     public void NotifyPreviewChanged() => OnPropertyChanged(nameof(HasPreview));
@@ -152,6 +151,21 @@ public partial class ColorFixerViewModel : ObservableObject
         private set => SetProperty(ref _isFixingAll, value);
     }
 
+    private double _correctionStrength = 50;
+
+    /// <summary>User-adjustable correction strength (0–100). Default is 50.</summary>
+    public double CorrectionStrength
+    {
+        get => _correctionStrength;
+        set
+        {
+            if (SetProperty(ref _correctionStrength, value))
+            {
+                InvalidatePreviewAndRegenerate();
+            }
+        }
+    }
+
     /// <summary>Summary of progress.</summary>
     public string ProgressText => $"{FixedCount} fixed · {SkippedCount} skipped · {Images.Count(i => !i.IsResolved)} remaining";
 
@@ -168,6 +182,37 @@ public partial class ColorFixerViewModel : ObservableObject
     /// Dialog service for showing confirmation dialogs.
     /// </summary>
     public IDialogService? DialogService { get; set; }
+
+    private CancellationTokenSource? _previewCts;
+
+    /// <summary>
+    /// Invalidates the current preview and regenerates it with the updated strength.
+    /// Uses debouncing to avoid excessive regeneration during slider drag.
+    /// </summary>
+    private async void InvalidatePreviewAndRegenerate()
+    {
+        if (_selectedImage is null)
+            return;
+
+        // Cancel any pending debounce/generation
+        _previewCts?.Cancel();
+        _previewCts = new CancellationTokenSource();
+        var ct = _previewCts.Token;
+
+        try
+        {
+            // Debounce: wait 250ms before regenerating
+            await Task.Delay(250, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        _selectedImage.AfterPreviewPath = null;
+        _selectedImage.NotifyPreviewChanged();
+        await GeneratePreviewAsync(_selectedImage);
+    }
 
     /// <summary>
     /// Creates a new <see cref="ColorFixerViewModel"/>.
@@ -257,7 +302,7 @@ public partial class ColorFixerViewModel : ObservableObject
             await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
-                ApplyColorCorrection(image);
+                ApplyColorCorrection(image, _correctionStrength / 100.0);
                 image.Save(item.FilePath);
             });
 
@@ -287,27 +332,25 @@ public partial class ColorFixerViewModel : ObservableObject
         if (item is null || !File.Exists(item.FilePath))
             return;
 
-        if (item.HasPreview)
-            return;
-
         item.IsGeneratingPreview = true;
         try
         {
-            var afterBmp = await Task.Run(() =>
+            var previewPath = await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
 
                 // Apply the color correction to a copy for the "after" preview
                 using var corrected = image.Clone();
-                ApplyColorCorrection(corrected);
+                ApplyColorCorrection(corrected, _correctionStrength / 100.0);
 
-                using var afterStream = new MemoryStream();
-                corrected.SaveAsPng(afterStream);
-                afterStream.Position = 0;
-                return new Bitmap(afterStream);
+                var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
+                    $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
+                Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
+                corrected.Save(tempPath);
+                return tempPath;
             });
 
-            item.AfterBitmap = afterBmp;
+            item.AfterPreviewPath = previewPath;
             item.NotifyPreviewChanged();
         }
         catch (Exception ex)
@@ -324,7 +367,9 @@ public partial class ColorFixerViewModel : ObservableObject
     /// Applies white balance and brightness correction to an image in-place.
     /// Shared logic between preview generation and actual fixing.
     /// </summary>
-    private static void ApplyColorCorrection(Image<Rgba32> image)
+    /// <param name="image">The image to correct in-place.</param>
+    /// <param name="strength">Correction strength from 0.0 (no change) to 1.0 (full correction).</param>
+    private static void ApplyColorCorrection(Image<Rgba32> image, double strength)
     {
         long totalR = 0, totalG = 0, totalB = 0;
         long pixelCount = 0;
@@ -352,11 +397,32 @@ public partial class ColorFixerViewModel : ObservableObject
         double avgB = totalB / (double)pixelCount;
         double avgGray = (avgR + avgG + avgB) / 3.0;
 
-        float scaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
-        float scaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
-        float scaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
+        // Measure how saturated the image is overall — high saturation means
+        // intentional color dominance (e.g. a red-themed scene). We should
+        // NOT aggressively neutralize such images.
+        double maxChannel = Math.Max(avgR, Math.Max(avgG, avgB));
+        double minChannel = Math.Min(avgR, Math.Min(avgG, avgB));
+        double saturationRatio = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
 
-        bool needsWhiteBalance = Math.Abs(scaleR - 1) > 0.05 || Math.Abs(scaleG - 1) > 0.05 || Math.Abs(scaleB - 1) > 0.05;
+        // Compute raw correction scales toward neutral gray
+        float rawScaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
+        float rawScaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
+        float rawScaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
+
+        // User strength (0..1) scales the base correction factor.
+        // Saturation still dampens the correction to preserve artistic intent,
+        // but the user slider controls the overall ceiling.
+        float baseFactor = (float)Math.Max(0, 1.0 - saturationRatio * 2.0);
+        float correctionStrength = (float)(strength * baseFactor);
+        float maxShift = (float)(0.50 * strength); // per-channel clamp scales with strength
+
+        // Blend: scale = 1 + strength * (rawScale - 1), clamped to ±maxShift per channel
+        float scaleR = 1f + Math.Clamp(correctionStrength * (rawScaleR - 1f), -maxShift, maxShift);
+        float scaleG = 1f + Math.Clamp(correctionStrength * (rawScaleG - 1f), -maxShift, maxShift);
+        float scaleB = 1f + Math.Clamp(correctionStrength * (rawScaleB - 1f), -maxShift, maxShift);
+
+        bool needsWhiteBalance = correctionStrength > 0.001f &&
+            (Math.Abs(scaleR - 1) > 0.005 || Math.Abs(scaleG - 1) > 0.005 || Math.Abs(scaleB - 1) > 0.005);
 
         bool isDark = avgGray < 38;
         bool isBright = avgGray > 230;
@@ -381,14 +447,18 @@ public partial class ColorFixerViewModel : ObservableObject
 
         if (isDark)
         {
-            float brightnessFactor = (float)(128.0 / Math.Max(avgGray, 1));
-            brightnessFactor = Math.Min(brightnessFactor, 2.5f);
+            // Brightness boost scaled by user strength — target between current and 128
+            float rawFactor = (float)((avgGray + 128.0) / 2.0 / Math.Max(avgGray, 1));
+            rawFactor = Math.Min(rawFactor, 1.5f);
+            float brightnessFactor = (float)(1.0 + (rawFactor - 1.0) * strength);
             image.Mutate(ctx => ctx.Brightness(brightnessFactor));
         }
         else if (isBright)
         {
-            float brightnessFactor = (float)(200.0 / Math.Max(avgGray, 1));
-            brightnessFactor = Math.Max(brightnessFactor, 0.5f);
+            // Brightness reduction scaled by user strength — target between current and 200
+            float rawFactor = (float)((avgGray + 200.0) / 2.0 / Math.Max(avgGray, 1));
+            rawFactor = Math.Max(rawFactor, 0.75f);
+            float brightnessFactor = (float)(1.0 + (rawFactor - 1.0) * strength);
             image.Mutate(ctx => ctx.Brightness(brightnessFactor));
         }
     }

@@ -4,6 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
         xmlns:converters="using:DiffusionNexus.UI.Converters"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
         mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
         x:Class="DiffusionNexus.UI.Views.Dialogs.ColorFixerWindow"
         x:DataType="vm:ColorFixerViewModel"
@@ -96,10 +97,9 @@
           </StackPanel>
 
           <!-- Selected image detail -->
-          <Grid RowDefinitions="*,Auto" IsVisible="{Binding HasSelectedImage}">
-            <!-- Image preview -->
-            <ScrollViewer Grid.Row="0" Padding="20">
-              <StackPanel Spacing="12" HorizontalAlignment="Center">
+          <Grid RowDefinitions="Auto,Auto,*,Auto" IsVisible="{Binding HasSelectedImage}">
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Spacing="4" Margin="20,12,20,4" HorizontalAlignment="Center">
                 <TextBlock Text="{Binding SelectedImage.FileName}"
                            FontSize="16" FontWeight="SemiBold"
                            HorizontalAlignment="Center"/>
@@ -109,56 +109,45 @@
                            MaxWidth="700"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"/>
+            </StackPanel>
 
-                <!-- Loading indicator while preview generates -->
+            <!-- Strength slider -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12"
+                        Margin="20,8,20,4" HorizontalAlignment="Center">
+              <TextBlock Text="Correction Strength:" FontSize="13" Opacity="0.7"
+                         VerticalAlignment="Center"/>
+              <Slider Value="{Binding CorrectionStrength, Mode=TwoWay}"
+                      Minimum="0" Maximum="100" Width="300"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="Adjust how strongly colors are corrected (0 = none, 100 = full)"/>
+              <TextBlock Text="{Binding CorrectionStrength, StringFormat={}{0:F0}%}"
+                         FontSize="13" FontWeight="SemiBold"
+                         VerticalAlignment="Center" Width="40"/>
+            </StackPanel>
 
-                <!-- Side-by-side Before / After -->
-                <Grid ColumnDefinitions="*,Auto,*" Margin="0,8">
-                  <!-- Before (always from file) -->
-                  <StackPanel Grid.Column="0" Spacing="6">
-                    <TextBlock Text="Current" FontSize="14" FontWeight="SemiBold"
-                               HorizontalAlignment="Center" Opacity="0.7"/>
-                    <Border Background="#1A1A1A" CornerRadius="8" Padding="4">
-                      <Image Source="{Binding SelectedImage.FilePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}"
-                             MaxHeight="350" Stretch="Uniform"/>
-                    </Border>
-                  </StackPanel>
-
-                  <!-- Arrow separator -->
-                  <TextBlock Grid.Column="1" Text="→" FontSize="24"
-                             VerticalAlignment="Center" Margin="12,20,12,0"
-                             Opacity="0.4"/>
-
-                  <!-- After (preview or loading spinner) -->
-                  <StackPanel Grid.Column="2" Spacing="6">
-                    <TextBlock Text="After Fix" FontSize="14" FontWeight="SemiBold"
-                               HorizontalAlignment="Center" Foreground="#4CAF50"/>
-                    <Border Background="#1A1A1A" CornerRadius="8" Padding="4" MinHeight="150">
-                      <Panel>
-                        <!-- Spinner while generating -->
-                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                                    Spacing="12"
-                                    IsVisible="{Binding SelectedImage.IsGeneratingPreview}">
-                          <ProgressBar IsIndeterminate="True"
-                                       Width="48" Height="48"
-                                       Classes="circular"/>
-                          <TextBlock Text="Generating preview…"
-                                     FontSize="12" Opacity="0.5"
-                                     HorizontalAlignment="Center"/>
-                        </StackPanel>
-                        <!-- After image once ready -->
-                        <Image Source="{Binding SelectedImage.AfterBitmap}"
-                               MaxHeight="350" Stretch="Uniform"
-                               IsVisible="{Binding SelectedImage.HasPreview}"/>
-                      </Panel>
-                    </Border>
-                  </StackPanel>
-                </Grid>
+            <!-- Image Comparer with slider, zoom, and pan -->
+            <Panel Grid.Row="2" Margin="4,4,4,0">
+              <!-- Spinner while generating preview -->
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                          Spacing="12"
+                          IsVisible="{Binding SelectedImage.IsGeneratingPreview}">
+                <ProgressBar IsIndeterminate="True"
+                             Width="48" Height="48"
+                             Classes="circular"/>
+                <TextBlock Text="Generating preview…"
+                           FontSize="12" Opacity="0.5"
+                           HorizontalAlignment="Center"/>
               </StackPanel>
-            </ScrollViewer>
+
+              <!-- Compare control once preview is ready -->
+              <controls:ImageCompareControl
+                  IsVisible="{Binding SelectedImage.HasPreview}"
+                  LeftImagePath="{Binding SelectedImage.FilePath}"
+                  RightImagePath="{ReflectionBinding SelectedImage.AfterPreviewPath}"/>
+            </Panel>
 
             <!-- Action buttons for selected image -->
-            <Border Grid.Row="1" Background="#222" Padding="16,10"
+            <Border Grid.Row="3" Background="#222" Padding="16,10"
                     BorderBrush="#333" BorderThickness="0,1,0,0">
               <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
                 <Button Command="{Binding FixSelectedCommand}"
