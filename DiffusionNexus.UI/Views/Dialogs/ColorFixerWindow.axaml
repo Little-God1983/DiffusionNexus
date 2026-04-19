@@ -60,6 +60,8 @@
                   <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
                     <TextBlock Text="✓" FontSize="14" Foreground="#4CAF50"
                                IsVisible="{Binding IsFixed}"/>
+                    <TextBlock Text="🗑" FontSize="12" Foreground="#FF6B6B"
+                               IsVisible="{Binding IsRejected}"/>
                     <TextBlock Text="—" FontSize="14" Foreground="#666"
                                IsVisible="{Binding IsSkipped}"/>
                     <TextBlock Text="●" FontSize="10" Foreground="#FFA726"
@@ -151,7 +153,7 @@
                         IsVisible="{Binding IsOutlierSelected}">
                   <StackPanel Spacing="2">
                     <TextBlock Text="⚠ Color Outlier" FontSize="13" FontWeight="SemiBold" Foreground="#FF6B6B"/>
-                    <TextBlock Text="This image's colors don't match the rest of the dataset. Color correction won't help — consider removing it via Dataset Manager's reject feature."
+                    <TextBlock Text="This image's colors don't match the rest of the dataset. Color correction won't help — use the Mark Trash button below."
                                FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
                   </StackPanel>
                 </Border>
@@ -202,7 +204,8 @@
             <!-- Action buttons for selected image -->
             <Border Grid.Row="2" Background="#222" Padding="16,10"
                     BorderBrush="#333" BorderThickness="0,1,0,0">
-              <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+              <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
                 <Button Command="{Binding AutoSetCommand}"
                         Padding="20,10"
                         Background="#2196F3"
@@ -227,6 +230,18 @@
                     <TextBlock Text="Apply Values"/>
                   </StackPanel>
                 </Button>
+                <Button Command="{Binding RejectSelectedCommand}"
+                        Padding="20,10"
+                        Background="#FF6B6B"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Mark this image as trash">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="🗑"/>
+                    <TextBlock Text="Mark Trash"/>
+                  </StackPanel>
+                </Button>
                 <Button Command="{Binding SkipSelectedCommand}"
                         Padding="20,10"
                         Background="#555"
@@ -239,6 +254,14 @@
                     <TextBlock Text="Skip"/>
                   </StackPanel>
                 </Button>
+              </StackPanel>
+
+                <!-- Already-rejected banner -->
+                <Border Background="#D32F2F" CornerRadius="6" Padding="12,8"
+                        IsVisible="{Binding IsAlreadyRejected}">
+                  <TextBlock Text="🗑 This image is already marked as trash — no adjustment needed."
+                             Foreground="White" FontWeight="SemiBold" TextAlignment="Center"/>
+                </Border>
               </StackPanel>
             </Border>
           </Grid>

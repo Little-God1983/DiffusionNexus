@@ -18,6 +18,7 @@ public partial class ColorFixerImageItem : ObservableObject
 {
     private bool _isFixed;
     private bool _isSkipped;
+    private bool _isRejected;
     private bool _isProcessing;
 
     /// <summary>Full path to the image file.</summary>
@@ -88,14 +89,25 @@ public partial class ColorFixerImageItem : ObservableObject
         set => SetProperty(ref _isProcessing, value);
     }
 
-    /// <summary>Whether this image has been resolved (fixed or skipped).</summary>
-    public bool IsResolved => IsFixed || IsSkipped;
+    /// <summary>Whether this image was rejected (marked as trash).</summary>
+    public bool IsRejected
+    {
+        get => _isRejected;
+        set
+        {
+            if (SetProperty(ref _isRejected, value))
+                OnPropertyChanged(nameof(IsResolved));
+        }
+    }
+
+    /// <summary>Whether this image has been resolved (fixed, skipped, or rejected).</summary>
+    public bool IsResolved => IsFixed || IsSkipped || IsRejected;
 
     /// <summary>Status label for display.</summary>
-    public string StatusLabel => IsFixed ? "Fixed" : IsSkipped ? "Skipped" : "Pending";
+    public string StatusLabel => IsFixed ? "Fixed" : IsRejected ? "Rejected" : IsSkipped ? "Skipped" : "Pending";
 
     /// <summary>Status color for display.</summary>
-    public string StatusColor => IsFixed ? "#4CAF50" : IsSkipped ? "#666" : "#FFA726";
+    public string StatusColor => IsFixed ? "#4CAF50" : IsRejected ? "#FF6B6B" : IsSkipped ? "#666" : "#FFA726";
 
     /// <summary>Temp file path for the corrected preview image.</summary>
     [ObservableProperty]
@@ -140,11 +152,13 @@ public partial class ColorFixerViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(HasSelectedImage));
                 OnPropertyChanged(nameof(IsOutlierSelected));
+                OnPropertyChanged(nameof(IsAlreadyRejected));
                 OnPropertyChanged(nameof(ShowTintSlider));
                 OnPropertyChanged(nameof(ShowBrightnessSliders));
                 AutoSetCommand.NotifyCanExecuteChanged();
                 ApplyValuesCommand.NotifyCanExecuteChanged();
                 SkipSelectedCommand.NotifyCanExecuteChanged();
+                RejectSelectedCommand.NotifyCanExecuteChanged();
                 // Reset sliders to defaults for new image
                 _tintRemoval = 50;
                 _brightness = 50;
@@ -164,6 +178,9 @@ public partial class ColorFixerViewModel : ObservableObject
 
     /// <summary>Whether the selected image is a color outlier (not fixable with sliders).</summary>
     public bool IsOutlierSelected => _selectedImage?.IsOutlier == true && !(_selectedImage?.IsFixable ?? false);
+
+    /// <summary>Whether the selected image was already marked as trash before opening the fixer.</summary>
+    public bool IsAlreadyRejected => _selectedImage?.IsRejected == true;
 
     /// <summary>Number of images fixed in this session.</summary>
     public int FixedCount
@@ -255,7 +272,21 @@ public partial class ColorFixerViewModel : ObservableObject
     };
 
     /// <summary>Summary of progress.</summary>
-    public string ProgressText => $"{FixedCount} fixed · {SkippedCount} skipped · {Images.Count(i => !i.IsResolved)} remaining";
+    /// <summary>Number of images rejected in this session.</summary>
+    public int RejectedCount => Images.Count(i => i.IsRejected);
+
+    /// <summary>Summary of progress.</summary>
+    public string ProgressText
+    {
+        get
+        {
+            var rejected = RejectedCount;
+            var remaining = Images.Count(i => !i.IsResolved);
+            return rejected > 0
+                ? $"{FixedCount} fixed · {SkippedCount} skipped · {rejected} rejected · {remaining} remaining"
+                : $"{FixedCount} fixed · {SkippedCount} skipped · {remaining} remaining";
+        }
+    }
 
     /// <summary>Finds and sets the optimal slider values without saving the image.</summary>
     public IAsyncRelayCommand AutoSetCommand { get; }
@@ -265,6 +296,9 @@ public partial class ColorFixerViewModel : ObservableObject
 
     /// <summary>Skips the selected image without fixing.</summary>
     public IRelayCommand SkipSelectedCommand { get; }
+
+    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    public IRelayCommand RejectSelectedCommand { get; }
 
     /// <summary>Auto-fixes all remaining (unfixed, unskipped) images.</summary>
     public IAsyncRelayCommand FixAllCommand { get; }
@@ -313,6 +347,7 @@ public partial class ColorFixerViewModel : ObservableObject
         AutoSetCommand = new AsyncRelayCommand(AutoSetAsync, () => _selectedImage is not null && !_selectedImage.IsResolved && !IsOutlierSelected);
         ApplyValuesCommand = new AsyncRelayCommand(ApplyValuesAsync, () => _selectedImage is not null && !_selectedImage.IsResolved && !IsOutlierSelected);
         SkipSelectedCommand = new RelayCommand(SkipSelected, () => _selectedImage is not null && !_selectedImage.IsResolved);
+        RejectSelectedCommand = new RelayCommand(RejectSelected, () => _selectedImage is not null && !_selectedImage.IsResolved && IsOutlierSelected);
         FixAllCommand = new AsyncRelayCommand(FixAllAsync, () => Images.Any(i => !i.IsResolved));
     }
 
@@ -325,15 +360,29 @@ public partial class ColorFixerViewModel : ObservableObject
 
         foreach (var src in items)
         {
-            Images.Add(new ColorFixerImageItem
+            var item = new ColorFixerImageItem
             {
                 FilePath = src.FilePath,
                 Score = src.Score,
                 Detail = src.Detail
-            });
+            };
+
+            // Detect pre-existing .rating sidecar marking the image as rejected
+            var ratingPath = Path.ChangeExtension(src.FilePath, ".rating");
+            if (File.Exists(ratingPath))
+            {
+                var rating = File.ReadAllText(ratingPath).Trim();
+                if (string.Equals(rating, "Rejected", StringComparison.OrdinalIgnoreCase))
+                {
+                    item.IsRejected = true;
+                }
+            }
+
+            Images.Add(item);
         }
 
-        SelectedImage = Images.FirstOrDefault();
+        // Select the first image that still needs attention
+        SelectedImage = Images.FirstOrDefault(i => !i.IsResolved) ?? Images.FirstOrDefault();
         FixAllCommand.NotifyCanExecuteChanged();
     }
 
@@ -403,12 +452,41 @@ public partial class ColorFixerViewModel : ObservableObject
         }
     }
 
+    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    private void RejectSelected()
+    {
+        if (_selectedImage is null || _selectedImage.IsResolved)
+            return;
+
+        var ratingPath = Path.ChangeExtension(_selectedImage.FilePath, ".rating");
+        try
+        {
+            File.WriteAllText(ratingPath, "Rejected");
+        }
+        catch (IOException ex)
+        {
+            Logger.Warning(ex, "Failed to write rating file for {FilePath}", _selectedImage.FilePath);
+            return;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Logger.Warning(ex, "No permission to write rating file for {FilePath}", _selectedImage.FilePath);
+            return;
+        }
+
+        _selectedImage.IsRejected = true;
+        OnPropertyChanged(nameof(ProgressText));
+        FixAllCommand.NotifyCanExecuteChanged();
+        AdvanceToNext();
+    }
+
     private void AdvanceToNext()
     {
         SelectedImage = Images.FirstOrDefault(i => !i.IsResolved);
         AutoSetCommand.NotifyCanExecuteChanged();
         ApplyValuesCommand.NotifyCanExecuteChanged();
         SkipSelectedCommand.NotifyCanExecuteChanged();
+        RejectSelectedCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
