@@ -32,6 +32,18 @@ public partial class ColorFixerImageItem : ObservableObject
     /// <summary>Human-readable detail about the color issue.</summary>
     public required string Detail { get; init; }
 
+    /// <summary>Whether this image has a color cast issue.</summary>
+    public bool HasColorCast => Detail.Contains("color tint", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether this image is too dark.</summary>
+    public bool IsDark => Detail.Contains("very dark", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether this image is too bright.</summary>
+    public bool IsBright => Detail.Contains("very bright", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether this image has a brightness issue (dark or bright).</summary>
+    public bool HasBrightnessIssue => IsDark || IsBright;
+
     /// <summary>Color hex for the score.</summary>
     public string ScoreColor => Score switch
     {
@@ -120,8 +132,17 @@ public partial class ColorFixerViewModel : ObservableObject
             if (SetProperty(ref _selectedImage, value))
             {
                 OnPropertyChanged(nameof(HasSelectedImage));
+                OnPropertyChanged(nameof(ShowTintSlider));
+                OnPropertyChanged(nameof(ShowBrightnessSliders));
                 FixSelectedCommand.NotifyCanExecuteChanged();
                 SkipSelectedCommand.NotifyCanExecuteChanged();
+                // Reset sliders to defaults for new image
+                _tintRemoval = 50;
+                _brightness = 50;
+                _contrast = 50;
+                OnPropertyChanged(nameof(TintRemoval));
+                OnPropertyChanged(nameof(Brightness));
+                OnPropertyChanged(nameof(Contrast));
                 _ = GeneratePreviewAsync(value);
             }
         }
@@ -151,20 +172,48 @@ public partial class ColorFixerViewModel : ObservableObject
         private set => SetProperty(ref _isFixingAll, value);
     }
 
-    private double _correctionStrength = 50;
+    private double _tintRemoval = 50;
+    private double _brightness = 50;
+    private double _contrast = 50;
 
-    /// <summary>User-adjustable correction strength (0–100). Default is 50.</summary>
-    public double CorrectionStrength
+    /// <summary>Tint removal strength (0–100). Shown for color-cast images.</summary>
+    public double TintRemoval
     {
-        get => _correctionStrength;
+        get => _tintRemoval;
         set
         {
-            if (SetProperty(ref _correctionStrength, value))
-            {
+            if (SetProperty(ref _tintRemoval, value))
                 InvalidatePreviewAndRegenerate();
-            }
         }
     }
+
+    /// <summary>Brightness adjustment (0–100). Shown for dark/bright images.</summary>
+    public double Brightness
+    {
+        get => _brightness;
+        set
+        {
+            if (SetProperty(ref _brightness, value))
+                InvalidatePreviewAndRegenerate();
+        }
+    }
+
+    /// <summary>Contrast adjustment (0–100). Shown for dark/bright images.</summary>
+    public double Contrast
+    {
+        get => _contrast;
+        set
+        {
+            if (SetProperty(ref _contrast, value))
+                InvalidatePreviewAndRegenerate();
+        }
+    }
+
+    /// <summary>Whether the selected image has a color cast issue.</summary>
+    public bool ShowTintSlider => _selectedImage?.HasColorCast == true;
+
+    /// <summary>Whether the selected image has a brightness issue.</summary>
+    public bool ShowBrightnessSliders => _selectedImage?.HasBrightnessIssue == true;
 
     /// <summary>Summary of progress.</summary>
     public string ProgressText => $"{FixedCount} fixed · {SkippedCount} skipped · {Images.Count(i => !i.IsResolved)} remaining";
@@ -302,7 +351,7 @@ public partial class ColorFixerViewModel : ObservableObject
             await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
-                ApplyColorCorrection(image, _correctionStrength / 100.0, item.Detail);
+                ApplyColorCorrection(image, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
                 image.Save(item.FilePath);
             });
 
@@ -340,7 +389,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 using var image = Image.Load<Rgba32>(item.FilePath);
 
                 using var corrected = image.Clone();
-                ApplyColorCorrection(corrected, _correctionStrength / 100.0, item.Detail);
+                ApplyColorCorrection(corrected, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
 
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
@@ -366,9 +415,11 @@ public partial class ColorFixerViewModel : ObservableObject
     /// Routes to issue-specific correction algorithms based on the analyzer detail string.
     /// </summary>
     /// <param name="image">The image to correct in-place.</param>
-    /// <param name="strength">Correction strength from 0.0 (no change) to 1.0 (full correction).</param>
     /// <param name="detail">The detail string from the color distribution analyzer.</param>
-    private static void ApplyColorCorrection(Image<Rgba32> image, double strength, string detail)
+    /// <param name="tintRemoval">Tint removal strength 0.0–1.0.</param>
+    /// <param name="brightness">Brightness adjustment strength 0.0–1.0.</param>
+    /// <param name="contrast">Contrast adjustment strength 0.0–1.0.</param>
+    private static void ApplyColorCorrection(Image<Rgba32> image, string detail, double tintRemoval, double brightness, double contrast)
     {
         bool hasColorCast = detail.Contains("color tint", StringComparison.OrdinalIgnoreCase);
         bool isDark = detail.Contains("very dark", StringComparison.OrdinalIgnoreCase);
@@ -376,16 +427,16 @@ public partial class ColorFixerViewModel : ObservableObject
 
         if (hasColorCast)
         {
-            ApplyColorCastCorrection(image, strength);
+            ApplyColorCastCorrection(image, tintRemoval);
         }
 
         if (isDark)
         {
-            ApplyBrightnessCorrection(image, strength, brighten: true);
+            ApplyBrightnessCorrection(image, brightness, contrast, brighten: true);
         }
         else if (isBright)
         {
-            ApplyBrightnessCorrection(image, strength, brighten: false);
+            ApplyBrightnessCorrection(image, brightness, contrast, brighten: false);
         }
     }
 
@@ -496,10 +547,14 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Corrects brightness using histogram-based contrast stretching with gamma correction.
+    /// Corrects brightness and contrast using histogram-based stretching with gamma correction.
     /// Uses percentile-based range detection (1st/99th) for robust clipping.
     /// </summary>
-    private static void ApplyBrightnessCorrection(Image<Rgba32> image, double strength, bool brighten)
+    /// <param name="image">The image to correct in-place.</param>
+    /// <param name="brightnessStrength">Brightness adjustment 0.0–1.0.</param>
+    /// <param name="contrastStrength">Contrast stretch strength 0.0–1.0.</param>
+    /// <param name="brighten">True to brighten dark images, false to darken bright images.</param>
+    private static void ApplyBrightnessCorrection(Image<Rgba32> image, double brightnessStrength, double contrastStrength, bool brighten)
     {
         // Build luminance histogram
         var histogram = new int[256];
@@ -537,19 +592,27 @@ public partial class ColorFixerViewModel : ObservableObject
 
         if (highClip <= lowClip) highClip = lowClip + 1;
 
-        // Build LUT: contrast stretch + gamma
-        double gamma = brighten ? Math.Max(0.3, 1.0 - strength * 0.7) : Math.Min(2.5, 1.0 + strength * 1.5);
-        float userStrength = (float)strength;
+        // Gamma controls brightness; contrast stretch range controls contrast
+        double gamma = brighten
+            ? Math.Max(0.3, 1.0 - brightnessStrength * 0.7)
+            : Math.Min(2.5, 1.0 + brightnessStrength * 1.5);
+
+        // Blend contrast stretch range: at 0 contrast -> no stretch (identity), at 1 -> full percentile stretch
+        int effectiveLow = (int)(lowClip * contrastStrength);
+        int effectiveHigh = (int)(255 + (highClip - 255) * contrastStrength);
+        if (effectiveHigh <= effectiveLow) effectiveHigh = effectiveLow + 1;
+
         var lut = new byte[256];
 
         for (int i = 0; i < 256; i++)
         {
             // Contrast stretch to [0..1]
-            double normalized = Math.Clamp((i - lowClip) / (double)(highClip - lowClip), 0, 1);
-            // Apply gamma
+            double normalized = Math.Clamp((i - effectiveLow) / (double)(effectiveHigh - effectiveLow), 0, 1);
+            // Apply gamma for brightness
             double corrected = Math.Pow(normalized, gamma) * 255.0;
-            // Blend with original based on strength
-            double blended = i + userStrength * (corrected - i);
+            // Blend: use max of brightness/contrast strength for overall blend
+            double blendFactor = Math.Max(brightnessStrength, contrastStrength);
+            double blended = i + blendFactor * (corrected - i);
             lut[i] = (byte)Math.Clamp((int)Math.Round(blended), 0, 255);
         }
 

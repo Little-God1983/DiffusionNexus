@@ -111,18 +111,51 @@
                            TextAlignment="Center"/>
             </StackPanel>
 
-            <!-- Strength slider -->
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12"
-                        Margin="20,8,20,4" HorizontalAlignment="Center">
-              <TextBlock Text="Correction Strength:" FontSize="13" Opacity="0.7"
-                         VerticalAlignment="Center"/>
-              <Slider Value="{Binding CorrectionStrength, Mode=TwoWay}"
-                      Minimum="0" Maximum="100" Width="300"
-                      VerticalAlignment="Center"
-                      ToolTip.Tip="Adjust how strongly colors are corrected (0 = none, 100 = full)"/>
-              <TextBlock Text="{Binding CorrectionStrength, StringFormat={}{0:F0}%}"
-                         FontSize="13" FontWeight="SemiBold"
-                         VerticalAlignment="Center" Width="40"/>
+            <!-- Issue-specific sliders -->
+            <StackPanel Grid.Row="1" Spacing="6" Margin="20,8,20,4" HorizontalAlignment="Center">
+
+              <!-- Tint Removal slider (color cast images) -->
+              <StackPanel Orientation="Horizontal" Spacing="12"
+                          IsVisible="{Binding ShowTintSlider}">
+                <TextBlock Text="Tint Removal:" FontSize="13" Opacity="0.7"
+                           VerticalAlignment="Center" Width="100" TextAlignment="Right"/>
+                <Slider Value="{Binding TintRemoval, Mode=TwoWay}"
+                        Minimum="0" Maximum="100" Width="300"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="How much of the dominant color tint to remove (0 = none, 100 = full neutralization)"/>
+                <TextBlock Text="{Binding TintRemoval, StringFormat={}{0:F0}%}"
+                           FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Width="40"/>
+              </StackPanel>
+
+              <!-- Brightness slider (dark/bright images) -->
+              <StackPanel Orientation="Horizontal" Spacing="12"
+                          IsVisible="{Binding ShowBrightnessSliders}">
+                <TextBlock Text="Brightness:" FontSize="13" Opacity="0.7"
+                           VerticalAlignment="Center" Width="100" TextAlignment="Right"/>
+                <Slider Value="{Binding Brightness, Mode=TwoWay}"
+                        Minimum="0" Maximum="100" Width="300"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="How much to adjust brightness toward a normal range (0 = no change, 100 = full correction)"/>
+                <TextBlock Text="{Binding Brightness, StringFormat={}{0:F0}%}"
+                           FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Width="40"/>
+              </StackPanel>
+
+              <!-- Contrast slider (dark/bright images) -->
+              <StackPanel Orientation="Horizontal" Spacing="12"
+                          IsVisible="{Binding ShowBrightnessSliders}">
+                <TextBlock Text="Contrast:" FontSize="13" Opacity="0.7"
+                           VerticalAlignment="Center" Width="100" TextAlignment="Right"/>
+                <Slider Value="{Binding Contrast, Mode=TwoWay}"
+                        Minimum="0" Maximum="100" Width="300"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="How much to stretch the tonal range for more contrast (0 = no change, 100 = full stretch)"/>
+                <TextBlock Text="{Binding Contrast, StringFormat={}{0:F0}%}"
+                           FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Width="40"/>
+              </StackPanel>
+
             </StackPanel>
 
             <!-- Image Comparer with slider, zoom, and pan -->
