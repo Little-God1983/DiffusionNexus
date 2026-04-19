@@ -134,7 +134,8 @@ public partial class ColorFixerViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasSelectedImage));
                 OnPropertyChanged(nameof(ShowTintSlider));
                 OnPropertyChanged(nameof(ShowBrightnessSliders));
-                FixSelectedCommand.NotifyCanExecuteChanged();
+                AutoSetCommand.NotifyCanExecuteChanged();
+                ApplyValuesCommand.NotifyCanExecuteChanged();
                 SkipSelectedCommand.NotifyCanExecuteChanged();
                 // Reset sliders to defaults for new image
                 _tintRemoval = 50;
@@ -143,6 +144,8 @@ public partial class ColorFixerViewModel : ObservableObject
                 OnPropertyChanged(nameof(TintRemoval));
                 OnPropertyChanged(nameof(Brightness));
                 OnPropertyChanged(nameof(Contrast));
+                EstimatedScore = value?.Score ?? 0;
+                OnPropertyChanged(nameof(EstimatedScoreColor));
                 _ = GeneratePreviewAsync(value);
             }
         }
@@ -215,11 +218,32 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <summary>Whether the selected image has a brightness issue.</summary>
     public bool ShowBrightnessSliders => _selectedImage?.HasBrightnessIssue == true;
 
+    private double _estimatedScore;
+
+    /// <summary>Estimated score if the current correction is applied.</summary>
+    public double EstimatedScore
+    {
+        get => _estimatedScore;
+        private set => SetProperty(ref _estimatedScore, value);
+    }
+
+    /// <summary>Color hex for the estimated score.</summary>
+    public string EstimatedScoreColor => EstimatedScore switch
+    {
+        >= 80 => "#4CAF50",
+        >= 65 => "#8BC34A",
+        >= 40 => "#FFA726",
+        _ => "#FF6B6B"
+    };
+
     /// <summary>Summary of progress.</summary>
     public string ProgressText => $"{FixedCount} fixed · {SkippedCount} skipped · {Images.Count(i => !i.IsResolved)} remaining";
 
-    /// <summary>Auto-fixes the selected image's color issues.</summary>
-    public IAsyncRelayCommand FixSelectedCommand { get; }
+    /// <summary>Finds and sets the optimal slider values without saving the image.</summary>
+    public IAsyncRelayCommand AutoSetCommand { get; }
+
+    /// <summary>Applies the current slider values and saves the corrected image.</summary>
+    public IAsyncRelayCommand ApplyValuesCommand { get; }
 
     /// <summary>Skips the selected image without fixing.</summary>
     public IRelayCommand SkipSelectedCommand { get; }
@@ -268,7 +292,8 @@ public partial class ColorFixerViewModel : ObservableObject
     /// </summary>
     public ColorFixerViewModel()
     {
-        FixSelectedCommand = new AsyncRelayCommand(FixSelectedAsync, () => _selectedImage is not null && !_selectedImage.IsResolved);
+        AutoSetCommand = new AsyncRelayCommand(AutoSetAsync, () => _selectedImage is not null && !_selectedImage.IsResolved);
+        ApplyValuesCommand = new AsyncRelayCommand(ApplyValuesAsync, () => _selectedImage is not null && !_selectedImage.IsResolved);
         SkipSelectedCommand = new RelayCommand(SkipSelected, () => _selectedImage is not null && !_selectedImage.IsResolved);
         FixAllCommand = new AsyncRelayCommand(FixAllAsync, () => Images.Any(i => !i.IsResolved));
     }
@@ -294,7 +319,17 @@ public partial class ColorFixerViewModel : ObservableObject
         FixAllCommand.NotifyCanExecuteChanged();
     }
 
-    private async Task FixSelectedAsync()
+    /// <summary>Finds optimal slider values and sets them (does not save the image).</summary>
+    private async Task AutoSetAsync()
+    {
+        if (_selectedImage is null || _selectedImage.IsResolved)
+            return;
+
+        await OptimizeSliderValuesAsync(_selectedImage);
+    }
+
+    /// <summary>Applies the current slider values, saves the corrected image, and advances.</summary>
+    private async Task ApplyValuesAsync()
     {
         if (_selectedImage is null || _selectedImage.IsResolved)
             return;
@@ -323,6 +358,7 @@ public partial class ColorFixerViewModel : ObservableObject
             var remaining = Images.Where(i => !i.IsResolved).ToList();
             foreach (var image in remaining)
             {
+                await OptimizeSliderValuesAsync(image);
                 await ApplyColorFixAsync(image);
             }
         }
@@ -335,8 +371,80 @@ public partial class ColorFixerViewModel : ObservableObject
     private void AdvanceToNext()
     {
         SelectedImage = Images.FirstOrDefault(i => !i.IsResolved);
-        FixSelectedCommand.NotifyCanExecuteChanged();
+        AutoSetCommand.NotifyCanExecuteChanged();
+        ApplyValuesCommand.NotifyCanExecuteChanged();
         SkipSelectedCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Finds the optimal slider values (TintRemoval, Brightness, Contrast) that maximize
+    /// the estimated score. Uses a coarse-to-fine grid search: first samples at 25% intervals,
+    /// then refines around the best candidate at 5% intervals.
+    /// </summary>
+    private async Task OptimizeSliderValuesAsync(ColorFixerImageItem item)
+    {
+        if (!File.Exists(item.FilePath))
+            return;
+
+        var (bestTint, bestBright, bestContrast) = await Task.Run(() =>
+        {
+            using var image = Image.Load<Rgba32>(item.FilePath);
+
+            double bestScore = -1;
+            double bTint = 50, bBright = 50, bContrast = 50;
+
+            // Coarse pass: sample at 25% intervals (0, 25, 50, 75, 100)
+            for (int t = 0; t <= 100; t += 25)
+            {
+                for (int br = 0; br <= 100; br += 25)
+                {
+                    for (int co = 0; co <= 100; co += 25)
+                    {
+                        using var clone = image.Clone();
+                        ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
+                        double score = EstimateScore(clone);
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bTint = t;
+                            bBright = br;
+                            bContrast = co;
+                        }
+                    }
+                }
+            }
+
+            // Fine pass: refine ±20 around best at 10% steps
+            double fTint = bTint, fBright = bBright, fContrast = bContrast;
+            double fineScore = bestScore;
+
+            for (int t = (int)Math.Max(0, bTint - 20); t <= Math.Min(100, bTint + 20); t += 10)
+            {
+                for (int br = (int)Math.Max(0, bBright - 20); br <= Math.Min(100, bBright + 20); br += 10)
+                {
+                    for (int co = (int)Math.Max(0, bContrast - 20); co <= Math.Min(100, bContrast + 20); co += 10)
+                    {
+                        using var clone = image.Clone();
+                        ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
+                        double score = EstimateScore(clone);
+                        if (score > fineScore)
+                        {
+                            fineScore = score;
+                            fTint = t;
+                            fBright = br;
+                            fContrast = co;
+                        }
+                    }
+                }
+            }
+
+            return (fTint, fBright, fContrast);
+        });
+
+        // Update sliders to optimal values (triggers preview regeneration)
+        TintRemoval = bestTint;
+        Brightness = bestBright;
+        Contrast = bestContrast;
     }
 
     /// <summary>
@@ -384,7 +492,7 @@ public partial class ColorFixerViewModel : ObservableObject
         item.IsGeneratingPreview = true;
         try
         {
-            var previewPath = await Task.Run(() =>
+            var (previewPath, estimatedScore) = await Task.Run<(string, double)>(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
 
@@ -395,11 +503,15 @@ public partial class ColorFixerViewModel : ObservableObject
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
                 corrected.Save(tempPath);
-                return tempPath;
+
+                double score = EstimateScore(corrected);
+                return (tempPath, score);
             });
 
             item.AfterPreviewPath = previewPath;
             item.NotifyPreviewChanged();
+            EstimatedScore = estimatedScore;
+            OnPropertyChanged(nameof(EstimatedScoreColor));
         }
         catch (Exception ex)
         {
@@ -421,22 +533,18 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <param name="contrast">Contrast adjustment strength 0.0–1.0.</param>
     private static void ApplyColorCorrection(Image<Rgba32> image, string detail, double tintRemoval, double brightness, double contrast)
     {
-        bool hasColorCast = detail.Contains("color tint", StringComparison.OrdinalIgnoreCase);
-        bool isDark = detail.Contains("very dark", StringComparison.OrdinalIgnoreCase);
-        bool isBright = detail.Contains("very bright", StringComparison.OrdinalIgnoreCase);
-
-        if (hasColorCast)
+        if (tintRemoval > 0.001)
         {
             ApplyColorCastCorrection(image, tintRemoval);
         }
 
-        if (isDark)
+        if (brightness > 0.001 || contrast > 0.001)
         {
-            ApplyBrightnessCorrection(image, brightness, contrast, brighten: true);
-        }
-        else if (isBright)
-        {
-            ApplyBrightnessCorrection(image, brightness, contrast, brighten: false);
+            bool isDark = detail.Contains("very dark", StringComparison.OrdinalIgnoreCase);
+            bool isBright = detail.Contains("very bright", StringComparison.OrdinalIgnoreCase);
+            // Default to brighten if no specific direction detected
+            bool brighten = !isBright || isDark;
+            ApplyBrightnessCorrection(image, brightness, contrast, brighten);
         }
     }
 
@@ -672,4 +780,82 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     private static byte ClampByte(float value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
+
+    /// <summary>
+    /// Estimates the color distribution score for a corrected image using the same
+    /// thresholds as <c>ColorDistributionAnalyzer</c>: color cast (−25), very dark (−10), very bright (−10).
+    /// </summary>
+    private static double EstimateScore(Image<Rgba32> image)
+    {
+        const int hueBins = 12;
+        const double grayscaleThreshold = 0.1;
+        const double colorCastThreshold = 0.6;
+        const double veryDarkThreshold = 0.15;
+        const double veryBrightThreshold = 0.9;
+        const double minSatForHue = 0.15;
+
+        var hueCounts = new long[hueBins];
+        double satSum = 0, valSum = 0;
+        long totalPixels = 0, saturatedPixels = 0;
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    var p = row[x];
+                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out float v);
+                    satSum += s;
+                    valSum += v;
+                    totalPixels++;
+
+                    if (s >= minSatForHue)
+                    {
+                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                        hueCounts[bin]++;
+                        saturatedPixels++;
+                    }
+                }
+            }
+        });
+
+        if (totalPixels == 0) return 100;
+
+        double satMean = satSum / totalPixels;
+        double valMean = valSum / totalPixels;
+
+        double score = 100;
+        bool isGrayscale = satMean < grayscaleThreshold;
+
+        // Continuous color cast penalty: any hue dominance above 25% starts reducing score,
+        // reaching full −25 penalty at 75%+ dominance. This provides smooth feedback as
+        // the user adjusts tint removal.
+        if (!isGrayscale && saturatedPixels > 0)
+        {
+            long maxHue = hueCounts.Max();
+            double dominance = (double)maxHue / saturatedPixels;
+            if (dominance > 0.25)
+            {
+                double castSeverity = Math.Clamp((dominance - 0.25) / 0.50, 0, 1);
+                score -= 25 * castSeverity;
+            }
+        }
+
+        // Continuous brightness penalties with wide ramps
+        if (valMean < 0.4)
+        {
+            double darkSeverity = Math.Clamp((0.4 - valMean) / 0.3, 0, 1);
+            score -= 10 * darkSeverity;
+        }
+
+        if (valMean > 0.7)
+        {
+            double brightSeverity = Math.Clamp((valMean - 0.7) / 0.25, 0, 1);
+            score -= 10 * brightSeverity;
+        }
+
+        return Math.Max(0, Math.Round(score, 1));
+    }
 }
