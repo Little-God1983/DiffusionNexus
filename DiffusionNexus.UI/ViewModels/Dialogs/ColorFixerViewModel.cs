@@ -393,9 +393,10 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Finds the optimal slider values (TintRemoval, Brightness, Contrast) that maximize
-    /// the estimated score. Uses a coarse-to-fine grid search: first samples at 25% intervals,
-    /// then refines around the best candidate at 5% intervals.
+    /// Finds the optimal slider values (TintRemoval, Brightness, Contrast) that achieve
+    /// a good score with minimal correction. Uses a coarse-to-fine grid search with a
+    /// "least intervention" penalty — among candidates with similar scores, it prefers
+    /// lower slider values to avoid over-correcting stylized/anime images.
     /// </summary>
     private async Task OptimizeSliderValuesAsync(ColorFixerImageItem item)
     {
@@ -406,22 +407,34 @@ public partial class ColorFixerViewModel : ObservableObject
         {
             using var image = Image.Load<Rgba32>(item.FilePath);
 
-            double bestScore = -1;
-            double bTint = 50, bBright = 50, bContrast = 50;
-
-            // Coarse pass: sample at 25% intervals (0, 25, 50, 75, 100)
-            for (int t = 0; t <= 100; t += 25)
+            // Score that accounts for both quality and amount of correction applied.
+            // Penalizes high slider values so the optimizer prefers gentle fixes.
+            static double EffectiveScore(double rawScore, int tint, int brightness, int contrast)
             {
-                for (int br = 0; br <= 100; br += 25)
+                // Average slider intensity (0.0–1.0), weighted: tint corrections are more destructive
+                double interventionLevel = (tint * 1.5 + brightness + contrast) / 350.0;
+                // Penalty: up to 15 points for maxing all sliders — strongly prefer minimal correction
+                double penalty = interventionLevel * 15.0;
+                return rawScore - penalty;
+            }
+
+            double bestEffective = double.MinValue;
+            double bTint = 0, bBright = 0, bContrast = 0;
+
+            // Coarse pass: sample at 20% intervals (0, 20, 40, 60, 80, 100)
+            for (int t = 0; t <= 100; t += 20)
+            {
+                for (int br = 0; br <= 100; br += 20)
                 {
-                    for (int co = 0; co <= 100; co += 25)
+                    for (int co = 0; co <= 100; co += 20)
                     {
                         using var clone = image.Clone();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
-                        double score = EstimateScore(clone);
-                        if (score > bestScore)
+                        double raw = EstimateScore(clone);
+                        double effective = EffectiveScore(raw, t, br, co);
+                        if (effective > bestEffective)
                         {
-                            bestScore = score;
+                            bestEffective = effective;
                             bTint = t;
                             bBright = br;
                             bContrast = co;
@@ -430,22 +443,23 @@ public partial class ColorFixerViewModel : ObservableObject
                 }
             }
 
-            // Fine pass: refine ±20 around best at 10% steps
+            // Fine pass: refine ±15 around best at 5% steps
             double fTint = bTint, fBright = bBright, fContrast = bContrast;
-            double fineScore = bestScore;
+            double fineEffective = bestEffective;
 
-            for (int t = (int)Math.Max(0, bTint - 20); t <= Math.Min(100, bTint + 20); t += 10)
+            for (int t = (int)Math.Max(0, bTint - 15); t <= Math.Min(100, bTint + 15); t += 5)
             {
-                for (int br = (int)Math.Max(0, bBright - 20); br <= Math.Min(100, bBright + 20); br += 10)
+                for (int br = (int)Math.Max(0, bBright - 15); br <= Math.Min(100, bBright + 15); br += 5)
                 {
-                    for (int co = (int)Math.Max(0, bContrast - 20); co <= Math.Min(100, bContrast + 20); co += 10)
+                    for (int co = (int)Math.Max(0, bContrast - 15); co <= Math.Min(100, bContrast + 15); co += 5)
                     {
                         using var clone = image.Clone();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
-                        double score = EstimateScore(clone);
-                        if (score > fineScore)
+                        double raw = EstimateScore(clone);
+                        double effective = EffectiveScore(raw, t, br, co);
+                        if (effective > fineEffective)
                         {
-                            fineScore = score;
+                            fineEffective = effective;
                             fTint = t;
                             fBright = br;
                             fContrast = co;
@@ -630,8 +644,9 @@ public partial class ColorFixerViewModel : ObservableObject
 
         // Step 4: Apply correction — blend original toward white-balanced based on
         // how close each pixel's hue is to the cast hue.
-        // Pixels near the cast hue get full correction; others get partial.
-        float userStrength = (float)strength;
+        // Cap at 40% of full gray-world shift to preserve artistic intent.
+        const float maxEffect = 0.4f;
+        float userStrength = (float)strength * maxEffect;
 
         image.ProcessPixelRows(accessor =>
         {
@@ -642,21 +657,18 @@ public partial class ColorFixerViewModel : ObservableObject
                 {
                     ref var pixel = ref row[x];
 
-                    // Compute how much this pixel should be corrected
                     RgbToHsv(pixel.R, pixel.G, pixel.B, out float pixelHue, out float pixelSat, out _);
 
-                    // Pixels with low saturation (near gray) get full white-balance correction
-                    // Pixels with high saturation near cast hue get full correction
-                    // Pixels with high saturation far from cast get reduced correction (preserve their color)
+                    // Only correct pixels near the cast hue; leave others mostly untouched
                     float hueProximity = 1.0f;
                     if (pixelSat > 0.15f)
                     {
                         float hueDist = HueDistance(pixelHue, dominantHue);
-                        // Full correction within 60° of cast; tapers to 30% correction at 180°
-                        hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.7f, 0.3f, 1.0f);
+                        // Full correction within 45° of cast; tapers to 10% at 180°
+                        hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.9f, 0.1f, 1.0f);
                     }
 
-                    float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance + 0.3, 1.0);
+                    float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance, 1.0);
 
                     float newR = pixel.R * (1f + pixelStrength * (scaleR - 1f));
                     float newG = pixel.G * (1f + pixelStrength * (scaleG - 1f));
@@ -716,10 +728,10 @@ public partial class ColorFixerViewModel : ObservableObject
 
         if (highClip <= lowClip) highClip = lowClip + 1;
 
-        // Gamma controls brightness; contrast stretch range controls contrast
+        // Gamma controls brightness — gentle range to avoid washing out images
         double gamma = brighten
-            ? Math.Max(0.3, 1.0 - brightnessStrength * 0.7)
-            : Math.Min(2.5, 1.0 + brightnessStrength * 1.5);
+            ? Math.Max(0.7, 1.0 - brightnessStrength * 0.3)
+            : Math.Min(1.5, 1.0 + brightnessStrength * 0.5);
 
         // Blend contrast stretch range: at 0 contrast -> no stretch (identity), at 1 -> full percentile stretch
         int effectiveLow = (int)(lowClip * contrastStrength);
@@ -734,8 +746,8 @@ public partial class ColorFixerViewModel : ObservableObject
             double normalized = Math.Clamp((i - effectiveLow) / (double)(effectiveHigh - effectiveLow), 0, 1);
             // Apply gamma for brightness
             double corrected = Math.Pow(normalized, gamma) * 255.0;
-            // Blend: use max of brightness/contrast strength for overall blend
-            double blendFactor = Math.Max(brightnessStrength, contrastStrength);
+            // Blend: partial application to preserve image character
+            double blendFactor = Math.Max(brightnessStrength, contrastStrength) * 0.5;
             double blended = i + blendFactor * (corrected - i);
             lut[i] = (byte)Math.Clamp((int)Math.Round(blended), 0, 255);
         }
