@@ -311,7 +311,7 @@ public class ColorDistributionTabViewModel : ObservableObject, IDialogServiceAwa
             return;
 
         var problematicImages = _imageItemsByPath.Values
-            .Where(i => i.Score < 80)
+            .Where(i => i.Score <= 80)
             .OrderBy(i => i.Score)
             .ToList();
 

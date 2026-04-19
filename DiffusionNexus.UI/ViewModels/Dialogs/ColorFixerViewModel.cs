@@ -44,6 +44,12 @@ public partial class ColorFixerImageItem : ObservableObject
     /// <summary>Whether this image has a brightness issue (dark or bright).</summary>
     public bool HasBrightnessIssue => IsDark || IsBright;
 
+    /// <summary>Whether this image is a color outlier that doesn't match the rest of the dataset.</summary>
+    public bool IsOutlier => Detail.Contains("Colors look very different", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether this image has fixable color issues (not just an outlier).</summary>
+    public bool IsFixable => HasColorCast || HasBrightnessIssue;
+
     /// <summary>Color hex for the score.</summary>
     public string ScoreColor => Score switch
     {
@@ -133,6 +139,7 @@ public partial class ColorFixerViewModel : ObservableObject
             if (SetProperty(ref _selectedImage, value))
             {
                 OnPropertyChanged(nameof(HasSelectedImage));
+                OnPropertyChanged(nameof(IsOutlierSelected));
                 OnPropertyChanged(nameof(ShowTintSlider));
                 OnPropertyChanged(nameof(ShowBrightnessSliders));
                 AutoSetCommand.NotifyCanExecuteChanged();
@@ -154,6 +161,9 @@ public partial class ColorFixerViewModel : ObservableObject
 
     /// <summary>Whether an image is selected.</summary>
     public bool HasSelectedImage => _selectedImage is not null;
+
+    /// <summary>Whether the selected image is a color outlier (not fixable with sliders).</summary>
+    public bool IsOutlierSelected => _selectedImage?.IsOutlier == true && !(_selectedImage?.IsFixable ?? false);
 
     /// <summary>Number of images fixed in this session.</summary>
     public int FixedCount
@@ -300,8 +310,8 @@ public partial class ColorFixerViewModel : ObservableObject
     /// </summary>
     public ColorFixerViewModel()
     {
-        AutoSetCommand = new AsyncRelayCommand(AutoSetAsync, () => _selectedImage is not null && !_selectedImage.IsResolved);
-        ApplyValuesCommand = new AsyncRelayCommand(ApplyValuesAsync, () => _selectedImage is not null && !_selectedImage.IsResolved);
+        AutoSetCommand = new AsyncRelayCommand(AutoSetAsync, () => _selectedImage is not null && !_selectedImage.IsResolved && !IsOutlierSelected);
+        ApplyValuesCommand = new AsyncRelayCommand(ApplyValuesAsync, () => _selectedImage is not null && !_selectedImage.IsResolved && !IsOutlierSelected);
         SkipSelectedCommand = new RelayCommand(SkipSelected, () => _selectedImage is not null && !_selectedImage.IsResolved);
         FixAllCommand = new AsyncRelayCommand(FixAllAsync, () => Images.Any(i => !i.IsResolved));
     }
@@ -374,6 +384,15 @@ public partial class ColorFixerViewModel : ObservableObject
             var remaining = Images.Where(i => !i.IsResolved).ToList();
             foreach (var image in remaining)
             {
+                // Skip pure outliers — they need manual review, not color correction
+                if (image.IsOutlier && !image.IsFixable)
+                {
+                    image.IsSkipped = true;
+                    SkippedCount++;
+                    OnPropertyChanged(nameof(ProgressText));
+                    continue;
+                }
+
                 await OptimizeSliderValuesAsync(image);
                 await ApplyColorFixAsync(image);
             }
