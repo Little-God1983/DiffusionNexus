@@ -292,7 +292,7 @@ public partial class ColorFixerViewModel : ObservableObject
 
     /// <summary>
     /// Applies automated color correction to a single image using ImageSharp.
-    /// Performs white balance normalization and brightness adjustment.
+    /// Routes to issue-specific algorithms based on the detail string from the analyzer.
     /// </summary>
     private async Task ApplyColorFixAsync(ColorFixerImageItem item)
     {
@@ -302,7 +302,7 @@ public partial class ColorFixerViewModel : ObservableObject
             await Task.Run(() =>
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
-                ApplyColorCorrection(image, _correctionStrength / 100.0);
+                ApplyColorCorrection(image, _correctionStrength / 100.0, item.Detail);
                 image.Save(item.FilePath);
             });
 
@@ -339,9 +339,8 @@ public partial class ColorFixerViewModel : ObservableObject
             {
                 using var image = Image.Load<Rgba32>(item.FilePath);
 
-                // Apply the color correction to a copy for the "after" preview
                 using var corrected = image.Clone();
-                ApplyColorCorrection(corrected, _correctionStrength / 100.0);
+                ApplyColorCorrection(corrected, _correctionStrength / 100.0, item.Detail);
 
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
@@ -364,15 +363,44 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies white balance and brightness correction to an image in-place.
-    /// Shared logic between preview generation and actual fixing.
+    /// Routes to issue-specific correction algorithms based on the analyzer detail string.
     /// </summary>
     /// <param name="image">The image to correct in-place.</param>
     /// <param name="strength">Correction strength from 0.0 (no change) to 1.0 (full correction).</param>
-    private static void ApplyColorCorrection(Image<Rgba32> image, double strength)
+    /// <param name="detail">The detail string from the color distribution analyzer.</param>
+    private static void ApplyColorCorrection(Image<Rgba32> image, double strength, string detail)
     {
-        long totalR = 0, totalG = 0, totalB = 0;
-        long pixelCount = 0;
+        bool hasColorCast = detail.Contains("color tint", StringComparison.OrdinalIgnoreCase);
+        bool isDark = detail.Contains("very dark", StringComparison.OrdinalIgnoreCase);
+        bool isBright = detail.Contains("very bright", StringComparison.OrdinalIgnoreCase);
+
+        if (hasColorCast)
+        {
+            ApplyColorCastCorrection(image, strength);
+        }
+
+        if (isDark)
+        {
+            ApplyBrightnessCorrection(image, strength, brighten: true);
+        }
+        else if (isBright)
+        {
+            ApplyBrightnessCorrection(image, strength, brighten: false);
+        }
+    }
+
+    /// <summary>
+    /// Corrects color cast by finding the dominant hue via a 12-bin hue histogram,
+    /// then applying per-pixel white balance that specifically targets the cast color.
+    /// Unlike gray-world, this preserves natural color variation while neutralizing the tint.
+    /// </summary>
+    private static void ApplyColorCastCorrection(Image<Rgba32> image, double strength)
+    {
+        // Step 1: Build hue histogram to find the dominant cast hue
+        const int hueBins = 12;
+        var hueCounts = new long[hueBins];
+        long totalR = 0, totalG = 0, totalB = 0, pixelCount = 0;
+        long saturatedPixelCount = 0;
 
         image.ProcessPixelRows(accessor =>
         {
@@ -381,11 +409,19 @@ public partial class ColorFixerViewModel : ObservableObject
                 var row = accessor.GetRowSpan(y);
                 for (int x = 0; x < row.Length; x++)
                 {
-                    var pixel = row[x];
-                    totalR += pixel.R;
-                    totalG += pixel.G;
-                    totalB += pixel.B;
+                    var p = row[x];
+                    totalR += p.R;
+                    totalG += p.G;
+                    totalB += p.B;
                     pixelCount++;
+
+                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out _);
+                    if (s > 0.15f)
+                    {
+                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                        hueCounts[bin]++;
+                        saturatedPixelCount++;
+                    }
                 }
             }
         });
@@ -397,70 +433,179 @@ public partial class ColorFixerViewModel : ObservableObject
         double avgB = totalB / (double)pixelCount;
         double avgGray = (avgR + avgG + avgB) / 3.0;
 
-        // Measure how saturated the image is overall — high saturation means
-        // intentional color dominance (e.g. a red-themed scene). We should
-        // NOT aggressively neutralize such images.
-        double maxChannel = Math.Max(avgR, Math.Max(avgG, avgB));
-        double minChannel = Math.Min(avgR, Math.Min(avgG, avgB));
-        double saturationRatio = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
+        // Step 2: Compute per-channel white balance scales (gray-world)
+        float scaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
+        float scaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
+        float scaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
 
-        // Compute raw correction scales toward neutral gray
-        float rawScaleR = avgGray > 0 ? (float)(avgGray / Math.Max(avgR, 1)) : 1f;
-        float rawScaleG = avgGray > 0 ? (float)(avgGray / Math.Max(avgG, 1)) : 1f;
-        float rawScaleB = avgGray > 0 ? (float)(avgGray / Math.Max(avgB, 1)) : 1f;
-
-        // User strength (0..1) scales the base correction factor.
-        // Saturation still dampens the correction to preserve artistic intent,
-        // but the user slider controls the overall ceiling.
-        float baseFactor = (float)Math.Max(0, 1.0 - saturationRatio * 2.0);
-        float correctionStrength = (float)(strength * baseFactor);
-        float maxShift = (float)(0.50 * strength); // per-channel clamp scales with strength
-
-        // Blend: scale = 1 + strength * (rawScale - 1), clamped to ±maxShift per channel
-        float scaleR = 1f + Math.Clamp(correctionStrength * (rawScaleR - 1f), -maxShift, maxShift);
-        float scaleG = 1f + Math.Clamp(correctionStrength * (rawScaleG - 1f), -maxShift, maxShift);
-        float scaleB = 1f + Math.Clamp(correctionStrength * (rawScaleB - 1f), -maxShift, maxShift);
-
-        bool needsWhiteBalance = correctionStrength > 0.001f &&
-            (Math.Abs(scaleR - 1) > 0.005 || Math.Abs(scaleG - 1) > 0.005 || Math.Abs(scaleB - 1) > 0.005);
-
-        bool isDark = avgGray < 38;
-        bool isBright = avgGray > 230;
-
-        if (needsWhiteBalance)
+        // Step 3: Find dominant hue and how dominant the cast is
+        int dominantBin = 0;
+        long maxCount = 0;
+        for (int i = 0; i < hueBins; i++)
         {
-            image.ProcessPixelRows(accessor =>
+            if (hueCounts[i] > maxCount)
             {
-                for (int y = 0; y < accessor.Height; y++)
-                {
-                    var row = accessor.GetRowSpan(y);
-                    for (int x = 0; x < row.Length; x++)
-                    {
-                        ref var pixel = ref row[x];
-                        pixel.R = ClampByte(pixel.R * scaleR);
-                        pixel.G = ClampByte(pixel.G * scaleG);
-                        pixel.B = ClampByte(pixel.B * scaleB);
-                    }
-                }
-            });
+                maxCount = hueCounts[i];
+                dominantBin = i;
+            }
         }
 
-        if (isDark)
+        float dominantHue = (dominantBin + 0.5f) * (360f / hueBins);
+        double castDominance = saturatedPixelCount > 0 ? (double)maxCount / saturatedPixelCount : 0;
+
+        // Step 4: Apply correction — blend original toward white-balanced based on
+        // how close each pixel's hue is to the cast hue.
+        // Pixels near the cast hue get full correction; others get partial.
+        float userStrength = (float)strength;
+
+        image.ProcessPixelRows(accessor =>
         {
-            // Brightness boost scaled by user strength — target between current and 128
-            float rawFactor = (float)((avgGray + 128.0) / 2.0 / Math.Max(avgGray, 1));
-            rawFactor = Math.Min(rawFactor, 1.5f);
-            float brightnessFactor = (float)(1.0 + (rawFactor - 1.0) * strength);
-            image.Mutate(ctx => ctx.Brightness(brightnessFactor));
-        }
-        else if (isBright)
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    ref var pixel = ref row[x];
+
+                    // Compute how much this pixel should be corrected
+                    RgbToHsv(pixel.R, pixel.G, pixel.B, out float pixelHue, out float pixelSat, out _);
+
+                    // Pixels with low saturation (near gray) get full white-balance correction
+                    // Pixels with high saturation near cast hue get full correction
+                    // Pixels with high saturation far from cast get reduced correction (preserve their color)
+                    float hueProximity = 1.0f;
+                    if (pixelSat > 0.15f)
+                    {
+                        float hueDist = HueDistance(pixelHue, dominantHue);
+                        // Full correction within 60° of cast; tapers to 30% correction at 180°
+                        hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.7f, 0.3f, 1.0f);
+                    }
+
+                    float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance + 0.3, 1.0);
+
+                    float newR = pixel.R * (1f + pixelStrength * (scaleR - 1f));
+                    float newG = pixel.G * (1f + pixelStrength * (scaleG - 1f));
+                    float newB = pixel.B * (1f + pixelStrength * (scaleB - 1f));
+
+                    pixel.R = ClampByte(newR);
+                    pixel.G = ClampByte(newG);
+                    pixel.B = ClampByte(newB);
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Corrects brightness using histogram-based contrast stretching with gamma correction.
+    /// Uses percentile-based range detection (1st/99th) for robust clipping.
+    /// </summary>
+    private static void ApplyBrightnessCorrection(Image<Rgba32> image, double strength, bool brighten)
+    {
+        // Build luminance histogram
+        var histogram = new int[256];
+        long pixelCount = 0;
+
+        image.ProcessPixelRows(accessor =>
         {
-            // Brightness reduction scaled by user strength — target between current and 200
-            float rawFactor = (float)((avgGray + 200.0) / 2.0 / Math.Max(avgGray, 1));
-            rawFactor = Math.Max(rawFactor, 0.75f);
-            float brightnessFactor = (float)(1.0 + (rawFactor - 1.0) * strength);
-            image.Mutate(ctx => ctx.Brightness(brightnessFactor));
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    var p = row[x];
+                    int lum = (int)(0.299 * p.R + 0.587 * p.G + 0.114 * p.B);
+                    histogram[Math.Clamp(lum, 0, 255)]++;
+                    pixelCount++;
+                }
+            }
+        });
+
+        if (pixelCount == 0) return;
+
+        // Find 1st and 99th percentile
+        long threshold1 = pixelCount / 100;
+        long threshold99 = pixelCount * 99 / 100;
+        long cumulative = 0;
+        int lowClip = 0, highClip = 255;
+
+        for (int i = 0; i < 256; i++)
+        {
+            cumulative += histogram[i];
+            if (cumulative >= threshold1 && lowClip == 0) lowClip = i;
+            if (cumulative >= threshold99) { highClip = i; break; }
         }
+
+        if (highClip <= lowClip) highClip = lowClip + 1;
+
+        // Build LUT: contrast stretch + gamma
+        double gamma = brighten ? Math.Max(0.3, 1.0 - strength * 0.7) : Math.Min(2.5, 1.0 + strength * 1.5);
+        float userStrength = (float)strength;
+        var lut = new byte[256];
+
+        for (int i = 0; i < 256; i++)
+        {
+            // Contrast stretch to [0..1]
+            double normalized = Math.Clamp((i - lowClip) / (double)(highClip - lowClip), 0, 1);
+            // Apply gamma
+            double corrected = Math.Pow(normalized, gamma) * 255.0;
+            // Blend with original based on strength
+            double blended = i + userStrength * (corrected - i);
+            lut[i] = (byte)Math.Clamp((int)Math.Round(blended), 0, 255);
+        }
+
+        // Apply LUT
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    ref var pixel = ref row[x];
+                    pixel.R = lut[pixel.R];
+                    pixel.G = lut[pixel.G];
+                    pixel.B = lut[pixel.B];
+                }
+            }
+        });
+    }
+
+    /// <summary>Converts RGB (0-255) to HSV (H: 0-360, S: 0-1, V: 0-1).</summary>
+    private static void RgbToHsv(byte r, byte g, byte b, out float h, out float s, out float v)
+    {
+        float rf = r / 255f, gf = g / 255f, bf = b / 255f;
+        float max = Math.Max(rf, Math.Max(gf, bf));
+        float min = Math.Min(rf, Math.Min(gf, bf));
+        float delta = max - min;
+
+        v = max;
+        s = max > 0 ? delta / max : 0;
+
+        if (delta < 0.0001f)
+        {
+            h = 0;
+        }
+        else if (max == rf)
+        {
+            h = 60f * (((gf - bf) / delta) % 6);
+        }
+        else if (max == gf)
+        {
+            h = 60f * (((bf - rf) / delta) + 2);
+        }
+        else
+        {
+            h = 60f * (((rf - gf) / delta) + 4);
+        }
+
+        if (h < 0) h += 360f;
+    }
+
+    /// <summary>Computes the angular distance between two hues (0-360).</summary>
+    private static float HueDistance(float h1, float h2)
+    {
+        float diff = Math.Abs(h1 - h2);
+        return diff > 180f ? 360f - diff : diff;
     }
 
     private static byte ClampByte(float value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
