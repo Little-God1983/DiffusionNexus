@@ -171,6 +171,20 @@
                   IsVisible="{Binding SelectedImage.HasPreview}"
                   LeftImagePath="{Binding SelectedImage.FilePath}"
                   RightImagePath="{ReflectionBinding SelectedImage.AfterPreviewPath}"/>
+
+              <!-- Overlay while optimizing slider values -->
+              <Border Background="#AA000000" IsVisible="{Binding IsOptimizing}"
+                      CornerRadius="4">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Spacing="12">
+                  <ProgressBar IsIndeterminate="True"
+                               Width="48" Height="48"
+                               Classes="circular"/>
+                  <TextBlock Text="Finding optimal values…"
+                             FontSize="13" Foreground="White" Opacity="0.8"
+                             HorizontalAlignment="Center"/>
+                </StackPanel>
+              </Border>
             </Panel>
 
             <!-- Action buttons for selected image -->

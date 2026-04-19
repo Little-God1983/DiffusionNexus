@@ -119,6 +119,7 @@ public partial class ColorFixerViewModel : ObservableObject
     private int _fixedCount;
     private int _skippedCount;
     private bool _isFixingAll;
+    private bool _isOptimizing;
 
     /// <summary>All images with color issues to fix.</summary>
     public ObservableCollection<ColorFixerImageItem> Images { get; } = [];
@@ -173,6 +174,13 @@ public partial class ColorFixerViewModel : ObservableObject
     {
         get => _isFixingAll;
         private set => SetProperty(ref _isFixingAll, value);
+    }
+
+    /// <summary>Whether the auto-set optimization is currently running.</summary>
+    public bool IsOptimizing
+    {
+        get => _isOptimizing;
+        private set => SetProperty(ref _isOptimizing, value);
     }
 
     private double _tintRemoval = 50;
@@ -325,7 +333,15 @@ public partial class ColorFixerViewModel : ObservableObject
         if (_selectedImage is null || _selectedImage.IsResolved)
             return;
 
-        await OptimizeSliderValuesAsync(_selectedImage);
+        IsOptimizing = true;
+        try
+        {
+            await OptimizeSliderValuesAsync(_selectedImage);
+        }
+        finally
+        {
+            IsOptimizing = false;
+        }
     }
 
     /// <summary>Applies the current slider values, saves the corrected image, and advances.</summary>
