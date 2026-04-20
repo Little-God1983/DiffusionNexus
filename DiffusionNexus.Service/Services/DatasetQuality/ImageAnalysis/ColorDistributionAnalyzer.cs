@@ -362,8 +362,8 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
         double score = 100;
 
         if (data.HasColorCast) score -= 25;
-        if (data.IsVeryDark) score -= 10;
-        if (data.IsVeryBright) score -= 10;
+        if (data.IsVeryDark) score -= 25;
+        if (data.IsVeryBright) score -= 25;
         if (isOutlier) score -= 20;
 
         return Math.Max(0, score);

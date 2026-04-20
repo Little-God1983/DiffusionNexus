@@ -310,8 +310,16 @@ public class ColorDistributionTabViewModel : ObservableObject, IDialogServiceAwa
         if (DialogService is null || !HasResults || Issues.Count == 0)
             return;
 
+        // Collect images that scored poorly OR are referenced by any issue
+        var issueAffectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var issue in Issues)
+        {
+            foreach (var path in issue.AffectedFiles)
+                issueAffectedPaths.Add(path);
+        }
+
         var problematicImages = _imageItemsByPath.Values
-            .Where(i => i.Score <= 80)
+            .Where(i => i.Score <= 80 || issueAffectedPaths.Contains(i.FilePath))
             .OrderBy(i => i.Score)
             .ToList();
 

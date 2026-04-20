@@ -508,8 +508,9 @@ public partial class ColorFixerViewModel : ObservableObject
             // Penalizes high slider values so the optimizer prefers gentle fixes.
             static double EffectiveScore(double rawScore, int tint, int brightness, int contrast)
             {
-                // Average slider intensity (0.0–1.0), weighted: tint corrections are more destructive
-                double interventionLevel = (tint * 1.5 + brightness + contrast) / 350.0;
+                // Weighted slider intensity: tint is more destructive (1.5×),
+                // brightness/contrast are gentler corrections (0.5× each)
+                double interventionLevel = (tint * 1.5 + brightness * 0.5 + contrast * 0.5) / 250.0;
                 // Penalty: up to 15 points for maxing all sliders — strongly prefer minimal correction
                 double penalty = interventionLevel * 15.0;
                 return rawScore - penalty;
@@ -825,10 +826,10 @@ public partial class ColorFixerViewModel : ObservableObject
 
         if (highClip <= lowClip) highClip = lowClip + 1;
 
-        // Gamma controls brightness — gentle range to avoid washing out images
+        // Gamma controls brightness direction and intensity
         double gamma = brighten
-            ? Math.Max(0.7, 1.0 - brightnessStrength * 0.3)
-            : Math.Min(1.5, 1.0 + brightnessStrength * 0.5);
+            ? Math.Max(0.4, 1.0 - brightnessStrength * 0.6)
+            : Math.Min(1.8, 1.0 + brightnessStrength * 0.8);
 
         // Blend contrast stretch range: at 0 contrast -> no stretch (identity), at 1 -> full percentile stretch
         int effectiveLow = (int)(lowClip * contrastStrength);
@@ -844,7 +845,7 @@ public partial class ColorFixerViewModel : ObservableObject
             // Apply gamma for brightness
             double corrected = Math.Pow(normalized, gamma) * 255.0;
             // Blend: partial application to preserve image character
-            double blendFactor = Math.Max(brightnessStrength, contrastStrength) * 0.5;
+            double blendFactor = Math.Max(brightnessStrength, contrastStrength) * 0.8;
             double blended = i + blendFactor * (corrected - i);
             lut[i] = (byte)Math.Clamp((int)Math.Round(blended), 0, 255);
         }
@@ -972,13 +973,13 @@ public partial class ColorFixerViewModel : ObservableObject
         if (valMean < 0.4)
         {
             double darkSeverity = Math.Clamp((0.4 - valMean) / 0.3, 0, 1);
-            score -= 10 * darkSeverity;
+            score -= 25 * darkSeverity;
         }
 
         if (valMean > 0.7)
         {
             double brightSeverity = Math.Clamp((valMean - 0.7) / 0.25, 0, 1);
-            score -= 10 * brightSeverity;
+            score -= 25 * brightSeverity;
         }
 
         return Math.Max(0, Math.Round(score, 1));
