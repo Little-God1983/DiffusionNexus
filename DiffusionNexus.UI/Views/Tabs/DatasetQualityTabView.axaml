@@ -63,6 +63,14 @@
           <ProgressBar Minimum="0" Maximum="1" Value="{Binding AnalysisProgress}"
                        Width="120" Height="14" VerticalAlignment="Center"/>
           <TextBlock Text="{Binding AnalysisStatusText}" FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+          <Button Content="Cancel"
+                  Command="{Binding CancelAnalysisCommand}"
+                  IsEnabled="{Binding CanCancelAnalysis}"
+                  Padding="10,4"
+                  Background="#B71C1C"
+                  Foreground="White"
+                  CornerRadius="4"
+                  VerticalAlignment="Center"/>
         </StackPanel>
 
         <!-- Spacer -->
@@ -193,6 +201,14 @@
                 <ProgressBar Minimum="0" Maximum="1" Value="{Binding AnalysisProgress}"
                              Width="120" Height="14" VerticalAlignment="Center"/>
                 <TextBlock Text="{Binding AnalysisStatusText}" FontSize="13" Opacity="0.7" VerticalAlignment="Center"/>
+                <Button Content="Cancel"
+                        Command="{Binding CancelAnalysisCommand}"
+                        IsEnabled="{Binding CanCancelAnalysis}"
+                        Padding="10,4"
+                        Background="#B71C1C"
+                        Foreground="White"
+                        CornerRadius="4"
+                        VerticalAlignment="Center"/>
               </StackPanel>
             </Grid>
           </Border>
