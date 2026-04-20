@@ -1069,8 +1069,21 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return;
 
+        // Export the current edited state to a temp file so the upscaler
+        // receives the edited image, not the original on disk.
+        var pathToSend = CurrentImagePath;
+        if (SaveImageFunc is not null)
+        {
+            var ext = Path.GetExtension(CurrentImagePath);
+            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_upscale_{Guid.NewGuid()}{ext}");
+            if (SaveImageFunc(tempPath))
+            {
+                pathToSend = tempPath;
+            }
+        }
+
         _eventAggregator?.PublishNavigateToBatchUpscale(
-            new NavigateToBatchUpscaleEventArgs { ImagePaths = [CurrentImagePath] });
+            new NavigateToBatchUpscaleEventArgs { ImagePaths = [pathToSend] });
     }
 
     #endregion

@@ -76,4 +76,46 @@ public class ImageEditorViewModelSendToBatchUpscaleTests
         var act = () => sut.SendToBatchUpscaleCommand.Execute(null);
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void WhenSaveImageFuncProvided_SendToBatchUpscaleExportsTempFile()
+    {
+        const string imagePath = @"C:\datasets\test\image.png";
+        NavigateToBatchUpscaleEventArgs? capturedArgs = null;
+
+        _mockAggregator
+            .Setup(a => a.PublishNavigateToBatchUpscale(It.IsAny<NavigateToBatchUpscaleEventArgs>()))
+            .Callback<NavigateToBatchUpscaleEventArgs>(args => capturedArgs = args);
+
+        var sut = CreateSut();
+        sut.LoadImage(imagePath);
+        sut.SaveImageFunc = _ => true;
+
+        sut.SendToBatchUpscaleCommand.Execute(null);
+
+        capturedArgs.Should().NotBeNull();
+        capturedArgs!.ImagePaths.Should().ContainSingle()
+            .Which.Should().NotBe(imagePath, "the edited image should be exported to a temp file");
+    }
+
+    [Fact]
+    public void WhenSaveImageFuncFails_SendToBatchUpscaleFallsBackToOriginalPath()
+    {
+        const string imagePath = @"C:\datasets\test\image.png";
+        NavigateToBatchUpscaleEventArgs? capturedArgs = null;
+
+        _mockAggregator
+            .Setup(a => a.PublishNavigateToBatchUpscale(It.IsAny<NavigateToBatchUpscaleEventArgs>()))
+            .Callback<NavigateToBatchUpscaleEventArgs>(args => capturedArgs = args);
+
+        var sut = CreateSut();
+        sut.LoadImage(imagePath);
+        sut.SaveImageFunc = _ => false;
+
+        sut.SendToBatchUpscaleCommand.Execute(null);
+
+        capturedArgs.Should().NotBeNull();
+        capturedArgs!.ImagePaths.Should().ContainSingle()
+            .Which.Should().Be(imagePath);
+    }
 }
