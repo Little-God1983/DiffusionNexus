@@ -27,6 +27,7 @@ public partial class ImageEditView : UserControl
     private readonly int _instanceId;
     private ImageEditorControl? _imageEditorCanvas;
     private Border? _imageDropZone;
+    private Grid? _imageEditorGrid;
     private Button? _openImageButton;
     private bool _eventsWired;
     private long _lastSyncedInpaintBaseVersion = -1;
@@ -48,6 +49,7 @@ public partial class ImageEditView : UserControl
         AvaloniaXamlLoader.Load(this);
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
         _imageDropZone = this.FindControl<Border>("ImageDropZone");
+        _imageEditorGrid = this.FindControl<Grid>("ImageEditorGrid");
         _openImageButton = this.FindControl<Button>("OpenImageButton");
         // Drag-drop and button handlers are registered in OnAttachedToVisualTree
         // so they survive TabControl detach/reattach cycles.
@@ -105,6 +107,14 @@ public partial class ImageEditView : UserControl
             _imageDropZone.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
         }
 
+        // Allow drag/drop on the editor grid so images can be dropped even when one is already loaded.
+        if (_imageEditorGrid is not null)
+        {
+            _imageEditorGrid.AddHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageEditorGrid.AddHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageEditorGrid.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
         if (_openImageButton is not null)
             _openImageButton.Click += OnOpenImageButtonClick;
 
@@ -128,6 +138,13 @@ public partial class ImageEditView : UserControl
             _imageDropZone.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
             _imageDropZone.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
             _imageDropZone.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
+        if (_imageEditorGrid is not null)
+        {
+            _imageEditorGrid.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageEditorGrid.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageEditorGrid.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
         }
 
         if (_openImageButton is not null)
@@ -1076,20 +1093,26 @@ public partial class ImageEditView : UserControl
 
     private void OnImageDragEnter(object? sender, DragEventArgs e)
     {
-        if (_imageDropZone is null) return;
-
         var hasValidImage = AnalyzeImageFilesInDrag(e);
 
         if (hasValidImage)
         {
-            _imageDropZone.BorderBrush = Brushes.LimeGreen;
-            _imageDropZone.BorderThickness = new Thickness(3);
+            if (_imageDropZone is { IsVisible: true })
+            {
+                _imageDropZone.BorderBrush = Brushes.LimeGreen;
+                _imageDropZone.BorderThickness = new Thickness(3);
+            }
+
             e.DragEffects = DragDropEffects.Copy;
         }
         else
         {
-            _imageDropZone.BorderBrush = Brushes.Red;
-            _imageDropZone.BorderThickness = new Thickness(3);
+            if (_imageDropZone is { IsVisible: true })
+            {
+                _imageDropZone.BorderBrush = Brushes.Red;
+                _imageDropZone.BorderThickness = new Thickness(3);
+            }
+
             e.DragEffects = DragDropEffects.None;
         }
     }

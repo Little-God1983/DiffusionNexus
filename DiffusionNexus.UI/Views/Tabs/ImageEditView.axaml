@@ -187,7 +187,7 @@
       
       <!-- Image Editor Canvas -->
       <Border Grid.Row="1" Background="#1A1A1A" Margin="16">
-        <Grid>
+        <Grid x:Name="ImageEditorGrid" DragDrop.AllowDrop="True">
           <!-- Empty state - Drop Zone -->
           <Border x:Name="ImageDropZone" IsVisible="{Binding !ImageEditor.HasImage}"
                   Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" CornerRadius="12"
@@ -212,7 +212,7 @@
                                        ShapeStrokeColor="{Binding ImageEditor.DrawingTools.ShapeStrokeColor}"
                                        ShapeFillColor="{Binding ImageEditor.DrawingTools.ShapeFillColor}"
                                        ShapeStrokeWidth="{Binding ImageEditor.DrawingTools.ShapeStrokeWidth}"
-                                       IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=False}"/>
+                                       IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
           <!-- Video player shown when a video file is loaded -->
           <controls:VideoPlayerControl DataContext="{Binding ImageEditor.VideoPlayer}"
                                        IsVisible="{Binding $parent[Grid].((vmTabs:ImageEditTabViewModel)DataContext).ImageEditor.IsVideoMode, FallbackValue=False}"/>
