@@ -654,7 +654,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         BucketAnalyzer? bucketAnalyzer = null,
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
         AnalysisRunStore? analysisRunStore = null,
-        DuplicateDetector? duplicateDetector = null)
+        DuplicateDetector? duplicateDetector = null,
+        ColorDistributionAnalyzer? colorDistributionAnalyzer = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -672,7 +673,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         PresentationTab = new PresentationTabViewModel(_eventAggregator);
         CaptioningTab = new CaptioningTabViewModel(_eventAggregator, _state, _captioningService);
         DatasetQualityTab = analysisPipeline is not null && analysisRunStore is not null
-            ? new DatasetQualityTabViewModel(analysisPipeline, analysisRunStore, bucketAnalyzer, imageQualityChecks, duplicateDetector)
+            ? new DatasetQualityTabViewModel(analysisPipeline, analysisRunStore, bucketAnalyzer, imageQualityChecks, duplicateDetector, colorDistributionAnalyzer)
             : new DatasetQualityTabViewModel();
         DatasetQualityTab.FixDistributionRequested += OnFixDistributionRequested;
 

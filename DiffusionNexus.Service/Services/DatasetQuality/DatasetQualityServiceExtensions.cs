@@ -37,6 +37,10 @@ public static class DatasetQualityServiceExtensions
         services.AddSingleton<IImageQualityCheck, BlurDetector>();
         services.AddSingleton<IImageQualityCheck, ExposureAnalyzer>();
         services.AddSingleton<IImageQualityCheck, JpegArtifactDetector>();
+        services.AddSingleton<IImageQualityCheck, NoiseEstimator>();
+        // Register ColorDistributionAnalyzer as a shared singleton, exposed both as IImageQualityCheck and directly
+        services.AddSingleton<ColorDistributionAnalyzer>();
+        services.AddSingleton<IImageQualityCheck>(sp => sp.GetRequiredService<ColorDistributionAnalyzer>());
         // Register DuplicateDetector as a shared singleton, exposed both as IImageQualityCheck and directly
         services.AddSingleton<DuplicateDetector>();
         services.AddSingleton<IImageQualityCheck>(sp => sp.GetRequiredService<DuplicateDetector>());

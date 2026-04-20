@@ -553,4 +553,14 @@ public class DialogService : IDialogService
         return viewModel.DeletedCount;
     }
 
+    public async Task<int> ShowColorFixerAsync(IEnumerable<ViewModels.Tabs.ColorDistributionItemViewModel> images)
+    {
+        var viewModel = new ViewModels.Dialogs.ColorFixerViewModel();
+        viewModel.LoadImages(images);
+
+        var dialog = new ColorFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.FixedCount;
+    }
+
     }

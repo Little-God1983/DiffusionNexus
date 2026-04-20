@@ -1,0 +1,280 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+        mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.ColorFixerWindow"
+        x:DataType="vm:ColorFixerViewModel"
+        Title="Fix Color Issues"
+        Width="1300" Height="750"
+        MinWidth="900" MinHeight="550"
+        WindowStartupLocation="CenterOwner"
+        Background="#1A1A1A">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- TOP: Action Bar -->
+    <Border Grid.Row="0" Background="#222" Padding="16,12" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Fix Color Issues"
+                   FontSize="16" FontWeight="SemiBold"
+                   Opacity="0.9"
+                   VerticalAlignment="Center"/>
+
+        <Button Grid.Column="1"
+                Content="Fix All Remaining"
+                Command="{Binding FixAllCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#4CAF50"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Automatically fix all remaining images"/>
+
+        <TextBlock Grid.Column="2"
+                   Text="{Binding ProgressText}"
+                   FontSize="13"
+                   Opacity="0.6"
+                   VerticalAlignment="Center"
+                   Margin="8,0,0,0"/>
+      </Grid>
+    </Border>
+
+    <!-- MAIN: Left image list + Right preview -->
+    <Grid Grid.Row="1" ColumnDefinitions="350,*">
+
+      <!-- LEFT: Image List -->
+      <Border Grid.Column="0" Background="#1A1A1A" BorderBrush="#333" BorderThickness="0,0,1,0">
+        <ListBox ItemsSource="{Binding Images}"
+                 SelectedItem="{Binding SelectedImage, Mode=TwoWay}"
+                 Background="Transparent">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:ColorFixerImageItem">
+              <Border Padding="10,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <TextBlock Text="✓" FontSize="14" Foreground="#4CAF50"
+                               IsVisible="{Binding IsFixed}"/>
+                    <TextBlock Text="🗑" FontSize="12" Foreground="#FF6B6B"
+                               IsVisible="{Binding IsRejected}"/>
+                    <TextBlock Text="—" FontSize="14" Foreground="#666"
+                               IsVisible="{Binding IsSkipped}"/>
+                    <TextBlock Text="●" FontSize="10" Foreground="#FFA726"
+                               IsVisible="{Binding !IsResolved}"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="{Binding FileName}"
+                               FontSize="12" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Detail}"
+                               FontSize="11" Opacity="0.6"
+                               TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding Score, StringFormat={}{0:F0}}"
+                             FontSize="14" FontWeight="Bold"
+                             Foreground="{Binding ScoreColor}"
+                             VerticalAlignment="Center"
+                             Margin="8,0,0,0"/>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+
+      <!-- RIGHT: Preview + Actions -->
+      <Border Grid.Column="1" Background="#1E1E1E">
+        <Panel>
+          <!-- No selection -->
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                      IsVisible="{Binding !HasSelectedImage}">
+            <TextBlock Text="Select an image to preview and fix"
+                       Opacity="0.4" FontSize="14" HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <!-- Selected image detail -->
+          <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding HasSelectedImage}">
+            <!-- Row 0: compact control bar -->
+            <Border Grid.Row="0" Background="#252525" Padding="10,6" BorderBrush="#333" BorderThickness="0,0,0,1">
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <!-- Left: filename + score -->
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="0" MinWidth="120">
+                  <TextBlock Text="{Binding SelectedImage.FileName}"
+                             FontSize="13" FontWeight="SemiBold"/>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="{Binding SelectedImage.Score, StringFormat=Score: {0:F0}}"
+                               FontSize="11" Opacity="0.5"/>
+                    <TextBlock Text="→" FontSize="11" Opacity="0.4"/>
+                    <TextBlock Text="{Binding EstimatedScore, StringFormat={}{0:F0}}"
+                               FontSize="13" FontWeight="Bold"
+                               Foreground="{Binding EstimatedScoreColor}"/>
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- Center: sliders (hidden for pure outliers) -->
+                <Grid Grid.Column="1" RowDefinitions="28,28,28" ColumnDefinitions="90,*,50"
+                      Margin="20,0,20,0" VerticalAlignment="Center"
+                      IsVisible="{Binding !IsOutlierSelected}">
+
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Tint Removal:" FontSize="11" Opacity="0.7"
+                             VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,6,0"/>
+                  <Slider Grid.Row="0" Grid.Column="1" Value="{Binding TintRemoval, Mode=TwoWay}"
+                          Minimum="0" Maximum="100" VerticalAlignment="Center"
+                          ToolTip.Tip="How much of the dominant color tint to remove"/>
+                  <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding TintRemoval, StringFormat={}{0:F0}%}"
+                             FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                  <TextBlock Grid.Row="1" Grid.Column="0" Text="Brightness:" FontSize="11" Opacity="0.7"
+                             VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,6,0"/>
+                  <Slider Grid.Row="1" Grid.Column="1" Value="{Binding Brightness, Mode=TwoWay}"
+                          Minimum="0" Maximum="100" VerticalAlignment="Center"
+                          ToolTip.Tip="How much to adjust brightness"/>
+                  <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Brightness, StringFormat={}{0:F0}%}"
+                             FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" Text="Contrast:" FontSize="11" Opacity="0.7"
+                             VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,6,0"/>
+                  <Slider Grid.Row="2" Grid.Column="1" Value="{Binding Contrast, Mode=TwoWay}"
+                          Minimum="0" Maximum="100" VerticalAlignment="Center"
+                          ToolTip.Tip="How much to stretch the tonal range"/>
+                  <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Contrast, StringFormat={}{0:F0}%}"
+                             FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </Grid>
+
+                <!-- Center: outlier message (shown instead of sliders for pure outliers) -->
+                <Border Grid.Column="1" Background="#3AFF6B6B" CornerRadius="4" Padding="12,8"
+                        Margin="20,0,20,0" VerticalAlignment="Center"
+                        IsVisible="{Binding IsOutlierSelected}">
+                  <StackPanel Spacing="2">
+                    <TextBlock Text="⚠ Color Outlier" FontSize="13" FontWeight="SemiBold" Foreground="#FF6B6B"/>
+                    <TextBlock Text="This image's colors don't match the rest of the dataset. Color correction won't help — use the Mark Trash button below."
+                               FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+                  </StackPanel>
+                </Border>
+
+                <!-- Right: issue detail tooltip icon -->
+                <TextBlock Grid.Column="2" Text="ℹ" FontSize="20" Opacity="0.7"
+                           VerticalAlignment="Center" Margin="8,0,0,0"
+                           ToolTip.Tip="{Binding SelectedImage.Detail}"
+                           Cursor="Help"/>
+              </Grid>
+            </Border>
+
+            <!-- Image Comparer with slider, zoom, and pan -->
+            <Panel Grid.Row="1" Margin="4,4,4,0">
+              <!-- Spinner while generating preview -->
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                          Spacing="12"
+                          IsVisible="{Binding SelectedImage.IsGeneratingPreview}">
+                <ProgressBar IsIndeterminate="True"
+                             Width="48" Height="48"
+                             Classes="circular"/>
+                <TextBlock Text="Generating preview…"
+                           FontSize="12" Opacity="0.5"
+                           HorizontalAlignment="Center"/>
+              </StackPanel>
+
+              <!-- Compare control once preview is ready -->
+              <controls:ImageCompareControl
+                  IsVisible="{Binding SelectedImage.HasPreview}"
+                  LeftImagePath="{Binding SelectedImage.FilePath}"
+                  RightImagePath="{ReflectionBinding SelectedImage.AfterPreviewPath}"/>
+
+              <!-- Overlay while optimizing slider values -->
+              <Border Background="#AA000000" IsVisible="{Binding IsOptimizing}"
+                      CornerRadius="4">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Spacing="12">
+                  <ProgressBar IsIndeterminate="True"
+                               Width="48" Height="48"
+                               Classes="circular"/>
+                  <TextBlock Text="Finding optimal values…"
+                             FontSize="13" Foreground="White" Opacity="0.8"
+                             HorizontalAlignment="Center"/>
+                </StackPanel>
+              </Border>
+            </Panel>
+
+            <!-- Action buttons for selected image -->
+            <Border Grid.Row="2" Background="#222" Padding="16,10"
+                    BorderBrush="#333" BorderThickness="0,1,0,0">
+              <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                <Button Command="{Binding AutoSetCommand}"
+                        Padding="20,10"
+                        Background="#2196F3"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Automatically find and set the best slider values">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="🎯"/>
+                    <TextBlock Text="Auto-Set Best Values"/>
+                  </StackPanel>
+                </Button>
+                <Button Command="{Binding ApplyValuesCommand}"
+                        Padding="20,10"
+                        Background="#4CAF50"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Apply the current slider values and save">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="✅"/>
+                    <TextBlock Text="Apply Values"/>
+                  </StackPanel>
+                </Button>
+                <Button Command="{Binding RejectSelectedCommand}"
+                        Padding="20,10"
+                        Background="#FF6B6B"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Mark this image as trash">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="🗑"/>
+                    <TextBlock Text="Mark Trash"/>
+                  </StackPanel>
+                </Button>
+                <Button Command="{Binding SkipSelectedCommand}"
+                        Padding="20,10"
+                        Background="#555"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        CornerRadius="4"
+                        ToolTip.Tip="Skip this image without changes">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="⏭"/>
+                    <TextBlock Text="Skip"/>
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+
+                <!-- Already-rejected banner -->
+                <Border Background="#D32F2F" CornerRadius="6" Padding="12,8"
+                        IsVisible="{Binding IsAlreadyRejected}">
+                  <TextBlock Text="🗑 This image is already marked as trash — no adjustment needed."
+                             Foreground="White" FontWeight="SemiBold" TextAlignment="Center"/>
+                </Border>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Panel>
+      </Border>
+    </Grid>
+
+    <!-- BOTTOM: Status -->
+    <Border Grid.Row="2" Background="#1A1A1A" Padding="16,8"
+            BorderBrush="#333" BorderThickness="0,1,0,0">
+      <TextBlock Text="{Binding ProgressText}"
+                 FontSize="13" Opacity="0.6"/>
+    </Border>
+
+  </Grid>
+</Window>

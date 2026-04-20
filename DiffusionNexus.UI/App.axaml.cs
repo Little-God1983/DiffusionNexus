@@ -702,7 +702,8 @@ public partial class App : Application
             sp.GetService<IComfyUIReadinessService>(),
             sp.GetServices<IImageQualityCheck>(),
             sp.GetService<AnalysisRunStore>(),
-            sp.GetService<DuplicateDetector>()));
+            sp.GetService<DuplicateDetector>(),
+            sp.GetService<ColorDistributionAnalyzer>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
