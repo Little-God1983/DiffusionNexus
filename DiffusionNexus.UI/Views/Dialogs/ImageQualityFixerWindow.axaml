@@ -1,0 +1,256 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
+        mc:Ignorable="d" d:DesignWidth="1400" d:DesignHeight="820"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.ImageQualityFixerWindow"
+        x:DataType="vm:ImageQualityFixerViewModel"
+        Title="Fix Image Quality Issues"
+        Width="1400" Height="820"
+        MinWidth="1100" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#1A1A1A">
+
+  <Window.Styles>
+    <Style Selector="ToggleButton.chip">
+      <Setter Property="Background" Value="#2A2A2A"/>
+      <Setter Property="Foreground" Value="#DDDDDD"/>
+      <Setter Property="BorderBrush" Value="#3A3A3A"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="CornerRadius" Value="14"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="#3F6CB6"/>
+      <Setter Property="Foreground" Value="White"/>
+    </Style>
+    <Style Selector="Border.scoreCell">
+      <Setter Property="CornerRadius" Value="3"/>
+      <Setter Property="Padding" Value="6,2"/>
+      <Setter Property="MinWidth" Value="36"/>
+      <Setter Property="Margin" Value="2,0"/>
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <Border Grid.Row="0" Background="#222" Padding="16,12" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <TextBlock Grid.Column="0" Text="Image Quality Fixer"
+                   FontSize="16" FontWeight="SemiBold" Opacity="0.9"
+                   VerticalAlignment="Center" Margin="0,0,16,0"/>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <ToggleButton Classes="chip" IsChecked="{Binding IsAllSelected}"
+                        Click="OnFilterAll_Click"
+                        Content="{Binding TotalCount, StringFormat=All ({0})}"/>
+          <ToggleButton Classes="chip" IsChecked="{Binding IsUnratedSelected}"
+                        Click="OnFilterUnrated_Click"
+                        Content="{Binding UnratedCount, StringFormat=Unrated ({0})}"/>
+          <ToggleButton Classes="chip" IsChecked="{Binding IsApprovedSelected}"
+                        Click="OnFilterApproved_Click"
+                        Content="{Binding ApprovedCount, StringFormat=Ready ({0})}"/>
+          <ToggleButton Classes="chip" IsChecked="{Binding IsTrashSelected}"
+                        Click="OnFilterTrash_Click"
+                        Content="{Binding TrashCount, StringFormat=Trash ({0})}"/>
+        </StackPanel>
+
+        <Button Grid.Column="2"
+                Content="{Binding SelectedRowCount, StringFormat=Mark {0} as Trash}"
+                Command="{Binding BulkMarkTrashCommand}"
+                Padding="12,6" Margin="0,0,12,0"
+                Background="#FF6B6B" Foreground="White" FontWeight="SemiBold" CornerRadius="4"
+                ToolTip.Tip="Mark every checked row as Trash"/>
+
+        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="Sort:" Opacity="0.6" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <ComboBox SelectedIndex="0" Width="180" SelectionChanged="OnSortChanged">
+            <ComboBoxItem Content="Worst score first"/>
+            <ComboBoxItem Content="Best score first"/>
+            <ComboBoxItem Content="File name (A-Z)"/>
+          </ComboBox>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="*,420">
+
+      <Border Grid.Column="0" Background="#1A1A1A">
+        <Grid RowDefinitions="Auto,*">
+
+          <Border Grid.Row="0" Background="#202020" Padding="10,8" BorderBrush="#333" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="32,*,180,60,60,60,60,60">
+              <TextBlock Grid.Column="0" Text=""/>
+              <TextBlock Grid.Column="1" Text="File" FontSize="11" Opacity="0.6" FontWeight="SemiBold"/>
+              <TextBlock Grid.Column="2" Text="Resolution / Size" FontSize="11" Opacity="0.6" FontWeight="SemiBold"/>
+              <TextBlock Grid.Column="3" Text="Blur" FontSize="11" Opacity="0.6" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Grid.Column="4" Text="Expo" FontSize="11" Opacity="0.6" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Grid.Column="5" Text="Noise" FontSize="11" Opacity="0.6" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Grid.Column="6" Text="JPEG" FontSize="11" Opacity="0.6" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+              <TextBlock Grid.Column="7" Text="Overall" FontSize="11" Opacity="0.6" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+            </Grid>
+          </Border>
+
+          <ListBox Grid.Row="1"
+                   ItemsSource="{Binding Items}"
+                   SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                   Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:ImageQualityFixerItemViewModel">
+                <Border Padding="10,6" BorderBrush="#262626" BorderThickness="0,0,0,1">
+                  <Grid ColumnDefinitions="32,*,180,60,60,60,60,60">
+                    <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                              VerticalAlignment="Center" ToolTip.Tip="Select for bulk action"/>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2" Margin="4,0,8,0">
+                      <TextBlock Text="{Binding FileName}" FontSize="12" FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Border Background="{Binding RatingColor}" CornerRadius="3" Padding="5,1">
+                          <TextBlock Text="{Binding RatingLabel}" FontSize="10" Foreground="White" FontWeight="SemiBold"/>
+                        </Border>
+                        <TextBlock Text="{Binding Advice.Headline}" FontSize="11" Opacity="0.6"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
+                      <TextBlock Text="{Binding ResolutionDisplay}" FontSize="11" Opacity="0.7"/>
+                      <TextBlock Text="{Binding FileSizeDisplay}" FontSize="11" Opacity="0.5"/>
+                    </StackPanel>
+
+                    <Border Grid.Column="3" Classes="scoreCell" Background="{Binding BlurScoreColor}">
+                      <TextBlock Text="{Binding BlurDisplay}" FontSize="12" Foreground="White"
+                                 FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </Border>
+                    <Border Grid.Column="4" Classes="scoreCell" Background="{Binding ExposureScoreColor}">
+                      <TextBlock Text="{Binding ExposureDisplay}" FontSize="12" Foreground="White"
+                                 FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </Border>
+                    <Border Grid.Column="5" Classes="scoreCell" Background="{Binding NoiseScoreColor}">
+                      <TextBlock Text="{Binding NoiseDisplay}" FontSize="12" Foreground="White"
+                                 FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </Border>
+                    <Border Grid.Column="6" Classes="scoreCell" Background="{Binding JpegScoreColor}">
+                      <TextBlock Text="{Binding JpegDisplay}" FontSize="12" Foreground="White"
+                                 FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </Border>
+                    <Border Grid.Column="7" Classes="scoreCell" Background="{Binding OverallScoreColor}">
+                      <TextBlock Text="{Binding OverallDisplay}" FontSize="13" Foreground="White"
+                                 FontWeight="Bold" HorizontalAlignment="Center"/>
+                    </Border>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="1" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1,0,0,0">
+        <Panel>
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                      IsVisible="{Binding !HasSelectedItem}">
+            <TextBlock Text="Select an image to see details"
+                       Opacity="0.4" FontSize="13" HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <Grid IsVisible="{Binding HasSelectedItem}" RowDefinitions="280,*,Auto">
+
+            <Border Grid.Row="0" Background="#0F0F0F" Padding="8">
+              <Image Source="{Binding SelectedItem.FilePath}" Stretch="Uniform"/>
+            </Border>
+
+            <ScrollViewer Grid.Row="1" Padding="14,12" VerticalScrollBarVisibility="Auto">
+              <StackPanel Spacing="14">
+                <StackPanel Spacing="3">
+                  <TextBlock Text="{Binding SelectedItem.FileName}" FontSize="14" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding SelectedItem.Advice.Headline}"
+                             FontSize="12" Opacity="0.75" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <StackPanel Spacing="4" IsVisible="{Binding SelectedItem.Advice.Problems.Count}">
+                  <TextBlock Text="What's wrong" FontSize="11" Opacity="0.55" FontWeight="SemiBold"/>
+                  <ItemsControl ItemsSource="{Binding SelectedItem.Advice.Problems}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                          <TextBlock Text="&#x2022;" Opacity="0.5" VerticalAlignment="Top"/>
+                          <StackPanel>
+                            <TextBlock FontSize="12" FontWeight="SemiBold">
+                              <Run Text="{Binding MetricName}"/>
+                              <Run Text=" &#x2014; "/>
+                              <Run Text="{Binding Score, StringFormat={}{0:F0}/100}"/>
+                            </TextBlock>
+                            <TextBlock Text="{Binding Description}" FontSize="11"
+                                       Opacity="0.7" TextWrapping="Wrap"/>
+                          </StackPanel>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Spacing="4" IsVisible="{Binding SelectedItem.Advice.SuggestedFixes.Count}">
+                  <TextBlock Text="Suggested fixes" FontSize="11" Opacity="0.55" FontWeight="SemiBold"/>
+                  <ItemsControl ItemsSource="{Binding SelectedItem.Advice.SuggestedFixes}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                          <TextBlock Text="&#x2022;" Opacity="0.5" VerticalAlignment="Top"/>
+                          <TextBlock Text="{Binding}" FontSize="12" Opacity="0.85" TextWrapping="Wrap"/>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Row="2" Background="#252525" Padding="12,10"
+                    BorderBrush="#333" BorderThickness="0,1,0,0">
+              <StackPanel Spacing="6">
+                <UniformGrid Columns="3">
+                  <Button Content="Mark Ready" Command="{Binding MarkApprovedCommand}"
+                          Background="#4CAF50" Foreground="White"
+                          Margin="0,0,4,0" Padding="0,6" HorizontalContentAlignment="Center"/>
+                  <Button Content="Mark Trash" Command="{Binding MarkTrashCommand}"
+                          Background="#FF6B6B" Foreground="White"
+                          Margin="2,0" Padding="0,6" HorizontalContentAlignment="Center"/>
+                  <Button Content="Clear Rating" Command="{Binding ClearRatingCommand}"
+                          Background="#3A3A3A" Foreground="White"
+                          Margin="4,0,0,0" Padding="0,6" HorizontalContentAlignment="Center"/>
+                </UniformGrid>
+                <UniformGrid Columns="3">
+                  <Button Content="Replace…" Command="{Binding ReplaceCommand}"
+                          Background="#3F6CB6" Foreground="White"
+                          Margin="0,0,4,0" Padding="0,6" HorizontalContentAlignment="Center"
+                          ToolTip.Tip="Replace this image and re-run quality analysis"/>
+                  <Button Content="Edit in Editor" Command="{Binding EditInImageEditorCommand}"
+                          Background="#3A3A3A" Foreground="White"
+                          Margin="2,0" Padding="0,6" HorizontalContentAlignment="Center"
+                          ToolTip.Tip="Open in the Image Editor (closes this dialog)"/>
+                  <Button Content="Show in Explorer" Command="{Binding OpenInExplorerCommand}"
+                          Background="#3A3A3A" Foreground="White"
+                          Margin="4,0,0,0" Padding="0,6" HorizontalContentAlignment="Center"/>
+                </UniformGrid>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Panel>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="#222" Padding="16,10" BorderBrush="#333" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" Text="{Binding SummaryText}"
+                   FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+        <Button Grid.Column="1" Content="Close" Click="OnClose_Click"
+                Padding="20,6" Background="#3A3A3A" Foreground="White" CornerRadius="4"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

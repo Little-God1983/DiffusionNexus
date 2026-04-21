@@ -110,6 +110,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         {
             field = value;
             TestRunsTab.DialogService = value;
+            ImageAnalysisTab.ImageQualityTab.DialogService = value;
+            ImageAnalysisTab.ColorDistributionTab.DialogService = value;
         }
     }
 

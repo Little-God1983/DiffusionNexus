@@ -37,6 +37,57 @@ public record ImageCheckResult
 public record PerImageScore(string FilePath, double Score, string? Detail);
 
 /// <summary>
+/// Aggregated per-image quality summary across every image quality check that ran.
+/// One instance per image, keyed by absolute file path. All score fields are
+/// nullable so the consumer can tell "check did not run" apart from "scored zero".
+/// </summary>
+public record PerImageQualitySummary
+{
+    /// <summary>Absolute path to the image.</summary>
+    public required string FilePath { get; init; }
+
+    /// <summary>Blur score (0–100, higher = sharper) or null if the check did not run.</summary>
+    public double? BlurScore { get; init; }
+
+    /// <summary>Human-readable blur detail (e.g. "Laplacian variance: 67").</summary>
+    public string? BlurDetail { get; init; }
+
+    /// <summary>Exposure score (0–100, higher = better exposed) or null if the check did not run.</summary>
+    public double? ExposureScore { get; init; }
+
+    /// <summary>Human-readable exposure detail (e.g. "8% clipped highlights").</summary>
+    public string? ExposureDetail { get; init; }
+
+    /// <summary>Noise score (0–100, higher = cleaner) or null if the check did not run.</summary>
+    public double? NoiseScore { get; init; }
+
+    /// <summary>Human-readable noise detail (e.g. "Estimated sigma 4.2").</summary>
+    public string? NoiseDetail { get; init; }
+
+    /// <summary>JPEG quality score (0–100, higher = better) or null if the check did not run.</summary>
+    public double? JpegScore { get; init; }
+
+    /// <summary>Human-readable JPEG detail (e.g. "Estimated quality factor 62").</summary>
+    public string? JpegDetail { get; init; }
+
+    /// <summary>
+    /// Mean of all non-null score components. Returns NaN when no checks reported a score.
+    /// </summary>
+    public double OverallScore
+    {
+        get
+        {
+            var values = new List<double>(4);
+            if (BlurScore is { } b) values.Add(b);
+            if (ExposureScore is { } e) values.Add(e);
+            if (NoiseScore is { } n) values.Add(n);
+            if (JpegScore is { } j) values.Add(j);
+            return values.Count == 0 ? double.NaN : values.Average();
+        }
+    }
+}
+
+/// <summary>
 /// A scored result from any check (caption or image), normalized for composite calculation.
 /// </summary>
 public record CheckScore

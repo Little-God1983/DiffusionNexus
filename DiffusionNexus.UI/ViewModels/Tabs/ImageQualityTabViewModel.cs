@@ -4,6 +4,11 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.ViewModels.Dialogs;
+using SixLabors.ImageSharp;
+using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -70,8 +75,12 @@ public class ImageQualityItemViewModel : ObservableObject
 /// ViewModel for the Image Quality detail section within the Image Analysis dashboard.
 /// Uses the same left (issue list) + right (detail with affected images) pattern as Caption Quality.
 /// </summary>
-public class ImageQualityTabViewModel : ObservableObject
+public class ImageQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
+    private static readonly ILogger Logger = Log.ForContext<ImageQualityTabViewModel>();
+
+    /// <inheritdoc />
+    public IDialogService? DialogService { get; set; }
     private readonly IEnumerable<IImageQualityCheck>? _imageChecks;
 
     private string _folderPath = string.Empty;
@@ -87,6 +96,20 @@ public class ImageQualityTabViewModel : ObservableObject
     private readonly Dictionary<string, ImageQualityItemViewModel> _imageItemsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Resolves an absolute image path to its <c>DatasetImageViewModel</c> when the
+    /// path is part of the active dataset. Wired by <c>DatasetManagementViewModel</c>
+    /// so the Image Quality Fixer can mutate ratings via the existing rating-sidecar
+    /// pipeline. Returns <c>null</c> when no match exists or no resolver was wired.
+    /// </summary>
+    public Func<string, DiffusionNexus.UI.ViewModels.DatasetImageViewModel?>? DatasetImageResolver { get; set; }
+
+    /// <summary>
+    /// Stores the most recent set of per-image quality results so the fixer dialog
+    /// can rebuild rows without re-running analysis.
+    /// </summary>
+    public IReadOnlyList<ImageCheckResult> LastResults { get; private set; } = [];
+
+    /// <summary>
     /// Creates a new <see cref="ImageQualityTabViewModel"/>.
     /// </summary>
     public ImageQualityTabViewModel(IEnumerable<IImageQualityCheck> imageChecks)
@@ -94,6 +117,7 @@ public class ImageQualityTabViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(imageChecks);
         _imageChecks = imageChecks;
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     /// <summary>
@@ -102,6 +126,7 @@ public class ImageQualityTabViewModel : ObservableObject
     public ImageQualityTabViewModel()
     {
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        OpenFixerCommand = new AsyncRelayCommand(OpenFixerAsync, () => CanOpenFixer);
     }
 
     #region Observable Properties
@@ -124,7 +149,9 @@ public class ImageQualityTabViewModel : ObservableObject
             if (SetProperty(ref _isAnalyzing, value))
             {
                 OnPropertyChanged(nameof(CanAnalyze));
+                OnPropertyChanged(nameof(CanOpenFixer));
                 AnalyzeCommand.NotifyCanExecuteChanged();
+                OpenFixerCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -133,11 +160,21 @@ public class ImageQualityTabViewModel : ObservableObject
     public bool HasResults
     {
         get => _hasResults;
-        private set => SetProperty(ref _hasResults, value);
+        private set
+        {
+            if (SetProperty(ref _hasResults, value))
+            {
+                OnPropertyChanged(nameof(CanOpenFixer));
+                OpenFixerCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
 
     /// <summary>Can the analyze command execute.</summary>
     public bool CanAnalyze => !string.IsNullOrEmpty(_folderPath) && !IsAnalyzing;
+
+    /// <summary>Can the fixer be opened (results loaded with at least one image).</summary>
+    public bool CanOpenFixer => HasResults && LastResults.Count > 0 && !IsAnalyzing;
 
     /// <summary>Overall image quality score.</summary>
     public double OverallScore
@@ -195,6 +232,9 @@ public class ImageQualityTabViewModel : ObservableObject
     /// <summary>Analyze command.</summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
 
+    /// <summary>Opens the Image Quality Fixer dialog with the latest results.</summary>
+    public IAsyncRelayCommand OpenFixerCommand { get; }
+
     #endregion
 
     /// <summary>
@@ -233,6 +273,7 @@ public class ImageQualityTabViewModel : ObservableObject
         AffectedImages.Clear();
         AllImages.Clear();
         _imageItemsByPath.Clear();
+        LastResults = results;
 
         if (results.Count == 0)
         {
@@ -444,6 +485,81 @@ public class ImageQualityTabViewModel : ObservableObject
         finally
         {
             IsAnalyzing = false;
+        }
+    }
+
+    /// <summary>
+    /// Builds the fixer view model from <see cref="LastResults"/> and shows the dialog.
+    /// Each row is wired to the live <c>DatasetImageViewModel</c> via
+    /// <see cref="DatasetImageResolver"/> when the file is part of the active dataset.
+    /// </summary>
+    private async Task OpenFixerAsync()
+    {
+        if (DialogService is null || LastResults.Count == 0)
+            return;
+
+        var summaries = PerImageQualityAggregator.Aggregate(LastResults);
+        if (summaries.Count == 0)
+        {
+            await DialogService.ShowMessageAsync("Image Quality Fixer",
+                "No per-image scores are available yet. Run analysis first.");
+            return;
+        }
+
+        var rows = await Task.Run(() =>
+        {
+            var built = new List<ImageQualityFixerItemViewModel>(summaries.Count);
+            foreach (var (path, summary) in summaries)
+            {
+                var advice = ImageQualityAdvisor.Analyze(summary);
+                var datasetImage = DatasetImageResolver?.Invoke(path);
+                var (width, height, size) = ReadImageMetadata(path);
+                built.Add(new ImageQualityFixerItemViewModel(summary, advice, datasetImage, width, height, size));
+            }
+            return built;
+        });
+
+        var fixer = new ImageQualityFixerViewModel
+        {
+            DialogService = DialogService,
+            RequestEditInImageEditor = OnFixerEditInImageEditor,
+            // RequestReplace and RequestOpenInExplorer are intentionally left null for now —
+            // they require host shell integration that lives outside this VM.
+        };
+        fixer.LoadItems(rows);
+
+        await DialogService.ShowImageQualityFixerAsync(fixer);
+    }
+
+    private void OnFixerEditInImageEditor(ImageQualityFixerItemViewModel item)
+    {
+        // The fixer dialog closes itself; no-op here unless a host wires
+        // navigation later (e.g. via DatasetEventAggregator).
+    }
+
+    private static (int? Width, int? Height, long? SizeBytes) ReadImageMetadata(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists)
+                return (null, null, null);
+
+            try
+            {
+                var imgInfo = Image.Identify(path);
+                return (imgInfo.Width, imgInfo.Height, info.Length);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Logger.Debug(ex, "Could not identify image dimensions for {Path}", path);
+                return (null, null, info.Length);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Debug(ex, "Could not stat file {Path}", path);
+            return (null, null, null);
         }
     }
 }

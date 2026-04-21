@@ -563,4 +563,12 @@ public class DialogService : IDialogService
         return viewModel.FixedCount;
     }
 
+    public async Task ShowImageQualityFixerAsync(ViewModels.Dialogs.ImageQualityFixerViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+
+        var dialog = new ImageQualityFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+    }
+
     }

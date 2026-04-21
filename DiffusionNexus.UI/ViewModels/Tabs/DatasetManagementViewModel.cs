@@ -677,6 +677,11 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             : new DatasetQualityTabViewModel();
         DatasetQualityTab.FixDistributionRequested += OnFixDistributionRequested;
 
+        // Allow the Image Quality Fixer dialog to mutate ratings on the live dataset images.
+        DatasetQualityTab.ImageAnalysisTab.ImageQualityTab.DatasetImageResolver = filePath =>
+            DatasetImages.FirstOrDefault(img =>
+                string.Equals(img.ImagePath, filePath, StringComparison.OrdinalIgnoreCase));
+
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
 
