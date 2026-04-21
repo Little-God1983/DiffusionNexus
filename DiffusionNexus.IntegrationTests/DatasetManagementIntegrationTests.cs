@@ -219,5 +219,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<int> ShowColorFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.ColorDistributionItemViewModel> images) =>
             Task.FromResult(0);
+
+        public Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel) =>
+            Task.CompletedTask;
     }
 }

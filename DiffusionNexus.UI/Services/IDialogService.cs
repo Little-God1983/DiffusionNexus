@@ -344,6 +344,15 @@ public interface IDialogService
     /// <param name="images">Images with color issues to fix.</param>
     /// <returns>Number of images fixed during the session.</returns>
     Task<int> ShowColorFixerAsync(IEnumerable<ColorDistributionItemViewModel> images);
+
+    /// <summary>
+    /// Shows the Image Quality Fixer window for triaging per-image scores (Blur, Exposure,
+    /// Noise, JPEG). The caller is expected to fully populate <paramref name="viewModel"/>
+    /// (rows + RequestReplace / RequestEditInImageEditor / RequestOpenInExplorer callbacks)
+    /// before invoking this method.
+    /// </summary>
+    /// <param name="viewModel">Pre-built fixer view model.</param>
+    Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel);
 }
 
 /// <summary>

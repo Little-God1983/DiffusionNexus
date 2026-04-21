@@ -29,7 +29,7 @@
             Padding="16,12"
             BorderBrush="#333"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Image Quality Analysis"
                    FontSize="14"
@@ -47,7 +47,18 @@
                 FontWeight="SemiBold"
                 CornerRadius="4"/>
 
-        <StackPanel Grid.Column="2"
+        <Button Grid.Column="2"
+                Content="Fix Issues"
+                Command="{Binding OpenFixerCommand}"
+                Padding="14,8"
+                Margin="0,0,8,0"
+                Background="#FF9800"
+                Foreground="White"
+                FontWeight="SemiBold"
+                CornerRadius="4"
+                ToolTip.Tip="Open the per-image fixer dialog"/>
+
+        <StackPanel Grid.Column="3"
                     Orientation="Horizontal"
                     Spacing="8"
                     IsVisible="{Binding IsAnalyzing}">

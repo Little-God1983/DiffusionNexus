@@ -21,6 +21,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     private readonly AnalysisPipeline? _pipeline;
     private readonly AnalysisRunStore _runStore;
     private readonly DuplicateDetector? _duplicateDetector;
+    private CancellationTokenSource? _analysisCts;
 
     private string _datasetFolderPath = string.Empty;
     private string _datasetLabel = string.Empty;
@@ -71,6 +72,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
+        CancelAnalysisCommand = new RelayCommand(CancelAnalysis, () => CanCancelAnalysis);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -91,6 +93,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
         AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
+        CancelAnalysisCommand = new RelayCommand(CancelAnalysis, () => CanCancelAnalysis);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -107,6 +110,8 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         {
             field = value;
             TestRunsTab.DialogService = value;
+            ImageAnalysisTab.ImageQualityTab.DialogService = value;
+            ImageAnalysisTab.ColorDistributionTab.DialogService = value;
         }
     }
 
@@ -182,11 +187,18 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             if (SetProperty(ref _isAnalyzing, value))
             {
                 OnPropertyChanged(nameof(CanAnalyze));
+                OnPropertyChanged(nameof(CanCancelAnalysis));
                 AnalyzeCommand.NotifyCanExecuteChanged();
                 AnalyzeAllCommand.NotifyCanExecuteChanged();
+                CancelAnalysisCommand.NotifyCanExecuteChanged();
             }
         }
     }
+
+    /// <summary>
+    /// Whether a cancellable analysis is currently in progress.
+    /// </summary>
+    public bool CanCancelAnalysis => IsAnalyzing && _analysisCts is not null && !_analysisCts.IsCancellationRequested;
 
     /// <summary>
     /// Human-readable status text showing the current analysis phase (e.g. "Running Spell Check…").
@@ -350,6 +362,11 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public IAsyncRelayCommand AnalyzeAllCommand { get; }
 
     /// <summary>
+    /// Cancels the in-progress analysis run started by <see cref="AnalyzeAllCommand"/>.
+    /// </summary>
+    public IRelayCommand CancelAnalysisCommand { get; }
+
+    /// <summary>
     /// Applies a single <see cref="FixSuggestion"/> then re-runs analysis.
     /// </summary>
     public IAsyncRelayCommand<FixSuggestion?> ApplyFixCommand { get; }
@@ -397,6 +414,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         if (_pipeline is null || !HasDatasetContext) return;
 
         SelectedTabIndex = 2;
+        _analysisCts?.Dispose();
+        _analysisCts = new CancellationTokenSource();
+        var cancellationToken = _analysisCts.Token;
         IsAnalyzing = true;
         AnalysisStatusText = "Starting analysis…";
         AnalysisProgress = 0.0;
@@ -445,7 +465,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
                 MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
                 MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
                 BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
-            }, percentProgress, statusProgress: statusProgress, checkScoreProgress: checkScoreProgress);
+            }, percentProgress, statusProgress: statusProgress, checkScoreProgress: checkScoreProgress, cancellationToken: cancellationToken);
 
             // Apply caption issues + composite score
             ApplyReport(report);
@@ -497,13 +517,31 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             await _runStore.SaveAsync(_datasetFolderPath, runRecord);
             await TestRunsTab.OnRunSavedAsync();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            AnalysisStatusText = "Analysis cancelled";
+        }
         finally
         {
             TestRunsTab.EndLiveAnalysis();
             IsAnalyzing = false;
-            AnalysisStatusText = string.Empty;
             AnalysisProgress = 0.0;
+            _analysisCts?.Dispose();
+            _analysisCts = null;
+            OnPropertyChanged(nameof(CanCancelAnalysis));
+            CancelAnalysisCommand.NotifyCanExecuteChanged();
         }
+    }
+
+    private void CancelAnalysis()
+    {
+        if (_analysisCts is null || _analysisCts.IsCancellationRequested)
+            return;
+
+        _analysisCts.Cancel();
+        AnalysisStatusText = "Cancelling…";
+        OnPropertyChanged(nameof(CanCancelAnalysis));
+        CancelAnalysisCommand.NotifyCanExecuteChanged();
     }
 
     private async Task ApplyFixAsync(FixSuggestion? suggestion)
