@@ -48,11 +48,11 @@
                 CornerRadius="4"/>
 
         <Button Grid.Column="2"
-                Content="Fix Issues&#x2026;"
+                Content="Fix Issues"
                 Command="{Binding OpenFixerCommand}"
                 Padding="14,8"
                 Margin="0,0,8,0"
-                Background="#3F6CB6"
+                Background="#FF9800"
                 Foreground="White"
                 FontWeight="SemiBold"
                 CornerRadius="4"

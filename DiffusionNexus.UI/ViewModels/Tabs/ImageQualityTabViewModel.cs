@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -102,6 +104,21 @@ public class ImageQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// pipeline. Returns <c>null</c> when no match exists or no resolver was wired.
     /// </summary>
     public Func<string, DiffusionNexus.UI.ViewModels.DatasetImageViewModel?>? DatasetImageResolver { get; set; }
+
+    /// <summary>
+    /// Invoked when the fixer dialog requests to send the current image to the
+    /// Image Editor tab. Wired by <c>DatasetManagementViewModel</c> so it can
+    /// publish the navigation event after the fixer closes itself.
+    /// </summary>
+    public Action<DiffusionNexus.UI.ViewModels.DatasetImageViewModel>? SendToImageEditor { get; set; }
+
+    /// <summary>
+    /// Invoked when the fixer dialog requests to replace a dataset image's underlying
+    /// file. The host shows the replace dialog, performs the file swap, and returns
+    /// <c>true</c> when the file was actually replaced (so the fixer can re-run
+    /// analysis on the new file). Wired by <c>DatasetManagementViewModel</c>.
+    /// </summary>
+    public Func<DiffusionNexus.UI.ViewModels.DatasetImageViewModel, Task<bool>>? RequestReplaceImage { get; set; }
 
     /// <summary>
     /// Stores the most recent set of per-image quality results so the fixer dialog
@@ -523,8 +540,8 @@ public class ImageQualityTabViewModel : ObservableObject, IDialogServiceAware
         {
             DialogService = DialogService,
             RequestEditInImageEditor = OnFixerEditInImageEditor,
-            // RequestReplace and RequestOpenInExplorer are intentionally left null for now —
-            // they require host shell integration that lives outside this VM.
+            RequestOpenInExplorer = OnFixerOpenInExplorer,
+            RequestReplace = OnFixerReplaceAsync,
         };
         fixer.LoadItems(rows);
 
@@ -533,8 +550,81 @@ public class ImageQualityTabViewModel : ObservableObject, IDialogServiceAware
 
     private void OnFixerEditInImageEditor(ImageQualityFixerItemViewModel item)
     {
-        // The fixer dialog closes itself; no-op here unless a host wires
-        // navigation later (e.g. via DatasetEventAggregator).
+        if (item is null || SendToImageEditor is null)
+            return;
+
+        var datasetImage = item.DatasetImage ?? DatasetImageResolver?.Invoke(item.FilePath);
+        if (datasetImage is null)
+            return;
+
+        SendToImageEditor(datasetImage);
+    }
+
+    private static void OnFixerOpenInExplorer(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (!File.Exists(path) && !Directory.Exists(path))
+                    return;
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            // TODO: Linux Implementation for revealing files in the system file manager (e.g. xdg-open on the parent folder).
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to reveal {Path} in file explorer", path);
+        }
+    }
+
+    private async Task<PerImageQualitySummary?> OnFixerReplaceAsync(ImageQualityFixerItemViewModel item)
+    {
+        if (item?.DatasetImage is null || RequestReplaceImage is null || _imageChecks is null)
+            return null;
+
+        var replaced = await RequestReplaceImage(item.DatasetImage);
+        if (!replaced)
+            return null;
+
+        // The host may have updated DatasetImage.ImagePath if the extension changed.
+        var newPath = item.DatasetImage.ImagePath;
+        if (string.IsNullOrEmpty(newPath) || !File.Exists(newPath))
+            return null;
+
+        try
+        {
+            var images = new List<ImageFileInfo> { new(newPath, 0, 0) };
+            var config = new DatasetConfig
+            {
+                FolderPath = Path.GetDirectoryName(newPath) ?? _folderPath,
+                LoraType = LoraType.Character
+            };
+
+            var results = new List<ImageCheckResult>();
+            foreach (var check in _imageChecks.OrderBy(c => c.Order))
+            {
+                var result = await check.RunAsync(images, config);
+                results.Add(result);
+            }
+
+            var summaries = PerImageQualityAggregator.Aggregate(results);
+            return summaries.TryGetValue(newPath, out var summary) ? summary : null;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to re-analyze replaced image {Path}", newPath);
+            return null;
+        }
     }
 
     private static (int? Width, int? Height, long? SizeBytes) ReadImageMetadata(string path)

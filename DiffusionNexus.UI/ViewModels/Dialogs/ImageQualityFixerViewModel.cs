@@ -50,6 +50,7 @@ public partial class ImageQualityFixerViewModel : ObservableObject
 
     private readonly List<ImageQualityFixerItemViewModel> _allItems = [];
     private ImageQualityFixerItemViewModel? _selectedItem;
+    private bool _suppressSelectionReset;
     private ImageQualitySortMode _sortMode = ImageQualitySortMode.OverallScoreAsc;
     private ImageQualityRatingFilter _ratingFilter = ImageQualityRatingFilter.All;
 
@@ -62,6 +63,10 @@ public partial class ImageQualityFixerViewModel : ObservableObject
         get => _selectedItem;
         set
         {
+            // Ignore the transient null the ListBox writes back when we Clear+repopulate Items.
+            if (_suppressSelectionReset && value is null)
+                return;
+
             if (SetProperty(ref _selectedItem, value))
             {
                 OnPropertyChanged(nameof(HasSelectedItem));
@@ -187,9 +192,9 @@ public partial class ImageQualityFixerViewModel : ObservableObject
     /// </summary>
     public ImageQualityFixerViewModel()
     {
-        MarkApprovedCommand = new RelayCommand(MarkApproved, () => SelectedItem?.CanMutateRating == true);
-        MarkTrashCommand = new RelayCommand(MarkTrash, () => SelectedItem?.CanMutateRating == true);
-        ClearRatingCommand = new RelayCommand(ClearRating, () => SelectedItem?.CanMutateRating == true);
+        MarkApprovedCommand = new RelayCommand(MarkApproved, () => SelectedItem?.CanMutateRating == true && SelectedItem.Rating != ImageRatingStatus.Approved);
+        MarkTrashCommand = new RelayCommand(MarkTrash, () => SelectedItem?.CanMutateRating == true && SelectedItem.Rating != ImageRatingStatus.Rejected);
+        ClearRatingCommand = new RelayCommand(ClearRating, () => SelectedItem?.CanMutateRating == true && SelectedItem.Rating != ImageRatingStatus.Unrated);
         BulkMarkTrashCommand = new AsyncRelayCommand(BulkMarkTrashAsync, () => _allItems.Any(i => i.IsSelected && i.CanMutateRating));
         ReplaceCommand = new AsyncRelayCommand(ReplaceAsync, () => SelectedItem?.DatasetImage is not null && RequestReplace is not null);
         EditInImageEditorCommand = new RelayCommand(EditInImageEditor, () => SelectedItem is not null && RequestEditInImageEditor is not null);
@@ -227,6 +232,13 @@ public partial class ImageQualityFixerViewModel : ObservableObject
             NotifyAggregatesChanged();
             // Refresh visibility because the row might no longer match the current chip.
             RebuildVisibleItems();
+            // The mutated row's rating drives the rating-button enabled state.
+            if (ReferenceEquals(sender, SelectedItem))
+            {
+                MarkApprovedCommand.NotifyCanExecuteChanged();
+                MarkTrashCommand.NotifyCanExecuteChanged();
+                ClearRatingCommand.NotifyCanExecuteChanged();
+            }
         }
         else if (e.PropertyName is nameof(ImageQualityFixerItemViewModel.IsSelected))
         {
@@ -256,13 +268,25 @@ public partial class ImageQualityFixerViewModel : ObservableObject
             _ => filtered.OrderBy(i => double.IsNaN(i.OverallScore) ? double.MaxValue : i.OverallScore),
         };
 
-        Items.Clear();
-        foreach (var item in sorted)
-            Items.Add(item);
+        // Capture selection before mutating Items so the ListBox's transient null write-back
+        // (triggered by Items.Clear) doesn't drop the user's selection.
+        var previousSelection = _selectedItem;
+        _suppressSelectionReset = true;
+        try
+        {
+            Items.Clear();
+            foreach (var item in sorted)
+                Items.Add(item);
+        }
+        finally
+        {
+            _suppressSelectionReset = false;
+        }
 
         // Preserve selection where possible.
-        if (_selectedItem is not null && !Items.Contains(_selectedItem))
-            SelectedItem = Items.FirstOrDefault();
+        SelectedItem = previousSelection is not null && Items.Contains(previousSelection)
+            ? previousSelection
+            : Items.FirstOrDefault();
     }
 
     private bool MatchesFilter(ImageQualityFixerItemViewModel item) => RatingFilter switch

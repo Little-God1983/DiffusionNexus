@@ -682,6 +682,29 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             DatasetImages.FirstOrDefault(img =>
                 string.Equals(img.ImagePath, filePath, StringComparison.OrdinalIgnoreCase));
 
+        // Allow the Image Quality Fixer dialog to send the current image to the Image Editor tab.
+        DatasetQualityTab.ImageAnalysisTab.ImageQualityTab.SendToImageEditor = SendToImageEdit;
+
+        // Allow the Image Quality Fixer dialog to replace a dataset image via the existing replace flow.
+        DatasetQualityTab.ImageAnalysisTab.ImageQualityTab.RequestReplaceImage = async img =>
+        {
+            if (img is null) return false;
+            var originalPath = img.ImagePath;
+            DateTime? originalWriteTime = File.Exists(originalPath) ? File.GetLastWriteTimeUtc(originalPath) : null;
+
+            await ReplaceImageCommand.ExecuteAsync(img);
+
+            // Detect actual replacement: path changed (extension swap) or file content was overwritten.
+            if (!string.Equals(originalPath, img.ImagePath, StringComparison.OrdinalIgnoreCase))
+                return File.Exists(img.ImagePath);
+
+            if (!File.Exists(img.ImagePath))
+                return false;
+
+            var newWriteTime = File.GetLastWriteTimeUtc(img.ImagePath);
+            return originalWriteTime is null || newWriteTime != originalWriteTime;
+        };
+
         // Subscribe to state changes
         _state.StateChanged += OnStateChanged;
 
