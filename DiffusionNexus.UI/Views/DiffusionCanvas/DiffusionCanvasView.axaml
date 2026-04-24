@@ -1,0 +1,166 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.DiffusionCanvas"
+             xmlns:paz="using:Avalonia.Controls.PanAndZoom"
+             x:Class="DiffusionNexus.UI.Views.DiffusionCanvas.DiffusionCanvasView"
+             x:DataType="vm:DiffusionCanvasViewModel">
+  <Design.DataContext>
+    <vm:DiffusionCanvasViewModel/>
+  </Design.DataContext>
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <ComboBox MinWidth="200" IsEnabled="False"
+                  ItemsSource="{Binding AvailableBackends}"
+                  SelectedItem="{Binding SelectedBackend}"
+                  ToolTip.Tip="TODO(v2-backend-dropdown): Switch between local and ComfyUI backends." />
+        <Separator Margin="6,0" />
+        <Button Content="Generate" Command="{Binding GenerateCommand}"
+                Padding="14,4" Background="#0E639C" Foreground="White" />
+        <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-cancel): Mid-sampling cancellation requires upstream stable-diffusion.cpp support." />
+        <Separator Margin="6,0" />
+        <Button Content="+ LoRA" Command="{Binding AddLoraCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-loras): Add a LoRA over the base model." />
+        <Button Content="+ ControlNet" Command="{Binding AddControlNetCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-controlnet): Add ControlNet conditioning input." />
+        <Separator Margin="6,0" />
+        <Button Content="Brush" Command="{Binding ActivateBrushToolCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-mask-tools): Brush tool." />
+        <Button Content="Eraser" Command="{Binding ActivateEraserToolCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-mask-tools): Eraser tool." />
+        <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-mask-tools): Inpaint mask painting." />
+        <Separator Margin="6,0" />
+        <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-layers): Show/hide layer panel." />
+        <Button Content="Undo" Command="{Binding UndoCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-undo): Undo (Ctrl+Z)." />
+        <Button Content="Redo" Command="{Binding RedoCommand}" IsEnabled="False"
+                ToolTip.Tip="TODO(v2-undo): Redo (Ctrl+Y)." />
+        <Separator Margin="6,0" />
+        <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="#CCC" />
+      </StackPanel>
+    </Border>
+    <paz:ZoomBorder Grid.Row="1" Name="CanvasZoom"
+                    Background="#262626" Stretch="None"
+                    ZoomSpeed="1.2" PanButton="Middle" ClipToBounds="True">
+      <ItemsControl ItemsSource="{Binding Frames}" Background="Transparent">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <Canvas Width="10000" Height="10000" Background="Transparent" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.Styles>
+          <Style Selector="ContentPresenter" x:DataType="vm:GenerationFrameViewModel">
+            <Setter Property="Canvas.Left" Value="{Binding CanvasX}" />
+            <Setter Property="Canvas.Top" Value="{Binding CanvasY}" />
+          </Style>
+        </ItemsControl.Styles>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:GenerationFrameViewModel">
+            <Border Width="{Binding Width}" Height="{Binding Height}"
+                    Background="#1A1A1A" BorderBrush="#666" BorderThickness="2"
+                    CornerRadius="4" Cursor="SizeAll"
+                    PointerPressed="OnFramePointerPressed"
+                    PointerMoved="OnFramePointerMoved"
+                    PointerReleased="OnFramePointerReleased">
+              <Border.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Delete frame"
+                            Command="{Binding $parent[ItemsControl].((vm:DiffusionCanvasViewModel)DataContext).DeleteFrameCommand}"
+                            CommandParameter="{Binding}" />
+                  <Separator />
+                  <MenuItem Header="Send to Image Editor" IsEnabled="False" />
+                  <MenuItem Header="Use as ControlNet reference" IsEnabled="False" />
+                  <MenuItem Header="Use as inpaint base" IsEnabled="False" />
+                  <Separator />
+                  <MenuItem Header="Copy seed to clipboard" IsEnabled="False" />
+                  <MenuItem Header="Copy prompt to clipboard" IsEnabled="False" />
+                </ContextMenu>
+              </Border.ContextMenu>
+              <Grid>
+                <Image Source="{Binding Image}" Stretch="Uniform" />
+                <Border Background="#80000000" IsVisible="{Binding IsBusy}">
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="14"
+                               HorizontalAlignment="Center" />
+                    <ProgressBar Width="200" IsIndeterminate="True" />
+                  </StackPanel>
+                </Border>
+                <TextBlock Text="{Binding StatusText}" Foreground="#999"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"
+                           IsVisible="{Binding !IsBusy}" />
+                <Border VerticalAlignment="Bottom" Background="#80000000" Padding="6,2"
+                        IsVisible="{Binding Image, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  <TextBlock Foreground="#DDD" FontSize="11">
+                    <Run Text="{Binding Width}"/><Run Text="x"/><Run Text="{Binding Height}"/>
+                    <Run Text="  seed "/><Run Text="{Binding Seed}"/>
+                  </TextBlock>
+                </Border>
+                <Border Width="16" Height="16"
+                        HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                        Background="#444" BorderBrush="#888" BorderThickness="1"
+                        Cursor="BottomRightCorner"
+                        PointerPressed="OnResizePointerPressed"
+                        PointerMoved="OnResizePointerMoved"
+                        PointerReleased="OnResizePointerReleased"
+                        ToolTip.Tip="Drag to resize (snaps to 64-pixel grid)" />
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </paz:ZoomBorder>
+    <Border Grid.Row="2" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,1,0,0">
+      <StackPanel Spacing="6">
+        <Border Background="#5A2020" CornerRadius="4" Padding="8"
+                IsVisible="{Binding BackendUnavailableMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Text="{Binding BackendUnavailableMessage}" Foreground="#FFD" TextWrapping="Wrap" />
+        </Border>
+        <TextBox Text="{Binding PromptText}"
+                 Watermark="Prompt - describe the image to generate"
+                 AcceptsReturn="True" MaxHeight="80" />
+        <TextBox Text="{Binding NegativePromptText}"
+                 Watermark="Negative prompt - coming soon (TODO(v2-negative-prompt))"
+                 IsEnabled="False" MaxHeight="60" />
+        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4" IsEnabled="False">
+            <TextBlock Text="Seed:" VerticalAlignment="Center" Foreground="#888" />
+            <NumericUpDown Value="{Binding Seed}" Minimum="0" Maximum="9999999999" Width="160"
+                           ToolTip.Tip="TODO(v2-seed)" />
+            <ToggleButton Content="Random" IsChecked="{Binding UseRandomSeed}"
+                          ToolTip.Tip="TODO(v2-seed): Random seed each generation." />
+          </StackPanel>
+          <Expander Grid.Column="1" Header="Advanced (steps / cfg / sampler)" Margin="12,0,0,0"
+                    IsEnabled="False" IsExpanded="False"
+                    ToolTip.Tip="TODO(v2-advanced)">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="Steps:" VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding Steps}" Minimum="1" Maximum="100" Width="80" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="CFG:" VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding Cfg}" Minimum="0.5" Maximum="20" Increment="0.5" Width="80" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="Sampler:" VerticalAlignment="Center" />
+                <ComboBox SelectedItem="{Binding SelectedSampler}" Width="120">
+                  <x:String>euler</x:String>
+                  <x:String>euler_a</x:String>
+                  <x:String>dpmpp2m</x:String>
+                  <x:String>lcm</x:String>
+                </ComboBox>
+              </StackPanel>
+            </StackPanel>
+          </Expander>
+          <Button Grid.Column="2" Content="Generate" Command="{Binding GenerateCommand}"
+                  Padding="20,6" FontWeight="SemiBold"
+                  Background="#0E639C" Foreground="White" />
+        </Grid>
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>
+

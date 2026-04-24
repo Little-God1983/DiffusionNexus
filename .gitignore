@@ -431,3 +431,6 @@ config.json
 *.db-shm
 *.db-wal
 DemoFiles/
+\
+# Throwaway spike project for StableDiffusion.NET evaluation
+DiffusionNexus.Inference.Sandbox/\

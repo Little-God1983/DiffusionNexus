@@ -128,6 +128,25 @@ public partial class App : Application
                 Serilog.Log.Information("Registering modules...");
                 RegisterModules(mainViewModel);
 
+                // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
+                // Fire-and-forget: failure to register must not block startup (registrar logs internally).
+                if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = Services!.CreateScope();
+                            var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+                            await registrar.EnsureRegisteredAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
+                        }
+                    });
+                }
+
                 // Force show the window explicitly
                 mainWindow.Show();
                 Serilog.Log.Information("Main window Show() called");
@@ -137,6 +156,13 @@ public partial class App : Application
                 {
                     // Dispose the instance process manager (unwires events)
                     (Services?.GetService<IInstanceProcessManager>() as IDisposable)?.Dispose();
+                    // Release native diffusion contexts (unloads ~12 GB of model weights)
+                    var localBackend = Services?.GetService<DiffusionNexus.UI.Services.Diffusion.LocalDiffusionBackendProvider>();
+                    if (localBackend is not null)
+                    {
+                        try { localBackend.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                        catch (Exception ex) { Serilog.Log.Warning(ex, "Local diffusion backend dispose failed."); }
+                    }
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
@@ -558,6 +584,17 @@ public partial class App : Application
                 sp.GetRequiredService<Domain.Services.UnifiedLogging.ITaskTracker>(),
                 sp));
 
+        // Local diffusion backend (StableDiffusion.NET / stable-diffusion.cpp).
+        // Singleton — owns the per-model native context cache for the lifetime of the app.
+        services.AddSingleton<DiffusionNexus.UI.Services.Diffusion.LocalDiffusionBackendProvider>();
+
+        // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
+        services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+
+        // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
+        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+
+
         // ?? Installer SDK services ??
         // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
         services.AddDiffusionNexusDataAccess();
@@ -783,6 +820,26 @@ public partial class App : Application
         {
             ViewModel = generationGalleryVm
         });
+
+        // Diffusion Canvas module — local Z-Image-Turbo generation on an Invoke-AI-style canvas.
+        // Gated behind DiffusionFeatureFlags.UseLocalDiffusionBackend so the module disappears
+        // entirely when the local backend is disabled (e.g., for ComfyUI-only builds).
+        if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+        {
+            var diffusionCanvasVm = Services!.GetRequiredService<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+            var diffusionCanvasView = new DiffusionNexus.UI.Views.DiffusionCanvas.DiffusionCanvasView
+            {
+                DataContext = diffusionCanvasVm
+            };
+
+            mainViewModel.RegisterModule(new ModuleItem(
+                "Diffusion Canvas",
+                "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
+                diffusionCanvasView)
+            {
+                ViewModel = diffusionCanvasVm
+            });
+        }
 
         // Image Comparer module
         var datasetState = Services!.GetRequiredService<IDatasetState>();
