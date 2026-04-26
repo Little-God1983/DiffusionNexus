@@ -68,29 +68,39 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
             var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
             var packages = await repo.GetAllAsync(ct).ConfigureAwait(false);
 
+            Logger.Information("LocalDiffusionBackendProvider: Found {Count} total packages in database.", packages.Count);
+
             // Prefer the default ComfyUI installation; fall back to any ComfyUI installation.
             var comfy = packages.FirstOrDefault(p => p.Type == InstallerType.ComfyUI && p.IsDefault)
                      ?? packages.FirstOrDefault(p => p.Type == InstallerType.ComfyUI);
 
             if (comfy is null)
             {
-                Logger.Warning("No ComfyUI installation found — local diffusion backend cannot start.");
+                // Log what we DID find so the user can diagnose (e.g., maybe they're registered as Unknown).
+                var typeCounts = packages.GroupBy(p => p.Type).Select(g => $"{g.Key}={g.Count()}").ToList();
+                Logger.Warning(
+                    "No ComfyUI installation found in database (looked for InstallerType.ComfyUI). " +
+                    "Found: [{Types}]. The local diffusion backend uses the ComfyUI models folder layout " +
+                    "(DiffusionModels/, TextEncoders/, VAE/) but does NOT run ComfyUI — it generates locally on your GPU. " +
+                    "Workaround: if your models live elsewhere, manually set the path or register one installation as ComfyUI type.",
+                    string.Join(", ", typeCounts));
                 return null;
             }
 
             if (string.IsNullOrWhiteSpace(comfy.InstallationPath) || !Directory.Exists(comfy.InstallationPath))
             {
-                Logger.Warning("ComfyUI '{Name}' has no valid InstallationPath.", comfy.Name);
+                Logger.Warning("ComfyUI '{Name}' (ID={Id}) has no valid InstallationPath: '{Path}'.", comfy.Name, comfy.Id, comfy.InstallationPath);
                 return null;
             }
 
             var modelsRoot = Path.Combine(comfy.InstallationPath, "models");
             if (!Directory.Exists(modelsRoot))
             {
-                Logger.Warning("ComfyUI models folder not found at {Path}.", modelsRoot);
+                Logger.Warning("ComfyUI models folder not found at {Path}. Expected: DiffusionModels/, TextEncoders/, VAE/ subfolders.", modelsRoot);
                 return null;
             }
 
+            Logger.Information("Resolved models root: {Root} (from ComfyUI installation '{Name}')", modelsRoot, comfy.Name);
             return modelsRoot;
         }
         catch (Exception ex)

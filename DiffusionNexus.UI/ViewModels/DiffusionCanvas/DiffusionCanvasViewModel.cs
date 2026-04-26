@@ -179,7 +179,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             if (backend is null)
             {
                 BackendUnavailableMessage =
-                    "No ComfyUI installation found. Add a ComfyUI installation in the Installer Manager so the canvas can locate the models folder.";
+                    "Cannot locate the models folder. The local backend generates entirely on your GPU (no ComfyUI process), " +
+                    "but it expects a ComfyUI-layout models folder (DiffusionModels/, TextEncoders/, VAE/). " +
+                    "Check the Unified Logger for details, or ensure at least one installation is registered as 'ComfyUI' type in the Installer Manager.";
                 StatusText = "Backend unavailable";
                 return;
             }
@@ -188,8 +190,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             if (descriptor is null)
             {
                 BackendUnavailableMessage =
-                    "Z-Image-Turbo files were not found in the ComfyUI models folder. Required: " +
-                    "DiffusionModels/z_image_turbo_bf16.safetensors, TextEncoders/qwen_3_4b.safetensors, VAE/ae.safetensors.";
+                    "Z-Image-Turbo files were not found. Required files under the models folder: " +
+                    "DiffusionModels/z_image_turbo_bf16.safetensors, TextEncoders/qwen_3_4b.safetensors, VAE/ae.safetensors. " +
+                    $"Searched under: {_backendProvider.ResolvedModelsRoot ?? "(unknown)"}";
                 StatusText = "Model unavailable";
                 return;
             }
