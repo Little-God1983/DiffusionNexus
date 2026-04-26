@@ -114,8 +114,12 @@ public class DatasetBackupService : IDatasetBackupService
                     TotalFiles = totalFiles
                 });
 
-                // Create ZIP archive
-                using (var archive = ZipFile.Open(backupPath, ZipArchiveMode.Create))
+                var memBeforeMb = GC.GetTotalMemory(forceFullCollection: false) / 1024.0 / 1024.0;
+                Log.Information("Backup memory before: {MemBefore:F1} MB ({TotalFiles} files)", memBeforeMb, totalFiles);
+
+                // Create ZIP archive with streaming FileStream to reduce memory pressure
+                using (var fileStream = new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1 << 20))
+                using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false))
                 {
                     foreach (var filePath in allFiles)
                     {
@@ -127,7 +131,9 @@ public class DatasetBackupService : IDatasetBackupService
 
                         try
                         {
-                            archive.CreateEntryFromFile(filePath, relativePath, CompressionLevel.Optimal);
+                            // Use smart compression: no compression for already-compressed media files
+                            var compressionLevel = GetCompressionLevelForFile(filePath);
+                            archive.CreateEntryFromFile(filePath, relativePath, compressionLevel);
                             processedFiles++;
 
                             if (processedFiles % 10 == 0 || processedFiles == totalFiles)
@@ -142,6 +148,16 @@ public class DatasetBackupService : IDatasetBackupService
                                     TotalFiles = totalFiles
                                 });
                             }
+                        }
+                        catch (OutOfMemoryException)
+                        {
+                            // Process is in a compromised state; do not try to continue compressing
+                            // more files. Let it propagate so the outer handler can clean up.
+                            throw;
+                        }
+                        catch (StackOverflowException)
+                        {
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -179,8 +195,9 @@ public class DatasetBackupService : IDatasetBackupService
                 });
 
                 var sizeInMb = totalSize / 1024.0 / 1024.0;
-                Log.Information("Dataset backup completed: {FilesCount} files, {Size:N0} bytes", 
-                    processedFiles, totalSize);
+                var memAfterMb = GC.GetTotalMemory(forceFullCollection: false) / 1024.0 / 1024.0;
+                Log.Information("Dataset backup completed: {FilesCount} files, {Size:N0} bytes (memory after: {MemAfter:F1} MB, delta: {Delta:F1} MB)",
+                    processedFiles, totalSize, memAfterMb, memAfterMb - memBeforeMb);
                 _activityLog?.LogSuccess("Backup", $"Backup completed: {processedFiles} files ({sizeInMb:F1} MB)");
 
                 return BackupResult.Succeeded(backupPath, processedFiles, totalSize);
@@ -598,5 +615,25 @@ public class DatasetBackupService : IDatasetBackupService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Determines the compression level for a file based on its extension and content.
+    /// Uses optimal compression for general data, no compression for already-compressed media files.
+    /// </summary>
+    private static CompressionLevel GetCompressionLevelForFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath)?.ToLowerInvariant();
+
+        // No compression for already-compressed media (videos/images). Captions and other
+        // text formats compress 5-10x with Deflate, so we keep Optimal for them.
+        if (SupportedMediaTypes.VideoExtensionSet.Contains(extension) ||
+            SupportedMediaTypes.ImageExtensionSet.Contains(extension))
+        {
+            return CompressionLevel.NoCompression;
+        }
+
+        // Optimal compression for everything else (captions, json, yaml, etc.)
+        return CompressionLevel.Optimal;
     }
 }

@@ -51,10 +51,35 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
         {
             var ex = args.ExceptionObject as Exception;
-            Serilog.Log.Fatal(ex, "UNHANDLED DOMAIN EXCEPTION");
+            Serilog.Log.Fatal(ex, "UNHANDLED DOMAIN EXCEPTION (IsTerminating={IsTerminating})", args.IsTerminating);
             FileLogger.LogError($"UNHANDLED DOMAIN EXCEPTION: {ex?.Message}", ex);
+
+            // Only flush+close when the process is actually terminating; otherwise the
+            // static logger becomes a silent sink and all subsequent logs are lost.
+            if (args.IsTerminating)
+            {
+                Serilog.Log.CloseAndFlush();
+            }
         };
-        
+
+        // Surface exceptions that are thrown but later caught/swallowed. Helps diagnose
+        // silent failures (e.g. native AVE, OOM in worker code paths) where nothing
+        // otherwise reaches the log. Kept at Verbose to avoid noise during normal flow.
+        AppDomain.CurrentDomain.FirstChanceException += (sender, args) =>
+        {
+            // Avoid recursion if Serilog itself throws while writing.
+            if (args.Exception is OutOfMemoryException ||
+                args.Exception is StackOverflowException ||
+                args.Exception is AccessViolationException)
+            {
+                Serilog.Log.Fatal(args.Exception, "FIRST-CHANCE FATAL EXCEPTION ({Type})", args.Exception.GetType().Name);
+            }
+            else
+            {
+                Serilog.Log.Verbose(args.Exception, "FirstChanceException: {Type}", args.Exception.GetType().Name);
+            }
+        };
+
         TaskScheduler.UnobservedTaskException += (sender, args) =>
         {
             Serilog.Log.Error(args.Exception, "UNOBSERVED TASK EXCEPTION");
