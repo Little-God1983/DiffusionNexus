@@ -18,14 +18,31 @@ namespace DiffusionNexus.Inference.StableDiffusionCpp;
 /// </remarks>
 public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
 {
-    private readonly string _modelsRoot;
+    private readonly IReadOnlyList<string> _modelsRoots;
     private List<ModelDescriptor>? _cached;
+    private int _searchedLocationCount;
 
-    public ComfyUiModelCatalog(string modelsRoot)
+    /// <summary>Convenience constructor for a single root.</summary>
+    public ComfyUiModelCatalog(string modelsRoot) : this(new[] { modelsRoot })
     {
-        if (string.IsNullOrWhiteSpace(modelsRoot))
-            throw new ArgumentException("Models root is required.", nameof(modelsRoot));
-        _modelsRoot = modelsRoot;
+    }
+
+    /// <summary>
+    /// Construct a catalog that searches every supplied models root recursively. Roots earlier in
+    /// the list win when the same filename exists in multiple installations (matches the user's
+    /// preference order — typically default ComfyUI first).
+    /// </summary>
+    public ComfyUiModelCatalog(IEnumerable<string> modelsRoots)
+    {
+        ArgumentNullException.ThrowIfNull(modelsRoots);
+        _modelsRoots = modelsRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (_modelsRoots.Count == 0)
+            throw new ArgumentException("At least one models root is required.", nameof(modelsRoots));
     }
 
     public IReadOnlyList<ModelDescriptor> ListAvailable() => _cached ??= Discover();
@@ -34,7 +51,17 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
         ListAvailable().FirstOrDefault(d => string.Equals(d.Key, key, StringComparison.Ordinal));
 
     /// <summary>Forces a fresh disk scan on the next call. Use after the user changes their models folder.</summary>
-    public void Invalidate() => _cached = null;
+    public void Invalidate()
+    {
+        _cached = null;
+        _searchedLocationCount = 0;
+    }
+
+    /// <summary>The number of folders scanned during the last discovery pass (diagnostic).</summary>
+    public int SearchedLocationCount => _searchedLocationCount;
+
+    /// <summary>Read-only view of the configured model roots (diagnostic).</summary>
+    public IReadOnlyList<string> ModelsRoots => _modelsRoots;
 
     private List<ModelDescriptor> Discover()
     {
@@ -49,11 +76,12 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
 
     private void TryAddZImageTurbo(List<ModelDescriptor> sink)
     {
-        var unet = Path.Combine(_modelsRoot, "DiffusionModels", "z_image_turbo_bf16.safetensors");
-        var clip = Path.Combine(_modelsRoot, "TextEncoders", "qwen_3_4b.safetensors");
-        var vae = Path.Combine(_modelsRoot, "VAE", "ae.safetensors");
+        // Z-Image-Turbo requires three files. Find each by name across every configured root.
+        var unet = FindFile("z_image_turbo_bf16.safetensors");
+        var clip = FindFile("qwen_3_4b.safetensors");
+        var vae = FindFile("ae.safetensors");
 
-        if (!File.Exists(unet) || !File.Exists(clip) || !File.Exists(vae))
+        if (unet is null || clip is null || vae is null)
             return;
 
         sink.Add(new ModelDescriptor
@@ -75,6 +103,51 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
             DefaultWidth = 1024,
             DefaultHeight = 1024,
         });
+    }
+
+    /// <summary>
+    /// Walks every configured models root recursively looking for a file with the given name.
+    /// Returns the first hit (roots are searched in user-supplied order). Returns <c>null</c>
+    /// if not found anywhere. Increments <see cref="SearchedLocationCount"/> for every
+    /// directory visited so the UI can surface "searched N locations" feedback.
+    /// </summary>
+    private string? FindFile(string fileName)
+    {
+        foreach (var root in _modelsRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                continue;
+
+            var hit = SearchRecursive(root, fileName);
+            if (hit is not null) return hit;
+        }
+        return null;
+    }
+
+    private string? SearchRecursive(string directory, string fileName)
+    {
+        var stack = new Stack<string>();
+        stack.Push(directory);
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            _searchedLocationCount++;
+
+            try
+            {
+                var direct = Path.Combine(current, fileName);
+                if (File.Exists(direct)) return direct;
+
+                foreach (var subDir in Directory.EnumerateDirectories(current))
+                    stack.Push(subDir);
+            }
+            catch (UnauthorizedAccessException) { /* skip inaccessible folders */ }
+            catch (DirectoryNotFoundException) { /* race: folder removed mid-scan */ }
+            catch (IOException) { /* skip transient I/O errors */ }
+        }
+
+        return null;
     }
 }
 

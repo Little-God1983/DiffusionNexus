@@ -58,7 +58,7 @@ public partial class GenerationFrameViewModel : ObservableObject
 
     /// <summary>The completed image bound to the frame's surface, or null while idle/in-flight.</summary>
     [ObservableProperty]
-    private Bitmap? _image;
+    private Bitmap? _frameImage;
 
     /// <summary>Absolute path of the saved PNG, populated once <see cref="State"/> becomes Completed.</summary>
     [ObservableProperty]

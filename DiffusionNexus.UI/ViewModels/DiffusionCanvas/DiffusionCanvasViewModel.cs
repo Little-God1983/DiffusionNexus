@@ -189,10 +189,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             var descriptor = backend.Catalog.TryGet(ModelKeys.ZImageTurbo);
             if (descriptor is null)
             {
+                var roots = _backendProvider.ResolvedModelsRoots;
+                var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
+                var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
                 BackendUnavailableMessage =
-                    "Z-Image-Turbo files were not found. Required files under the models folder: " +
-                    "DiffusionModels/z_image_turbo_bf16.safetensors, TextEncoders/qwen_3_4b.safetensors, VAE/ae.safetensors. " +
-                    $"Searched under: {_backendProvider.ResolvedModelsRoot ?? "(unknown)"}";
+                    "Z-Image-Turbo files were not found. Required filenames: " +
+                    "z_image_turbo_bf16.safetensors, qwen_3_4b.safetensors, ae.safetensors. " +
+                    $"Searched {searched} location(s) recursively across {roots.Count} ComfyUI installation(s): {rootsText}";
                 StatusText = "Model unavailable";
                 return;
             }
@@ -284,13 +287,37 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             case DiffusionPhase.Completed:
                 if (item.Result is { } result)
                 {
+                    Logger.Information(
+                        "Generation completed: {W}x{H}, seed={Seed}, png={Bytes} bytes, duration={Duration}",
+                        result.Width, result.Height, result.Seed, result.PngBytes?.Length ?? 0, result.Duration);
+
                     frame.Seed = result.Seed;
-                    var path = SaveResultToOutputs(result);
-                    frame.ImagePath = path;
-                    frame.Image = LoadBitmap(result.PngBytes);
-                    frame.State = GenerationFrameState.Completed;
-                    frame.StatusText = $"Done in {result.Duration.TotalSeconds:N1}s";
-                    StatusText = frame.StatusText;
+                    string? path = null;
+                    try
+                    {
+                        path = SaveResultToOutputs(result);
+                        frame.ImagePath = path;
+                        Logger.Information("Saved generated image to {Path}", path);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error(ex, "Failed to save generated image to outputs folder.");
+                    }
+
+                    var bitmap = TryLoadBitmap(result.PngBytes, path);
+                    if (bitmap is null)
+                    {
+                        frame.State = GenerationFrameState.Failed;
+                        frame.StatusText = "Image decode failed (see Unified Logger).";
+                        StatusText = frame.StatusText;
+                    }
+                    else
+                    {
+                        frame.FrameImage = bitmap;
+                        frame.State = GenerationFrameState.Completed;
+                        frame.StatusText = $"Done in {result.Duration.TotalSeconds:N1}s";
+                        StatusText = frame.StatusText;
+                    }
                 }
                 else if (!string.IsNullOrEmpty(item.Progress.Message))
                 {
@@ -310,6 +337,42 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         var path = Path.Combine(OutputsFolderRegistrar.OutputsDirectory, fileName);
         File.WriteAllBytes(path, result.PngBytes);
         return path;
+    }
+
+    private static Bitmap? TryLoadBitmap(byte[]? pngBytes, string? fallbackPath)
+    {
+        // 1. Decode from the in-memory PNG bytes.
+        if (pngBytes is { Length: > 0 })
+        {
+            try
+            {
+                using var ms = new MemoryStream(pngBytes);
+                return new Bitmap(ms);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Failed to decode generated image from in-memory PNG bytes ({Bytes} bytes); will try the saved file.", pngBytes.Length);
+            }
+        }
+        else
+        {
+            Logger.Warning("Generated image PNG byte array was null or empty.");
+        }
+
+        // 2. Fallback: re-load from the file we just wrote (different decoder path).
+        if (!string.IsNullOrEmpty(fallbackPath) && File.Exists(fallbackPath))
+        {
+            try
+            {
+                return new Bitmap(fallbackPath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Failed to load bitmap from saved file {Path}", fallbackPath);
+            }
+        }
+
+        return null;
     }
 
     private static Bitmap LoadBitmap(byte[] pngBytes)

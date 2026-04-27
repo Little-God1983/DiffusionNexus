@@ -24,8 +24,13 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     private static int _eventsInitialized;
 
     public StableDiffusionCppBackend(string modelsRoot)
+        : this(new[] { modelsRoot })
     {
-        _catalog = new ComfyUiModelCatalog(modelsRoot);
+    }
+
+    public StableDiffusionCppBackend(IEnumerable<string> modelsRoots)
+    {
+        _catalog = new ComfyUiModelCatalog(modelsRoots);
         EnsureNativeEventsInitialized();
     }
 

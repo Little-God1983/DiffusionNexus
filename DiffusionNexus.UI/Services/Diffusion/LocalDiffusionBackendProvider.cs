@@ -1,4 +1,5 @@
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.StableDiffusionCpp;
@@ -8,9 +9,9 @@ using Serilog;
 namespace DiffusionNexus.UI.Services.Diffusion;
 
 /// <summary>
-/// Resolves the local-diffusion models root from the user's installed ComfyUI package
-/// and lazily constructs the singleton <see cref="IDiffusionBackend"/> that the
-/// Diffusion Canvas binds to.
+/// Resolves the local-diffusion models roots from <b>every</b> ComfyUI installation registered
+/// in the Installer Manager and lazily constructs the singleton <see cref="IDiffusionBackend"/>
+/// that the Diffusion Canvas binds to.
 ///
 /// The first call performs DB I/O + native library probing (~10–50 ms but no model load yet);
 /// subsequent calls return the cached instance. The actual model load happens on the first
@@ -22,7 +23,7 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private StableDiffusionCppBackend? _backend;
-    private string? _resolvedRoot;
+    private IReadOnlyList<string> _resolvedRoots = [];
 
     public LocalDiffusionBackendProvider(IServiceProvider serviceProvider)
     {
@@ -30,9 +31,9 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
     }
 
     /// <summary>
-    /// Returns the configured backend, or <c>null</c> if no ComfyUI installation is registered
-    /// or its <c>models/</c> folder does not exist. Callers should surface a friendly message
-    /// to the user in the null case rather than retrying.
+    /// Returns the configured backend, or <c>null</c> if no usable ComfyUI installation is
+    /// registered. Callers should surface a friendly message to the user in the null case
+    /// rather than retrying.
     /// </summary>
     public async Task<IDiffusionBackend?> TryGetAsync(CancellationToken cancellationToken = default)
     {
@@ -43,12 +44,13 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
         {
             if (_backend is not null) return _backend;
 
-            var modelsRoot = await ResolveModelsRootAsync(cancellationToken).ConfigureAwait(false);
-            if (modelsRoot is null) return null;
+            var roots = await ResolveModelsRootsAsync(cancellationToken).ConfigureAwait(false);
+            if (roots.Count == 0) return null;
 
-            Logger.Information("Initializing local diffusion backend with models root: {Root}", modelsRoot);
-            _backend = new StableDiffusionCppBackend(modelsRoot);
-            _resolvedRoot = modelsRoot;
+            Logger.Information("Initializing local diffusion backend with {Count} models root(s): {Roots}",
+                roots.Count, string.Join(" | ", roots));
+            _backend = new StableDiffusionCppBackend(roots);
+            _resolvedRoots = roots;
             return _backend;
         }
         finally
@@ -57,57 +59,101 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
         }
     }
 
-    /// <summary>The models root the backend was initialized with, or null if not yet initialized.</summary>
-    public string? ResolvedModelsRoot => _resolvedRoot;
+    /// <summary>
+    /// The first models root resolved (for legacy single-root callers / status messages).
+    /// Returns null if the backend has not been initialized.
+    /// </summary>
+    public string? ResolvedModelsRoot => _resolvedRoots.Count > 0 ? _resolvedRoots[0] : null;
 
-    private async Task<string?> ResolveModelsRootAsync(CancellationToken ct)
+    /// <summary>All models roots (one per discovered ComfyUI installation) the backend will search.</summary>
+    public IReadOnlyList<string> ResolvedModelsRoots => _resolvedRoots;
+
+    private async Task<IReadOnlyList<string>> ResolveModelsRootsAsync(CancellationToken ct)
     {
         try
         {
+            // Use IUnitOfWork (same path as InstallerManagerViewModel). Repositories are NOT
+            // registered directly in DI — they are only accessible through the Unit of Work.
             using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IInstallerPackageRepository>();
-            var packages = await repo.GetAllAsync(ct).ConfigureAwait(false);
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var packages = await uow.InstallerPackages.GetAllAsync(ct).ConfigureAwait(false);
 
             Logger.Information("LocalDiffusionBackendProvider: Found {Count} total packages in database.", packages.Count);
 
-            // Prefer the default ComfyUI installation; fall back to any ComfyUI installation.
-            var comfy = packages.FirstOrDefault(p => p.Type == InstallerType.ComfyUI && p.IsDefault)
-                     ?? packages.FirstOrDefault(p => p.Type == InstallerType.ComfyUI);
+            // Take every ComfyUI installation; default(s) first so they win on duplicate filenames.
+            var comfyInstalls = packages
+                .Where(p => p.Type == InstallerType.ComfyUI)
+                .OrderByDescending(p => p.IsDefault)
+                .ThenBy(p => p.Name)
+                .ToList();
 
-            if (comfy is null)
+            if (comfyInstalls.Count == 0)
             {
-                // Log what we DID find so the user can diagnose (e.g., maybe they're registered as Unknown).
                 var typeCounts = packages.GroupBy(p => p.Type).Select(g => $"{g.Key}={g.Count()}").ToList();
                 Logger.Warning(
                     "No ComfyUI installation found in database (looked for InstallerType.ComfyUI). " +
                     "Found: [{Types}]. The local diffusion backend uses the ComfyUI models folder layout " +
-                    "(DiffusionModels/, TextEncoders/, VAE/) but does NOT run ComfyUI — it generates locally on your GPU. " +
-                    "Workaround: if your models live elsewhere, manually set the path or register one installation as ComfyUI type.",
+                    "but does NOT run ComfyUI — it generates locally on your GPU.",
                     string.Join(", ", typeCounts));
-                return null;
+                return [];
             }
 
-            if (string.IsNullOrWhiteSpace(comfy.InstallationPath) || !Directory.Exists(comfy.InstallationPath))
+            var roots = new List<string>(comfyInstalls.Count);
+            foreach (var pkg in comfyInstalls)
             {
-                Logger.Warning("ComfyUI '{Name}' (ID={Id}) has no valid InstallationPath: '{Path}'.", comfy.Name, comfy.Id, comfy.InstallationPath);
-                return null;
+                var root = ResolveSingleRoot(pkg);
+                if (root is not null && !roots.Contains(root, StringComparer.OrdinalIgnoreCase))
+                {
+                    roots.Add(root);
+                    Logger.Information("ComfyUI installation '{Name}' → models root: {Root}", pkg.Name, root);
+                }
             }
 
-            var modelsRoot = Path.Combine(comfy.InstallationPath, "models");
-            if (!Directory.Exists(modelsRoot))
+            if (roots.Count == 0)
             {
-                Logger.Warning("ComfyUI models folder not found at {Path}. Expected: DiffusionModels/, TextEncoders/, VAE/ subfolders.", modelsRoot);
-                return null;
+                Logger.Warning("Found {Count} ComfyUI installation(s) but none had a usable models folder.", comfyInstalls.Count);
             }
 
-            Logger.Information("Resolved models root: {Root} (from ComfyUI installation '{Name}')", modelsRoot, comfy.Name);
-            return modelsRoot;
+            return roots;
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Failed to resolve ComfyUI models root for local diffusion backend.");
+            Logger.Error(ex, "Failed to resolve ComfyUI models roots for local diffusion backend.");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Resolves a single ComfyUI installation's models folder, accounting for the same
+    /// portable-vs-manual layouts the Installer's ConfigurationCheckerService recognizes.
+    /// </summary>
+    private static string? ResolveSingleRoot(InstallerPackage pkg)
+    {
+        if (string.IsNullOrWhiteSpace(pkg.InstallationPath) || !Directory.Exists(pkg.InstallationPath))
+        {
+            Logger.Warning("ComfyUI '{Name}' (ID={Id}) has no valid InstallationPath: '{Path}'.",
+                pkg.Name, pkg.Id, pkg.InstallationPath);
             return null;
         }
+
+        // Probe both layouts:
+        //   Manual:   <root>/models/
+        //   Portable: <root>/ComfyUI/models/  (some installers also keep <root>/models/ at the parent level)
+        var candidates = new[]
+        {
+            Path.Combine(pkg.InstallationPath, "models"),
+            Path.Combine(pkg.InstallationPath, "ComfyUI", "models"),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+
+        Logger.Warning("ComfyUI '{Name}' has no models folder under {Root}. Probed: [{Candidates}].",
+            pkg.Name, pkg.InstallationPath, string.Join(", ", candidates));
+        return null;
     }
 
     public ValueTask DisposeAsync()
