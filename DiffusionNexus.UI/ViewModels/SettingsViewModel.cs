@@ -1061,11 +1061,24 @@ public partial class SettingsViewModel : BusyViewModelBase
                 {
                     Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                     {
-                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%)";
+                        var fileInfo = p.TotalFiles > 0
+                            ? $" — {p.FilesProcessed}/{p.TotalFiles}"
+                            : string.Empty;
+                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
                     });
                 });
 
-                var result = await _backupService.RestoreBackupAsync(backupPath, progress);
+                // Run the restore on a background thread with its own DI scope.
+                // RestoreBackupAsync is "async" but its extraction loop is synchronous I/O,
+                // so awaiting it directly blocks the UI thread and freezes the busy dialog.
+                // A fresh scope avoids concurrent DbContext access (the shared scoped
+                // DbContext is not thread-safe).
+                var result = await Task.Run(async () =>
+                {
+                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+                    return await scopedBackupService.RestoreBackupAsync(backupPath, progress);
+                });
 
                 if (result.Success)
                 {
