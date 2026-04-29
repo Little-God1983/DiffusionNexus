@@ -557,9 +557,9 @@
           <views:TrainingRunsTabView/>
         </TabItem>
 
-        <!-- Tab 3: Dataset Quality (hidden until feature toggle is enabled) -->
-        <TabItem Header="Dataset Quality"
-                 IsVisible="{ReflectionBinding $parent[Window].DataContext.IsDatasetQualityEnabled}">
+        <!-- Tab 3: Dataset Quality (always visible; the hidden feature toggle in the
+             main window now gates the Diffusion Canvas module instead). -->
+        <TabItem Header="Dataset Quality">
           <views:DatasetQualityTabView DataContext="{Binding DatasetQualityTab}"/>
         </TabItem>
 
