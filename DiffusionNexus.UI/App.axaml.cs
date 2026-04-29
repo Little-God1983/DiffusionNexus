@@ -824,6 +824,8 @@ public partial class App : Application
         // Diffusion Canvas module — local Z-Image-Turbo generation on an Invoke-AI-style canvas.
         // Gated behind DiffusionFeatureFlags.UseLocalDiffusionBackend so the module disappears
         // entirely when the local backend is disabled (e.g., for ComfyUI-only builds).
+        // Also hidden by default in the sidebar; the obscure checkbox in the main window
+        // (IsDiffusionCanvasEnabled) reveals it.
         if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
         {
             var diffusionCanvasVm = Services!.GetRequiredService<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
@@ -832,13 +834,17 @@ public partial class App : Application
                 DataContext = diffusionCanvasVm
             };
 
-            mainViewModel.RegisterModule(new ModuleItem(
+            var diffusionCanvasModule = new ModuleItem(
                 "Diffusion Canvas",
                 "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
-                diffusionCanvasView)
+                diffusionCanvasView,
+                isVisible: mainViewModel.IsDiffusionCanvasEnabled)
             {
                 ViewModel = diffusionCanvasVm
-            });
+            };
+
+            mainViewModel.RegisterModule(diffusionCanvasModule);
+            mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
         }
 
         // Image Comparer module
