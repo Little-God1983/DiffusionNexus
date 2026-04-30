@@ -15,15 +15,15 @@ which production types in each project have a corresponding `*Tests.cs` file in
 
 | Project                          | Type            | Production Files (approx.) | Dedicated Test Files | Qualitative Coverage |
 |----------------------------------|-----------------|---------------------------:|---------------------:|----------------------|
-| DiffusionNexus.Domain            | Class library   | ~55                        | 2                    | 🟠 Low               |
-| DiffusionNexus.Infrastructure    | Class library   | 7                          | 1                    | 🔴 Very Low          |
+| DiffusionNexus.Domain            | Class library   | ~55                        | 7                    | 🟡 Medium (core utilities + entities now covered) |
+| DiffusionNexus.Infrastructure    | Class library   | 7                          | 4                    | 🟢 Good (TaskTracker, UnifiedLogger, ActivityLog) |
 | DiffusionNexus.Service           | Class library   | ~80                        | ~25                  | 🟡 Mixed (Good in DatasetQuality, Low elsewhere) |
 | DiffusionNexus.DataAccess        | Class library   | ~25 (excl. migrations)     | 2                    | 🟠 Low               |
-| DiffusionNexus.Captioning        | Class library   | 5                          | 0                    | 🔴 None              |
-| DiffusionNexus.Civitai           | Class library   | 9                          | 0                    | 🔴 None              |
-| DiffusionNexus.Inference         | Class library   | 10                         | 0                    | 🔴 None              |
+| DiffusionNexus.Captioning        | Class library   | 5                          | 2                    | 🟢 Good (ImagePreprocessor + CaptioningModelManager) |
+| DiffusionNexus.Civitai           | Class library   | 9                          | 2                    | 🟢 Good (CivitaiClient + CivitaiQueryParameters) |
+| DiffusionNexus.Inference         | Class library   | 10                         | 2                    | 🟡 Medium (catalog + loader; native backend still untested) |
 | DiffusionNexus.UI                | Avalonia app    | ~230                       | ~30 (VMs/utilities)  | 🟡 Medium (VMs only) |
-| DiffusionNexus.Tests             | Unit tests      | n/a                        | 73                   | —                    |
+| DiffusionNexus.Tests             | Unit tests      | n/a                        | ~283                 | —                    |
 | DiffusionNexus.IntegrationTests  | Integration     | n/a                        | 2                    | 🔴 Very Low          |
 
 Legend: 🟢 Good · 🟡 Mixed/Medium · 🟠 Low · 🔴 Very Low / None
@@ -31,6 +31,51 @@ Legend: 🟢 Good · 🟡 Mixed/Medium · 🟠 Low · 🔴 Very Low / None
 ---
 
 ## Projects with **Good** Test Coverage
+
+### ✅ DiffusionNexus.Domain — core utilities & entities (added)
+- `BaseModelDisplayMapperTests`, `BaseModelTypeExtensionsTests`,
+  `CaptionPostProcessorTests`, `ActivityLogExtensionsTests`,
+  `QualityScoreModelsTests` (plus the existing `EpochFileItemTests`,
+  `NoteItemTests`).
+
+### ✅ DiffusionNexus.Infrastructure — cross-cutting services (added)
+- `TaskTrackerTests` (concurrency / handle disposal),
+  `UnifiedLoggerTests` (level filtering + sink fan-out),
+  `ActivityLogServiceTests` (subscriber notification order),
+  plus the existing `ActivityLogServiceBridgeTests`.
+
+### ✅ DiffusionNexus.Civitai — HTTP client & query builder (added)
+- `CivitaiClientTests` — uses a `FakeHttpHandler` (custom
+  `HttpMessageHandler`) with golden-JSON fixtures to cover success,
+  401, 404, paging and rate-limit responses.
+- `CivitaiQueryParametersTests` — table-driven URL-builder tests
+  (reflection used to invoke the internal `ToQueryString()`).
+
+### ✅ DiffusionNexus.Inference — catalog & loader (added)
+- `ComfyUiModelCatalogTests` — temp-dir filesystem fixtures,
+  Z-Image-Turbo discovery, partial-files, caching/`Invalidate`,
+  first-root-wins precedence, missing-roots tolerance.
+- `StableDiffusionCppLoaderTests` — reflection-based access to the
+  `internal static StableDiffusionCppLoader.Build(...)`; covers null
+  descriptor, unsupported `ModelKind`, missing diffusion model / LLM
+  text encoder / VAE, and the all-slots-present happy path.
+- _Native interop (`StableDiffusionCppBackend`,
+  `DiffusionContextHost`) still requires the abstraction work noted in
+  Priority 1 #3._
+
+### ✅ DiffusionNexus.Captioning — preprocessing & model management (added)
+- `ImagePreprocessorTests` — generates PNG/JPEG fixtures with
+  SkiaSharp; covers validation (null/missing/unsupported/too-small),
+  `ProcessImage` (no-resize / aspect-preserving resize / PNG signature
+  / JPEG SOI), `ProcessImageFromBytes`, supported-format helpers and
+  the `ImagePreprocessResult.Succeeded/Failed` factories.
+- `CaptioningModelManagerTests` — temp-dir + sparse-file pattern
+  (`FileStream.SetLength`) to exercise the size-threshold logic;
+  covers ctor directory creation, `GetModelPath` /
+  `GetClipProjectorPath` / `GetExpectedModelSize` for all three model
+  types, status (`NotDownloaded` / `Corrupted`),
+  `DownloadModelAsync` short-circuit when ready, `DeleteModel`
+  removal + no-throw when files are absent.
 
 ### ✅ DiffusionNexus.Service — `DatasetQuality` subsystem
 This is the strongest part of the codebase from a testing perspective.
@@ -86,25 +131,21 @@ test fixture:
 
 ## Projects that **Need Improvement**
 
-### ⚠️ DiffusionNexus.Domain — Low
-Only `EpochFileItemTests` and `NoteItemTests` exist.
-While the project is largely DTOs/entities/interfaces, the following contain
-real logic and are **untested**:
+### ⚠️ DiffusionNexus.Domain — Medium (improved)
+New fixtures cover `BaseModelDisplayMapper`, `BaseModelTypeExtensions`,
+`CaptionPostProcessor`, `ActivityLogExtensions` and
+`QualityScoreModels`. Still **untested**:
 
-- `Utilities/BaseModelDisplayMapper.cs`
-- `Enums/BaseModelTypeExtensions.cs`
-- `Services/CaptionPostProcessor.cs`
-- `Services/ActivityLogExtensions.cs`
-- `Models/QualityScoreModels.cs`, `BucketAnalysisModels.cs`,
-  `DatasetQualityModels.cs`, `ComfyUIFeatureRequirements.cs`
+- `Models/BucketAnalysisModels.cs`, `Models/DatasetQualityModels.cs`,
+  `Models/ComfyUIFeatureRequirements.cs`.
 - Domain entities with behavior (`Model`, `ModelVersion`, `ModelFile`,
   `ImageGallery`, `InstallerPackage`, `DatasetCategory`, `AppSettings`).
 
-### ⚠️ DiffusionNexus.Infrastructure — Very Low
-Only `ActivityLogServiceBridgeTests` exists. **Untested:**
-`ActivityLogService`, `UnifiedLogger`, `TaskTracker`,
+### ✅ DiffusionNexus.Infrastructure — Good (resolved)
+All cross-cutting services (`ActivityLogService`, `UnifiedLogger`,
+`TaskTracker`) now have dedicated fixtures. Remaining gaps:
 `ImageCacheService`, `SecureStorageService`,
-`ServiceCollectionExtensions`.
+`ServiceCollectionExtensions` (mostly DI wiring — low risk).
 
 ### ⚠️ DiffusionNexus.DataAccess — Low
 Tested: `UnitOfWorkTests`, `ModelRepositoryTests`. **Untested:**
@@ -131,19 +172,25 @@ Critical services with **no tests**:
 - App-level: `SettingsExportService`, `DatasetBackupService`,
   `DisclaimerService`.
 
-### 🚫 DiffusionNexus.Captioning — None
-`CaptioningService`, `CaptioningModelManager`,
-`LocalInferenceCaptioningBackend`, and `ImagePreprocessor` have **zero** tests.
+### ✅ DiffusionNexus.Captioning — Good (resolved)
+`ImagePreprocessor` and `CaptioningModelManager` are now fully
+covered. Still **untested**: `CaptioningService` and
+`LocalInferenceCaptioningBackend` (these depend on the native
+llama.cpp backend and need the abstraction work noted in Priority 2).
 
-### 🚫 DiffusionNexus.Civitai — None
-The HTTP client (`CivitaiClient`), query parameter builder
-(`CivitaiQueryParameters`) and the model DTOs have **no** unit tests.
-This is high-risk because external API contract changes cannot be detected.
+### ✅ DiffusionNexus.Civitai — Good (resolved)
+`CivitaiClient` (HTTP) and `CivitaiQueryParameters` (URL builder) are
+now covered, including success, 401, 404, paging and rate-limit
+responses. The DTOs themselves are simple records — covered
+indirectly via the client deserialization tests.
 
-### 🚫 DiffusionNexus.Inference — None
-`StableDiffusionCppBackend`, `StableDiffusionCppLoader`,
-`DiffusionContextHost`, `ComfyUiModelCatalog` are entirely untested.
-Native interop + lifecycle code is the most common source of leaks/crashes.
+### ⚠️ DiffusionNexus.Inference — Medium (improved)
+`ComfyUiModelCatalog` (filesystem discovery) and
+`StableDiffusionCppLoader` (descriptor validation) now have full unit
+coverage. Still **untested** because they require native interop:
+`StableDiffusionCppBackend`, `DiffusionContextHost`. These should be
+wrapped behind an interface so the backend can be exercised without
+loading the native DLL (see Priority 1 #3).
 
 ### ⚠️ DiffusionNexus.UI — Medium (broad gaps)
 ViewModels currently **without** tests (selection of high-impact ones):
@@ -194,19 +241,19 @@ captioning/inference pipelines.
    and wire it into the `Doc/publish.ps1` flow so every CI run produces
    an HTML report (`reportgenerator`). This replaces the qualitative
    bands above with real numbers and makes regressions visible.
-2. **DiffusionNexus.Civitai**: add unit tests around `CivitaiClient`
-   using `HttpMessageHandler` mocks (System.Net.Http.HttpClientFactory
-   testing pattern) and golden-JSON fixtures for each `Civitai*` DTO.
-   Cover at minimum: success, 401, 404, paging, and rate-limit responses.
-3. **DiffusionNexus.Inference**: add tests for
-   `ComfyUiModelCatalog` and `StableDiffusionCppLoader` resolution
-   logic (these are pure C# and easy to unit test). Wrap native
-   `DiffusionContextHost` in an interface so the backend can be tested
-   without loading the native DLL.
-4. **DiffusionNexus.Captioning**: cover `ImagePreprocessor`
-   (deterministic) and `CaptioningModelManager` (file-system layout,
-   download path resolution). Use `IFileSystem` (System.IO.Abstractions)
-   abstractions where missing.
+2. ✅ **DiffusionNexus.Civitai** — DONE. `CivitaiClientTests` and
+   `CivitaiQueryParametersTests` cover success, 401, 404, paging and
+   rate-limit responses via a `FakeHttpHandler`.
+3. 🟡 **DiffusionNexus.Inference** — partially DONE. `ComfyUiModelCatalog`
+   and `StableDiffusionCppLoader` are covered. **Still pending:** wrap
+   native `DiffusionContextHost` in an interface so
+   `StableDiffusionCppBackend` can be tested without loading the
+   native DLL.
+4. ✅ **DiffusionNexus.Captioning** — DONE. `ImagePreprocessor` and
+   `CaptioningModelManager` are fully covered (SkiaSharp fixtures +
+   sparse-file pattern). `CaptioningService` and
+   `LocalInferenceCaptioningBackend` remain blocked on the same
+   native-backend abstraction as item #3.
 
 ### Priority 2 — Stability of core services
 
@@ -219,9 +266,10 @@ captioning/inference pipelines.
    `ModelMetadataService`, `ModelDiscoveryService` (filesystem walk +
    pairing logic) and `ModelFileSyncService` — these are pure logic
    given a fake filesystem.
-7. **DiffusionNexus.Infrastructure**: add tests for `TaskTracker`
-   (concurrency / handle disposal), `UnifiedLogger` (level filtering &
-   sink fan-out), `ActivityLogService` (subscriber notification order).
+7. ✅ **DiffusionNexus.Infrastructure** — DONE. `TaskTrackerTests`,
+   `UnifiedLoggerTests` and `ActivityLogServiceTests` are in place.
+   Remaining gaps (`ImageCacheService`, `SecureStorageService`,
+   `ServiceCollectionExtensions`) are mostly DI wiring.
 
 ### Priority 3 — Persistence safety
 
@@ -284,6 +332,8 @@ captioning/inference pipelines.
 
 ---
 
-_Last updated: automatically generated by the assistant — re-run this
-analysis (or replace with Coverlet output) after substantial test
-additions._
+_Last updated: refreshed after adding ~210 new tests across
+Domain (5 fixtures, 78 tests), Infrastructure (3 fixtures, 48 tests),
+Civitai (2 fixtures, 29 tests), Inference (2 fixtures, 17 tests) and
+Captioning (2 fixtures, 39 tests). Re-run this analysis (or replace
+with Coverlet output) after the next substantial test additions._
