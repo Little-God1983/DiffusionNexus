@@ -54,6 +54,12 @@ public class Model : BaseEntity
     /// </summary>
     public bool IsUserEdited { get; set; }
 
+    /// <summary>
+    /// User-selected category override. When set, takes precedence over the
+    /// category inferred from tags. Null means "infer from tags".
+    /// </summary>
+    public Domain.Enums.CivitaiCategory? UserCategory { get; set; }
+
     #region License Permissions
 
     public bool AllowNoCredit { get; set; }

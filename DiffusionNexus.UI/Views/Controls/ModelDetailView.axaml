@@ -57,15 +57,52 @@
               Padding="16,12"
               BorderBrush="#333"
               BorderThickness="0,0,0,1">
-        <Grid ColumnDefinitions="*,Auto">
+        <Grid ColumnDefinitions="*,Auto,Auto">
           <TextBlock Grid.Column="0"
                      Text="{Binding ModelName}"
                      FontSize="18"
                      FontWeight="Bold"
                      Foreground="White"
                      TextWrapping="Wrap"
-                     VerticalAlignment="Center"/>
+                     VerticalAlignment="Center"
+                     IsVisible="{Binding !IsEditingName}"/>
+          <TextBox Grid.Column="0"
+                   Text="{Binding NameEditBuffer, Mode=TwoWay}"
+                   FontSize="18"
+                   FontWeight="Bold"
+                   Foreground="White"
+                   Background="#1A1A1A"
+                   VerticalAlignment="Center"
+                   IsVisible="{Binding IsEditingName}"/>
           <Button Grid.Column="1"
+                  Content="Edit"
+                  Command="{Binding BeginEditNameCommand}"
+                  IsVisible="{Binding !IsEditingName}"
+                  Padding="6,2"
+                  FontSize="11"
+                  Margin="6,0"
+                  Background="Transparent"
+                  Foreground="#66CCFF"
+                  ToolTip.Tip="Edit model name"/>
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      Spacing="4"
+                      Margin="6,0"
+                      IsVisible="{Binding IsEditingName}">
+            <Button Content="Save"
+                    Command="{Binding SaveNameCommand}"
+                    Padding="8,2"
+                    FontSize="11"
+                    Background="#0066CC"
+                    Foreground="White"/>
+            <Button Content="Cancel"
+                    Command="{Binding CancelEditNameCommand}"
+                    Padding="8,2"
+                    FontSize="11"
+                    Background="Transparent"
+                    Foreground="#888"/>
+          </StackPanel>
+          <Button Grid.Column="2"
                   Content="&#x2715;"
                   Command="{Binding CloseCommand}"
                   Background="Transparent"
@@ -237,12 +274,15 @@
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"
-                             IsVisible="{Binding HasCategory}"/>
-                  <TextBlock Grid.Row="5" Grid.Column="1"
-                             Text="{Binding CategoryDisplay}"
-                             Foreground="White"
-                             Margin="0,0,0,6"
-                             IsVisible="{Binding HasCategory}"/>
+                             VerticalAlignment="Center"/>
+                  <ComboBox Grid.Row="5" Grid.Column="1"
+                            ItemsSource="{Binding AvailableCategories}"
+                            SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                            Background="#1A1A1A"
+                            Foreground="White"
+                            Margin="0,0,0,6"
+                            HorizontalAlignment="Stretch"
+                            ToolTip.Tip="Select a category (overrides tag-based inference)"/>
 
                   <TextBlock Grid.Row="6" Grid.Column="0"
                              Text="Creator:"

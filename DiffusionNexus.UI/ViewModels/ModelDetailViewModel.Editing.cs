@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,6 +42,145 @@ public partial class ModelDetailViewModel
 
     [ObservableProperty]
     private string _triggerWordsEditBuffer = string.Empty;
+
+    [ObservableProperty]
+    private bool _isEditingName;
+
+    [ObservableProperty]
+    private string _nameEditBuffer = string.Empty;
+
+    /// <summary>
+    /// All selectable categories for the inline ComboBox. Includes a leading
+    /// "(infer from tags)" entry mapped to <see cref="Domain.Enums.CivitaiCategory.Unknown"/>.
+    /// </summary>
+    public IReadOnlyList<CivitaiCategory> AvailableCategories { get; } =
+        Enum.GetValues<CivitaiCategory>();
+
+    /// <summary>Currently selected category in the ComboBox (two-way bound).</summary>
+    [ObservableProperty]
+    private CivitaiCategory _selectedCategory = CivitaiCategory.Unknown;
+
+    private bool _suppressCategorySave;
+
+    partial void OnSelectedCategoryChanged(CivitaiCategory value)
+    {
+        if (_suppressCategorySave) return;
+        _ = SaveCategoryAsync(value);
+    }
+
+    #endregion
+
+    #region Name editing
+
+    [RelayCommand]
+    private void BeginEditName()
+    {
+        NameEditBuffer = ModelName ?? string.Empty;
+        IsEditingName = true;
+    }
+
+    [RelayCommand]
+    private void CancelEditName()
+    {
+        IsEditingName = false;
+        NameEditBuffer = string.Empty;
+    }
+
+    [RelayCommand]
+    private async Task SaveNameAsync()
+    {
+        var model = SourceTile?.ModelEntity;
+        if (model is null) return;
+
+        var newName = (NameEditBuffer ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            StatusMessage = "Name cannot be empty.";
+            return;
+        }
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+            if (dbModel is null) return;
+
+            dbModel.Name = newName;
+            dbModel.IsUserEdited = true;
+
+            await unitOfWork.SaveChangesAsync();
+            ModelName = newName;
+            IsEditingName = false;
+
+            await PostSaveRefreshAsync(unitOfWork, model.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "ModelDetailEdit",
+                $"Failed to save name: {ex.Message}", ex);
+            StatusMessage = $"Failed to save name: {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region Category editing
+
+    /// <summary>
+    /// Initializes <see cref="SelectedCategory"/> from the loaded model without
+    /// triggering a save (uses <see cref="_suppressCategorySave"/>).
+    /// </summary>
+    public void LoadCategorySelection()
+    {
+        var model = SourceTile?.ModelEntity;
+        var current = model?.UserCategory ?? CivitaiCategory.Unknown;
+        _suppressCategorySave = true;
+        try
+        {
+            SelectedCategory = current;
+        }
+        finally
+        {
+            _suppressCategorySave = false;
+        }
+    }
+
+    private async Task SaveCategoryAsync(CivitaiCategory value)
+    {
+        var model = SourceTile?.ModelEntity;
+        if (model is null) return;
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+            if (dbModel is null) return;
+
+            dbModel.UserCategory = value == CivitaiCategory.Unknown ? null : value;
+            dbModel.IsUserEdited = true;
+
+            await unitOfWork.SaveChangesAsync();
+
+            // Update displayed category to reflect the override (or fall back to inference).
+            var label = value == CivitaiCategory.Unknown
+                ? null
+                : (value == CivitaiCategory.BaseModel ? "Base Model" : value.ToString());
+            CategoryDisplay = label ?? string.Empty;
+            HasCategory = !string.IsNullOrEmpty(CategoryDisplay);
+
+            await PostSaveRefreshAsync(unitOfWork, model.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "ModelDetailEdit",
+                $"Failed to save category: {ex.Message}", ex);
+            StatusMessage = $"Failed to save category: {ex.Message}";
+        }
+    }
 
     #endregion
 

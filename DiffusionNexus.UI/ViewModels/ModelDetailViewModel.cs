@@ -233,6 +233,7 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         // Build editable tag chips from local data immediately
         await LoadEditableTagsAsync();
+        LoadCategorySelection();
 
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
@@ -945,8 +946,17 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
 
         // Infer category from the first tag that matches a known CivitaiCategory enum value
-        // (same logic as MetaDataUtilService.GetCategoryFromTags)
-        var category = InferCategoryFromTags(model);
+        // (same logic as MetaDataUtilService.GetCategoryFromTags). User override (Model.UserCategory)
+        // takes precedence when set.
+        string? category = null;
+        if (model?.UserCategory is { } userCat && userCat != Domain.Enums.CivitaiCategory.Unknown)
+        {
+            category = userCat == Domain.Enums.CivitaiCategory.BaseModel ? "Base Model" : userCat.ToString();
+        }
+        else
+        {
+            category = InferCategoryFromTags(model);
+        }
         CategoryDisplay = category ?? string.Empty;
         HasCategory = category is not null;
     }
