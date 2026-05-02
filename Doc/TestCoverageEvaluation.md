@@ -35,7 +35,7 @@ Legend: 🟢 Good · 🟡 Mixed/Medium · 🟠 Low · 🔴 Very Low / None
 ### ✅ DiffusionNexus.Domain — core utilities & entities (added)
 - `BaseModelDisplayMapperTests`, `BaseModelTypeExtensionsTests`,
   `CaptionPostProcessorTests`, `ActivityLogExtensionsTests`,
-  `QualityScoreModelsTests` (plus the existing `EpochFileItemTests`,
+  `PerImageQualitySummaryTests` (plus the existing `EpochFileItemTests`,
   `NoteItemTests`).
 
 ### ✅ DiffusionNexus.Infrastructure — cross-cutting services (added)
