@@ -260,11 +260,16 @@
                              Text="Base Model:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
-                             Margin="0,0,12,6"/>
-                  <TextBlock Grid.Row="2" Grid.Column="1"
-                             Text="{Binding BaseModelDisplay}"
-                             Foreground="White"
-                             Margin="0,0,0,6"/>
+                             Margin="0,0,12,6"
+                             VerticalAlignment="Center"/>
+                  <ComboBox Grid.Row="2" Grid.Column="1"
+                            ItemsSource="{Binding AvailableBaseModels}"
+                            SelectedItem="{Binding SelectedBaseModel, Mode=TwoWay}"
+                            Background="#1A1A1A"
+                            Foreground="White"
+                            Margin="0,0,0,6"
+                            HorizontalAlignment="Stretch"
+                            ToolTip.Tip="Override the base model for the currently selected version (saved per-version)"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0"
                              Text="File:"

@@ -669,6 +669,9 @@ public partial class App : Application
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
 
+        // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
+        services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
+
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
@@ -726,7 +729,8 @@ public partial class App : Application
             sp.GetRequiredService<IModelSyncService>(),
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<ISecureStorage>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<IUnitOfWork>(),

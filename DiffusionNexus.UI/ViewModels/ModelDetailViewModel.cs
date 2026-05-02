@@ -29,6 +29,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
 
     /// <summary>
     /// Cached Civitai model data from the initial API fetch.
@@ -203,12 +204,14 @@ public partial class ModelDetailViewModel : ViewModelBase
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
         ISecureStorage? secureStorage,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _logger = logger;
+        _baseModelCatalog = baseModelCatalog;
     }
 
     #endregion
@@ -234,6 +237,11 @@ public partial class ModelDetailViewModel : ViewModelBase
         // Build editable tag chips from local data immediately
         await LoadEditableTagsAsync();
         LoadCategorySelection();
+
+        // Populate the base-model dropdown from the Civitai catalog (cached;
+        // falls back to a bundled snapshot when offline). Fire-and-forget so a
+        // slow first fetch never blocks the detail view from rendering.
+        _ = LoadBaseModelCatalogAsync();
 
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
@@ -1189,6 +1197,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             ? selected.CivitaiVersion.Id.ToString()
             : "\u2014";
         BaseModelDisplay = selected.BaseModel;
+        SyncSelectedBaseModelFromVersion();
 
         // Trigger words
         TriggerWordsDisplay = selected.TriggerWords;

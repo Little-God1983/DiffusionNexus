@@ -4,6 +4,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
@@ -280,6 +281,168 @@ public partial class ModelDetailViewModel
                 }
                 dbModel.Tags.Add(new ModelTag { Tag = tag });
             }
+        }
+    }
+
+    #endregion
+
+    #region Base model editing
+
+    /// <summary>
+    /// Selectable base model labels (e.g. "SDXL 1.0", "Pony", "Flux.1 D"). The
+    /// list is sourced from <see cref="ICivitaiBaseModelCatalog"/> at load time
+    /// and matches Civitai's own base-model filter dropdown. The currently
+    /// persisted value is always present, even when the catalog hasn't heard of
+    /// it yet, so the ComboBox can round-trip arbitrary legacy strings.
+    /// </summary>
+    public ObservableCollection<string> AvailableBaseModels { get; } = [];
+
+    /// <summary>Currently selected base model in the ComboBox (two-way bound).</summary>
+    [ObservableProperty]
+    private string? _selectedBaseModel;
+
+    private bool _suppressBaseModelSave;
+
+    partial void OnSelectedBaseModelChanged(string? value)
+    {
+        if (_suppressBaseModelSave) return;
+        _ = SaveSelectedBaseModelAsync(value);
+    }
+
+    /// <summary>
+    /// Refreshes <see cref="AvailableBaseModels"/> from the catalog and seeds
+    /// <see cref="SelectedBaseModel"/> from the current version's
+    /// <c>BaseModelRaw</c>. Safe to call multiple times.
+    /// </summary>
+    public async Task LoadBaseModelCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<string> labels;
+        try
+        {
+            labels = _baseModelCatalog is not null
+                ? await _baseModelCatalog.GetBaseModelsAsync(cancellationToken: cancellationToken)
+                : Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, "BaseModelCatalog",
+                $"Failed to load Civitai base model catalog: {ex.Message}");
+            labels = Array.Empty<string>();
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var current = ResolveCurrentBaseModelRaw();
+
+            _suppressBaseModelSave = true;
+            try
+            {
+                AvailableBaseModels.Clear();
+                foreach (var label in labels)
+                {
+                    AvailableBaseModels.Add(label);
+                }
+
+                // Make sure the currently-stored value is selectable even if it
+                // isn't in the Civitai catalog (e.g. legacy / custom labels).
+                if (!string.IsNullOrWhiteSpace(current)
+                    && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+                {
+                    AvailableBaseModels.Insert(0, current);
+                }
+
+                SelectedBaseModel = string.IsNullOrWhiteSpace(current) ? null : current;
+            }
+            finally
+            {
+                _suppressBaseModelSave = false;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Re-syncs <see cref="SelectedBaseModel"/> to the value backing the
+    /// currently selected version tab (or the local primary version) without
+    /// triggering a save. Called whenever the version tab changes.
+    /// </summary>
+    public void SyncSelectedBaseModelFromVersion()
+    {
+        var current = ResolveCurrentBaseModelRaw();
+        if (!string.IsNullOrWhiteSpace(current)
+            && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+        {
+            AvailableBaseModels.Insert(0, current);
+        }
+
+        _suppressBaseModelSave = true;
+        try
+        {
+            SelectedBaseModel = string.IsNullOrWhiteSpace(current) ? null : current;
+        }
+        finally
+        {
+            _suppressBaseModelSave = false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the BaseModelRaw of the currently displayed version: the local
+    /// version backing the selected tab when present, otherwise the Civitai
+    /// version label, otherwise the source tile's selected version.
+    /// </summary>
+    private string? ResolveCurrentBaseModelRaw()
+    {
+        var localFromTab = SelectedVersionTab?.LocalVersion?.BaseModelRaw;
+        if (!string.IsNullOrWhiteSpace(localFromTab)) return localFromTab;
+
+        var civitai = SelectedVersionTab?.CivitaiVersion?.BaseModel;
+        if (!string.IsNullOrWhiteSpace(civitai)) return civitai;
+
+        return SourceTile?.SelectedVersion?.BaseModelRaw;
+    }
+
+    private async Task SaveSelectedBaseModelAsync(string? value)
+    {
+        var localVersion = SelectedVersionTab?.LocalVersion ?? SourceTile?.SelectedVersion;
+        if (localVersion is null)
+        {
+            // Nothing local to persist (Civitai-only tab) — silently ignore;
+            // BaseModelRaw is fixed by the API for those tabs.
+            return;
+        }
+
+        var newValue = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        if (string.Equals(newValue, localVersion.BaseModelRaw, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(localVersion.ModelId);
+            if (dbModel is null) return;
+
+            var dbVersion = dbModel.Versions.FirstOrDefault(v => v.Id == localVersion.Id);
+            if (dbVersion is null) return;
+
+            dbVersion.BaseModelRaw = newValue;
+            dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(newValue);
+            dbVersion.IsUserEdited = true;
+
+            await unitOfWork.SaveChangesAsync();
+
+            BaseModelDisplay = newValue ?? "Unknown";
+
+            await PostSaveRefreshAsync(unitOfWork, dbModel.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "ModelDetailEdit",
+                $"Failed to save base model: {ex.Message}", ex);
+            StatusMessage = $"Failed to save base model: {ex.Message}";
         }
     }
 

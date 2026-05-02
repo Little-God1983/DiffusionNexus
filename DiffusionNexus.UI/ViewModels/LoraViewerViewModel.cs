@@ -25,6 +25,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly IModelSyncService? _syncService;
     private readonly ICivitaiClient? _civitaiClient;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
 
@@ -121,6 +122,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _civitaiClient = null;
         _secureStorage = null;
         _logger = null;
+        _baseModelCatalog = null;
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -133,13 +135,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         IModelSyncService syncService,
         ICivitaiClient? civitaiClient = null,
         ISecureStorage? secureStorage = null,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
         _civitaiClient = civitaiClient;
         _secureStorage = secureStorage;
         _logger = logger;
+        _baseModelCatalog = baseModelCatalog;
     }
 
     #endregion
@@ -1813,7 +1817,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _civitaiClient,
             _settingsService,
             _secureStorage,
-            _logger);
+            _logger,
+            _baseModelCatalog);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
