@@ -511,7 +511,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts)
     {
         var tilesNeedingMetadata = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null })
+            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null }
+                        && !(t.ModelEntity?.IsUserEdited ?? false))
             .ToList();
 
         if (tilesNeedingMetadata.Count == 0)
@@ -708,7 +709,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var tilesNeedingTags = AllTiles
             .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
                         && t.TagNames.Count == 0
-                        && t.SelectedVersion?.CivitaiId is not null)
+                        && t.SelectedVersion?.CivitaiId is not null
+                        && !(t.ModelEntity?.IsUserEdited ?? false))
             .ToList();
 
         if (tilesNeedingTags.Count == 0)
@@ -1575,6 +1577,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (dbModel is null) return;
 
         // Update model-level fields from Civitai
+        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
+        var preserveModelEdits = dbModel.IsUserEdited;
         if (civitaiModel is not null)
         {
             // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
@@ -1593,8 +1597,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     "already assigned to another model");
             }
 
-            dbModel.Name = civitaiModel.Name;
-            dbModel.Description = civitaiModel.Description;
+            if (!preserveModelEdits)
+            {
+                dbModel.Name = civitaiModel.Name;
+                dbModel.Description = civitaiModel.Description;
+            }
             dbModel.IsNsfw = civitaiModel.Nsfw;
             dbModel.IsPoi = civitaiModel.Poi;
             dbModel.Source = DataSource.CivitaiApi;
@@ -1654,16 +1661,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
             dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
 
-            // Update trigger words
-            dbVersion.TriggerWords.Clear();
-            var order = 0;
-            foreach (var word in bestCivitaiVersion.TrainedWords)
+            // Update trigger words — skip when this version was user-edited
+            if (!dbVersion.IsUserEdited)
             {
-                dbVersion.TriggerWords.Add(new TriggerWord
+                dbVersion.TriggerWords.Clear();
+                var order = 0;
+                foreach (var word in bestCivitaiVersion.TrainedWords)
                 {
-                    Word = word,
-                    Order = order++
-                });
+                    dbVersion.TriggerWords.Add(new TriggerWord
+                    {
+                        Word = word,
+                        Order = order++
+                    });
+                }
             }
 
             // Add images from Civitai (use the version with the richest data)
@@ -1719,8 +1729,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
-        // Sync tags from Civitai model response
-        if (civitaiModel?.Tags is { Count: > 0 } civitaiTags)
+        // Sync tags from Civitai model response (skip when user has edited tags)
+        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
         {
             var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
             SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);

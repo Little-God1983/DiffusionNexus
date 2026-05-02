@@ -23,6 +23,7 @@ internal sealed class ModelVersionConfiguration : IEntityTypeConfiguration<Model
         entity.Property(e => e.BaseModel).HasConversion<string>().HasMaxLength(50);
         entity.Property(e => e.BaseModelRaw).HasMaxLength(100);
         entity.Property(e => e.DownloadUrl).HasMaxLength(2000);
+        entity.Property(e => e.IsUserEdited).HasDefaultValue(false);
 
         // Relationships
         entity.HasMany(e => e.Files)

@@ -35,6 +35,12 @@ public class ModelVersion : BaseEntity
     /// <summary>Early access period in days (0 = no early access).</summary>
     public int EarlyAccessDays { get; set; }
 
+    /// <summary>
+    /// True when the user has manually edited this version (e.g., trigger words).
+    /// Civitai sync flows must not overwrite user-edited versions. Defaults to false.
+    /// </summary>
+    public bool IsUserEdited { get; set; }
+
     #region Statistics
 
     public int DownloadCount { get; set; }

@@ -231,6 +231,9 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         PopulateFromLocalVersion(tile);
 
+        // Build editable tag chips from local data immediately
+        await LoadEditableTagsAsync();
+
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
     }
