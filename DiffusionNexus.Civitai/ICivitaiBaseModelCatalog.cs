@@ -26,4 +26,45 @@ public interface ICivitaiBaseModelCatalog
     Task<IReadOnlyList<string>> GetBaseModelsAsync(
         bool forceRefresh = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// UTC timestamp the on-disk cache was last written, or <c>null</c> when no
+    /// cache file exists yet. Useful for surfacing "definition age" at startup.
+    /// </summary>
+    DateTime? CacheTimestampUtc { get; }
+
+    /// <summary>
+    /// Full path to the on-disk cache file (may not exist yet).
+    /// </summary>
+    string CacheFilePath { get; }
+
+    /// <summary>
+    /// Raised whenever the catalog tries to refresh its data (cache hit, live
+    /// fetch attempt + result, fallback to bundled snapshot).
+    /// </summary>
+    event EventHandler<CivitaiBaseModelCatalogEventArgs>? StatusChanged;
+}
+
+/// <summary>
+/// Outcome of a single catalog refresh step.
+/// </summary>
+public enum CivitaiBaseModelCatalogEventKind
+{
+    FetchStarted,
+    FetchSucceeded,
+    FetchFailed,
+    UsedDiskCache,
+    UsedBundledFallback,
+}
+
+/// <summary>
+/// Event payload describing what the catalog just did.
+/// </summary>
+public sealed class CivitaiBaseModelCatalogEventArgs : EventArgs
+{
+    public CivitaiBaseModelCatalogEventKind Kind { get; init; }
+    public int Count { get; init; }
+    public string? Message { get; init; }
+    public Exception? Exception { get; init; }
+    public DateTime? CacheTimestampUtc { get; init; }
 }

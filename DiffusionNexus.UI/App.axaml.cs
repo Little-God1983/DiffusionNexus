@@ -140,6 +140,12 @@ public partial class App : Application
                 Serilog.Log.Information("Initializing instance process manager...");
                 _ = Services!.GetRequiredService<IInstanceProcessManager>();
 
+                // Wire the Civitai base-model catalog into the Unified Console:
+                // - log how old the on-disk definition is right now
+                // - log every refresh attempt (cache hit, live fetch + result, fallback)
+                Serilog.Log.Information("Initializing Civitai base-model catalog...");
+                InitializeCivitaiBaseModelCatalog();
+
                 // Create and assign the main window before registering modules,
                 // because module resolution requires IDialogService which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
@@ -222,6 +228,94 @@ public partial class App : Application
         var spellCheck = Services!.GetRequiredService<ISpellCheckService>();
         var autoComplete = Services!.GetRequiredService<IAutoCompleteService>();
         SpellCheckTextBox.Initialize(spellCheck, autoComplete);
+    }
+
+    /// <summary>
+    /// Wires the Civitai base-model catalog to the Unified Console:
+    /// reports the on-disk definition's age at startup and logs every refresh
+    /// attempt (cache hit, live fetch + result, fallback to bundled snapshot).
+    /// </summary>
+    private static void InitializeCivitaiBaseModelCatalog()
+    {
+        const string source = "CivitaiBaseModelCatalog";
+        var catalog = Services!.GetRequiredService<Civitai.ICivitaiBaseModelCatalog>();
+        var logger = Services!.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>();
+
+        // a) Subscribe BEFORE any fetch so the first refresh is captured.
+        catalog.StatusChanged += (_, e) =>
+        {
+            try
+            {
+                var category = DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network;
+                var detail = e.CacheTimestampUtc.HasValue
+                    ? $"Cache file: {catalog.CacheFilePath}\nLast written (UTC): {e.CacheTimestampUtc:O}"
+                    : $"Cache file: {catalog.CacheFilePath}\nNo cache on disk yet.";
+
+                switch (e.Kind)
+                {
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchStarted:
+                        logger?.Info(category, source, e.Message ?? "Fetching base model list...", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchSucceeded:
+                        logger?.Info(category, source, e.Message ?? $"Fetched {e.Count} base models.", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.UsedDiskCache:
+                        logger?.Info(category, source, e.Message ?? $"Loaded {e.Count} base models from disk cache.", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.UsedBundledFallback:
+                        logger?.Warn(category, source, e.Message ?? $"Using bundled fallback ({e.Count} base models).", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchFailed:
+                        logger?.Warn(category, source, e.Message ?? "Base model fetch failed.", detail);
+                        if (e.Exception is not null)
+                        {
+                            logger?.Error(category, source, e.Message ?? "Base model fetch failed.", e.Exception);
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Failed to forward CivitaiBaseModelCatalog status to UnifiedLogger.");
+            }
+        };
+
+        // b) Report the current definition age on startup, before any fetch runs.
+        var ts = catalog.CacheTimestampUtc;
+        if (ts.HasValue)
+        {
+            var age = DateTime.UtcNow - ts.Value;
+            var ageText = FormatAge(age);
+            logger?.Info(
+                DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network,
+                source,
+                $"Civitai base model definition is {ageText} old (last refreshed {ts.Value:yyyy-MM-dd HH:mm} UTC).",
+                $"Cache file: {catalog.CacheFilePath}");
+        }
+        else
+        {
+            logger?.Info(
+                DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network,
+                source,
+                "Civitai base model definition has not been cached yet — will fetch from GitHub on first use.",
+                $"Cache file: {catalog.CacheFilePath}");
+        }
+
+        // Kick off a background load so the FetchStarted/Succeeded events fire even
+        // before the user opens the LoRA detail panel.
+        _ = Task.Run(async () =>
+        {
+            try { await catalog.GetBaseModelsAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Serilog.Log.Warning(ex, "Initial Civitai base model load failed."); }
+        });
+    }
+
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalDays >= 1) return $"{(int)age.TotalDays}d {age.Hours}h";
+        if (age.TotalHours >= 1) return $"{(int)age.TotalHours}h {age.Minutes}m";
+        if (age.TotalMinutes >= 1) return $"{(int)age.TotalMinutes}m";
+        return $"{(int)age.TotalSeconds}s";
     }
 
     private static void InitializeDatabase()
