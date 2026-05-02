@@ -208,8 +208,17 @@ public partial class ModelDetailViewModel
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
             if (dbModel is null) return;
 
+            // Determine the previously-active category (override or inferred) so we
+            // know which tag chip currently "owns" the category badge — that tag is
+            // dropped before the new one is added.
+            var previousActive = dbModel.UserCategory ?? InferCategoryEnumFromTags(dbModel);
+
             dbModel.UserCategory = value == CivitaiCategory.Unknown ? null : value;
             dbModel.IsUserEdited = true;
+
+            // Sync the tag list so the previously-protected tag goes away and the
+            // new category tag is added (and becomes the new protected chip).
+            SyncCategoryTag(dbModel, previousActive, value, await unitOfWork.Models.GetAllTagsLookupAsync());
 
             await unitOfWork.SaveChangesAsync();
 
@@ -220,8 +229,6 @@ public partial class ModelDetailViewModel
             CategoryDisplay = label ?? string.Empty;
             HasCategory = !string.IsNullOrEmpty(CategoryDisplay);
 
-            RefreshCategoryTagHighlight();
-
             await PostSaveRefreshAsync(unitOfWork, model.Id);
         }
         catch (Exception ex)
@@ -229,6 +236,50 @@ public partial class ModelDetailViewModel
             _logger?.Error(LogCategory.General, "ModelDetailEdit",
                 $"Failed to save category: {ex.Message}", ex);
             StatusMessage = $"Failed to save category: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Removes the tag corresponding to <paramref name="oldCategory"/> (when it
+    /// exists in the model's tag list) and adds a tag for
+    /// <paramref name="newCategory"/>. The tag name uses the enum's exact
+    /// member name so <see cref="InferCategoryEnumFromTags"/> can match it.
+    /// </summary>
+    private static void SyncCategoryTag(
+        Model dbModel,
+        CivitaiCategory oldCategory,
+        CivitaiCategory newCategory,
+        IDictionary<string, Tag> tagLookup)
+    {
+        if (oldCategory == newCategory) return;
+
+        if (oldCategory != CivitaiCategory.Unknown)
+        {
+            var oldName = oldCategory.ToString();
+            var oldNormalized = oldName.ToLowerInvariant();
+            var existing = dbModel.Tags.FirstOrDefault(mt => mt.Tag != null
+                && string.Equals(mt.Tag.NormalizedName, oldNormalized, StringComparison.Ordinal));
+            if (existing is not null)
+            {
+                dbModel.Tags.Remove(existing);
+            }
+        }
+
+        if (newCategory != CivitaiCategory.Unknown)
+        {
+            var newName = newCategory.ToString();
+            var newNormalized = newName.ToLowerInvariant();
+            var alreadyHas = dbModel.Tags.Any(mt => mt.Tag != null
+                && string.Equals(mt.Tag.NormalizedName, newNormalized, StringComparison.Ordinal));
+            if (!alreadyHas)
+            {
+                if (!tagLookup.TryGetValue(newNormalized, out var tag))
+                {
+                    tag = new Tag { Name = newName, NormalizedName = newNormalized };
+                    tagLookup[newNormalized] = tag;
+                }
+                dbModel.Tags.Add(new ModelTag { Tag = tag });
+            }
         }
     }
 
@@ -861,7 +912,13 @@ public partial class EditableTagItem : ObservableObject
     /// can't silently change the category by deleting the tag.
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TooltipText))]
     private bool _isCategoryTag;
+
+    /// <summary>Hover tooltip shown for the chip (locked vs. removable).</summary>
+    public string TooltipText => IsCategoryTag
+        ? "This is the LoRA's category tag and cannot be removed. Change the Category dropdown above to swap it."
+        : Name;
 
     [RelayCommand]
     private Task RemoveAsync() => _removeAsync(this);
