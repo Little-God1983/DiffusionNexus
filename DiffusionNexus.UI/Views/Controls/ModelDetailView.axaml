@@ -43,6 +43,24 @@
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="BorderBrush" Value="#FFCC00"/>
     </Style>
+
+    <!-- Tag chips -->
+    <Style Selector="Border.normalTag">
+      <Setter Property="Background" Value="#333"/>
+      <Setter Property="BorderBrush" Value="#333"/>
+    </Style>
+    <Style Selector="TextBlock.normalTagText">
+      <Setter Property="Foreground" Value="#AAAAAA"/>
+    </Style>
+    <!-- Highlighted chip for the tag that drives the LoRA's category -->
+    <Style Selector="Border.categoryTag">
+      <Setter Property="Background" Value="#FFCC00"/>
+      <Setter Property="BorderBrush" Value="#FFE066"/>
+    </Style>
+    <Style Selector="TextBlock.categoryTagText">
+      <Setter Property="Foreground" Value="#1E1E1E"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
   </UserControl.Styles>
 
   <Border Background="#1E1E1E"
@@ -380,23 +398,33 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:EditableTagItem">
-                    <Border Background="#333"
+                    <Border Classes.categoryTag="{Binding IsCategoryTag}"
+                            Classes.normalTag="{Binding !IsCategoryTag}"
                             CornerRadius="4"
                             Padding="8,4"
-                            Margin="0,0,4,4">
+                            Margin="0,0,4,4"
+                            BorderThickness="1">
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Text="{Binding Name}"
-                                   Foreground="#AAAAAA"
+                                   Classes.categoryTagText="{Binding IsCategoryTag}"
+                                   Classes.normalTagText="{Binding !IsCategoryTag}"
                                    FontSize="12"
                                    VerticalAlignment="Center"/>
                         <Button Content="✕"
                                 Command="{Binding RemoveCommand}"
                                 ToolTip.Tip="Remove tag"
+                                IsVisible="{Binding !IsCategoryTag}"
                                 Background="Transparent"
                                 Foreground="#FF6677"
                                 FontSize="11"
                                 Padding="2,0"
                                 BorderThickness="0"/>
+                        <TextBlock Text="🔒"
+                                   IsVisible="{Binding IsCategoryTag}"
+                                   Foreground="#1E1E1E"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   ToolTip.Tip="This tag defines the LoRA's category and cannot be removed."/>
                       </StackPanel>
                     </Border>
                   </DataTemplate>
@@ -488,6 +516,13 @@
                       Command="{Binding OpenOnCivitaiCommand}"
                       Padding="10,6"
                       FontSize="12"/>
+              <Button Content="Assign Civitai IDs Manually"
+                      Command="{Binding AssignCivitaiIdsManuallyCommand}"
+                      ToolTip.Tip="Manually paste a Civitai URL or enter Model/Version IDs when auto-detection failed"
+                      Padding="10,6"
+                      FontSize="12"
+                      Background="#0066CC"
+                      Foreground="White"/>
             </StackPanel>
           </Border>
 

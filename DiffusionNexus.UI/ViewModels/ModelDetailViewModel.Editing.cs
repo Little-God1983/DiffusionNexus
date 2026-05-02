@@ -1,13 +1,16 @@
 using System.Collections.ObjectModel;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 
@@ -135,7 +138,11 @@ public partial class ModelDetailViewModel
     public void LoadCategorySelection()
     {
         var model = SourceTile?.ModelEntity;
-        var current = model?.UserCategory ?? CivitaiCategory.Unknown;
+        // When the user hasn't set an explicit override, fall back to the
+        // category inferred from the model's tags so the ComboBox is never
+        // empty for an existing LoRA whose category derives from a tag.
+        var current = model?.UserCategory
+                      ?? InferCategoryEnumFromTags(model);
         _suppressCategorySave = true;
         try
         {
@@ -144,6 +151,47 @@ public partial class ModelDetailViewModel
         finally
         {
             _suppressCategorySave = false;
+        }
+        RefreshCategoryTagHighlight();
+    }
+
+    /// <summary>
+    /// Returns the first <see cref="CivitaiCategory"/> that matches one of the
+    /// model's tag names, or <see cref="CivitaiCategory.Unknown"/> when none match.
+    /// Mirrors <c>InferCategoryFromTags</c> but returns the enum value.
+    /// </summary>
+    private static CivitaiCategory InferCategoryEnumFromTags(Model? model)
+    {
+        if (model?.Tags is not { Count: > 0 } tags) return CivitaiCategory.Unknown;
+        foreach (var mt in tags)
+        {
+            var tagName = mt.Tag?.Name;
+            if (string.IsNullOrWhiteSpace(tagName)) continue;
+            var normalized = tagName.Replace(" ", "_").Trim();
+            if (Enum.TryParse<CivitaiCategory>(normalized, ignoreCase: true, out var cat)
+                && cat != CivitaiCategory.Unknown)
+            {
+                return cat;
+            }
+        }
+        return CivitaiCategory.Unknown;
+    }
+
+    /// <summary>
+    /// Marks the tag chip whose name maps to the active category so the UI
+    /// can highlight it and the user cannot remove it (removing it would
+    /// silently change the category).
+    /// </summary>
+    private void RefreshCategoryTagHighlight()
+    {
+        var model = SourceTile?.ModelEntity;
+        var active = model?.UserCategory ?? InferCategoryEnumFromTags(model);
+        var activeName = active == CivitaiCategory.Unknown ? null : active.ToString();
+        foreach (var item in EditableTagItems)
+        {
+            var normalized = item.Name.Replace(" ", "_").Trim();
+            item.IsCategoryTag = activeName is not null
+                && string.Equals(normalized, activeName, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -171,6 +219,8 @@ public partial class ModelDetailViewModel
                 : (value == CivitaiCategory.BaseModel ? "Base Model" : value.ToString());
             CategoryDisplay = label ?? string.Empty;
             HasCategory = !string.IsNullOrEmpty(CategoryDisplay);
+
+            RefreshCategoryTagHighlight();
 
             await PostSaveRefreshAsync(unitOfWork, model.Id);
         }
@@ -205,6 +255,7 @@ public partial class ModelDetailViewModel
             }
         }
         HasTags = EditableTagItems.Count > 0;
+        RefreshCategoryTagHighlight();
         return Task.CompletedTask;
     }
 
@@ -264,6 +315,12 @@ public partial class ModelDetailViewModel
     {
         var model = SourceTile?.ModelEntity;
         if (model is null) return;
+
+        if (item.IsCategoryTag)
+        {
+            StatusMessage = $"Cannot remove '{item.Name}' \u2014 it defines this LoRA's category. Change the Category first.";
+            return;
+        }
 
         try
         {
@@ -534,6 +591,233 @@ public partial class ModelDetailViewModel
 
     #endregion
 
+    #region Manual Civitai ID assignment
+
+    /// <summary>
+    /// Opens a dialog where the user can paste a Civitai URL or enter Model/Version IDs
+    /// manually, previews the resolved Civitai model, and on confirm persists the IDs
+    /// plus the core Civitai metadata for this LoRA.
+    /// </summary>
+    /// TODO: Linux Implementation for owner window resolution
+    [RelayCommand]
+    private async Task AssignCivitaiIdsManuallyAsync()
+    {
+        var model = SourceTile?.ModelEntity;
+        if (model is null)
+        {
+            StatusMessage = "No model selected.";
+            return;
+        }
+
+        var owner = (App.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (owner is null) return;
+
+        var dialog = new AssignCivitaiIdsDialog();
+        await dialog.ShowDialog(owner);
+
+        if (!dialog.IsConfirmed || dialog.ResolvedModel is null)
+            return;
+
+        var civitaiModel = dialog.ResolvedModel;
+        var civitaiVersion = dialog.ResolvedVersion ?? civitaiModel.ModelVersions.FirstOrDefault();
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+            if (dbModel is null) return;
+
+            // --- Model-level IDs + metadata ---
+            dbModel.CivitaiModelPageId = civitaiModel.Id;
+
+            var civIdTaken = await unitOfWork.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id);
+            if (!civIdTaken)
+            {
+                dbModel.CivitaiId = civitaiModel.Id;
+            }
+            else
+            {
+                _logger?.Warn(LogCategory.Network, "AssignCivitaiIds",
+                    $"CivitaiId {civitaiModel.Id} is already used by another model — only the page ID was assigned.");
+            }
+
+            // Refresh model fields unless the user has explicitly edited this model already.
+            if (!dbModel.IsUserEdited)
+            {
+                dbModel.Name = civitaiModel.Name;
+                dbModel.Description = civitaiModel.Description;
+            }
+            dbModel.IsNsfw = civitaiModel.Nsfw;
+            dbModel.IsPoi = civitaiModel.Poi;
+            dbModel.Source = DataSource.CivitaiApi;
+            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
+            dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
+            dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
+            dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
+
+            if (civitaiModel.Creator is not null)
+            {
+                if (dbModel.Creator is not null)
+                {
+                    dbModel.Creator.Username = civitaiModel.Creator.Username;
+                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
+                }
+                else
+                {
+                    var existingCreator = await unitOfWork.Models
+                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
+                    dbModel.Creator = existingCreator ?? new Creator
+                    {
+                        Username = civitaiModel.Creator.Username,
+                        AvatarUrl = civitaiModel.Creator.Image,
+                    };
+                }
+            }
+
+            // --- Version-level IDs + metadata ---
+            // Pick the local version to attach the IDs to: the currently selected one,
+            // falling back to the first local version on the model.
+            var dbVersion = SelectedVersionTab?.LocalVersion is { } selectedLocal
+                ? dbModel.Versions.FirstOrDefault(v => v.Id == selectedLocal.Id)
+                : dbModel.Versions.FirstOrDefault();
+
+            if (dbVersion is not null && civitaiVersion is not null)
+            {
+                var versionIdTaken = await unitOfWork.Models
+                    .IsVersionCivitaiIdTakenAsync(civitaiVersion.Id, dbVersion.Id);
+                if (!versionIdTaken)
+                {
+                    dbVersion.CivitaiId = civitaiVersion.Id;
+                }
+                else
+                {
+                    _logger?.Warn(LogCategory.Network, "AssignCivitaiIds",
+                        $"Version CivitaiId {civitaiVersion.Id} is already used by another version — skipped.");
+                }
+
+                if (!dbVersion.IsUserEdited)
+                {
+                    dbVersion.Name = civitaiVersion.Name;
+                    dbVersion.Description = civitaiVersion.Description;
+                }
+                dbVersion.BaseModelRaw = civitaiVersion.BaseModel;
+                dbVersion.DownloadUrl = civitaiVersion.DownloadUrl;
+                dbVersion.DownloadCount = civitaiVersion.Stats?.DownloadCount ?? 0;
+                dbVersion.PublishedAt = civitaiVersion.PublishedAt;
+                dbVersion.EarlyAccessDays = civitaiVersion.EarlyAccessTimeFrame;
+
+                // Trigger words — only when the version has not been user-edited.
+                if (!dbVersion.IsUserEdited)
+                {
+                    dbVersion.TriggerWords.Clear();
+                    var order = 0;
+                    foreach (var word in civitaiVersion.TrainedWords)
+                    {
+                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
+                    }
+                }
+
+                // Add new images (skip duplicates by CivitaiId).
+                var existingImageIds = dbVersion.Images
+                    .Where(i => i.CivitaiId.HasValue)
+                    .Select(i => i.CivitaiId!.Value)
+                    .ToHashSet();
+                var sortOrder = dbVersion.Images.Count;
+                foreach (var civImage in civitaiVersion.Images)
+                {
+                    if (string.IsNullOrEmpty(civImage.Url)) continue;
+                    if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value)) continue;
+
+                    dbVersion.Images.Add(new ModelImage
+                    {
+                        ModelVersionId = dbVersion.Id,
+                        CivitaiId = civImage.Id,
+                        Url = civImage.Url,
+                        MediaType = civImage.Type,
+                        IsNsfw = civImage.Nsfw,
+                        Width = civImage.Width,
+                        Height = civImage.Height,
+                        BlurHash = civImage.Hash,
+                        SortOrder = sortOrder++,
+                        CreatedAt = civImage.CreatedAt,
+                        PostId = civImage.PostId,
+                        Username = civImage.Username,
+                        Prompt = civImage.Meta?.Prompt,
+                        NegativePrompt = civImage.Meta?.NegativePrompt,
+                        Seed = civImage.Meta?.Seed,
+                        Steps = civImage.Meta?.Steps,
+                        Sampler = civImage.Meta?.Sampler,
+                        CfgScale = civImage.Meta?.CfgScale,
+                    });
+                }
+
+                // File hashes from the primary Civitai file.
+                var civFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
+                              ?? civitaiVersion.Files.FirstOrDefault();
+                if (civFile?.Hashes is not null)
+                {
+                    var dbFile = dbVersion.PrimaryFile ?? dbVersion.Files.FirstOrDefault();
+                    if (dbFile is not null)
+                    {
+                        dbFile.CivitaiId ??= civFile.Id;
+                        dbFile.HashSHA256 ??= civFile.Hashes.SHA256;
+                        dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
+                        dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
+                        dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;
+                    }
+                }
+            }
+
+            // Tags — only when the model has not been user-edited.
+            if (!dbModel.IsUserEdited && civitaiModel.Tags is { Count: > 0 } tags)
+            {
+                var lookup = await unitOfWork.Models.GetAllTagsLookupAsync();
+                dbModel.Tags.Clear();
+                foreach (var tagName in tags)
+                {
+                    if (string.IsNullOrWhiteSpace(tagName)) continue;
+                    var normalized = tagName.Trim().ToLowerInvariant();
+                    if (!lookup.TryGetValue(normalized, out var tag))
+                    {
+                        tag = new Tag { Name = tagName, NormalizedName = normalized };
+                        lookup[normalized] = tag;
+                    }
+                    dbModel.Tags.Add(new ModelTag { Tag = tag });
+                }
+            }
+
+            await unitOfWork.SaveChangesAsync();
+
+            _logger?.Info(LogCategory.Network, "AssignCivitaiIds",
+                $"Assigned Civitai IDs to '{dbModel.Name}' (ModelId={civitaiModel.Id}, VersionId={civitaiVersion?.Id})");
+
+            // Reload the detail view from the freshly persisted entity.
+            await PostSaveRefreshAsync(unitOfWork, dbModel.Id);
+
+            var refreshed = await unitOfWork.Models.GetByIdWithIncludesAsync(dbModel.Id);
+            if (refreshed is not null && SourceTile is not null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    SourceTile.RefreshModelData(refreshed);
+                    await LoadAsync(SourceTile);
+                });
+            }
+
+            StatusMessage = "Civitai IDs assigned successfully.";
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.Network, "AssignCivitaiIds",
+                $"Failed to assign Civitai IDs: {ex.Message}", ex);
+            StatusMessage = $"Failed to assign Civitai IDs: {ex.Message}";
+        }
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>
@@ -570,6 +854,14 @@ public partial class EditableTagItem : ObservableObject
     }
 
     public string Name { get; }
+
+    /// <summary>
+    /// True when this tag is the one that drives the LoRA's category. The UI
+    /// highlights such chips and disables their remove button so the user
+    /// can't silently change the category by deleting the tag.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isCategoryTag;
 
     [RelayCommand]
     private Task RemoveAsync() => _removeAsync(this);
