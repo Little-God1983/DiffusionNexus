@@ -878,6 +878,76 @@ public partial class ModelDetailViewModel
            && !string.Equals(baseModel.Trim(), "???", StringComparison.Ordinal)
            && !string.Equals(baseModel.Trim(), "Unknown", StringComparison.OrdinalIgnoreCase);
 
+    private static void ClearVersionMetadata(ModelVersion version)
+    {
+        version.CivitaiId = null;
+        version.Description = null;
+        version.BaseModel = BaseModelType.Unknown;
+        version.BaseModelRaw = "???";
+        version.PublishedAt = null;
+        version.DownloadUrl = null;
+        version.EarlyAccessDays = 0;
+        version.DownloadCount = 0;
+        version.RatingCount = 0;
+        version.Rating = 0;
+        version.ThumbsUpCount = 0;
+        version.ThumbsDownCount = 0;
+        version.IsUserEdited = false;
+
+        version.Images.Clear();
+        version.TriggerWords.Clear();
+
+        foreach (var file in version.Files)
+        {
+            ClearFileMetadata(file);
+        }
+    }
+
+    private static void ClearFileMetadata(ModelFile file)
+    {
+        file.CivitaiId = null;
+        file.DownloadUrl = null;
+        file.HashAutoV1 = null;
+        file.HashAutoV2 = null;
+        file.HashSHA256 = null;
+        file.HashCRC32 = null;
+        file.HashBLAKE3 = null;
+        file.PickleScanResult = ScanResult.Pending;
+        file.PickleScanMessage = null;
+        file.VirusScanResult = ScanResult.Pending;
+        file.ScannedAt = null;
+        file.Format = FileFormat.Unknown;
+        file.Precision = FilePrecision.Unknown;
+        file.SizeType = FileSizeType.Unknown;
+    }
+
+    private static void ClearModelMetadataIfNoVersionMetadataRemains(Model model)
+    {
+        if (model.Versions.Any(HasDeletableVersionMetadata))
+            return;
+
+        model.CivitaiId = null;
+        model.CivitaiModelPageId = null;
+        model.Description = null;
+        model.IsNsfw = false;
+        model.IsPoi = false;
+        model.LastSyncedAt = null;
+        model.AllowNoCredit = false;
+        model.AllowDerivatives = false;
+        model.AllowDifferentLicense = false;
+        model.UserCategory = null;
+        model.IsUserEdited = false;
+        model.Tags.Clear();
+        model.Creator = null;
+        model.CreatorId = null;
+    }
+
+    private static bool HasDeletableVersionMetadata(ModelVersion version)
+        => version.CivitaiId is > 0
+           || HasRealBaseModel(version.BaseModelRaw)
+           || version.TriggerWords.Any(tw => !string.IsNullOrWhiteSpace(tw.Word))
+           || !string.IsNullOrWhiteSpace(version.Description);
+
     /// <summary>
     /// Tooltip shown on the "Assign Civitai IDs Manually" button. Explains the
     /// disabled state when the model is already linked to Civitai.
@@ -1158,6 +1228,70 @@ public partial class ModelDetailViewModel
     private void CancelDeleteMetadata()
     {
         IsConfirmingDeleteMetadata = false;
+    }
+
+    /// <summary>
+    /// Deletes metadata only for the currently selected version while keeping the
+    /// local file tracking row so the LoRA remains in the viewer as a local file.
+    /// </summary>
+    private IAsyncRelayCommand? _confirmDeleteCurrentVersionMetadataCommand;
+
+    public IAsyncRelayCommand ConfirmDeleteCurrentVersionMetadataCommand =>
+        _confirmDeleteCurrentVersionMetadataCommand ??= new AsyncRelayCommand(ConfirmDeleteCurrentVersionMetadataAsync);
+
+    private async Task ConfirmDeleteCurrentVersionMetadataAsync()
+    {
+        IsConfirmingDeleteMetadata = false;
+
+        var tile = SourceTile;
+        var selectedVersion = SelectedVersionTab?.LocalVersion ?? tile?.SelectedVersion;
+        if (tile is null || selectedVersion is null)
+        {
+            StatusMessage = "No version selected.";
+            return;
+        }
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(selectedVersion.ModelId);
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == selectedVersion.Id);
+            if (dbModel is null || dbVersion is null)
+            {
+                StatusMessage = "Selected version metadata could not be found.";
+                return;
+            }
+
+            ClearVersionMetadata(dbVersion);
+            ClearModelMetadataIfNoVersionMetadataRemains(dbModel);
+
+            await unitOfWork.SaveChangesAsync();
+
+            _logger?.Info(LogCategory.General, "DeleteMetadata",
+                $"Deleted metadata for selected version '{dbVersion.Name}' of '{dbModel.Name}'. Files on disk were not touched.");
+
+            await PostSaveRefreshAsync(unitOfWork, dbModel.Id);
+
+            var refreshed = await unitOfWork.Models.GetByIdWithIncludesAsync(dbModel.Id);
+            if (refreshed is not null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    tile.RefreshModelData(refreshed);
+                    await LoadAsync(tile);
+                });
+            }
+
+            StatusMessage = "Selected version metadata deleted. The local file was kept.";
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "DeleteMetadata",
+                $"Failed to delete selected version metadata: {ex.Message}", ex);
+            StatusMessage = $"Failed to delete selected version metadata: {ex.Message}";
+        }
     }
 
     /// <summary>

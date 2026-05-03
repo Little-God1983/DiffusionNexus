@@ -571,7 +571,13 @@
                             Command="{Binding CancelDeleteMetadataCommand}"
                             Padding="10,6"
                             FontSize="12"/>
-                    <Button Content="Yes, delete metadata"
+                    <Button Content="Yes, delete this version metadata"
+                            Command="{Binding ConfirmDeleteCurrentVersionMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"
+                            Background="#A65A20"
+                            Foreground="White"/>
+                    <Button Content="Yes, delete all metadata"
                             Command="{Binding ConfirmDeleteMetadataCommand}"
                             Padding="10,6"
                             FontSize="12"
