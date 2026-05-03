@@ -39,7 +39,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         progress?.Report("Fetching latest changes...");
 
         // Fetch from remote without modifying the working tree
-        var fetchResult = await RunGitAsync(backendDir, "fetch --all", ct);
+        var fetchResult = await RunGitAsync(backendDir, "fetch --all", progress, ct);
         if (!fetchResult.Success)
         {
             Logger.Warning("git fetch failed in {Dir}: {Output}", backendDir, fetchResult.Output);
@@ -47,13 +47,13 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         }
 
         // Get current local HEAD
-        var localHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", ct);
+        var localHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", progress: null, ct);
 
         // Detect the tracked branch — handle detached HEAD and missing tracking
         var (branch, isDetached) = await ResolveBranchAsync(backendDir, ct);
 
         // Verify the remote branch exists
-        var remoteHash = await RunGitAsync(backendDir, $"rev-parse --short origin/{branch}", ct);
+        var remoteHash = await RunGitAsync(backendDir, $"rev-parse --short origin/{branch}", progress: null, ct);
         if (!remoteHash.Success)
         {
             Logger.Warning("Remote branch origin/{Branch} not found in {Dir}", branch, backendDir);
@@ -64,7 +64,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         }
 
         // Count how many commits behind
-        var behindResult = await RunGitAsync(backendDir, $"rev-list --count HEAD..origin/{branch}", ct);
+        var behindResult = await RunGitAsync(backendDir, $"rev-list --count HEAD..origin/{branch}", progress: null, ct);
         var behindCount = behindResult.Success && int.TryParse(behindResult.Output.Trim(), out var n) ? n : 0;
 
         var isUpdateAvailable = behindCount > 0;
@@ -129,7 +129,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         }
 
         // ── Get new version hash ──
-        var newHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", ct);
+        var newHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", progress: null, ct);
         var hash = newHash.Success ? newHash.Output.Trim() : null;
 
         progress?.Report($"Update complete. Version: {hash ?? "unknown"}");
@@ -148,7 +148,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     private static async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
         string dir, CancellationToken ct)
     {
-        var branchResult = await RunGitAsync(dir, "rev-parse --abbrev-ref HEAD", ct);
+        var branchResult = await RunGitAsync(dir, "rev-parse --abbrev-ref HEAD", progress: null, ct);
         var branch = branchResult.Success ? branchResult.Output.Trim() : null;
 
         if (!string.IsNullOrEmpty(branch) && branch != "HEAD")
@@ -157,7 +157,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         Logger.Debug("Detached HEAD in {Dir}, trying to find default remote branch", dir);
 
         // Try origin/HEAD symbolic ref first
-        var symbolicRef = await RunGitAsync(dir, "symbolic-ref refs/remotes/origin/HEAD --short", ct);
+        var symbolicRef = await RunGitAsync(dir, "symbolic-ref refs/remotes/origin/HEAD --short", progress: null, ct);
         if (symbolicRef.Success)
         {
             // Returns "origin/main" or "origin/master" — strip "origin/"
@@ -169,7 +169,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             branch = null;
             foreach (var candidate in new[] { "main", "master" })
             {
-                var check = await RunGitAsync(dir, $"rev-parse --verify origin/{candidate}", ct);
+                var check = await RunGitAsync(dir, $"rev-parse --verify origin/{candidate}", progress: null, ct);
                 if (check.Success) { branch = candidate; break; }
             }
         }
@@ -186,7 +186,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         string dir, IProgress<string>? progress, string label, CancellationToken ct)
     {
         // Fetch latest refs first so we have up-to-date remote tracking
-        var fetchResult = await RunGitAsync(dir, "fetch --all", ct);
+        var fetchResult = await RunGitAsync(dir, "fetch --all", progress, ct);
         if (!fetchResult.Success)
         {
             Logger.Warning("{Label} git fetch failed in {Dir}: {Output}", label, dir, fetchResult.Output);
@@ -200,7 +200,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             Logger.Information("{Label} is in detached HEAD state, checking out branch {Branch}", label, branch);
             progress?.Report($"{label}: detached HEAD detected, checking out {branch}...");
 
-            var checkoutResult = await RunGitAsync(dir, $"checkout {branch}", ct);
+            var checkoutResult = await RunGitAsync(dir, $"checkout {branch}", progress, ct);
             if (!checkoutResult.Success)
             {
                 Logger.Error("{Label} checkout of {Branch} failed: {Output}", label, branch, checkoutResult.Output);
@@ -208,7 +208,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             }
         }
 
-        var pullResult = await RunGitAsync(dir, $"pull --ff-only origin {branch}", ct);
+        var pullResult = await RunGitAsync(dir, $"pull --ff-only origin {branch}", progress, ct);
         if (!pullResult.Success)
             Logger.Error("{Label} update failed: {Output}", label, pullResult.Output);
 
@@ -349,8 +349,12 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
 
         var pipResult = await RunProcessAsync(
             pythonExe,
-            $"-m pip install -r \"{requirementsPath}\"",
+            // -u forces unbuffered stdio so pip output streams live instead of arriving
+            // in one big blob at the end (root cause of the "updater hangs" perception).
+            $"-u -m pip install --progress-bar off -r \"{requirementsPath}\"",
             backendDir,
+            progress,
+            "pip",
             ct);
 
         if (pipResult.Success)
@@ -367,15 +371,30 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
 
     /// <summary>
     /// Runs a git command in the specified directory and returns the output.
+    /// When <paramref name="progress"/> is provided, each output line is forwarded live
+    /// so the unified console can show real-time feedback instead of waiting for the
+    /// process to exit (which can take many minutes for fetch/pull on slow networks).
     /// </summary>
-    private static Task<ProcessResult> RunGitAsync(string workingDir, string arguments, CancellationToken ct)
-        => RunProcessAsync("git", arguments, workingDir, ct);
+    private static Task<ProcessResult> RunGitAsync(
+        string workingDir, string arguments, IProgress<string>? progress, CancellationToken ct)
+        => RunProcessAsync("git", arguments, workingDir, progress, "git", ct);
 
     /// <summary>
-    /// Runs an external process and captures stdout/stderr.
+    /// Runs an external process and captures stdout/stderr. Each line is also reported
+    /// through <paramref name="progress"/> as it arrives so the user sees live output
+    /// (the prior implementation only logged the full buffer once the process exited,
+    /// which made long-running pip installs look frozen).
+    /// On cancellation the entire process tree is killed so an aborted update doesn't
+    /// leave git or pip running in the background mid-operation — that was corrupting
+    /// installations and forcing users to fix things by running update.bat manually.
     /// </summary>
     private static async Task<ProcessResult> RunProcessAsync(
-        string fileName, string arguments, string workingDir, CancellationToken ct)
+        string fileName,
+        string arguments,
+        string workingDir,
+        IProgress<string>? progress,
+        string? logPrefix,
+        CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -388,22 +407,56 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             CreateNoWindow = true
         };
 
+        // Force Python child processes to flush stdout/stderr immediately. Without this
+        // pip's output is line-buffered when not attached to a TTY and we'd only see it
+        // in big chunks (or at process exit), which is the root cause of the
+        // "updater hangs forever" perception.
+        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+        psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+        // Make git progress lines come through as well, even though stderr isn't a TTY.
+        psi.EnvironmentVariables["GIT_PROGRESS_DELAY"] = "0";
+
+        var prefix = string.IsNullOrEmpty(logPrefix) ? string.Empty : $"[{logPrefix}] ";
+
+        Process? process = null;
         try
         {
-            using var process = Process.Start(psi);
+            process = Process.Start(psi);
             if (process is null)
                 return new ProcessResult(false, $"Failed to start {fileName}");
 
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
 
-            process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stdout.AppendLine(e.Data);
+                progress?.Report(prefix + e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                stderr.AppendLine(e.Data);
+                // git and pip both write progress information to stderr — surface it too.
+                progress?.Report(prefix + e.Data);
+            };
 
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync(ct);
+            try
+            {
+                await process.WaitForExitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                // Kill the whole tree so child processes (e.g. pip's spawned setup.py
+                // builds) don't keep running and corrupt the installation.
+                TryKillProcessTree(process, fileName, arguments, workingDir);
+                progress?.Report($"{prefix}Aborted by user.");
+                return new ProcessResult(false, "Cancelled by user");
+            }
 
             var exitCode = process.ExitCode;
             var output = stdout.ToString().TrimEnd();
@@ -416,10 +469,31 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
                 ? new ProcessResult(true, output)
                 : new ProcessResult(false, string.IsNullOrEmpty(error) ? output : error);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             Logger.Error(ex, "Failed to run {Exe} {Args} in {Dir}", fileName, arguments, workingDir);
             return new ProcessResult(false, ex.Message);
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void TryKillProcessTree(Process process, string fileName, string arguments, string workingDir)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                Logger.Warning("Killing process tree for {Exe} {Args} in {Dir} due to cancellation",
+                    fileName, arguments, workingDir);
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception killEx)
+        {
+            Logger.Error(killEx, "Failed to kill {Exe} on cancellation", fileName);
         }
     }
 
