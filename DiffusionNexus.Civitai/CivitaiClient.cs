@@ -40,12 +40,47 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _disposeHttpClient = disposeHttpClient;
 
-        if (_httpClient.BaseAddress is null)
+        // HttpClient throws InvalidOperationException if BaseAddress or DefaultRequestHeaders
+        // are mutated after the first request has been sent. That happens when this ctor
+        // runs more than once against the same instance (DI quirks, design-time activation,
+        // or a caller passing in a pre-used client). Guard each mutation independently.
+        TryConfigureBaseAddress(_httpClient);
+        TryAddJsonAcceptHeader(_httpClient);
+    }
+
+    private static void TryConfigureBaseAddress(HttpClient client)
+    {
+        if (client.BaseAddress is not null) return;
+
+        try
         {
-            _httpClient.BaseAddress = new Uri(BaseUrl);
+            client.BaseAddress = new Uri(BaseUrl);
+        }
+        catch (InvalidOperationException)
+        {
+            // Client has already been used — caller is responsible for the BaseAddress.
+        }
+    }
+
+    private static void TryAddJsonAcceptHeader(HttpClient client)
+    {
+        // Don't double-add if Accept already includes application/json.
+        foreach (var existing in client.DefaultRequestHeaders.Accept)
+        {
+            if (string.Equals(existing.MediaType, "application/json", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
         }
 
-        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        try
+        {
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        }
+        catch (InvalidOperationException)
+        {
+            // Client has already been used — header negotiation falls back to per-request Accept.
+        }
     }
 
     #region Models
@@ -162,7 +197,12 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
 
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            // Build an absolute URL so we work regardless of whether BaseAddress
+            // was successfully assigned (see TryConfigureBaseAddress).
+            var requestUri = _httpClient.BaseAddress is null
+                ? new Uri(BaseUrl + endpoint)
+                : new Uri(_httpClient.BaseAddress, endpoint);
+            using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
 
             if (!string.IsNullOrWhiteSpace(apiKey))
             {

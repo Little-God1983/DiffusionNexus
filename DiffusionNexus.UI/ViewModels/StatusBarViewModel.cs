@@ -190,10 +190,23 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
 
     private void OnStatusChanged(object? sender, EventArgs e)
     {
-        Dispatcher.UIThread.Post(() =>
+        Dispatcher.UIThread.Post(async () =>
         {
             StatusMessage = _logService.CurrentStatus;
             StatusSeverity = _logService.CurrentStatusSeverity;
+
+            // Automatically reset success or error status after 3.5 seconds
+            if (StatusSeverity == ActivitySeverity.Success || StatusSeverity == ActivitySeverity.Error)
+            {
+                var storedMessage = StatusMessage;
+                await Task.Delay(3500);
+
+                // Re-check in case another status update occurred
+                if (StatusMessage == storedMessage && StatusSeverity == _logService.CurrentStatusSeverity)
+                {
+                    _logService.ClearStatus();
+                }
+            }
         });
     }
 

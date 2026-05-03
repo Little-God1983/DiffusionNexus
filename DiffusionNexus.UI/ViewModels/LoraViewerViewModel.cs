@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 
@@ -25,6 +26,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly IModelSyncService? _syncService;
     private readonly ICivitaiClient? _civitaiClient;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
 
@@ -121,6 +123,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _civitaiClient = null;
         _secureStorage = null;
         _logger = null;
+        _baseModelCatalog = null;
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -133,13 +136,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         IModelSyncService syncService,
         ICivitaiClient? civitaiClient = null,
         ISecureStorage? secureStorage = null,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
         _civitaiClient = civitaiClient;
         _secureStorage = secureStorage;
         _logger = logger;
+        _baseModelCatalog = baseModelCatalog;
     }
 
     #endregion
@@ -404,6 +409,55 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Opens the Civitai URL download dialog, lets the user preview the LoRA, and starts the download.
+    /// </summary>
+    [RelayCommand]
+    private async Task DownloadLoraAsync()
+    {
+        var dialogService = App.Services?.GetService<IDialogService>();
+        if (dialogService is null)
+        {
+            SyncStatus = "Dialog service not available.";
+            return;
+        }
+
+        IReadOnlyList<string> sourceFolders = [];
+        if (_settingsService is not null)
+        {
+            sourceFolders = await _settingsService.GetEnabledLoraSourcesAsync();
+        }
+
+        var result = await dialogService.ShowDownloadLoraDialogAsync(sourceFolders);
+        if (!result.Confirmed || result.Version is null || string.IsNullOrWhiteSpace(result.DownloadUrl) || string.IsNullOrWhiteSpace(result.TargetFolder))
+            return;
+
+        var fileName = !string.IsNullOrWhiteSpace(result.FileName)
+            ? result.FileName
+            : $"{result.ModelName}_{result.Version.Name}.safetensors";
+        var targetPath = Path.Combine(result.TargetFolder, fileName);
+
+        var downloadService = App.Services?.GetService<LoraDownloadService>()
+                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
+
+        SyncStatus = $"Downloading {fileName}...";
+        _ = Task.Run(async () =>
+        {
+            await downloadService.DownloadFileAsync(
+                result.DownloadUrl,
+                targetPath,
+                result.Version,
+                $"Downloading {fileName}",
+                (_, message) => Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}"),
+                () => Dispatcher.UIThread.Post(async () =>
+                {
+                    SyncStatus = $"Downloaded {fileName}";
+                    await RebuildTilesFromDatabaseAsync();
+                }),
+                () => Dispatcher.UIThread.Post(() => SyncStatus = $"Download failed: {fileName}"));
+        });
+    }
+
+    /// <summary>
     /// Reloads all models from the database and rebuilds tiles with proper grouping.
     /// Uses a fresh DI scope so the DbContext sees the latest committed data.
     /// Preserves the user's search/filter state.
@@ -511,7 +565,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts)
     {
         var tilesNeedingMetadata = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null })
+            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null }
+                        && !(t.ModelEntity?.IsUserEdited ?? false))
             .ToList();
 
         if (tilesNeedingMetadata.Count == 0)
@@ -708,7 +763,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var tilesNeedingTags = AllTiles
             .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
                         && t.TagNames.Count == 0
-                        && t.SelectedVersion?.CivitaiId is not null)
+                        && t.SelectedVersion?.CivitaiId is not null
+                        && !(t.ModelEntity?.IsUserEdited ?? false))
             .ToList();
 
         if (tilesNeedingTags.Count == 0)
@@ -1575,6 +1631,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (dbModel is null) return;
 
         // Update model-level fields from Civitai
+        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
+        var preserveModelEdits = dbModel.IsUserEdited;
         if (civitaiModel is not null)
         {
             // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
@@ -1593,8 +1651,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     "already assigned to another model");
             }
 
-            dbModel.Name = civitaiModel.Name;
-            dbModel.Description = civitaiModel.Description;
+            if (!preserveModelEdits)
+            {
+                dbModel.Name = civitaiModel.Name;
+                dbModel.Description = civitaiModel.Description;
+            }
             dbModel.IsNsfw = civitaiModel.Nsfw;
             dbModel.IsPoi = civitaiModel.Poi;
             dbModel.Source = DataSource.CivitaiApi;
@@ -1654,16 +1715,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
             dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
 
-            // Update trigger words
-            dbVersion.TriggerWords.Clear();
-            var order = 0;
-            foreach (var word in bestCivitaiVersion.TrainedWords)
+            // Update trigger words — skip when this version was user-edited
+            if (!dbVersion.IsUserEdited)
             {
-                dbVersion.TriggerWords.Add(new TriggerWord
+                dbVersion.TriggerWords.Clear();
+                var order = 0;
+                foreach (var word in bestCivitaiVersion.TrainedWords)
                 {
-                    Word = word,
-                    Order = order++
-                });
+                    dbVersion.TriggerWords.Add(new TriggerWord
+                    {
+                        Word = word,
+                        Order = order++
+                    });
+                }
             }
 
             // Add images from Civitai (use the version with the richest data)
@@ -1719,8 +1783,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
-        // Sync tags from Civitai model response
-        if (civitaiModel?.Tags is { Count: > 0 } civitaiTags)
+        // Sync tags from Civitai model response (skip when user has edited tags)
+        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
         {
             var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
             SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);
@@ -1797,16 +1861,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
+            DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
         }
 
         var detailVm = new ModelDetailViewModel(
             _civitaiClient,
             _settingsService,
             _secureStorage,
-            _logger);
+            _logger,
+            _baseModelCatalog);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
+        detailVm.MetadataDeleted += OnDetailMetadataDeleted;
         DetailViewModel = detailVm;
         IsDetailOpen = true;
 
@@ -1823,6 +1890,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
+            DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
         }
 
         IsDetailOpen = false;
@@ -1837,6 +1905,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
     {
         await RebuildTilesFromDatabaseAsync();
+    }
+
+    /// <summary>
+    /// Handles <see cref="ModelDetailViewModel.MetadataDeleted"/> by running a full
+    /// refresh: the .safetensors file is still on disk, so file discovery will
+    /// re-create a bare-metadata <see cref="Model"/> row and the tile reappears
+    /// immediately instead of vanishing until the next manual refresh.
+    /// </summary>
+    private async void OnDetailMetadataDeleted(object? sender, EventArgs e)
+    {
+        if (RefreshCommand.CanExecute(null))
+        {
+            await RefreshCommand.ExecuteAsync(null);
+        }
+        else
+        {
+            await RebuildTilesFromDatabaseAsync();
+        }
     }
 
     /// <summary>

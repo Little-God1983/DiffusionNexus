@@ -43,9 +43,15 @@ internal static class TileGroupingHelper
             foreach (var m in groupModels)
                 consumed.Add(m.Id);
 
-            tiles.Add(deduped.Count == 1
+            var tile = deduped.Count == 1
                 ? ModelTileViewModel.FromModel(deduped[0])
-                : ModelTileViewModel.FromModelGroup(deduped));
+                : ModelTileViewModel.FromModelGroup(deduped);
+
+            // Track every original DB id (incl. dropped duplicates) so destructive
+            // ops like "Delete Metadata" don't leave orphan rows behind.
+            tile.RegisterAdditionalDatabaseIds(groupModels.Select(m => m.Id));
+
+            tiles.Add(tile);
         }
 
         // Phase 2: Group remaining models by Name (case-insensitive)
@@ -61,9 +67,13 @@ internal static class TileGroupingHelper
             foreach (var m in groupModels)
                 consumed.Add(m.Id);
 
-            tiles.Add(deduped.Count == 1
+            var tile = deduped.Count == 1
                 ? ModelTileViewModel.FromModel(deduped[0])
-                : ModelTileViewModel.FromModelGroup(deduped));
+                : ModelTileViewModel.FromModelGroup(deduped);
+
+            tile.RegisterAdditionalDatabaseIds(groupModels.Select(m => m.Id));
+
+            tiles.Add(tile);
         }
 
         return tiles;

@@ -54,6 +54,13 @@ public partial class ModelTileViewModel : ViewModelBase
     public event EventHandler? Deleted;
 
     /// <summary>
+    /// Allows external collaborators (e.g. the detail-view "Delete Metadata"
+    /// command) to signal that this tile should be removed from the grid after
+    /// they have already removed the underlying record themselves.
+    /// </summary>
+    public void RaiseDeleted() => Deleted?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
     /// Raised when the user wants to view the detail panel for this tile.
     /// The parent view model should open the detail view.
     /// </summary>
@@ -105,6 +112,14 @@ public partial class ModelTileViewModel : ViewModelBase
     /// For ungrouped models this contains just the single model.
     /// </summary>
     private List<Model> _allGroupedModels = [];
+
+    /// <summary>
+    /// All <see cref="Model.Id"/> values that map to this tile in the database,
+    /// including re-discovery duplicates that <see cref="TileGroupingHelper.DeduplicateModels"/>
+    /// dropped from <see cref="_allGroupedModels"/>. Used by destructive operations
+    /// (e.g. "Delete Metadata") so dropped duplicate rows are not left behind in the DB.
+    /// </summary>
+    private HashSet<int> _allDatabaseModelIds = [];
 
     /// <summary>
     /// Updates the tile after a new version has been downloaded and persisted.
@@ -712,10 +727,14 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Gets all model entity IDs across the group.
+    /// Gets all model entity IDs across the group, including re-discovery
+    /// duplicates dropped during grouping. Use this for any destructive DB op.
     /// </summary>
-    private List<int> GetAllModelIds()
+    public List<int> GetAllModelIds()
     {
+        if (_allDatabaseModelIds.Count > 0)
+            return _allDatabaseModelIds.ToList();
+
         if (_allGroupedModels.Count > 0)
             return _allGroupedModels.Select(m => m.Id).ToList();
 
@@ -1698,6 +1717,7 @@ public partial class ModelTileViewModel : ViewModelBase
     {
         var vm = new ModelTileViewModel();
         vm._allGroupedModels = [model];
+        vm._allDatabaseModelIds = [model.Id];
         vm.ModelEntity = model;
         return vm;
     }
@@ -1717,8 +1737,20 @@ public partial class ModelTileViewModel : ViewModelBase
 
         var vm = new ModelTileViewModel();
         vm._allGroupedModels = models.ToList();
+        vm._allDatabaseModelIds = models.Select(m => m.Id).ToHashSet();
         vm.ModelEntity = primary;
         return vm;
+    }
+
+    /// <summary>
+    /// Records additional database <see cref="Model.Id"/> values (e.g. re-discovery
+    /// duplicates dropped during grouping) so destructive operations can clean
+    /// them up alongside the displayed survivors.
+    /// </summary>
+    public void RegisterAdditionalDatabaseIds(IEnumerable<int> ids)
+    {
+        foreach (var id in ids)
+            _allDatabaseModelIds.Add(id);
     }
 
     /// <summary>

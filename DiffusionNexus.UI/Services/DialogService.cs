@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services;
 
@@ -541,6 +542,21 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
+    }
+
+    public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
+    {
+        var viewModel = new DownloadLoraDialogViewModel(
+            App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
+            App.Services?.GetService<IAppSettingsService>(),
+            this,
+            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+        await viewModel.InitializeAsync(sourceFolders);
+
+        var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? DownloadLoraResult.Cancelled();
     }
 
     public async Task<int> ShowDuplicateFixerAsync(IEnumerable<ViewModels.Tabs.DuplicateClusterItemViewModel> clusters)

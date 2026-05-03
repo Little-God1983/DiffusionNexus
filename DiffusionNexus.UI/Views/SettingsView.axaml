@@ -73,7 +73,19 @@
                           Margin="8,0,0,0"/>
                 </Grid>
               </StackPanel>
-              
+
+              <!-- Civitai Base Model Catalog refresh -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Civitai Base Model Definition" FontWeight="SemiBold"/>
+                <TextBlock Text="Refreshes the list of base models used by the LoRA detail dropdown. Fetches the latest definition from Civitai's GitHub repo and updates the local cache. Status is reported in the Unified Console."
+                           FontSize="12"
+                           Opacity="0.7"
+                           TextWrapping="Wrap"/>
+                <Button Content="Refresh base model definition"
+                        Command="{Binding RefreshBaseModelCatalogCommand}"
+                        HorizontalAlignment="Left"/>
+              </StackPanel>
+
             </StackPanel>
           </Border>
         </Expander>
