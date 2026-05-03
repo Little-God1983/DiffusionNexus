@@ -194,9 +194,10 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                 }
                 else
                 {
-                    // Force UI refresh by triggering property change on the collection
-                    var idx = ActiveTasks.IndexOf(existing);
-                    ActiveTasks[idx] = info;
+                    existing.Status = info.Status;
+                    existing.Progress = info.Progress;
+                    existing.StatusText = info.StatusText;
+                    existing.CompletedAt = info.CompletedAt;
                 }
             }
 
