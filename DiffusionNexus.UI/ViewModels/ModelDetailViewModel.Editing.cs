@@ -894,6 +894,12 @@ public partial class ModelDetailViewModel
     [ObservableProperty]
     private bool _isConfirmingDeleteMetadata;
 
+    /// <summary>
+    /// Raised when the delete metadata confirmation strip becomes visible so
+    /// the view can scroll it into view after layout has updated.
+    /// </summary>
+    public event EventHandler? DeleteMetadataConfirmationRequested;
+
     partial void OnSourceTileChanged(ModelTileViewModel? value)
     {
         OnPropertyChanged(nameof(HasCivitaiId));
@@ -1142,6 +1148,7 @@ public partial class ModelDetailViewModel
         }
 
         IsConfirmingDeleteMetadata = true;
+        DeleteMetadataConfirmationRequested?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

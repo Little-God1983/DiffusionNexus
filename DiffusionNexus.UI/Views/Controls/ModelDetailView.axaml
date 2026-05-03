@@ -133,7 +133,8 @@
       </Border>
 
       <!-- Scrollable Content -->
-      <ScrollViewer Grid.Row="1"
+      <ScrollViewer x:Name="DetailScrollViewer"
+                    Grid.Row="1"
                     VerticalScrollBarVisibility="Auto"
                     HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="0">
