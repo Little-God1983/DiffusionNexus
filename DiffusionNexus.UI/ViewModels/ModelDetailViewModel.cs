@@ -266,6 +266,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     [RelayCommand]
     private void OpenOnCivitai()
     {
+        if (!CanOpenOnCivitai) return;
         SourceTile?.OpenOnCivitaiCommand.Execute(null);
     }
 

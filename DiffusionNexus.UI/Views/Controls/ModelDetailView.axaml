@@ -521,6 +521,9 @@
                           HorizontalAlignment="Right">
                 <Button Content="Open on Civitai"
                         Command="{Binding OpenOnCivitaiCommand}"
+                        IsEnabled="{Binding CanOpenOnCivitai}"
+                        ToolTip.Tip="{Binding OpenOnCivitaiButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
                         Padding="10,6"
                         FontSize="12"/>
                 <Button Content="Assign Civitai IDs Manually"
@@ -534,8 +537,10 @@
                         Foreground="White"/>
                 <Button Content="Delete Metadata"
                         Command="{Binding RequestDeleteMetadataCommand}"
+                        IsEnabled="{Binding HasMetadata}"
                         IsVisible="{Binding !IsConfirmingDeleteMetadata}"
-                        ToolTip.Tip="Removes all database metadata for this LoRA. The .safetensors file on disk is NOT deleted."
+                        ToolTip.Tip="{Binding DeleteMetadataButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
                         Padding="10,6"
                         FontSize="12"
                         Background="#A02020"

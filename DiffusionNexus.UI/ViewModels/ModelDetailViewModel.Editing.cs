@@ -817,6 +817,68 @@ public partial class ModelDetailViewModel
         SourceTile?.ModelEntity is { } m && (m.CivitaiId is > 0 || m.CivitaiModelPageId is > 0);
 
     /// <summary>
+    /// True when the Civitai action can open a valid model page.
+    /// </summary>
+    public bool CanOpenOnCivitai => HasCivitaiId;
+
+    /// <summary>
+    /// Tooltip shown on the "Open on Civitai" button, including the disabled-state reason.
+    /// </summary>
+    public string OpenOnCivitaiButtonTooltip => CanOpenOnCivitai
+        ? "Open this LoRA's Civitai model page in your browser"
+        : "This LoRA is not linked to a Civitai model yet. Use \"Assign Civitai IDs Manually\" first.";
+
+    /// <summary>
+    /// True when this detail view has meaningful metadata that can be removed.
+    /// A bare database row created by local file discovery is not enough; at least
+    /// one user-visible metadata field must be populated.
+    /// </summary>
+    public bool HasMetadata => HasDeletableMetadata(SourceTile?.ModelEntity);
+
+    /// <summary>
+    /// Tooltip shown on the "Delete Metadata" button, including the disabled-state reason.
+    /// </summary>
+    public string DeleteMetadataButtonTooltip => HasMetadata
+        ? "Removes all database metadata for this LoRA. The .safetensors file on disk is NOT deleted."
+        : "No metadata is available to delete. Metadata becomes deletable when Model ID, Version ID, Base Model, Category, Tags, Trigger Words, or Description is populated.";
+
+    private static bool HasDeletableMetadata(Model? model)
+    {
+        if (model is null) return false;
+
+        if (model.CivitaiId is > 0 || model.CivitaiModelPageId is > 0)
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(model.Description))
+            return true;
+
+        if (model.UserCategory is { } category && category != CivitaiCategory.Unknown)
+            return true;
+
+        if (model.Tags.Any(mt => !string.IsNullOrWhiteSpace(mt.Tag?.Name)))
+            return true;
+
+        foreach (var version in model.Versions)
+        {
+            if (version.CivitaiId is > 0)
+                return true;
+
+            if (HasRealBaseModel(version.BaseModelRaw))
+                return true;
+
+            if (version.TriggerWords.Any(tw => !string.IsNullOrWhiteSpace(tw.Word)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasRealBaseModel(string? baseModel)
+        => !string.IsNullOrWhiteSpace(baseModel)
+           && !string.Equals(baseModel.Trim(), "???", StringComparison.Ordinal)
+           && !string.Equals(baseModel.Trim(), "Unknown", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Tooltip shown on the "Assign Civitai IDs Manually" button. Explains the
     /// disabled state when the model is already linked to Civitai.
     /// </summary>
@@ -835,6 +897,10 @@ public partial class ModelDetailViewModel
     partial void OnSourceTileChanged(ModelTileViewModel? value)
     {
         OnPropertyChanged(nameof(HasCivitaiId));
+        OnPropertyChanged(nameof(CanOpenOnCivitai));
+        OnPropertyChanged(nameof(OpenOnCivitaiButtonTooltip));
+        OnPropertyChanged(nameof(HasMetadata));
+        OnPropertyChanged(nameof(DeleteMetadataButtonTooltip));
         OnPropertyChanged(nameof(AssignCivitaiButtonTooltip));
         IsConfirmingDeleteMetadata = false;
     }
@@ -1069,7 +1135,12 @@ public partial class ModelDetailViewModel
     [RelayCommand]
     private void RequestDeleteMetadata()
     {
-        if (SourceTile?.ModelEntity is null) return;
+        if (!HasMetadata)
+        {
+            StatusMessage = "No metadata is available to delete for this LoRA.";
+            return;
+        }
+
         IsConfirmingDeleteMetadata = true;
     }
 
