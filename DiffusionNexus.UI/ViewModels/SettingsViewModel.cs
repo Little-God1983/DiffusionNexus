@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using DiffusionNexus.Civitai;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -23,6 +24,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private bool _isSaving;
 
     #region Observable Properties
@@ -209,7 +211,8 @@ public partial class SettingsViewModel : BusyViewModelBase
         IDatasetBackupService? backupService = null,
         IDatasetEventAggregator? eventAggregator = null,
         IActivityLogService? activityLogService = null,
-        ISettingsExportService? exportService = null)
+        ISettingsExportService? exportService = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
@@ -217,6 +220,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _eventAggregator = eventAggregator;
         _activityLogService = activityLogService;
         _exportService = exportService;
+        _baseModelCatalog = baseModelCatalog;
 
         // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
         if (_eventAggregator is not null)
@@ -236,6 +240,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _eventAggregator = null;
         _activityLogService = null;
         _exportService = null;
+        _baseModelCatalog = null;
 
         // Design-time data
         LoraSources =
@@ -555,6 +560,30 @@ public partial class SettingsViewModel : BusyViewModelBase
     {
         HuggingfaceApiKey = null;
         HasChanges = true;
+    }
+
+    /// <summary>
+    /// Forces a live refresh of the Civitai base model catalog from GitHub,
+    /// bypassing the in-memory and on-disk caches. Status is surfaced to the
+    /// Unified Console via the catalog's <see cref="ICivitaiBaseModelCatalog.StatusChanged"/>
+    /// event (wired up in <c>App.axaml.cs</c>).
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshBaseModelCatalogAsync()
+    {
+        if (_baseModelCatalog is null) return;
+
+        await RunBusyAsync(async () =>
+        {
+            try
+            {
+                await _baseModelCatalog.GetBaseModelsAsync(forceRefresh: true);
+            }
+            catch
+            {
+                // Errors are already surfaced via StatusChanged → Unified Console.
+            }
+        });
     }
 
     /// <summary>

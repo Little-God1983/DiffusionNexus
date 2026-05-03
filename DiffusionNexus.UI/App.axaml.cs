@@ -816,7 +816,8 @@ public partial class App : Application
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IDatasetEventAggregator>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<ISettingsExportService>()));
+            sp.GetService<ISettingsExportService>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
         
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
