@@ -332,6 +332,13 @@ public interface IDialogService
         string? category = null);
 
     /// <summary>
+    /// Shows the Download LoRA dialog for resolving a Civitai URL, previewing it, and choosing a destination.
+    /// </summary>
+    /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
+    /// <returns>Download result with selected version and target folder, or cancelled result.</returns>
+    Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders);
+
+    /// <summary>
     /// Shows the duplicate fixer window for resolving duplicate image clusters.
     /// </summary>
     /// <param name="clusters">Duplicate clusters to resolve.</param>

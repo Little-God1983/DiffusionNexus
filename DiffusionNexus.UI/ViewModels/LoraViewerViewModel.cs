@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 
@@ -405,6 +406,55 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = false;
             BusyMessage = null;
         }
+    }
+
+    /// <summary>
+    /// Opens the Civitai URL download dialog, lets the user preview the LoRA, and starts the download.
+    /// </summary>
+    [RelayCommand]
+    private async Task DownloadLoraAsync()
+    {
+        var dialogService = App.Services?.GetService<IDialogService>();
+        if (dialogService is null)
+        {
+            SyncStatus = "Dialog service not available.";
+            return;
+        }
+
+        IReadOnlyList<string> sourceFolders = [];
+        if (_settingsService is not null)
+        {
+            sourceFolders = await _settingsService.GetEnabledLoraSourcesAsync();
+        }
+
+        var result = await dialogService.ShowDownloadLoraDialogAsync(sourceFolders);
+        if (!result.Confirmed || result.Version is null || string.IsNullOrWhiteSpace(result.DownloadUrl) || string.IsNullOrWhiteSpace(result.TargetFolder))
+            return;
+
+        var fileName = !string.IsNullOrWhiteSpace(result.FileName)
+            ? result.FileName
+            : $"{result.ModelName}_{result.Version.Name}.safetensors";
+        var targetPath = Path.Combine(result.TargetFolder, fileName);
+
+        var downloadService = App.Services?.GetService<LoraDownloadService>()
+                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
+
+        SyncStatus = $"Downloading {fileName}...";
+        _ = Task.Run(async () =>
+        {
+            await downloadService.DownloadFileAsync(
+                result.DownloadUrl,
+                targetPath,
+                result.Version,
+                $"Downloading {fileName}",
+                (_, message) => Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}"),
+                () => Dispatcher.UIThread.Post(async () =>
+                {
+                    SyncStatus = $"Downloaded {fileName}";
+                    await RebuildTilesFromDatabaseAsync();
+                }),
+                () => Dispatcher.UIThread.Post(() => SyncStatus = $"Download failed: {fileName}"));
+        });
     }
 
     /// <summary>

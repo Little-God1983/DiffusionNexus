@@ -208,6 +208,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IReadOnlyList<string> sourceFolders, string? category = null) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
 
+        public Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders) =>
+            Task.FromResult(DownloadLoraResult.Cancelled());
+
         public Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
             string datasetName,
             int datasetVersion,

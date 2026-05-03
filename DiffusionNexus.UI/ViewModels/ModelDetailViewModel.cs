@@ -349,6 +349,20 @@ public partial class ModelDetailViewModel : ViewModelBase
         {
             taskHandle?.ReportIndeterminate("Connecting...");
 
+            var downloadService = App.Services?.GetService<LoraDownloadService>();
+            if (downloadService is not null)
+            {
+                await downloadService.DownloadFileAsync(
+                    downloadUrl,
+                    targetPath,
+                    tab.CivitaiVersion,
+                    taskName,
+                    completed: () => Dispatcher.UIThread.Post(async () => await RefreshAfterDownloadAsync(targetPath)),
+                    failed: () => Dispatcher.UIThread.Post(() => tab.IsDownloading = false),
+                    existingModelId: SourceTile?.ModelEntity?.Id);
+                return;
+            }
+
             // Ensure target directory exists
             var directory = Path.GetDirectoryName(targetPath);
             if (!string.IsNullOrEmpty(directory))

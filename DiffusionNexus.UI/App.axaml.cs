@@ -826,6 +826,10 @@ public partial class App : Application
             sp.GetService<ISecureStorage>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+        services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
+            sp.GetService<Civitai.ICivitaiClient>(),
+            sp.GetService<IAppSettingsService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<IUnitOfWork>(),
