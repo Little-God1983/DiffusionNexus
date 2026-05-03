@@ -233,7 +233,7 @@ public class ActivityLogServiceTests
     }
 
     [Fact]
-    public void CompleteDownloadProgress_ResetsStateAndLogsSuccess()
+    public void CompleteDownloadProgress_SuccessResetsStateAndUpdatesStatusWithoutInfoLog()
     {
         var sut = CreateSut();
         sut.StartDownloadProgress("file.bin");
@@ -243,7 +243,25 @@ public class ActivityLogServiceTests
         sut.IsDownloadInProgress.Should().BeFalse();
         sut.DownloadProgressPercent.Should().BeNull();
         sut.DownloadOperationName.Should().BeNull();
-        sut.GetEntries().Should().Contain(e => e.Message == "complete" && e.Severity == ActivitySeverity.Success);
+        sut.CurrentStatus.Should().Be("complete");
+        sut.CurrentStatusSeverity.Should().Be(ActivitySeverity.Success);
+        sut.GetEntries().Should().NotContain(e => e.Message == "complete");
+    }
+
+    [Fact]
+    public void CompleteDownloadProgress_FailureResetsStateAndLogsError()
+    {
+        var sut = CreateSut();
+        sut.StartDownloadProgress("file.bin");
+
+        sut.CompleteDownloadProgress(false, "failed");
+
+        sut.IsDownloadInProgress.Should().BeFalse();
+        sut.DownloadProgressPercent.Should().BeNull();
+        sut.DownloadOperationName.Should().BeNull();
+        sut.CurrentStatus.Should().Be("failed");
+        sut.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error);
+        sut.GetEntries().Should().Contain(e => e.Message == "failed" && e.Severity == ActivitySeverity.Error);
     }
 
     [Fact]
