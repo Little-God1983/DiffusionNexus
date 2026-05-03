@@ -515,20 +515,65 @@
           <Border Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,1,0,0">
-            <StackPanel Orientation="Horizontal"
-                        Spacing="8"
-                        HorizontalAlignment="Right">
-              <Button Content="Open on Civitai"
-                      Command="{Binding OpenOnCivitaiCommand}"
-                      Padding="10,6"
-                      FontSize="12"/>
-              <Button Content="Assign Civitai IDs Manually"
-                      Command="{Binding AssignCivitaiIdsManuallyCommand}"
-                      ToolTip.Tip="Manually paste a Civitai URL or enter Model/Version IDs when auto-detection failed"
-                      Padding="10,6"
-                      FontSize="12"
-                      Background="#0066CC"
-                      Foreground="White"/>
+            <StackPanel Spacing="8">
+              <StackPanel Orientation="Horizontal"
+                          Spacing="8"
+                          HorizontalAlignment="Right">
+                <Button Content="Open on Civitai"
+                        Command="{Binding OpenOnCivitaiCommand}"
+                        Padding="10,6"
+                        FontSize="12"/>
+                <Button Content="Assign Civitai IDs Manually"
+                        Command="{Binding AssignCivitaiIdsManuallyCommand}"
+                        IsEnabled="{Binding !HasCivitaiId}"
+                        ToolTip.Tip="{Binding AssignCivitaiButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
+                        Padding="10,6"
+                        FontSize="12"
+                        Background="#0066CC"
+                        Foreground="White"/>
+                <Button Content="Delete Metadata"
+                        Command="{Binding RequestDeleteMetadataCommand}"
+                        IsVisible="{Binding !IsConfirmingDeleteMetadata}"
+                        ToolTip.Tip="Removes all database metadata for this LoRA. The .safetensors file on disk is NOT deleted."
+                        Padding="10,6"
+                        FontSize="12"
+                        Background="#A02020"
+                        Foreground="White"/>
+              </StackPanel>
+
+              <!-- Inline confirmation strip (security question) -->
+              <Border IsVisible="{Binding IsConfirmingDeleteMetadata}"
+                      Background="#3A1A1A"
+                      BorderBrush="#A02020"
+                      BorderThickness="1"
+                      CornerRadius="4"
+                      Padding="12,10">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Delete all metadata for this LoRA?"
+                             FontWeight="SemiBold"
+                             Foreground="White"/>
+                  <TextBlock Text="This permanently removes the model record, all versions, files, images, trigger words and tags from the database. The .safetensors file on disk will NOT be deleted. This cannot be undone."
+                             FontSize="12"
+                             Opacity="0.85"
+                             Foreground="White"
+                             TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal"
+                              Spacing="8"
+                              HorizontalAlignment="Right">
+                    <Button Content="Cancel"
+                            Command="{Binding CancelDeleteMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"/>
+                    <Button Content="Yes, delete metadata"
+                            Command="{Binding ConfirmDeleteMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"
+                            Background="#C42B2B"
+                            Foreground="White"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
 

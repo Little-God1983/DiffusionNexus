@@ -808,6 +808,38 @@ public partial class ModelDetailViewModel
     #region Manual Civitai ID assignment
 
     /// <summary>
+    /// True when the current model already has a Civitai ID linked. Used by the
+    /// XAML to disable the "Assign Civitai IDs Manually" button (and surface a
+    /// tooltip explaining why) since manual assignment only makes sense when
+    /// auto-detection failed.
+    /// </summary>
+    public bool HasCivitaiId =>
+        SourceTile?.ModelEntity is { } m && (m.CivitaiId is > 0 || m.CivitaiModelPageId is > 0);
+
+    /// <summary>
+    /// Tooltip shown on the "Assign Civitai IDs Manually" button. Explains the
+    /// disabled state when the model is already linked to Civitai.
+    /// </summary>
+    public string AssignCivitaiButtonTooltip => HasCivitaiId
+        ? "This LoRA is already linked to a Civitai model. Use \"Delete Metadata\" first if you want to re-assign it."
+        : "Manually paste a Civitai URL or enter Model/Version IDs when auto-detection failed";
+
+    /// <summary>
+    /// True while the user is being asked to confirm a metadata deletion.
+    /// Toggles an inline confirmation strip (red Confirm + Cancel) below the
+    /// action buttons; nothing is touched until the user clicks Confirm.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isConfirmingDeleteMetadata;
+
+    partial void OnSourceTileChanged(ModelTileViewModel? value)
+    {
+        OnPropertyChanged(nameof(HasCivitaiId));
+        OnPropertyChanged(nameof(AssignCivitaiButtonTooltip));
+        IsConfirmingDeleteMetadata = false;
+    }
+
+    /// <summary>
     /// Opens a dialog where the user can paste a Civitai URL or enter Model/Version IDs
     /// manually, previews the resolved Civitai model, and on confirm persists the IDs
     /// plus the core Civitai metadata for this LoRA.
@@ -1027,6 +1059,74 @@ public partial class ModelDetailViewModel
             _logger?.Error(LogCategory.Network, "AssignCivitaiIds",
                 $"Failed to assign Civitai IDs: {ex.Message}", ex);
             StatusMessage = $"Failed to assign Civitai IDs: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Shows the inline "are you sure?" confirmation strip for metadata deletion.
+    /// No data is touched until <see cref="ConfirmDeleteMetadataAsync"/> runs.
+    /// </summary>
+    [RelayCommand]
+    private void RequestDeleteMetadata()
+    {
+        if (SourceTile?.ModelEntity is null) return;
+        IsConfirmingDeleteMetadata = true;
+    }
+
+    /// <summary>
+    /// Hides the inline confirmation strip without deleting anything.
+    /// </summary>
+    [RelayCommand]
+    private void CancelDeleteMetadata()
+    {
+        IsConfirmingDeleteMetadata = false;
+    }
+
+    /// <summary>
+    /// Deletes ALL database metadata for this LoRA — the model record and every
+    /// version/file/image/trigger-word it owns (cascade) — but leaves the
+    /// safetensors file on disk untouched. Closes the detail panel and removes
+    /// the source tile from the grid.
+    /// </summary>
+    [RelayCommand]
+    private async Task ConfirmDeleteMetadataAsync()
+    {
+        IsConfirmingDeleteMetadata = false;
+
+        var tile = SourceTile;
+        var model = tile?.ModelEntity;
+        if (tile is null || model is null)
+        {
+            StatusMessage = "No model selected.";
+            return;
+        }
+
+        try
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
+            if (dbModel is not null)
+            {
+                unitOfWork.Models.Remove(dbModel);
+                await unitOfWork.SaveChangesAsync();
+            }
+
+            _logger?.Info(LogCategory.General, "DeleteMetadata",
+                $"Deleted metadata for '{model.Name}' (ModelId={model.Id}). Files on disk were not touched.");
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                tile.RaiseDeleted();
+                CloseRequested?.Invoke(this, EventArgs.Empty);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "DeleteMetadata",
+                $"Failed to delete metadata for '{model.Name}': {ex.Message}", ex);
+            StatusMessage = $"Failed to delete metadata: {ex.Message}";
         }
     }
 

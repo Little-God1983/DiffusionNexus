@@ -54,6 +54,13 @@ public partial class ModelTileViewModel : ViewModelBase
     public event EventHandler? Deleted;
 
     /// <summary>
+    /// Allows external collaborators (e.g. the detail-view "Delete Metadata"
+    /// command) to signal that this tile should be removed from the grid after
+    /// they have already removed the underlying record themselves.
+    /// </summary>
+    public void RaiseDeleted() => Deleted?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
     /// Raised when the user wants to view the detail panel for this tile.
     /// The parent view model should open the detail view.
     /// </summary>
