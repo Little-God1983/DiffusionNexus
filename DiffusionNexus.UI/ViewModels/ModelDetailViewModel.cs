@@ -339,17 +339,12 @@ public partial class ModelDetailViewModel : ViewModelBase
     // TODO: Linux Implementation for download task
     private async Task DownloadFileAsync(string downloadUrl, string targetPath, CivitaiVersionTabItem tab)
     {
-        var taskTracker = App.Services?.GetService<ITaskTracker>();
-        var activityLog = App.Services?.GetService<IActivityLogService>();
         var taskName = $"Downloading {Path.GetFileName(targetPath)}";
-        using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
-
-        activityLog?.StartDownloadProgress(taskName);
+        IActivityLogService? activityLog = null;
+        ITrackedTaskHandle? taskHandle = null;
 
         try
         {
-            taskHandle?.ReportIndeterminate("Connecting...");
-
             var downloadService = App.Services?.GetService<LoraDownloadService>();
             if (downloadService is not null)
             {
@@ -363,6 +358,13 @@ public partial class ModelDetailViewModel : ViewModelBase
                     existingModelId: SourceTile?.ModelEntity?.Id);
                 return;
             }
+
+            var taskTracker = App.Services?.GetService<ITaskTracker>();
+            activityLog = App.Services?.GetService<IActivityLogService>();
+            taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
+
+            activityLog?.StartDownloadProgress(taskName);
+            taskHandle?.ReportIndeterminate("Connecting...");
 
             // Ensure target directory exists
             var directory = Path.GetDirectoryName(targetPath);
@@ -484,6 +486,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         finally
         {
+            taskHandle?.Dispose();
             await Dispatcher.UIThread.InvokeAsync(() => tab.IsDownloading = false);
         }
     }

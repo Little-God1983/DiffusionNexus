@@ -147,8 +147,9 @@ public sealed class LoraDownloadService
                 completed?.Invoke();
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            taskHandle?.Fail(ex, $"Download cancelled: {Path.GetFileName(targetPath)}");
             activityLog?.CompleteDownloadProgress(false, $"Download cancelled: {Path.GetFileName(targetPath)}");
             _logger?.Info(LogCategory.Download, "LoraDownload",
                 $"Download cancelled: {Path.GetFileName(targetPath)}");
