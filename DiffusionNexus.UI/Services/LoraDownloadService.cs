@@ -138,12 +138,9 @@ public sealed class LoraDownloadService
 
                 await PersistDownloadedModelAsync(targetPath, civitaiVersion, existingModelId);
 
-                taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
+                taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
                 activityLog?.CompleteDownloadProgress(true,
-                    $"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
-                _logger?.Info(LogCategory.Download, "LoraDownload",
-                    $"Downloaded '{Path.GetFileName(targetPath)}' successfully — {sizeText}",
-                    $"Path: {targetPath}");
+                    $"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
                 completed?.Invoke();
             }
         }
@@ -151,17 +148,13 @@ public sealed class LoraDownloadService
         {
             taskHandle?.Fail(ex, $"Download cancelled: {Path.GetFileName(targetPath)}");
             activityLog?.CompleteDownloadProgress(false, $"Download cancelled: {Path.GetFileName(targetPath)}");
-            _logger?.Info(LogCategory.Download, "LoraDownload",
-                $"Download cancelled: {Path.GetFileName(targetPath)}");
             CleanupTempFile(targetPath);
             failed?.Invoke();
         }
         catch (Exception ex)
         {
-            taskHandle?.Fail(ex, $"Failed to download {Path.GetFileName(targetPath)}");
+            taskHandle?.Fail(ex, $"Failed to download: {ex.Message}");
             activityLog?.CompleteDownloadProgress(false, $"Download failed: {Path.GetFileName(targetPath)}");
-            _logger?.Error(LogCategory.Download, "LoraDownload",
-                $"Download failed: {ex.Message}", ex);
             CleanupTempFile(targetPath);
             failed?.Invoke();
         }
