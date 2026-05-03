@@ -896,6 +896,16 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     public event EventHandler? DownloadCompleted;
 
+    /// <summary>
+    /// Raised after the user confirms "Delete Metadata" and all DB rows for this
+    /// LoRA have been removed. The parent <see cref="LoraViewerViewModel"/>
+    /// subscribes to re-discover the still-on-disk safetensors so the tile
+    /// reappears immediately as a bare-metadata entry.
+    /// </summary>
+    public event EventHandler? MetadataDeleted;
+
+    internal void RaiseMetadataDeleted() => MetadataDeleted?.Invoke(this, EventArgs.Empty);
+
     #endregion
 
     #region Private Methods

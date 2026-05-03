@@ -1106,19 +1106,44 @@ public partial class ModelDetailViewModel
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
-            if (dbModel is not null)
+            // A tile may group multiple Model rows (e.g. multiple versions of
+            // the same LoRA). Delete every grouped row so no orphan
+            // images/versions remain after the user confirms.
+            var ids = tile.GetAllModelIds();
+            var deleted = 0;
+            foreach (var id in ids)
             {
-                unitOfWork.Models.Remove(dbModel);
+                var dbModel = await unitOfWork.Models.GetByIdAsync(id);
+                if (dbModel is not null)
+                {
+                    unitOfWork.Models.Remove(dbModel);
+                    deleted++;
+                }
+            }
+
+            if (deleted > 0)
+            {
                 await unitOfWork.SaveChangesAsync();
             }
 
             _logger?.Info(LogCategory.General, "DeleteMetadata",
-                $"Deleted metadata for '{model.Name}' (ModelId={model.Id}). Files on disk were not touched.");
+                $"Deleted metadata for '{model.Name}' ({deleted} of {ids.Count} grouped model row(s)). Files on disk were not touched.");
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                // Order matters and each step is required:
+                // 1. RaiseDeleted() — synchronously removes the tile from the
+                //    parent's AllTiles/FilteredTiles collections AND updates
+                //    TotalModelCount / FilteredModelCount so the overview
+                //    reflects the deletion immediately.
+                // 2. RaiseMetadataDeleted() — asks the parent VM to re-discover
+                //    the on-disk safetensors so a fresh bare-metadata tile
+                //    reappears without requiring a manual refresh.
+                // 3. CloseRequested — closes the detail panel last; this
+                //    triggers CloseDetail() which unsubscribes MetadataDeleted,
+                //    so it must come AFTER step 2.
                 tile.RaiseDeleted();
+                RaiseMetadataDeleted();
                 CloseRequested?.Invoke(this, EventArgs.Empty);
             });
         }

@@ -1811,6 +1811,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
+            DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
         }
 
         var detailVm = new ModelDetailViewModel(
@@ -1822,6 +1823,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
+        detailVm.MetadataDeleted += OnDetailMetadataDeleted;
         DetailViewModel = detailVm;
         IsDetailOpen = true;
 
@@ -1838,6 +1840,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
+            DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
         }
 
         IsDetailOpen = false;
@@ -1852,6 +1855,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
     {
         await RebuildTilesFromDatabaseAsync();
+    }
+
+    /// <summary>
+    /// Handles <see cref="ModelDetailViewModel.MetadataDeleted"/> by running a full
+    /// refresh: the .safetensors file is still on disk, so file discovery will
+    /// re-create a bare-metadata <see cref="Model"/> row and the tile reappears
+    /// immediately instead of vanishing until the next manual refresh.
+    /// </summary>
+    private async void OnDetailMetadataDeleted(object? sender, EventArgs e)
+    {
+        if (RefreshCommand.CanExecute(null))
+        {
+            await RefreshCommand.ExecuteAsync(null);
+        }
+        else
+        {
+            await RebuildTilesFromDatabaseAsync();
+        }
     }
 
     /// <summary>
