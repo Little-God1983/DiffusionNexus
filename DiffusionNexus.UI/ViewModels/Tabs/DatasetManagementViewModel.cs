@@ -302,6 +302,15 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         get => ActiveDataset?.CurrentVersion ?? 1;
         set
         {
+            // Ignore spurious updates from Avalonia ComboBox when ItemsSource is cleared
+            if (value <= 0) return;
+
+            // Wait for AvailableVersions to be fully populated during a dataset load
+            if (AvailableVersions.Count > 0 && !AvailableVersions.Contains(value))
+            {
+                return;
+            }
+
             if (ActiveDataset is not null && ActiveDataset.CurrentVersion != value)
             {
                 _ = SwitchVersionAsync(value);
@@ -1393,24 +1402,23 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             SelectedSubTab = VersionSubTab.TrainingData;
 
             // Populate available versions and default to the latest on fresh open
-            AvailableVersions.Clear();
-            if (dataset.IsVersionedStructure)
+            var currentVersions = dataset.IsVersionedStructure ? dataset.GetAllVersionNumbers() : new List<int> { 1 };
+
+            if (!AvailableVersions.SequenceEqual(currentVersions))
             {
-                foreach (var version in dataset.GetAllVersionNumbers())
+                AvailableVersions.Clear();
+                foreach (var version in currentVersions)
                 {
                     AvailableVersions.Add(version);
                 }
+            }
 
-                // Default to latest version only on fresh open; preserve current on switch/refresh
-                if (isFreshOpen && !dataset.IsVersionCard && AvailableVersions.Count > 0)
-                {
-                    dataset.CurrentVersion = AvailableVersions[^1];
-                }
-            }
-            else
+            // Default to latest version only on fresh open; preserve current on switch/refresh
+            if (isFreshOpen && dataset.IsVersionedStructure && !dataset.IsVersionCard && AvailableVersions.Count > 0)
             {
-                AvailableVersions.Add(1);
+                dataset.CurrentVersion = AvailableVersions[^1];
             }
+
             OnPropertyChanged(nameof(SelectedVersion));
 
             var mediaFolderPath = dataset.CurrentVersionFolderPath;
