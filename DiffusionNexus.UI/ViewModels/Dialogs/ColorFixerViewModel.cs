@@ -915,9 +915,6 @@ public partial class ColorFixerViewModel : ObservableObject
     {
         const int hueBins = 12;
         const double grayscaleThreshold = 0.1;
-        const double colorCastThreshold = 0.6;
-        const double veryDarkThreshold = 0.15;
-        const double veryBrightThreshold = 0.9;
         const double minSatForHue = 0.15;
 
         var hueCounts = new long[hueBins];

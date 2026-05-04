@@ -1643,7 +1643,9 @@ public partial class ModelTileViewModel : ViewModelBase
                 return (reEncodedBytes, "image/jpeg");
             }
 
-            using var resized = original.Resize(new SKImageInfo(MaxThumbnailWidth, targetHeight), SKFilterQuality.Medium);
+            using var resized = original.Resize(
+                new SKImageInfo(MaxThumbnailWidth, targetHeight),
+                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
             if (resized is null)
             {
                 logger?.Warn(LogCategory.General, "ThumbnailResize",

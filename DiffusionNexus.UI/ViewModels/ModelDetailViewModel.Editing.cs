@@ -789,7 +789,9 @@ public partial class ModelDetailViewModel
             {
                 var ratio = (float)CustomThumbnailMaxWidth / src.Width;
                 var targetH = Math.Max(1, (int)(src.Height * ratio));
-                scaled = src.Resize(new SKImageInfo(CustomThumbnailMaxWidth, targetH), SKFilterQuality.High);
+                scaled = src.Resize(
+                    new SKImageInfo(CustomThumbnailMaxWidth, targetH),
+                    new SKSamplingOptions(SKCubicResampler.Mitchell));
                 if (scaled is not null) working = scaled;
             }
 
