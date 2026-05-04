@@ -294,6 +294,25 @@ public class Layer : IDisposable
     }
 
     /// <summary>
+    /// Resizes the layer canvas and draws the existing content at the specified offset.
+    /// </summary>
+    public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        if (_bitmap == null) return;
+
+        var newBitmap = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+        newBitmap.Erase(SKColors.Transparent);
+
+        using var canvas = new SKCanvas(newBitmap);
+        canvas.DrawBitmap(_bitmap, offsetX, offsetY);
+
+        _bitmap.Dispose();
+        _bitmap = newBitmap;
+        UpdateThumbnail();
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
     /// Crops the layer to the specified rectangle.
     /// </summary>
     /// <param name="cropRect">The crop rectangle in pixel coordinates.</param>

@@ -112,6 +112,11 @@ public interface ILayerManager
     void FlattenAllLayers();
 
     /// <summary>
+    /// Resizes the layer canvas and offsets all existing layer content.
+    /// </summary>
+    void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY);
+
+    /// <summary>
     /// Tears down the layer stack and resets to non-layer mode without flattening.
     /// Use when the current image is being discarded (e.g., loading a new image).
     /// </summary>

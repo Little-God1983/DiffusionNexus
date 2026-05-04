@@ -170,6 +170,16 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        if (!_isLayerMode || _stack is null) return;
+
+        _stack.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+        LayersChanged?.Invoke(this, EventArgs.Empty);
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
     public void Reset()
     {
         UnsubscribeAndDispose();

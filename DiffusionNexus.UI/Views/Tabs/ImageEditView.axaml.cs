@@ -393,6 +393,11 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
 
+        var pendingExtendLeft = 0;
+        var pendingExtendTop = 0;
+        var pendingExtendRight = 0;
+        var pendingExtendBottom = 0;
+
         EventHandler<OutpaintGenerateEventArgs> onOutpaintGenerate = async (_, args) =>
         {
             if (_imageEditorCanvas is null) return;
@@ -407,6 +412,11 @@ public partial class ImageEditView : UserControl
                 var extTop = outpaintTool.ExtendTop;
                 var extRight = outpaintTool.ExtendRight;
                 var extBottom = outpaintTool.ExtendBottom;
+
+                pendingExtendLeft = extLeft;
+                pendingExtendTop = extTop;
+                pendingExtendRight = extRight;
+                pendingExtendBottom = extBottom;
 
                 if (extLeft + extTop + extRight + extBottom <= 0)
                 {
@@ -445,19 +455,39 @@ public partial class ImageEditView : UserControl
 
             try
             {
-                // Outpainting changes canvas dimensions, so reload the image as the new base
-                // rather than adding a layer.
-                if (_imageEditorCanvas.LoadImage(imageBytes))
+                var editorCore = _imageEditorCanvas.EditorCore;
+                var resultBitmap = SkiaSharp.SKBitmap.Decode(imageBytes);
+                if (resultBitmap is null)
                 {
-                    imageEditor.Outpainting.ClosePanel();
-                    imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
-                    imageEditor.UpdateDimensions(_imageEditorCanvas.EditorCore.Width, _imageEditorCanvas.EditorCore.Height);
-                    _imageEditorCanvas.InvalidateVisual();
+                    imageEditor.StatusMessage = "Failed to decode outpainting result.";
+                    return;
                 }
-                else
+
+                var expectedWidth = editorCore.Width + pendingExtendLeft + pendingExtendRight;
+                var expectedHeight = editorCore.Height + pendingExtendTop + pendingExtendBottom;
+
+                if (resultBitmap.Width != expectedWidth || resultBitmap.Height != expectedHeight)
                 {
-                    imageEditor.StatusMessage = "Failed to load outpainting result into the editor.";
+                    var resized = new SkiaSharp.SKBitmap(expectedWidth, expectedHeight);
+                    using var canvas = new SkiaSharp.SKCanvas(resized);
+                    canvas.DrawBitmap(resultBitmap, new SkiaSharp.SKRect(0, 0, expectedWidth, expectedHeight));
+                    resultBitmap.Dispose();
+                    resultBitmap = resized;
                 }
+
+                editorCore.ResizeLayerCanvas(expectedWidth, expectedHeight, pendingExtendLeft, pendingExtendTop);
+                editorCore.AddLayerFromBitmap(resultBitmap, "Outpaint Result");
+                editorCore.OutpaintTool.Reset();
+
+                imageEditor.Outpainting.ClosePanel();
+                imageEditor.LayerPanel.SyncLayers(editorCore.Layers);
+                imageEditor.UpdateDimensions(editorCore.Width, editorCore.Height);
+                _imageEditorCanvas.InvalidateVisual();
+
+                pendingExtendLeft = 0;
+                pendingExtendTop = 0;
+                pendingExtendRight = 0;
+                pendingExtendBottom = 0;
             }
             catch (Exception ex)
             {
