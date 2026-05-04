@@ -51,14 +51,16 @@ public partial class ModuleItem : ObservableObject
         {
             try
             {
-                // Copy asset data into a MemoryStream so the Bitmap has a stable backing
-                // buffer. The AssetLoader stream can be disposed once the bytes are copied;
-                // MemoryStream is backed by a managed array and needs no disposal.
                 using var assetStream = AssetLoader.Open(new Uri(iconPath));
-                var ms = new MemoryStream();
-                assetStream.CopyTo(ms);
-                ms.Position = 0;
-                _icon = new Bitmap(ms);
+                if (assetStream != null)
+                {
+                    // We must not dispose the MemoryStream because Avalonia decoding
+                    // might happen lazily or it retains the stream
+                    var memoryStream = new MemoryStream();
+                    assetStream.CopyTo(memoryStream);
+                    memoryStream.Position = 0;
+                    _icon = new Bitmap(memoryStream);
+                }
             }
             catch (Exception ex)
             {
