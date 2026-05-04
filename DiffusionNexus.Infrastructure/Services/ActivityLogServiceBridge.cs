@@ -313,7 +313,7 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _downloadProgressPercent = 0;
             _downloadOperationName = operationName;
         }
-        _logger.Info(LogCategory.Download, "Download", $"Starting: {operationName}");
+        _logger.Debug(LogCategory.Download, "Download", $"Starting: {operationName}");
         DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -338,8 +338,9 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _downloadProgressPercent = null;
             _downloadOperationName = null;
         }
+
         if (success)
-            _logger.Info(LogCategory.Download, "Download", message);
+            _logger.Debug(LogCategory.Download, "Download", message);
         else
             _logger.Error(LogCategory.Download, "Download", message);
 

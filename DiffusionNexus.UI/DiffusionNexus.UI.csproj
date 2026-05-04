@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Controls.PanAndZoom" Version="11.3.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.13" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.13" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.13" />
@@ -63,9 +64,13 @@
     <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.6" />
     <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.6" />
     <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.6" />
+    <PackageReference Include="StableDiffusion.NET.Backend.Cuda12.Windows" Version="6.0.0" />
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
     <!-- Pin transitive dependency to fix NU1903 (GHSA-xrw6-gwf8-vvr9) -->
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <PackageReference Include="LibVLCSharp" Version="3.9.6" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.6" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23" Condition="'$(RuntimeIdentifier)' == 'win-x64' OR '$(OS)' == 'Windows_NT'" />
   </ItemGroup>
 
   <ItemGroup>
@@ -74,6 +79,7 @@
     <ProjectReference Include="..\DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Captioning\DiffusionNexus.Captioning.csproj" />
+    <ProjectReference Include="..\DiffusionNexus.Inference\DiffusionNexus.Inference.csproj" />
   </ItemGroup>
 
   <ItemGroup>

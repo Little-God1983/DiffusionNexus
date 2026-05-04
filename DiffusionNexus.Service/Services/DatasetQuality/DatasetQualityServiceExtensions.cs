@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality.Checks;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality;
@@ -18,6 +19,7 @@ public static class DatasetQualityServiceExtensions
         // Core services
         services.AddSingleton<CaptionLoader>();
         services.AddSingleton<AnalysisPipeline>();
+        services.AddSingleton<AnalysisRunStore>();
 
         // Bucket analysis services
         services.AddSingleton<IImageDimensionReader, ImageHeaderReader>();
@@ -29,6 +31,19 @@ public static class DatasetQualityServiceExtensions
         services.AddSingleton<IDatasetCheck, SynonymConsistencyCheck>();
         services.AddSingleton<IDatasetCheck, FeatureConsistencyCheck>();
         services.AddSingleton<IDatasetCheck, TypeSpecificCheck>();
+        services.AddSingleton<IDatasetCheck, SpellCheckQualityCheck>();
+
+        // Image quality checks — each registered as IImageQualityCheck
+        services.AddSingleton<IImageQualityCheck, BlurDetector>();
+        services.AddSingleton<IImageQualityCheck, ExposureAnalyzer>();
+        services.AddSingleton<IImageQualityCheck, JpegArtifactDetector>();
+        services.AddSingleton<IImageQualityCheck, NoiseEstimator>();
+        // Register ColorDistributionAnalyzer as a shared singleton, exposed both as IImageQualityCheck and directly
+        services.AddSingleton<ColorDistributionAnalyzer>();
+        services.AddSingleton<IImageQualityCheck>(sp => sp.GetRequiredService<ColorDistributionAnalyzer>());
+        // Register DuplicateDetector as a shared singleton, exposed both as IImageQualityCheck and directly
+        services.AddSingleton<DuplicateDetector>();
+        services.AddSingleton<IImageQualityCheck>(sp => sp.GetRequiredService<DuplicateDetector>());
 
         return services;
     }

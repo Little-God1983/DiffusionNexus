@@ -14,6 +14,7 @@ using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
@@ -50,10 +51,35 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
         {
             var ex = args.ExceptionObject as Exception;
-            Serilog.Log.Fatal(ex, "UNHANDLED DOMAIN EXCEPTION");
+            Serilog.Log.Fatal(ex, "UNHANDLED DOMAIN EXCEPTION (IsTerminating={IsTerminating})", args.IsTerminating);
             FileLogger.LogError($"UNHANDLED DOMAIN EXCEPTION: {ex?.Message}", ex);
+
+            // Only flush+close when the process is actually terminating; otherwise the
+            // static logger becomes a silent sink and all subsequent logs are lost.
+            if (args.IsTerminating)
+            {
+                Serilog.Log.CloseAndFlush();
+            }
         };
-        
+
+        // Surface exceptions that are thrown but later caught/swallowed. Helps diagnose
+        // silent failures (e.g. native AVE, OOM in worker code paths) where nothing
+        // otherwise reaches the log. Kept at Verbose to avoid noise during normal flow.
+        AppDomain.CurrentDomain.FirstChanceException += (sender, args) =>
+        {
+            // Avoid recursion if Serilog itself throws while writing.
+            if (args.Exception is OutOfMemoryException ||
+                args.Exception is StackOverflowException ||
+                args.Exception is AccessViolationException)
+            {
+                Serilog.Log.Fatal(args.Exception, "FIRST-CHANCE FATAL EXCEPTION ({Type})", args.Exception.GetType().Name);
+            }
+            else
+            {
+                Serilog.Log.Verbose(args.Exception, "FirstChanceException: {Type}", args.Exception.GetType().Name);
+            }
+        };
+
         TaskScheduler.UnobservedTaskException += (sender, args) =>
         {
             Serilog.Log.Error(args.Exception, "UNOBSERVED TASK EXCEPTION");
@@ -114,6 +140,12 @@ public partial class App : Application
                 Serilog.Log.Information("Initializing instance process manager...");
                 _ = Services!.GetRequiredService<IInstanceProcessManager>();
 
+                // Wire the Civitai base-model catalog into the Unified Console:
+                // - log how old the on-disk definition is right now
+                // - log every refresh attempt (cache hit, live fetch + result, fallback)
+                Serilog.Log.Information("Initializing Civitai base-model catalog...");
+                InitializeCivitaiBaseModelCatalog();
+
                 // Create and assign the main window before registering modules,
                 // because module resolution requires IDialogService which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
@@ -127,6 +159,25 @@ public partial class App : Application
                 Serilog.Log.Information("Registering modules...");
                 RegisterModules(mainViewModel);
 
+                // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
+                // Fire-and-forget: failure to register must not block startup (registrar logs internally).
+                if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = Services!.CreateScope();
+                            var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+                            await registrar.EnsureRegisteredAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
+                        }
+                    });
+                }
+
                 // Force show the window explicitly
                 mainWindow.Show();
                 Serilog.Log.Information("Main window Show() called");
@@ -136,6 +187,13 @@ public partial class App : Application
                 {
                     // Dispose the instance process manager (unwires events)
                     (Services?.GetService<IInstanceProcessManager>() as IDisposable)?.Dispose();
+                    // Release native diffusion contexts (unloads ~12 GB of model weights)
+                    var localBackend = Services?.GetService<DiffusionNexus.UI.Services.Diffusion.LocalDiffusionBackendProvider>();
+                    if (localBackend is not null)
+                    {
+                        try { localBackend.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                        catch (Exception ex) { Serilog.Log.Warning(ex, "Local diffusion backend dispose failed."); }
+                    }
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
@@ -170,6 +228,94 @@ public partial class App : Application
         var spellCheck = Services!.GetRequiredService<ISpellCheckService>();
         var autoComplete = Services!.GetRequiredService<IAutoCompleteService>();
         SpellCheckTextBox.Initialize(spellCheck, autoComplete);
+    }
+
+    /// <summary>
+    /// Wires the Civitai base-model catalog to the Unified Console:
+    /// reports the on-disk definition's age at startup and logs every refresh
+    /// attempt (cache hit, live fetch + result, fallback to bundled snapshot).
+    /// </summary>
+    private static void InitializeCivitaiBaseModelCatalog()
+    {
+        const string source = "CivitaiBaseModelCatalog";
+        var catalog = Services!.GetRequiredService<Civitai.ICivitaiBaseModelCatalog>();
+        var logger = Services!.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>();
+
+        // a) Subscribe BEFORE any fetch so the first refresh is captured.
+        catalog.StatusChanged += (_, e) =>
+        {
+            try
+            {
+                var category = DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network;
+                var detail = e.CacheTimestampUtc.HasValue
+                    ? $"Cache file: {catalog.CacheFilePath}\nLast written (UTC): {e.CacheTimestampUtc:O}"
+                    : $"Cache file: {catalog.CacheFilePath}\nNo cache on disk yet.";
+
+                switch (e.Kind)
+                {
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchStarted:
+                        logger?.Info(category, source, e.Message ?? "Fetching base model list...", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchSucceeded:
+                        logger?.Info(category, source, e.Message ?? $"Fetched {e.Count} base models.", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.UsedDiskCache:
+                        logger?.Info(category, source, e.Message ?? $"Loaded {e.Count} base models from disk cache.", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.UsedBundledFallback:
+                        logger?.Warn(category, source, e.Message ?? $"Using bundled fallback ({e.Count} base models).", detail);
+                        break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.FetchFailed:
+                        logger?.Warn(category, source, e.Message ?? "Base model fetch failed.", detail);
+                        if (e.Exception is not null)
+                        {
+                            logger?.Error(category, source, e.Message ?? "Base model fetch failed.", e.Exception);
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Failed to forward CivitaiBaseModelCatalog status to UnifiedLogger.");
+            }
+        };
+
+        // b) Report the current definition age on startup, before any fetch runs.
+        var ts = catalog.CacheTimestampUtc;
+        if (ts.HasValue)
+        {
+            var age = DateTime.UtcNow - ts.Value;
+            var ageText = FormatAge(age);
+            logger?.Info(
+                DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network,
+                source,
+                $"Civitai base model definition is {ageText} old (last refreshed {ts.Value:yyyy-MM-dd HH:mm} UTC).",
+                $"Cache file: {catalog.CacheFilePath}");
+        }
+        else
+        {
+            logger?.Info(
+                DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Network,
+                source,
+                "Civitai base model definition has not been cached yet — will fetch from GitHub on first use.",
+                $"Cache file: {catalog.CacheFilePath}");
+        }
+
+        // Kick off a background load so the FetchStarted/Succeeded events fire even
+        // before the user opens the LoRA detail panel.
+        _ = Task.Run(async () =>
+        {
+            try { await catalog.GetBaseModelsAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Serilog.Log.Warning(ex, "Initial Civitai base model load failed."); }
+        });
+    }
+
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalDays >= 1) return $"{(int)age.TotalDays}d {age.Hours}h";
+        if (age.TotalHours >= 1) return $"{(int)age.TotalHours}h {age.Minutes}m";
+        if (age.TotalMinutes >= 1) return $"{(int)age.TotalMinutes}m";
+        return $"{(int)age.TotalSeconds}s";
     }
 
     private static void InitializeDatabase()
@@ -557,6 +703,17 @@ public partial class App : Application
                 sp.GetRequiredService<Domain.Services.UnifiedLogging.ITaskTracker>(),
                 sp));
 
+        // Local diffusion backend (StableDiffusion.NET / stable-diffusion.cpp).
+        // Singleton — owns the per-model native context cache for the lifetime of the app.
+        services.AddSingleton<DiffusionNexus.UI.Services.Diffusion.LocalDiffusionBackendProvider>();
+
+        // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
+        services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+
+        // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
+        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+
+
         // ?? Installer SDK services ??
         // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
         services.AddDiffusionNexusDataAccess();
@@ -606,6 +763,9 @@ public partial class App : Application
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
 
+        // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
+        services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
+
         // Captioning service (singleton - manages local LLM)
         services.AddCaptioningServices();
 
@@ -628,6 +788,10 @@ public partial class App : Application
         services.AddSingleton<ISpellCheckService>(sp =>
             new SpellCheckService(sp.GetRequiredService<IUserDictionaryService>()));
         services.AddSingleton<IAutoCompleteService, AutoCompleteService>();
+
+        // Bridge UI spell check into the domain contract used by dataset quality checks
+        services.AddSingleton<ISpellChecker>(sp =>
+            new SpellCheckerAdapter(sp.GetRequiredService<ISpellCheckService>()));
 
         // Image favorites service (singleton - per-folder .favorites.json persistence)
         services.AddSingleton<IImageFavoritesService, ImageFavoritesService>();
@@ -652,13 +816,19 @@ public partial class App : Application
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IDatasetEventAggregator>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<ISettingsExportService>()));
+            sp.GetService<ISettingsExportService>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
         
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IModelSyncService>(),
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<ISecureStorage>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+        services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
+            sp.GetService<Civitai.ICivitaiClient>(),
+            sp.GetService<IAppSettingsService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
@@ -694,7 +864,11 @@ public partial class App : Application
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
-            sp.GetService<IComfyUIReadinessService>()));
+            sp.GetService<IComfyUIReadinessService>(),
+            sp.GetServices<IImageQualityCheck>(),
+            sp.GetService<AnalysisRunStore>(),
+            sp.GetService<DuplicateDetector>(),
+            sp.GetService<ColorDistributionAnalyzer>()));
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
@@ -775,10 +949,37 @@ public partial class App : Application
             ViewModel = generationGalleryVm
         });
 
+        // Diffusion Canvas module — local Z-Image-Turbo generation on an Invoke-AI-style canvas.
+        // Gated behind DiffusionFeatureFlags.UseLocalDiffusionBackend so the module disappears
+        // entirely when the local backend is disabled (e.g., for ComfyUI-only builds).
+        // Also hidden by default in the sidebar; the obscure checkbox in the main window
+        // (IsDiffusionCanvasEnabled) reveals it.
+        if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+        {
+            var diffusionCanvasVm = Services!.GetRequiredService<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+            var diffusionCanvasView = new DiffusionNexus.UI.Views.DiffusionCanvas.DiffusionCanvasView
+            {
+                DataContext = diffusionCanvasVm
+            };
+
+            var diffusionCanvasModule = new ModuleItem(
+                "Diffusion Canvas",
+                "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
+                diffusionCanvasView,
+                isVisible: mainViewModel.IsDiffusionCanvasEnabled)
+            {
+                ViewModel = diffusionCanvasVm
+            };
+
+            mainViewModel.RegisterModule(diffusionCanvasModule);
+            mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
+        }
+
         // Image Comparer module
         var datasetState = Services!.GetRequiredService<IDatasetState>();
         var thumbnailOrchestrator = Services!.GetService<IThumbnailOrchestrator>();
-        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator);
+        var dialogService = Services!.GetRequiredService<IDialogService>();
+        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator, dialogService);
         var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
         var imageComparerModule = new ModuleItem(

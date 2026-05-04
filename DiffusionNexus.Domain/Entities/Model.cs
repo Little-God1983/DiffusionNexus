@@ -48,6 +48,18 @@ public class Model : BaseEntity
     /// <summary>When data was last synced from Civitai API.</summary>
     public DateTimeOffset? LastSyncedAt { get; set; }
 
+    /// <summary>
+    /// True when the user has manually edited this model (description, thumbnail, tags).
+    /// Civitai sync flows must not overwrite user-edited models. Defaults to false.
+    /// </summary>
+    public bool IsUserEdited { get; set; }
+
+    /// <summary>
+    /// User-selected category override. When set, takes precedence over the
+    /// category inferred from tags. Null means "infer from tags".
+    /// </summary>
+    public Domain.Enums.CivitaiCategory? UserCategory { get; set; }
+
     #region License Permissions
 
     public bool AllowNoCredit { get; set; }

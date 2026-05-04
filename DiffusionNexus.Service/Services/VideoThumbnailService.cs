@@ -68,22 +68,44 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             if (_ffmpegInitialized)
                 return;
 
-            // Store FFmpeg next to the application executable so it is bundled with
-            // the deployment and not scattered across user-profile folders.
-            var ffmpegDir = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
-            Directory.CreateDirectory(ffmpegDir);
-            FFmpeg.SetExecutablesPath(ffmpegDir);
+            var ffmpegBinary = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
 
-            // TODO: Linux Implementation for FFmpeg binary name
-            var ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+            // 1. Check app-local ffmpeg/ subdirectory (bundled deployment)
+            var ffmpegDir = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
+            var ffmpegExe = Path.Combine(ffmpegDir, ffmpegBinary);
             if (File.Exists(ffmpegExe))
             {
-                _logger.Information("FFmpeg already present at {Path}", ffmpegDir);
+                FFmpeg.SetExecutablesPath(ffmpegDir);
+                _logger.Information("FFmpeg found in app-local directory: {Path}", ffmpegDir);
                 _ffmpegInitialized = true;
                 return;
             }
 
-            _logger.Information("FFmpeg not found — downloading to {Path}...", ffmpegDir);
+            // 2. Check app base directory root (NuGet-packaged binary)
+            var baseExe = Path.Combine(AppContext.BaseDirectory, ffmpegBinary);
+            if (File.Exists(baseExe))
+            {
+                FFmpeg.SetExecutablesPath(AppContext.BaseDirectory);
+                _logger.Information("FFmpeg found in app base directory: {Path}", AppContext.BaseDirectory);
+                _ffmpegInitialized = true;
+                return;
+            }
+
+            // 3. Check system PATH — many developers have FFmpeg installed globally
+            // TODO: Linux Implementation for finding FFmpeg on PATH
+            var pathDir = FindFFmpegOnPath(ffmpegBinary);
+            if (pathDir is not null)
+            {
+                FFmpeg.SetExecutablesPath(pathDir);
+                _logger.Information("FFmpeg found on system PATH: {Path}", pathDir);
+                _ffmpegInitialized = true;
+                return;
+            }
+
+            // 4. Last resort: download to the app-local directory
+            _logger.Information("FFmpeg not found locally or on PATH — downloading to {Path}...", ffmpegDir);
+            Directory.CreateDirectory(ffmpegDir);
+            FFmpeg.SetExecutablesPath(ffmpegDir);
             await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, ffmpegDir);
             _ffmpegInitialized = true;
             _logger.Information("FFmpeg downloaded and ready at {Path}", ffmpegDir);
@@ -92,6 +114,34 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
         {
             _ffmpegLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Searches the system PATH environment variable for an FFmpeg executable.
+    /// </summary>
+    /// <returns>The directory containing FFmpeg, or null if not found.</returns>
+    private static string? FindFFmpegOnPath(string ffmpegBinary)
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(pathEnv))
+            return null;
+
+        var separator = OperatingSystem.IsWindows() ? ';' : ':';
+        foreach (var dir in pathEnv.Split(separator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(dir.Trim(), ffmpegBinary);
+                if (File.Exists(candidate))
+                    return dir.Trim();
+            }
+            catch
+            {
+                // Skip invalid PATH entries
+            }
+        }
+
+        return null;
     }
 
     /// <inheritdoc />
@@ -196,11 +246,22 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
     private static string GetDefaultThumbnailPath(string videoPath, ThumbnailFormat format)
     {
         var directory = Path.GetDirectoryName(videoPath) ?? string.Empty;
+        var thumbnailDir = Path.Combine(directory, ".thumbnails");
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
         var extension = GetFormatExtension(format);
-        
-        // Use _thumb suffix to clearly identify thumbnails
-        return Path.Combine(directory, $"{fileNameWithoutExtension}_thumb{extension}");
+
+        if (!Directory.Exists(thumbnailDir))
+        {
+            Directory.CreateDirectory(thumbnailDir);
+
+            // Set hidden attribute on Windows; .dot-prefix already hides on Linux/macOS
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(thumbnailDir, File.GetAttributes(thumbnailDir) | FileAttributes.Hidden);
+            }
+        }
+
+        return Path.Combine(thumbnailDir, $"{fileNameWithoutExtension}_thumb{extension}");
     }
 
     private static string GetFormatExtension(ThumbnailFormat format) => format switch

@@ -1,8 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
+using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -25,11 +29,17 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     private readonly Action<DatasetImageViewModel>? _onDeleteRequested;
     private readonly Func<string, Task<bool>>? _onToggleFavorite;
     private readonly Func<string, bool>? _isFavoriteCheck;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
 
     private DatasetImageViewModel? _currentImage;
     private int _currentIndex;
     private bool _disposed;
     private bool _isFavorite;
+    private CancellationTokenSource? _thumbnailCts;
+    private Bitmap? _videoPosterBitmap;
+
+    /// <summary>Video player for playing video files in the lightbox viewer.</summary>
+    public VideoPlayerViewModel VideoPlayer { get; } = new();
 
     /// <summary>ViewModel for the generation metadata side panel.</summary>
     public ImageMetadataPanelViewModel MetadataPanel { get; } = new();
@@ -84,6 +94,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public string PositionText => TotalCount > 0 ? $"{CurrentIndex + 1} / {TotalCount}" : "0 / 0";
     public bool HasCurrentImage => _currentImage is not null;
     public string? ImagePath => _currentImage?.ImagePath;
+
     public string? FileName => _currentImage?.FullFileName;
     public string? Caption => _currentImage?.Caption;
     public bool HasCaption => !string.IsNullOrWhiteSpace(_currentImage?.Caption);
@@ -94,6 +105,17 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public bool CanGoPrevious => _currentIndex > 0;
     public bool CanGoNext => _currentIndex < _allImages.Count - 1;
     public bool ShowRatingControls { get; }
+
+    /// <summary>
+    /// Poster bitmap for the current video, loaded directly from the thumbnail file.
+    /// Bypasses the DatasetImageViewModel.Thumbnail orchestrator chain which uses a
+    /// different code path than the gallery and fails silently for video thumbnails.
+    /// </summary>
+    public Bitmap? VideoPosterBitmap
+    {
+        get => _videoPosterBitmap;
+        private set => SetProperty(ref _videoPosterBitmap, value);
+    }
 
     /// <summary>Whether the current image is marked as a favorite.</summary>
     public bool IsFavorite
@@ -138,7 +160,8 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null)
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null)
     {
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
@@ -148,6 +171,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         _onToggleFavorite = onToggleFavorite;
         ShowRatingControls = showRatingControls;
         _isFavoriteCheck = isFavoriteCheck;
+        _videoThumbnailService = videoThumbnailService;
 
         // Subscribe to collection changes to handle external deletions
         _allImages.CollectionChanged += OnCollectionChanged;
@@ -231,6 +255,18 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         CurrentImage = _allImages[index];
         IsFavorite = _isFavoriteCheck is not null && CurrentImage is not null
             && _isFavoriteCheck(CurrentImage.ImagePath);
+
+        // Load or stop video player based on whether the current item is a video
+        if (CurrentImage?.IsVideo == true)
+        {
+            VideoPlayer.LoadVideo(CurrentImage.ImagePath);
+            _ = LoadVideoPosterAsync(CurrentImage.ImagePath);
+        }
+        else
+        {
+            VideoPlayer.Stop();
+            VideoPosterBitmap = null;
+        }
 
         ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
         ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
@@ -341,6 +377,68 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         IsFavorite = await _onToggleFavorite(_currentImage.ImagePath);
     }
 
+    /// <summary>
+    /// Loads the video poster bitmap directly from the thumbnail file.
+    /// Generates the thumbnail on-demand if it doesn't exist yet.
+    /// Uses direct file I/O instead of the DatasetImageViewModel.Thumbnail orchestrator
+    /// chain, which passes the .webp path and bypasses ThumbnailService's video-special
+    /// handling (the gallery passes the .mp4 path, which triggers that handling correctly).
+    /// </summary>
+    private async Task LoadVideoPosterAsync(string videoPath)
+    {
+        // Cancel any previous in-flight poster load
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = new CancellationTokenSource();
+        var ct = _thumbnailCts.Token;
+
+        VideoPosterBitmap = null;
+
+        try
+        {
+            var thumbPath = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
+
+            // Generate thumbnail if it doesn't exist yet
+            if (!File.Exists(thumbPath) && _videoThumbnailService is not null)
+            {
+                var result = await _videoThumbnailService.GenerateThumbnailAsync(videoPath, cancellationToken: ct);
+                if (ct.IsCancellationRequested || _disposed) return;
+
+                if (!result.Success)
+                {
+                    Log.Warning("[ImageViewer] Poster generation failed for {Path}: {Error}",
+                        videoPath, result.ErrorMessage);
+                    return;
+                }
+
+                // Re-resolve — generation may have written to legacy or new location
+                thumbPath = MediaFileExtensions.GetVideoThumbnailPath(videoPath);
+            }
+
+            if (!File.Exists(thumbPath) || ct.IsCancellationRequested || _disposed)
+                return;
+
+            // Load bitmap directly on a background thread
+            var bitmap = await Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                using var stream = File.OpenRead(thumbPath);
+                return new Bitmap(stream);
+            }, ct);
+
+            if (!ct.IsCancellationRequested && !_disposed)
+                VideoPosterBitmap = bitmap;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when navigating away before loading finishes
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ImageViewer] Failed to load poster for {Path}", videoPath);
+        }
+    }
+
     /// <summary>Refreshes the display after external changes.</summary>
     public void RefreshCurrentImage()
     {
@@ -368,7 +466,10 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
 
         if (disposing)
         {
+            _thumbnailCts?.Cancel();
+            _thumbnailCts?.Dispose();
             _allImages.CollectionChanged -= OnCollectionChanged;
+            VideoPlayer.Dispose();
         }
 
         _disposed = true;

@@ -1,0 +1,153 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.ExportTrainingRunsDialog"
+        x:DataType="vm:ExportTrainingRunsDialogViewModel"
+        Width="680"
+        MaxHeight="800"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+  <Grid Margin="24" RowDefinitions="Auto,*,Auto,Auto,Auto">
+
+    <!-- Title -->
+    <TextBlock Grid.Row="0"
+               Text="{Binding DialogTitle}"
+               FontSize="18"
+               FontWeight="SemiBold"
+               Foreground="#D4A574"
+               Margin="0,0,0,20"/>
+
+    <!-- Training Runs Content -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="520">
+      <StackPanel Margin="0" Spacing="10">
+
+        <!-- Select all / clear -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="Select All" Command="{Binding SelectAllRunsCommand}" Padding="8,4" FontSize="12"/>
+          <Button Content="Clear All" Command="{Binding ClearAllRunsCommand}" Padding="8,4" FontSize="12"/>
+          <TextBlock Text="{Binding SelectedRunCount, StringFormat='{}{0} selected'}"
+                     FontSize="12" Opacity="0.6" VerticalAlignment="Center" Margin="8,0,0,0"/>
+        </StackPanel>
+
+        <!-- Run list -->
+        <ItemsControl ItemsSource="{Binding TrainingRuns}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ExportableTrainingRun">
+              <Border Background="#2A2A2A" CornerRadius="6" Padding="10" Margin="0,0,0,6"
+                      BorderBrush="#444" BorderThickness="1">
+                <StackPanel Spacing="6">
+                  <!-- Run header: checkbox + name + summary + expand -->
+                  <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                    <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
+                      <TextBlock Text="{Binding ItemSummary}" FontSize="11" Opacity="0.6"/>
+                    </StackPanel>
+                    <CheckBox Grid.Column="2" IsChecked="{Binding IncludeModelCard}"
+                              VerticalAlignment="Center" Margin="0,0,8,0"
+                              ToolTip.Tip="Include model card (README.md)">
+                      <TextBlock Text="Model Card" FontSize="11"/>
+                    </CheckBox>
+                    <CheckBox Grid.Column="3" IsChecked="{Binding BakeMetadata}"
+                              IsEnabled="{Binding !$parent[Window].((vm:ExportTrainingRunsDialogViewModel)DataContext).CompressImagesToJpeg}"
+                              VerticalAlignment="Center" Margin="0,0,8,0"
+                              ToolTip.Tip="Embed captions into PNG metadata (A1111 style), overriding existing image metadata">
+                      <TextBlock Text="Bake Metadata" FontSize="11"/>
+                    </CheckBox>
+                    <Button Grid.Column="4" Content="Details" Command="{Binding ToggleExpandedCommand}"
+                            Padding="6,3" FontSize="11" Background="#80444444" CornerRadius="3"
+                            VerticalAlignment="Center"/>
+                  </Grid>
+
+                  <!-- Expandable detail: epochs + images -->
+                  <StackPanel IsVisible="{Binding IsExpanded}" Spacing="8" Margin="28,4,0,0">
+                    <!-- Epochs -->
+                    <StackPanel Spacing="4">
+                      <Grid ColumnDefinitions="*,Auto,Auto">
+                        <TextBlock Grid.Column="0" Text="{Binding SelectedEpochCount, StringFormat='Epochs ({0} selected)'}"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="All" Command="{Binding SelectAllEpochsCommand}"
+                                Padding="6,2" FontSize="11" Margin="0,0,4,0"/>
+                        <Button Grid.Column="2" Content="None" Command="{Binding ClearAllEpochsCommand}"
+                                Padding="6,2" FontSize="11"/>
+                      </Grid>
+                      <ItemsControl ItemsSource="{Binding Epochs}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SelectableExportItem">
+                            <CheckBox IsChecked="{Binding IsSelected}" Margin="0,1">
+                              <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                <TextBlock Text="{Binding SizeDisplay}" FontSize="11" Opacity="0.5"
+                                           IsVisible="{Binding HasSize}"/>
+                              </StackPanel>
+                            </CheckBox>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+
+                    <!-- Images -->
+                    <StackPanel Spacing="4">
+                      <Grid ColumnDefinitions="*,Auto,Auto">
+                        <TextBlock Grid.Column="0" Text="{Binding SelectedImageCount, StringFormat='Images ({0} selected)'}"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="All" Command="{Binding SelectAllImagesCommand}"
+                                Padding="6,2" FontSize="11" Margin="0,0,4,0"/>
+                        <Button Grid.Column="2" Content="None" Command="{Binding ClearAllImagesCommand}"
+                                Padding="6,2" FontSize="11"/>
+                      </Grid>
+                      <ItemsControl ItemsSource="{Binding Images}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SelectableExportItem">
+                            <CheckBox IsChecked="{Binding IsSelected}" Margin="0,1">
+                              <TextBlock Text="{Binding Name}" FontSize="12"/>
+                            </CheckBox>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Compress images option -->
+    <CheckBox Grid.Row="2" IsChecked="{Binding CompressImagesToJpeg}" Margin="0,12,0,12"
+              ToolTip.Tip="Convert PNG images to JPEG during export (without metadata)">
+      <TextBlock Text="Compress images to JPEG" FontSize="12"/>
+    </CheckBox>
+
+    <!-- Will be exported (highlighted) -->
+    <Border Grid.Row="3" Background="#2D7D46" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+            IsVisible="{Binding CanExport}">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" Text="Will be exported:" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="2">
+          <TextBlock Text="{Binding ExportRunsText}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ExportModelCardsText}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ExportSafetensorText}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ExportMediaText}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
+          <TextBlock Text="{Binding ExportTotalText}" FontWeight="Bold" FontSize="16" HorizontalAlignment="Right" Margin="0,2,0,0"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="3" Background="#7D2D2D" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+            IsVisible="{Binding !CanExport}">
+      <TextBlock Text="Select at least one run to export." HorizontalAlignment="Center" FontWeight="SemiBold"/>
+    </Border>
+
+    <!-- Buttons -->
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel" Width="100" Click="OnCancelClick"/>
+      <Button Content="Export" Width="100" Background="#2D7D46" IsEnabled="{Binding CanExport}" Click="OnExportClick"/>
+    </StackPanel>
+
+  </Grid>
+</Window>

@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -29,17 +30,44 @@ public partial class ImageEditorViewModel : ObservableObject
     private long _fileSizeBytes;
     private string _cropResolutionText = string.Empty;
     private bool _cropAspectInverted;
+    private bool _isVideoMode;
 
     #region Sub-ViewModels
 
     /// <summary>Gets the editor services for use by the View layer.</summary>
     public EditorServices Services => _services;
 
+    /// <summary>Sub-ViewModel for video playback. Non-null when a video file is loaded.</summary>
+    public VideoPlayerViewModel VideoPlayer { get; } = new();
+
+    /// <summary>Whether the editor is currently in video playback mode (no image editing tools).</summary>
+    public bool IsVideoMode
+    {
+        get => _isVideoMode;
+        private set
+        {
+            if (SetProperty(ref _isVideoMode, value))
+            {
+                OnPropertyChanged(nameof(IsImageMode));
+                NotifyCommandsCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Whether the editor is in image editing mode (not video).</summary>
+    public bool IsImageMode => !_isVideoMode;
+
     /// <summary>
     /// Callback provided by the View to save the current editor image to a file path.
     /// Returns true if the save succeeded.
     /// </summary>
     public Func<string, bool>? SaveImageFunc { get; set; }
+
+    /// <summary>
+    /// Callback provided by the View to save the current editor image as JPEG (no metadata).
+    /// Returns true if the save succeeded.
+    /// </summary>
+    public Func<string, bool>? SaveJpegFunc { get; set; }
 
     /// <summary>
     /// Callback provided by the View to save a layered TIFF to a file path.
@@ -265,6 +293,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public IAsyncRelayCommand SaveOverwriteCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
     public IAsyncRelayCommand ExportAsPngCommand { get; }
+    public IAsyncRelayCommand ExportAsJpegCommand { get; }
     public IAsyncRelayCommand ExportAsLayeredTiffCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
@@ -329,7 +358,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
-        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools);
+        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();
@@ -356,6 +385,7 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveOverwriteCommand = new AsyncRelayCommand(ExecuteSaveOverwriteAsync, () => HasImage);
         ExportCommand = new AsyncRelayCommand(ExecuteExportAsync, () => HasImage);
         ExportAsPngCommand = new AsyncRelayCommand(ExecuteExportAsPngAsync, () => HasImage);
+        ExportAsJpegCommand = new AsyncRelayCommand(ExecuteExportAsJpegAsync, () => HasImage);
         ExportAsLayeredTiffCommand = new AsyncRelayCommand(ExecuteExportAsLayeredTiffAsync, () => HasImage);
         ZoomInCommand = new RelayCommand(ExecuteZoomIn, () => HasImage);
         ZoomOutCommand = new RelayCommand(ExecuteZoomOut, () => HasImage);
@@ -514,6 +544,7 @@ public partial class ImageEditorViewModel : ObservableObject
         SaveOverwriteCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
         ExportAsPngCommand.NotifyCanExecuteChanged();
+        ExportAsJpegCommand.NotifyCanExecuteChanged();
         ExportAsLayeredTiffCommand.NotifyCanExecuteChanged();
         ZoomInCommand.NotifyCanExecuteChanged();
         ZoomOutCommand.NotifyCanExecuteChanged();
@@ -534,10 +565,26 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Public Methods (View wiring)
 
-    /// <summary>Loads an image from the specified file path.</summary>
+    /// <summary>Loads an image or video from the specified file path.</summary>
     public void LoadImage(string imagePath)
     {
-        CurrentImagePath = imagePath;
+        if (MediaFileExtensions.IsVideoFile(imagePath))
+        {
+            CloseAllTools();
+            VideoPlayer.LoadVideo(imagePath);
+            IsVideoMode = true;
+            CurrentImagePath = imagePath;
+        }
+        else
+        {
+            if (IsVideoMode)
+            {
+                VideoPlayer.Stop();
+                IsVideoMode = false;
+            }
+
+            CurrentImagePath = imagePath;
+        }
     }
 
     /// <summary>Updates the image dimensions displayed in the ViewModel.</summary>
@@ -679,6 +726,13 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteClearImage()
     {
         CloseAllTools();
+
+        if (IsVideoMode)
+        {
+            VideoPlayer.Stop();
+            IsVideoMode = false;
+        }
+
         CurrentImagePath = null;
         ImageWidth = 0;
         ImageHeight = 0;
@@ -867,6 +921,29 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    private async Task ExecuteExportAsJpegAsync()
+    {
+        if (CurrentImagePath is null || SaveJpegFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
+        var suggestedName = $"{fileName}_export.jpg";
+
+        var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
+        if (string.IsNullOrEmpty(exportPath)) return;
+
+        try
+        {
+            if (SaveJpegFunc(exportPath))
+                OnExportCompleted(exportPath);
+            else
+                StatusMessage = "Failed to export JPEG.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error exporting JPEG: {ex.Message}";
+        }
+    }
+
     private async Task ExecuteExportAsLayeredTiffAsync()
     {
         if (CurrentImagePath is null || SaveLayeredTiffFunc is null || ShowSaveFileDialogFunc is null) return;
@@ -992,8 +1069,21 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return;
 
+        // Export the current edited state to a temp file so the upscaler
+        // receives the edited image, not the original on disk.
+        var pathToSend = CurrentImagePath;
+        if (SaveImageFunc is not null)
+        {
+            var ext = Path.GetExtension(CurrentImagePath);
+            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_upscale_{Guid.NewGuid()}{ext}");
+            if (SaveImageFunc(tempPath))
+            {
+                pathToSend = tempPath;
+            }
+        }
+
         _eventAggregator?.PublishNavigateToBatchUpscale(
-            new NavigateToBatchUpscaleEventArgs { ImagePaths = [CurrentImagePath] });
+            new NavigateToBatchUpscaleEventArgs { ImagePaths = [pathToSend] });
     }
 
     #endregion

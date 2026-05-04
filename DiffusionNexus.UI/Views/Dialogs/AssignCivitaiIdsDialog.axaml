@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.AssignCivitaiIdsDialog"
+        x:DataType="local:AssignCivitaiIdsDialog"
+        Title="Assign Civitai IDs Manually"
+        Width="600"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+  <StackPanel Margin="20" Spacing="14">
+    <TextBlock FontSize="16" FontWeight="Bold" Foreground="White" Text="Find this model on Civitai"/>
+    <TextBlock TextWrapping="Wrap" Foreground="#CCCCCC" FontSize="12"
+               Text="Paste the full Civitai URL, or enter a Model ID and (optionally) a Model Version ID. Click Search to fetch the model and confirm it is the correct one before saving."/>
+    <StackPanel Spacing="4">
+      <TextBlock Text="Civitai URL" Foreground="#FF66AA" FontWeight="SemiBold" FontSize="12"/>
+      <TextBox Name="UrlTextBox" Text="{Binding UrlText, Mode=TwoWay}"
+               Watermark="https://civitai.com/models/2353262?modelVersionId=2658870" FontSize="13"/>
+    </StackPanel>
+    <TextBlock Text="— or —" Foreground="#888" FontSize="11" HorizontalAlignment="Center"/>
+    <Grid ColumnDefinitions="*,8,*">
+      <StackPanel Grid.Column="0" Spacing="4">
+        <TextBlock Text="Model ID" Foreground="#FF66AA" FontWeight="SemiBold" FontSize="12"/>
+        <TextBox Text="{Binding ModelIdText, Mode=TwoWay}" Watermark="e.g. 2353262" FontSize="13"/>
+      </StackPanel>
+      <StackPanel Grid.Column="2" Spacing="4">
+        <TextBlock Text="Model Version ID (optional)" Foreground="#FF66AA" FontWeight="SemiBold" FontSize="12"/>
+        <TextBox Text="{Binding VersionIdText, Mode=TwoWay}" Watermark="e.g. 2658870" FontSize="13"/>
+      </StackPanel>
+    </Grid>
+    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+      <Button Name="SearchButton" Content="Search" Padding="14,6"
+              Background="#0066CC" Foreground="White" FontWeight="SemiBold"
+              IsDefault="True" Click="OnSearchClick"/>
+      <ProgressBar Name="SearchProgress" IsIndeterminate="True" Width="120" Height="6"
+                   IsVisible="False" VerticalAlignment="Center"/>
+      <TextBlock Name="StatusText" Foreground="#FF6677" FontSize="12"
+                 VerticalAlignment="Center" TextWrapping="Wrap" IsVisible="False"/>
+    </StackPanel>
+    <Border Name="PreviewBorder" Background="#1E1E1E" BorderBrush="#444" BorderThickness="1"
+            CornerRadius="6" Padding="12" IsVisible="False">
+      <Grid ColumnDefinitions="Auto,12,*">
+        <Border Grid.Column="0" Width="140" Height="170" Background="#111"
+                CornerRadius="4" ClipToBounds="True">
+          <Grid>
+            <Image Name="PreviewImage" Stretch="UniformToFill"/>
+            <TextBlock Name="NoPreviewText" Text="No Preview" HorizontalAlignment="Center"
+                       VerticalAlignment="Center" Foreground="#555" FontSize="12" IsVisible="False"/>
+          </Grid>
+        </Border>
+        <StackPanel Grid.Column="2" Spacing="6">
+          <TextBlock Name="PreviewName" FontSize="16" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+          <TextBlock Name="PreviewType" Foreground="#AAA" FontSize="12"/>
+          <TextBlock Name="PreviewVersion" Foreground="#66CCFF" FontSize="13" TextWrapping="Wrap"/>
+          <TextBlock Name="PreviewBaseModel" Foreground="#CCCCCC" FontSize="12"/>
+          <TextBlock Name="PreviewCreator" Foreground="#CCCCCC" FontSize="12"/>
+          <TextBlock Name="PreviewIds" Foreground="#888" FontSize="11" Margin="0,4,0,0"/>
+          <TextBlock Text="Is this the correct model?" Foreground="White"
+                     FontWeight="SemiBold" FontSize="12" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel" Width="90" Click="OnCancelClick"/>
+      <Button Name="ConfirmButton" Content="Confirm &amp; Save" Width="140"
+              Background="#0066CC" Foreground="White" FontWeight="SemiBold"
+              IsEnabled="False" Click="OnConfirmClick"/>
+    </StackPanel>
+  </StackPanel>
+</Window>

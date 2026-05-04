@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -16,32 +19,60 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly AnalysisPipeline? _pipeline;
+    private readonly AnalysisRunStore _runStore;
+    private readonly DuplicateDetector? _duplicateDetector;
+    private CancellationTokenSource? _analysisCts;
 
     private string _datasetFolderPath = string.Empty;
     private string _datasetLabel = string.Empty;
     private string _triggerWord = string.Empty;
+    private int _currentVersion;
     private LoraType _selectedLoraType = LoraType.Character;
     private bool _isAnalyzing;
+    private string _analysisStatusText = string.Empty;
+    private double _analysisProgress;
     private string _summaryText = string.Empty;
     private Issue? _selectedIssue;
     private AnalysisReport? _lastReport;
+
+    private int _selectedTabIndex;
+    private double _compositeScore;
+    private string _compositeScoreLabel = string.Empty;
+    private string _compositeScoreColor = "#666";
+    private bool _hasCompositeScore;
+    private string _scoreCoverageText = string.Empty;
 
     /// <summary>
     /// Creates a new <see cref="DatasetQualityTabViewModel"/>.
     /// </summary>
     /// <param name="pipeline">The analysis pipeline for running quality checks.</param>
+    /// <param name="runStore">Store for persisting and loading analysis run history.</param>
     /// <param name="bucketAnalyzer">Optional bucket analyzer for image bucketing analysis.</param>
-    public DatasetQualityTabViewModel(AnalysisPipeline pipeline, BucketAnalyzer? bucketAnalyzer = null)
+    /// <param name="imageChecks">Optional image quality check implementations.</param>
+    public DatasetQualityTabViewModel(
+        AnalysisPipeline pipeline,
+        AnalysisRunStore runStore,
+        BucketAnalyzer? bucketAnalyzer = null,
+        IEnumerable<IImageQualityCheck>? imageChecks = null,
+        DuplicateDetector? duplicateDetector = null,
+        ColorDistributionAnalyzer? colorDistributionAnalyzer = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(runStore);
         _pipeline = pipeline;
+        _runStore = runStore;
+        _duplicateDetector = duplicateDetector;
 
         ImageAnalysisTab = bucketAnalyzer is not null
-            ? new ImageAnalysisTabViewModel(bucketAnalyzer)
+            ? new ImageAnalysisTabViewModel(bucketAnalyzer, imageChecks, duplicateDetector, colorDistributionAnalyzer)
             : new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
+        TestRunsTab = new TestRunsTabViewModel(runStore);
+
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
+        CancelAnalysisCommand = new RelayCommand(CancelAnalysis, () => CanCancelAnalysis);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -53,10 +84,16 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// </summary>
     public DatasetQualityTabViewModel()
     {
+        _runStore = new AnalysisRunStore();
+
         ImageAnalysisTab = new ImageAnalysisTabViewModel();
         ImageAnalysisTab.FixDistributionRequested += OnFixDistributionRequested;
 
+        TestRunsTab = new TestRunsTabViewModel();
+
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => CanAnalyze);
+        AnalyzeAllCommand = new AsyncRelayCommand(AnalyzeAllAsync, () => CanAnalyze);
+        CancelAnalysisCommand = new RelayCommand(CancelAnalysis, () => CanCancelAnalysis);
         ApplyFixCommand = new AsyncRelayCommand<FixSuggestion?>(ApplyFixAsync);
         BackupCaptionsCommand = new AsyncRelayCommand(BackupCaptionsAsync);
         ExpandAllFilesCommand = new RelayCommand(ExpandAllFiles, () => EditableAffectedFiles.Count > 0);
@@ -66,7 +103,17 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region IDialogServiceAware
 
     /// <inheritdoc />
-    public IDialogService? DialogService { get; set; }
+    public IDialogService? DialogService
+    {
+        get => field;
+        set
+        {
+            field = value;
+            TestRunsTab.DialogService = value;
+            ImageAnalysisTab.ImageQualityTab.DialogService = value;
+            ImageAnalysisTab.ColorDistributionTab.DialogService = value;
+        }
+    }
 
     #endregion
 
@@ -76,12 +123,26 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public ImageAnalysisTabViewModel ImageAnalysisTab { get; }
 
     /// <summary>
+    /// ViewModel for the Test Runs history sub-tab.
+    /// </summary>
+    public TestRunsTabViewModel TestRunsTab { get; }
+
+    /// <summary>
     /// Raised when a child analysis tab requests navigation to Batch Crop/Scale.
     /// Bubbles up to <see cref="DatasetManagementViewModel"/>.
     /// </summary>
     public event Action? FixDistributionRequested;
 
     #region Observable Properties
+
+    /// <summary>
+    /// Index of the currently selected sub-tab (0 = Image Analysis, 1 = Caption Quality, 2 = Test Runs).
+    /// </summary>
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => SetProperty(ref _selectedTabIndex, value);
+    }
 
     /// <summary>
     /// Display label showing the active dataset name and version (e.g. "Ahkasha — V8").
@@ -126,9 +187,35 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
             if (SetProperty(ref _isAnalyzing, value))
             {
                 OnPropertyChanged(nameof(CanAnalyze));
+                OnPropertyChanged(nameof(CanCancelAnalysis));
                 AnalyzeCommand.NotifyCanExecuteChanged();
+                AnalyzeAllCommand.NotifyCanExecuteChanged();
+                CancelAnalysisCommand.NotifyCanExecuteChanged();
             }
         }
+    }
+
+    /// <summary>
+    /// Whether a cancellable analysis is currently in progress.
+    /// </summary>
+    public bool CanCancelAnalysis => IsAnalyzing && _analysisCts is not null && !_analysisCts.IsCancellationRequested;
+
+    /// <summary>
+    /// Human-readable status text showing the current analysis phase (e.g. "Running Spell Check…").
+    /// </summary>
+    public string AnalysisStatusText
+    {
+        get => _analysisStatusText;
+        private set => SetProperty(ref _analysisStatusText, value);
+    }
+
+    /// <summary>
+    /// Overall analysis progress (0.0 – 1.0) across all pipeline phases.
+    /// </summary>
+    public double AnalysisProgress
+    {
+        get => _analysisProgress;
+        private set => SetProperty(ref _analysisProgress, value);
     }
 
     /// <summary>
@@ -170,6 +257,56 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     /// Whether an issue is currently selected.
     /// </summary>
     public bool HasSelectedIssue => _selectedIssue is not null;
+
+    /// <summary>
+    /// Composite quality score value (0–100).
+    /// </summary>
+    public double CompositeScore
+    {
+        get => _compositeScore;
+        private set => SetProperty(ref _compositeScore, value);
+    }
+
+    /// <summary>
+    /// Human-readable label for the composite score (Poor/Fair/Good/Excellent).
+    /// </summary>
+    public string CompositeScoreLabel
+    {
+        get => _compositeScoreLabel;
+        private set => SetProperty(ref _compositeScoreLabel, value);
+    }
+
+    /// <summary>
+    /// Color hex for the composite score display.
+    /// </summary>
+    public string CompositeScoreColor
+    {
+        get => _compositeScoreColor;
+        private set => SetProperty(ref _compositeScoreColor, value);
+    }
+
+    /// <summary>
+    /// Whether a composite score is available.
+    /// </summary>
+    public bool HasCompositeScore
+    {
+        get => _hasCompositeScore;
+        private set => SetProperty(ref _hasCompositeScore, value);
+    }
+
+    /// <summary>
+    /// Coverage text (e.g. "Based on 2 of 4 categories").
+    /// </summary>
+    public string ScoreCoverageText
+    {
+        get => _scoreCoverageText;
+        private set => SetProperty(ref _scoreCoverageText, value);
+    }
+
+    /// <summary>
+    /// Category score breakdowns for the composite score display.
+    /// </summary>
+    public ObservableCollection<CategoryScoreViewModel> CategoryScores { get; } = [];
 
     #endregion
 
@@ -214,9 +351,20 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     #region Commands
 
     /// <summary>
-    /// Runs the quality analysis pipeline on the active dataset version.
+    /// Runs the quality analysis pipeline on the active dataset version (caption checks only).
     /// </summary>
     public IAsyncRelayCommand AnalyzeCommand { get; }
+
+    /// <summary>
+    /// Runs the full analysis pipeline — captions, image quality, and bucket analysis
+    /// in one pass. Updates the composite score and propagates results to all sub-tabs.
+    /// </summary>
+    public IAsyncRelayCommand AnalyzeAllCommand { get; }
+
+    /// <summary>
+    /// Cancels the in-progress analysis run started by <see cref="AnalyzeAllCommand"/>.
+    /// </summary>
+    public IRelayCommand CancelAnalysisCommand { get; }
 
     /// <summary>
     /// Applies a single <see cref="FixSuggestion"/> then re-runs analysis.
@@ -259,6 +407,141 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         {
             IsAnalyzing = false;
         }
+    }
+
+    private async Task AnalyzeAllAsync()
+    {
+        if (_pipeline is null || !HasDatasetContext) return;
+
+        SelectedTabIndex = 2;
+        _analysisCts?.Dispose();
+        _analysisCts = new CancellationTokenSource();
+        var cancellationToken = _analysisCts.Token;
+        IsAnalyzing = true;
+        AnalysisStatusText = "Starting analysis…";
+        AnalysisProgress = 0.0;
+        TestRunsTab.BeginLiveAnalysis();
+        try
+        {
+            var config = BuildConfig();
+            var stopwatch = Stopwatch.StartNew();
+
+            var statusProgress = new Progress<string>(s =>
+            {
+                var elapsed = stopwatch.Elapsed;
+                var progress = AnalysisProgress;
+
+                // Only notify TestRunsTab for top-level check starts (e.g. "Running Spell Check…")
+                // Skip per-item progress like "Running Spell Check… caption 3 of 126"
+                if (s.StartsWith("Running ", StringComparison.Ordinal) && s.EndsWith('…') && !s.Contains(" of ", StringComparison.Ordinal))
+                {
+                    TestRunsTab.OnCheckStarted(s[8..^1]); // strip "Running " prefix and "…" suffix
+                }
+
+                if (progress > 0.05 && elapsed.TotalSeconds > 2)
+                {
+                    var totalEstimated = TimeSpan.FromTicks((long)(elapsed.Ticks / progress));
+                    var remaining = totalEstimated - elapsed;
+
+                    if (remaining.TotalSeconds >= 1)
+                    {
+                        AnalysisStatusText = $"{s} — ~{FormatTimeRemaining(remaining)} remaining";
+                        return;
+                    }
+                }
+
+                AnalysisStatusText = s;
+            });
+            var percentProgress = new Progress<double>(p => AnalysisProgress = p);
+            var checkScoreProgress = new Progress<CheckScore>(score =>
+                TestRunsTab.OnCheckScoreReported(score));
+
+            // Run the full pipeline: captions + image quality + bucket scoring
+            var report = await _pipeline.AnalyzeFullAsync(config, new BucketConfig
+            {
+                BaseResolution = ImageAnalysisTab.BucketAnalysisTab.BaseResolution,
+                StepSize = ImageAnalysisTab.BucketAnalysisTab.StepSize,
+                MinDimension = ImageAnalysisTab.BucketAnalysisTab.MinDimension,
+                MaxDimension = ImageAnalysisTab.BucketAnalysisTab.MaxDimension,
+                MaxAspectRatio = ImageAnalysisTab.BucketAnalysisTab.MaxAspectRatio,
+                BatchSize = ImageAnalysisTab.BucketAnalysisTab.BatchSize
+            }, percentProgress, statusProgress: statusProgress, checkScoreProgress: checkScoreProgress, cancellationToken: cancellationToken);
+
+            // Apply caption issues + composite score
+            ApplyReport(report);
+
+            // Propagate image quality results to the Image Quality sub-tab
+            if (report.ImageCheckResults.Count > 0)
+            {
+                ImageAnalysisTab.ImageQualityTab.ApplyResults(report.ImageCheckResults);
+            }
+
+            // Propagate duplicate detection results to the Duplicate Detection sub-tab
+            if (_duplicateDetector is not null)
+            {
+                var dupResult = report.ImageCheckResults
+                    .FirstOrDefault(r => r.CheckName == DuplicateDetector.CheckDisplayName);
+                if (dupResult is not null)
+                {
+                    ImageAnalysisTab.DuplicateDetectionTab.ApplyResults(dupResult, _duplicateDetector.LastClusters);
+                }
+            }
+
+            // Propagate color distribution results to the Color Distribution sub-tab
+            var colorResult = report.ImageCheckResults
+                .FirstOrDefault(r => r.CheckName == ColorDistributionAnalyzer.CheckDisplayName);
+            if (colorResult is not null)
+            {
+                ImageAnalysisTab.ColorDistributionTab.ApplyResults(colorResult);
+            }
+
+            // Run bucket analysis through the sub-tab so its full UI (bars, assignments table) gets populated
+            AnalysisStatusText = "Populating bucket analysis UI…";
+            await ImageAnalysisTab.BucketAnalysisTab.RunAnalysisAsync();
+
+            // Persist the run record for the Test Runs history tab
+            stopwatch.Stop();
+            AnalysisStatusText = "Saving run record…";
+            var runRecord = new AnalysisRunRecord
+            {
+                AnalyzedAtUtc = report.AnalyzedAt,
+                Version = _currentVersion,
+                DatasetLabel = DatasetLabel,
+                LoraType = SelectedLoraType,
+                Summary = report.Summary,
+                CompositeScore = report.CompositeScore,
+                CheckScores = report.CheckScores,
+                Issues = report.Issues.Select(RunIssueSnapshot.FromIssue).ToList(),
+                Duration = stopwatch.Elapsed
+            };
+            await _runStore.SaveAsync(_datasetFolderPath, runRecord);
+            await TestRunsTab.OnRunSavedAsync();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            AnalysisStatusText = "Analysis cancelled";
+        }
+        finally
+        {
+            TestRunsTab.EndLiveAnalysis();
+            IsAnalyzing = false;
+            AnalysisProgress = 0.0;
+            _analysisCts?.Dispose();
+            _analysisCts = null;
+            OnPropertyChanged(nameof(CanCancelAnalysis));
+            CancelAnalysisCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void CancelAnalysis()
+    {
+        if (_analysisCts is null || _analysisCts.IsCancellationRequested)
+            return;
+
+        _analysisCts.Cancel();
+        AnalysisStatusText = "Cancelling…";
+        OnPropertyChanged(nameof(CanCancelAnalysis));
+        CancelAnalysisCommand.NotifyCanExecuteChanged();
     }
 
     private async Task ApplyFixAsync(FixSuggestion? suggestion)
@@ -329,17 +612,86 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     {
         _lastReport = report;
 
+        // Only show caption-domain issues here; image issues are displayed in the Image Analysis tab
         Issues.Clear();
         foreach (var issue in report.Issues)
         {
-            Issues.Add(issue);
+            if (issue.Domain == CheckDomain.Caption)
+            {
+                Issues.Add(issue);
+            }
         }
 
         SelectedIssue = Issues.Count > 0 ? Issues[0] : null;
         SummaryText = FormatSummary(report.Summary);
+        ApplyCompositeScore(report.CompositeScore);
 
         OnPropertyChanged(nameof(HasResults));
     }
+
+    /// <summary>
+    /// Updates composite score display properties from a score result.
+    /// </summary>
+    private void ApplyCompositeScore(CompositeScoreResult? result)
+    {
+        CategoryScores.Clear();
+
+        if (result is null)
+        {
+            HasCompositeScore = false;
+            CompositeScore = 0;
+            CompositeScoreLabel = string.Empty;
+            CompositeScoreColor = "#666";
+            ScoreCoverageText = string.Empty;
+            return;
+        }
+
+        HasCompositeScore = true;
+        CompositeScore = result.Score;
+        CompositeScoreLabel = result.Label;
+        CompositeScoreColor = GetScoreColor(result.Score);
+        ScoreCoverageText = result.ParticipatingCategories < result.TotalCategories
+            ? $"Based on {result.ParticipatingCategories} of {result.TotalCategories} categories"
+            : $"All {result.TotalCategories} categories";
+
+        foreach (var cat in result.CategoryScores)
+        {
+            CategoryScores.Add(new CategoryScoreViewModel
+            {
+                CategoryName = FormatCategoryName(cat.Category),
+                Score = cat.Score,
+                ScoreColor = GetScoreColor(cat.Score),
+                Weight = $"{cat.Weight * 100:F0}%"
+            });
+        }
+    }
+
+    private static string GetScoreColor(double score) => score switch
+    {
+        >= 80 => "#4CAF50",  // Green
+        >= 65 => "#8BC34A",  // Light green
+        >= 40 => "#FFA726",  // Orange
+        _ => "#FF6B6B"       // Red
+    };
+
+    /// <summary>
+    /// Formats a <see cref="TimeSpan"/> as a compact human-readable remaining time string.
+    /// </summary>
+    private static string FormatTimeRemaining(TimeSpan remaining)
+    {
+        if (remaining.TotalMinutes >= 1)
+            return $"{(int)remaining.TotalMinutes}m {remaining.Seconds}s";
+        return $"{Math.Max(1, (int)remaining.TotalSeconds)}s";
+    }
+
+    private static string FormatCategoryName(QualityScoreCategory category) => category switch
+    {
+        QualityScoreCategory.ImageTechnicalQuality => "Image Quality",
+        QualityScoreCategory.CaptionQuality => "Caption Quality",
+        QualityScoreCategory.DatasetConsistency => "Consistency",
+        QualityScoreCategory.DatasetCompleteness => "Completeness",
+        _ => category.ToString()
+    };
 
     /// <summary>
     /// Formats the summary line for the bottom status bar.
@@ -379,6 +731,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     public void RefreshContext(string? folderPath, string? datasetName, int version, string? categoryName)
     {
         _datasetFolderPath = folderPath ?? string.Empty;
+        _currentVersion = version;
         DatasetLabel = string.IsNullOrWhiteSpace(datasetName)
             ? string.Empty
             : $"{datasetName} — V{version}";
@@ -394,6 +747,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         Issues.Clear();
         SelectedIssue = null;
         SummaryText = string.Empty;
+        ApplyCompositeScore(null);
 
         OnPropertyChanged(nameof(HasDatasetContext));
         OnPropertyChanged(nameof(HasResults));
@@ -402,6 +756,9 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
 
         // Forward folder context to image analysis dashboard
         ImageAnalysisTab.RefreshContext(_datasetFolderPath);
+
+        // Load run history for the Test Runs tab
+        _ = TestRunsTab.RefreshContextAsync(_datasetFolderPath);
     }
 
     /// <summary>
@@ -527,7 +884,7 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
         try
         {
             var config = BuildConfig();
-            var report = await Task.Run(() => _pipeline.Analyze(config)).ConfigureAwait(false);
+            var report = await Task.Run(() => _pipeline.Analyze(config));
             ApplyReport(report);
         }
         finally
@@ -542,4 +899,22 @@ public class DatasetQualityTabViewModel : ObservableObject, IDialogServiceAware
     }
 
     #endregion
+}
+
+/// <summary>
+/// Lightweight ViewModel for displaying a single category score in the composite breakdown.
+/// </summary>
+public class CategoryScoreViewModel
+{
+    /// <summary>Human-readable category name.</summary>
+    public required string CategoryName { get; init; }
+
+    /// <summary>Score value (0–100).</summary>
+    public required double Score { get; init; }
+
+    /// <summary>Color hex for the score display.</summary>
+    public required string ScoreColor { get; init; }
+
+    /// <summary>Category weight as percentage string (e.g. "30%").</summary>
+    public required string Weight { get; init; }
 }

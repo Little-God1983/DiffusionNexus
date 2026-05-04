@@ -47,11 +47,11 @@ x:Name="MainWin">
 
                             <!-- Bottom Social Links -->
                             <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
-                                <CheckBox IsChecked="{Binding IsDatasetQualityEnabled}"
+                                <CheckBox IsChecked="{Binding IsDiffusionCanvasEnabled}"
                                           Width="20" Height="20"
                                           Margin="14,0,0,0"
                                           Opacity="0.15"
-                                          ToolTip.Tip="Toggle Dataset Quality (hidden feature)"/>
+                                          ToolTip.Tip="Toggle Diffusion Canvas (hidden feature)"/>
                                 <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenYoutubeCommand}"
                                         HorizontalContentAlignment="Left">

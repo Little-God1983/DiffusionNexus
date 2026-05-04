@@ -1,6 +1,9 @@
 name: .NET 10 Build & Test
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
 
 jobs:
   build:

@@ -29,6 +29,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly IAppSettingsService? _settingsService;
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
 
     /// <summary>
     /// Cached Civitai model data from the initial API fetch.
@@ -203,12 +204,14 @@ public partial class ModelDetailViewModel : ViewModelBase
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
         ISecureStorage? secureStorage,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _logger = logger;
+        _baseModelCatalog = baseModelCatalog;
     }
 
     #endregion
@@ -230,6 +233,15 @@ public partial class ModelDetailViewModel : ViewModelBase
         ThumbnailImage = tile.ThumbnailImage;
 
         PopulateFromLocalVersion(tile);
+
+        // Build editable tag chips from local data immediately
+        await LoadEditableTagsAsync();
+        LoadCategorySelection();
+
+        // Populate the base-model dropdown from the Civitai catalog (cached;
+        // falls back to a bundled snapshot when offline). Fire-and-forget so a
+        // slow first fetch never blocks the detail view from rendering.
+        _ = LoadBaseModelCatalogAsync();
 
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
@@ -254,6 +266,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     [RelayCommand]
     private void OpenOnCivitai()
     {
+        if (!CanOpenOnCivitai) return;
         SourceTile?.OpenOnCivitaiCommand.Execute(null);
     }
 
@@ -326,15 +339,31 @@ public partial class ModelDetailViewModel : ViewModelBase
     // TODO: Linux Implementation for download task
     private async Task DownloadFileAsync(string downloadUrl, string targetPath, CivitaiVersionTabItem tab)
     {
-        var taskTracker = App.Services?.GetService<ITaskTracker>();
-        var activityLog = App.Services?.GetService<IActivityLogService>();
         var taskName = $"Downloading {Path.GetFileName(targetPath)}";
-        using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
-
-        activityLog?.StartDownloadProgress(taskName);
+        IActivityLogService? activityLog = null;
+        ITrackedTaskHandle? taskHandle = null;
 
         try
         {
+            var downloadService = App.Services?.GetService<LoraDownloadService>();
+            if (downloadService is not null)
+            {
+                await downloadService.DownloadFileAsync(
+                    downloadUrl,
+                    targetPath,
+                    tab.CivitaiVersion,
+                    taskName,
+                    completed: () => Dispatcher.UIThread.Post(async () => await RefreshAfterDownloadAsync(targetPath)),
+                    failed: () => Dispatcher.UIThread.Post(() => tab.IsDownloading = false),
+                    existingModelId: SourceTile?.ModelEntity?.Id);
+                return;
+            }
+
+            var taskTracker = App.Services?.GetService<ITaskTracker>();
+            activityLog = App.Services?.GetService<IActivityLogService>();
+            taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
+
+            activityLog?.StartDownloadProgress(taskName);
             taskHandle?.ReportIndeterminate("Connecting...");
 
             // Ensure target directory exists
@@ -457,6 +486,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         finally
         {
+            taskHandle?.Dispose();
             await Dispatcher.UIThread.InvokeAsync(() => tab.IsDownloading = false);
         }
     }
@@ -884,6 +914,16 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     public event EventHandler? DownloadCompleted;
 
+    /// <summary>
+    /// Raised after the user confirms "Delete Metadata" and all DB rows for this
+    /// LoRA have been removed. The parent <see cref="LoraViewerViewModel"/>
+    /// subscribes to re-discover the still-on-disk safetensors so the tile
+    /// reappears immediately as a bare-metadata entry.
+    /// </summary>
+    public event EventHandler? MetadataDeleted;
+
+    internal void RaiseMetadataDeleted() => MetadataDeleted?.Invoke(this, EventArgs.Empty);
+
     #endregion
 
     #region Private Methods
@@ -942,8 +982,17 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
 
         // Infer category from the first tag that matches a known CivitaiCategory enum value
-        // (same logic as MetaDataUtilService.GetCategoryFromTags)
-        var category = InferCategoryFromTags(model);
+        // (same logic as MetaDataUtilService.GetCategoryFromTags). User override (Model.UserCategory)
+        // takes precedence when set.
+        string? category = null;
+        if (model?.UserCategory is { } userCat && userCat != Domain.Enums.CivitaiCategory.Unknown)
+        {
+            category = userCat == Domain.Enums.CivitaiCategory.BaseModel ? "Base Model" : userCat.ToString();
+        }
+        else
+        {
+            category = InferCategoryFromTags(model);
+        }
         CategoryDisplay = category ?? string.Empty;
         HasCategory = category is not null;
     }
@@ -1176,6 +1225,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             ? selected.CivitaiVersion.Id.ToString()
             : "\u2014";
         BaseModelDisplay = selected.BaseModel;
+        SyncSelectedBaseModelFromVersion();
 
         // Trigger words
         TriggerWordsDisplay = selected.TriggerWords;
@@ -1253,11 +1303,16 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    /// <summary>
+    /// Retrieves the Civitai API key using a fresh DI scope to avoid stale EF Core tracked entities.
+    /// The injected <c>_settingsService</c> may hold a cached <see cref="AppSettings"/> entity from
+    /// a long-lived DbContext that was loaded before the key was saved via the Settings view.
+    /// </summary>
+    private static async Task<string?> GetApiKeyAsync()
     {
-        if (_settingsService is null || _secureStorage is null) return null;
-        var settings = await _settingsService.GetSettingsAsync();
-        return _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        return await settingsService.GetCivitaiApiKeyAsync();
     }
 
     /// <summary>

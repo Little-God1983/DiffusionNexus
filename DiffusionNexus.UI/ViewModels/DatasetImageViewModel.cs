@@ -85,6 +85,10 @@ public class DatasetImageViewModel : ObservableObject
             if (SetProperty(ref _thumbnailPath, value))
             {
                 OnPropertyChanged(nameof(HasThumbnail));
+                // Reset loaded bitmap so Thumbnail re-loads from the new path
+                _thumbnail = null;
+                _isThumbnailLoading = false;
+                OnPropertyChanged(nameof(Thumbnail));
             }
         }
     }
@@ -352,11 +356,12 @@ public class DatasetImageViewModel : ObservableObject
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         ThumbnailOwnerToken? ownerToken = null)
     {
-        var vm = new DatasetImageViewModel(eventAggregator, thumbnailOrchestrator, ownerToken)
-        {
-            ImagePath = mediaPath,
-            _isVideo = IsVideoFile(mediaPath)
-        };
+        var isVideo = IsVideoFile(mediaPath);
+        var vm = new DatasetImageViewModel(eventAggregator, thumbnailOrchestrator, ownerToken);
+        // Set _isVideo before ImagePath so ThumbnailPath resolves the correct
+        // path (video thumbnail .webp vs original image) from the very first evaluation.
+        vm._isVideo = isVideo;
+        vm.ImagePath = mediaPath;
         vm.LoadCaption();
         vm.LoadRating();
         return vm;

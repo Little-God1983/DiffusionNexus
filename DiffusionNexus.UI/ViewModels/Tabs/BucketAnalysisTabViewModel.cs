@@ -235,6 +235,12 @@ public class BucketAnalysisTabViewModel : ObservableObject
     public event Action<double, int, string>? AnalysisCompleted;
 
     /// <summary>
+    /// Raised when analysis begins running.
+    /// Used by the parent dashboard to show a running indicator on the card.
+    /// </summary>
+    public event Action? AnalysisStarted;
+
+    /// <summary>
     /// Raised when the user clicks the "Open in Batch Crop/Scale" button.
     /// The parent ViewModel chain handles navigation.
     /// </summary>
@@ -268,6 +274,7 @@ public class BucketAnalysisTabViewModel : ObservableObject
             return;
 
         IsAnalyzing = true;
+        AnalysisStarted?.Invoke();
         ClearResults();
 
         try
@@ -291,6 +298,21 @@ public class BucketAnalysisTabViewModel : ObservableObject
         MaxAspectRatio = _maxAspectRatio,
         BatchSize = _batchSize
     };
+
+    /// <summary>
+    /// Runs bucket analysis using the configured parameters and applies results to the UI.
+    /// Called by Analyze All to include bucket analysis in the unified run.
+    /// </summary>
+    public async Task RunAnalysisAsync()
+    {
+        if (_analyzer is null || string.IsNullOrWhiteSpace(_folderPath))
+            return;
+
+        ClearResults();
+        var config = BuildConfig();
+        var result = await Task.Run(() => _analyzer.AnalyzeFolder(_folderPath, config));
+        ApplyResult(result);
+    }
 
     private void ApplyResult(BucketAnalysisResult result)
     {
@@ -378,8 +400,9 @@ public class BucketAnalysisTabViewModel : ObservableObject
             if (pct > 40)
             {
                 Recommendations.Add(
-                    $"\u26A0 {pct:F0}% of images land in the {dominant.Bucket.Label} bucket. " +
-                    "Use Batch Crop/Scale to crop or pad images to different aspect ratios.");
+                    $"\u26A0 {pct:F0}% of your images share the same shape ({dominant.Bucket.Label}). " +
+                    "When most images look alike the AI over-learns that shape and struggles with others. " +
+                    "Open Batch Crop/Scale to resize some images to different aspect ratios (e.g. portrait, landscape, square).");
             }
         }
 
@@ -388,8 +411,9 @@ public class BucketAnalysisTabViewModel : ObservableObject
         if (singleBuckets > 0)
         {
             Recommendations.Add(
-                $"\u26A0 {singleBuckets} bucket(s) contain only 1 image. " +
-                "Consider cropping those images to a more common aspect ratio.");
+                $"\u26A0 {singleBuckets} size group(s) have only 1 image. " +
+                "Training works best when each size group has multiple images so they can be processed together in a batch. " +
+                "Use Batch Crop/Scale to resize these outliers so they fit into a more common size group.");
         }
 
         // High crop images
@@ -398,9 +422,9 @@ public class BucketAnalysisTabViewModel : ObservableObject
         if (highCropCount > 0)
         {
             Recommendations.Add(
-                $"\u2702 {highCropCount} image(s) lose \u2265 {BucketAnalyzer.CropWarningThreshold}% " +
-                "of pixels during bucketing. Pre-cropping to a standard ratio in " +
-                "Batch Crop/Scale reduces waste.");
+                $"\u2702 {highCropCount} image(s) will have {BucketAnalyzer.CropWarningThreshold}%+ of their content cut off " +
+                "to fit the nearest training size. Important details (faces, hands, etc.) may be lost. " +
+                "Open Batch Crop/Scale to manually crop these images so you control what stays in the frame.");
         }
 
         // Heavy upscale images
@@ -409,17 +433,19 @@ public class BucketAnalysisTabViewModel : ObservableObject
         if (upscaleCount > 0)
         {
             Recommendations.Add(
-                $"\uD83D\uDD0D {upscaleCount} image(s) require \u2265 " +
-                $"{BucketAnalyzer.UpscaleCriticalThreshold:F1}\u00D7 upscaling. " +
-                "Scaling these down to match the base resolution avoids blurry training data.");
+                $"\uD83D\uDD0D {upscaleCount} image(s) are too small and need to be stretched " +
+                $"{BucketAnalyzer.UpscaleCriticalThreshold:F1}\u00D7 or more to reach the training size. " +
+                "Stretched images look blurry, and the AI learns that blur. " +
+                "Replace them with higher-resolution versions or remove them from the dataset.");
         }
 
         // General tip when no specific recommendations were triggered
         if (Recommendations.Count == 0)
         {
             Recommendations.Add(
-                "\uD83D\uDCA1 The distribution is uneven. Use Batch Crop/Scale to pre-process images " +
-                "to standard aspect ratios before training.");
+                "\uD83D\uDCA1 Your images are spread unevenly across size groups, which can slow down training " +
+                "and reduce quality. Open Batch Crop/Scale to resize images into standard shapes " +
+                "(e.g. 1:1 square, 2:3 portrait, 3:2 landscape) before training.");
         }
 
         HasRecommendations = Recommendations.Count > 0;

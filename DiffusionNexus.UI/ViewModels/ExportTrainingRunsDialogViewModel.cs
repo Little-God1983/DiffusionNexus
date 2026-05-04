@@ -2,53 +2,26 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
-using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.ViewModels.Tabs;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel for the unified export dialog that combines dataset export and training run export
-/// into a single tabbed interface.
+/// ViewModel for the multi-run training export dialog.
+/// Lets users select multiple training runs with per-run epoch/image/model card selections.
 /// </summary>
-public partial class UnifiedExportDialogViewModel : ObservableObject
+public partial class ExportTrainingRunsDialogViewModel : ObservableObject
 {
-    private int _selectedTabIndex;
-
     /// <summary>
-    /// Dialog title displayed at the top (e.g. "Export MyDataset Version 3").
+    /// Dialog title displayed at the top.
     /// </summary>
     public string DialogTitle { get; }
-
-    /// <summary>
-    /// The dataset export sub-ViewModel (format, rating filters, AI Toolkit, etc.).
-    /// </summary>
-    public ExportDatasetDialogViewModel DatasetExport { get; }
 
     /// <summary>
     /// Selectable training runs, each with its own epochs/images/model card selections.
     /// </summary>
     public ObservableCollection<ExportableTrainingRun> TrainingRuns { get; } = [];
-
-    /// <summary>
-    /// Whether there are training runs available to export.
-    /// </summary>
-    public bool HasTrainingRuns => TrainingRuns.Count > 0;
-
-    /// <summary>
-    /// Index of the currently selected tab (0 = Dataset, 1 = Training Runs).
-    /// Determines what gets exported.
-    /// </summary>
-    public int SelectedTabIndex
-    {
-        get => _selectedTabIndex;
-        set
-        {
-            if (SetProperty(ref _selectedTabIndex, value))
-                RefreshSummary();
-        }
-    }
 
     /// <summary>
     /// Number of training runs selected for export.
@@ -62,14 +35,6 @@ public partial class UnifiedExportDialogViewModel : ObservableObject
     {
         get
         {
-            if (SelectedTabIndex == 0)
-            {
-                if (DatasetExport.CanExport)
-                    return $"{DatasetExport.ToExportCount} dataset file{(DatasetExport.ToExportCount == 1 ? "" : "s")}";
-
-                return "Nothing selected";
-            }
-
             var selectedRuns = TrainingRuns.Where(r => r.IsSelected).ToList();
             if (selectedRuns.Count > 0)
             {
@@ -82,41 +47,105 @@ public partial class UnifiedExportDialogViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Total number of safetensor files selected across all runs.
+    /// </summary>
+    private int TotalSafetensorCount => TrainingRuns.Where(r => r.IsSelected).Sum(r => r.SelectedEpochCount);
+
+    /// <summary>
+    /// Total number of media files selected across all runs.
+    /// </summary>
+    private int TotalMediaCount => TrainingRuns.Where(r => r.IsSelected).Sum(r => r.SelectedImageCount);
+
+    /// <summary>
+    /// Total number of model cards selected across all runs.
+    /// </summary>
+    private int TotalModelCardCount => TrainingRuns.Count(r => r.IsSelected && r.IncludeModelCard);
+
+    /// <summary>
+    /// Total number of files to export (epochs + images + model cards).
+    /// </summary>
+    private int TotalFileCount => TotalSafetensorCount + TotalMediaCount + TotalModelCardCount;
+
+    /// <summary>
+    /// Display text for runs (e.g. "2 Runs").
+    /// </summary>
+    public string ExportRunsText =>
+        $"{SelectedRunCount} {(SelectedRunCount == 1 ? "Run" : "Runs")}";
+
+    /// <summary>
+    /// Display text for model cards (e.g. "2 Model cards").
+    /// </summary>
+    public string ExportModelCardsText =>
+        $"{TotalModelCardCount} Model {(TotalModelCardCount == 1 ? "card" : "cards")}";
+
+    /// <summary>
+    /// Display text for safetensor files (e.g. "5 Safetensor files").
+    /// </summary>
+    public string ExportSafetensorText =>
+        $"{TotalSafetensorCount} Safetensor {(TotalSafetensorCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for media files (e.g. "8 Media files").
+    /// </summary>
+    public string ExportMediaText =>
+        $"{TotalMediaCount} Media {(TotalMediaCount == 1 ? "file" : "files")}";
+
+    /// <summary>
+    /// Display text for total file count (e.g. "15 Files in total").
+    /// </summary>
+    public string ExportTotalText =>
+        $"{TotalFileCount} {(TotalFileCount == 1 ? "File" : "Files")} in total";
+
+    /// <summary>
     /// Whether there is anything to export.
     /// </summary>
-    public bool CanExport
-    {
-        get
-        {
-            if (SelectedTabIndex == 0)
-                return DatasetExport.CanExport;
+    public bool CanExport => TrainingRuns.Any(r => r.IsSelected && r.TotalSelectedCount > 0);
 
-            return TrainingRuns.Any(r => r.IsSelected && r.TotalSelectedCount > 0);
+    /// <summary>
+    /// When enabled, exported PNG images will be converted to JPEG (without metadata).
+    /// </summary>
+    [ObservableProperty]
+    private bool _compressImagesToJpeg;
+
+    /// <summary>
+    /// Unchecks BakeMetadata on all runs when JPEG compression is enabled,
+    /// since JPEG does not support PNG text metadata chunks.
+    /// </summary>
+    partial void OnCompressImagesToJpegChanged(bool value)
+    {
+        if (value)
+        {
+            foreach (var run in TrainingRuns)
+            {
+                run.BakeMetadata = false;
+            }
         }
     }
 
     // ── Commands ──
 
+    /// <summary>
+    /// Selects all training runs and their items.
+    /// </summary>
     public IRelayCommand SelectAllRunsCommand { get; }
+
+    /// <summary>
+    /// Clears all training run selections.
+    /// </summary>
     public IRelayCommand ClearAllRunsCommand { get; }
 
     /// <summary>
-    /// Creates the unified export ViewModel.
+    /// Creates the training runs export ViewModel.
     /// </summary>
-    /// <param name="datasetName">Name of the dataset being exported.</param>
+    /// <param name="datasetName">Name of the dataset whose training runs are being exported.</param>
     /// <param name="datasetVersion">Current version number of the dataset.</param>
-    /// <param name="mediaFiles">All media files in the dataset.</param>
     /// <param name="trainingRuns">Training runs available for export.</param>
-    /// <param name="aiToolkitInstances">Available AI Toolkit installations.</param>
-    public UnifiedExportDialogViewModel(
+    public ExportTrainingRunsDialogViewModel(
         string datasetName,
         int datasetVersion,
-        IEnumerable<DatasetImageViewModel> mediaFiles,
-        IEnumerable<TrainingRunCardViewModel> trainingRuns,
-        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
+        IEnumerable<TrainingRunCardViewModel> trainingRuns)
     {
-        DialogTitle = $"Export {datasetName} Version {datasetVersion}";
-        DatasetExport = new ExportDatasetDialogViewModel(datasetName, mediaFiles, aiToolkitInstances);
+        DialogTitle = $"Export Training Runs — {datasetName} V{datasetVersion}";
 
         foreach (var run in trainingRuns)
         {
@@ -143,15 +172,12 @@ public partial class UnifiedExportDialogViewModel : ObservableObject
                 run.ClearAllImagesCommand.Execute(null);
             }
         });
-
-        // Listen to dataset export changes
-        DatasetExport.PropertyChanged += (_, _) => RefreshSummary();
     }
 
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public UnifiedExportDialogViewModel() : this("Sample Dataset", 1, [], [])
+    public ExportTrainingRunsDialogViewModel() : this("Sample Dataset", 1, [])
     {
     }
 
@@ -160,7 +186,69 @@ public partial class UnifiedExportDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedRunCount));
         OnPropertyChanged(nameof(ExportSummary));
         OnPropertyChanged(nameof(CanExport));
+        OnPropertyChanged(nameof(ExportRunsText));
+        OnPropertyChanged(nameof(ExportModelCardsText));
+        OnPropertyChanged(nameof(ExportSafetensorText));
+        OnPropertyChanged(nameof(ExportMediaText));
+        OnPropertyChanged(nameof(ExportTotalText));
     }
+}
+
+/// <summary>
+/// Result from the training runs export dialog.
+/// </summary>
+public class ExportTrainingRunsResult
+{
+    /// <summary>
+    /// Whether the user confirmed the export.
+    /// </summary>
+    public bool Confirmed { get; init; }
+
+    /// <summary>
+    /// Training run export entries for each selected run.
+    /// </summary>
+    public List<TrainingRunExportEntry> TrainingRunResults { get; init; } = [];
+
+    /// <summary>
+    /// When true, exported PNG images should be converted to JPEG (without metadata).
+    /// </summary>
+    public bool CompressImagesToJpeg { get; init; }
+
+    /// <summary>
+    /// Creates a cancelled result.
+    /// </summary>
+    public static ExportTrainingRunsResult Cancelled() => new() { Confirmed = false };
+}
+
+/// <summary>
+/// Export entry for a single training run.
+/// </summary>
+public class TrainingRunExportEntry
+{
+    /// <summary>
+    /// The source training run view model.
+    /// </summary>
+    public required TrainingRunCardViewModel Source { get; init; }
+
+    /// <summary>
+    /// Full paths of selected epoch files.
+    /// </summary>
+    public List<string> EpochPaths { get; init; } = [];
+
+    /// <summary>
+    /// Full paths of selected image files.
+    /// </summary>
+    public List<string> ImagePaths { get; init; } = [];
+
+    /// <summary>
+    /// Whether to include a model card.
+    /// </summary>
+    public bool IncludeModelCard { get; init; }
+
+    /// <summary>
+    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
+    /// </summary>
+    public bool BakeMetadata { get; init; }
 }
 
 /// <summary>
@@ -364,61 +452,4 @@ public partial class ExportableTrainingRun : ObservableObject
     /// </summary>
     public List<string> GetSelectedImagePaths() =>
         Images.Where(i => i.IsSelected).Select(i => i.FilePath).ToList();
-}
-
-/// <summary>
-/// Combined result from the unified export dialog.
-/// </summary>
-public class UnifiedExportResult
-{
-    /// <summary>
-    /// Whether the user confirmed the export.
-    /// </summary>
-    public bool Confirmed { get; init; }
-
-    /// <summary>
-    /// Dataset export result (null if dataset export was not included).
-    /// </summary>
-    public ExportDatasetResult? DatasetResult { get; init; }
-
-    /// <summary>
-    /// Training run export results for each selected run.
-    /// </summary>
-    public List<TrainingRunExportEntry> TrainingRunResults { get; init; } = [];
-
-    /// <summary>
-    /// Creates a cancelled result.
-    /// </summary>
-    public static UnifiedExportResult Cancelled() => new() { Confirmed = false };
-}
-
-/// <summary>
-/// Export entry for a single training run within the unified export.
-/// </summary>
-public class TrainingRunExportEntry
-{
-    /// <summary>
-    /// The source training run view model.
-    /// </summary>
-    public required TrainingRunCardViewModel Source { get; init; }
-
-    /// <summary>
-    /// Full paths of selected epoch files.
-    /// </summary>
-    public List<string> EpochPaths { get; init; } = [];
-
-    /// <summary>
-    /// Full paths of selected image files.
-    /// </summary>
-    public List<string> ImagePaths { get; init; } = [];
-
-    /// <summary>
-    /// Whether to include a model card.
-    /// </summary>
-    public bool IncludeModelCard { get; init; }
-
-    /// <summary>
-    /// Whether to embed captions into PNG metadata (A1111-style parameters), overriding existing image metadata.
-    /// </summary>
-    public bool BakeMetadata { get; init; }
 }

@@ -314,6 +314,15 @@ public partial class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Expands the layer canvas and offsets all existing layer content.
+    /// </summary>
+    public void ResizeLayerCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+        OnImageChanged();
+    }
+
+    /// <summary>
     /// Removes a layer from the stack.
     /// </summary>
     /// <param name="layer">Layer to remove.</param>

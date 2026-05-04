@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using DiffusionNexus.Civitai;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -23,6 +24,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private bool _isSaving;
 
     #region Observable Properties
@@ -209,7 +211,8 @@ public partial class SettingsViewModel : BusyViewModelBase
         IDatasetBackupService? backupService = null,
         IDatasetEventAggregator? eventAggregator = null,
         IActivityLogService? activityLogService = null,
-        ISettingsExportService? exportService = null)
+        ISettingsExportService? exportService = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
@@ -217,6 +220,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _eventAggregator = eventAggregator;
         _activityLogService = activityLogService;
         _exportService = exportService;
+        _baseModelCatalog = baseModelCatalog;
 
         // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
         if (_eventAggregator is not null)
@@ -236,6 +240,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _eventAggregator = null;
         _activityLogService = null;
         _exportService = null;
+        _baseModelCatalog = null;
 
         // Design-time data
         LoraSources =
@@ -555,6 +560,30 @@ public partial class SettingsViewModel : BusyViewModelBase
     {
         HuggingfaceApiKey = null;
         HasChanges = true;
+    }
+
+    /// <summary>
+    /// Forces a live refresh of the Civitai base model catalog from GitHub,
+    /// bypassing the in-memory and on-disk caches. Status is surfaced to the
+    /// Unified Console via the catalog's <see cref="ICivitaiBaseModelCatalog.StatusChanged"/>
+    /// event (wired up in <c>App.axaml.cs</c>).
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshBaseModelCatalogAsync()
+    {
+        if (_baseModelCatalog is null) return;
+
+        await RunBusyAsync(async () =>
+        {
+            try
+            {
+                await _baseModelCatalog.GetBaseModelsAsync(forceRefresh: true);
+            }
+            catch
+            {
+                // Errors are already surfaced via StatusChanged → Unified Console.
+            }
+        });
     }
 
     /// <summary>
@@ -1061,11 +1090,24 @@ public partial class SettingsViewModel : BusyViewModelBase
                 {
                     Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                     {
-                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%)";
+                        var fileInfo = p.TotalFiles > 0
+                            ? $" — {p.FilesProcessed}/{p.TotalFiles}"
+                            : string.Empty;
+                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
                     });
                 });
 
-                var result = await _backupService.RestoreBackupAsync(backupPath, progress);
+                // Run the restore on a background thread with its own DI scope.
+                // RestoreBackupAsync is "async" but its extraction loop is synchronous I/O,
+                // so awaiting it directly blocks the UI thread and freezes the busy dialog.
+                // A fresh scope avoids concurrent DbContext access (the shared scoped
+                // DbContext is not thread-safe).
+                var result = await Task.Run(async () =>
+                {
+                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+                    return await scopedBackupService.RestoreBackupAsync(backupPath, progress);
+                });
 
                 if (result.Success)
                 {

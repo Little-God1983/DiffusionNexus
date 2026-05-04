@@ -7,6 +7,8 @@ using System.Collections.ObjectModel;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 
+using DiffusionNexus.UI.ViewModels.Tabs;
+
 /// <summary>
 /// Provides dialog operations for file/folder pickers and message boxes.
 /// Inject this interface to enable testable UI dialogs.
@@ -124,20 +126,16 @@ public interface IDialogService
         IEnumerable<InstallerPackage>? aiToolkitInstances = null);
 
     /// <summary>
-    /// Shows the unified export dialog combining dataset and training run export into a single tabbed UI.
+    /// Shows the training runs export dialog for selecting which runs and artifacts to export.
     /// </summary>
-    /// <param name="datasetName">Name of the dataset being exported.</param>
+    /// <param name="datasetName">Name of the dataset whose training runs are being exported.</param>
     /// <param name="datasetVersion">Current version number of the dataset.</param>
-    /// <param name="mediaFiles">All media files in the dataset.</param>
     /// <param name="trainingRuns">Training runs available for export.</param>
-    /// <param name="aiToolkitInstances">Available AI Toolkit installations for direct export.</param>
-    /// <returns>Unified export result with dataset and training run selections, or cancelled result.</returns>
-    Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+    /// <returns>Export result with selected training runs, or cancelled result.</returns>
+    Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
         string datasetName,
         int datasetVersion,
-        IEnumerable<DatasetImageViewModel> mediaFiles,
-        IEnumerable<TrainingRunCardViewModel> trainingRuns,
-        IEnumerable<InstallerPackage>? aiToolkitInstances = null);
+        IEnumerable<TrainingRunCardViewModel> trainingRuns);
 
     /// <summary>
     /// Shows the create dataset dialog with name, category, and type options.
@@ -159,6 +157,7 @@ public interface IDialogService
     /// <param name="showRatingControls">Whether to show rating controls.</param>
     /// <param name="onToggleFavorite">Optional callback to toggle favorite state. Returns the new state. When null, favorite controls are hidden.</param>
     /// <param name="isFavoriteCheck">Optional callback to check if a file is currently favorited.</param>
+    /// <param name="videoThumbnailService">Optional video thumbnail service for on-demand thumbnail generation.</param>
     Task ShowImageViewerDialogAsync(
         ObservableCollection<DatasetImageViewModel> images,
         int startIndex,
@@ -168,7 +167,8 @@ public interface IDialogService
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null);
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null);
 
     /// <summary>
     /// Shows the Save As dialog for saving an image with a new name and optional rating.
@@ -330,6 +330,36 @@ public interface IDialogService
         CivitaiModelVersion civitaiVersion,
         IReadOnlyList<string> sourceFolders,
         string? category = null);
+
+    /// <summary>
+    /// Shows the Download LoRA dialog for resolving a Civitai URL, previewing it, and choosing a destination.
+    /// </summary>
+    /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
+    /// <returns>Download result with selected version and target folder, or cancelled result.</returns>
+    Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders);
+
+    /// <summary>
+    /// Shows the duplicate fixer window for resolving duplicate image clusters.
+    /// </summary>
+    /// <param name="clusters">Duplicate clusters to resolve.</param>
+    /// <returns>Number of images deleted during the session.</returns>
+    Task<int> ShowDuplicateFixerAsync(IEnumerable<DuplicateClusterItemViewModel> clusters);
+
+    /// <summary>
+    /// Shows the color fixer window for resolving color distribution issues.
+    /// </summary>
+    /// <param name="images">Images with color issues to fix.</param>
+    /// <returns>Number of images fixed during the session.</returns>
+    Task<int> ShowColorFixerAsync(IEnumerable<ColorDistributionItemViewModel> images);
+
+    /// <summary>
+    /// Shows the Image Quality Fixer window for triaging per-image scores (Blur, Exposure,
+    /// Noise, JPEG). The caller is expected to fully populate <paramref name="viewModel"/>
+    /// (rows + RequestReplace / RequestEditInImageEditor / RequestOpenInExplorer callbacks)
+    /// before invoking this method.
+    /// </summary>
+    /// <param name="viewModel">Pre-built fixer view model.</param>
+    Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel);
 }
 
 /// <summary>

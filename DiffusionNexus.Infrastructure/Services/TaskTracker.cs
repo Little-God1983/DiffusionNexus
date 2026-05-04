@@ -40,8 +40,9 @@ public sealed class TaskTracker : ITaskTracker
         };
 
         _tasks[taskId] = info;
-        _logger.Log(LogLevel.Info, category, nameof(TaskTracker), $"Task started: {name}", taskId: taskId);
         NotifyChanged(info);
+
+        _logger.Log(LogLevel.Debug, category, nameof(TaskTracker), $"Task started: {name}", taskId: taskId);
 
         return new TrackedTaskHandle(info, _logger, OnTaskTerminated);
     }

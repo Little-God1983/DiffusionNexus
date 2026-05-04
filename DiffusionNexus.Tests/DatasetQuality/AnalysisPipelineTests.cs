@@ -234,7 +234,13 @@ public class AnalysisPipelineTests : IDisposable
 
     private static AnalysisPipeline CreatePipeline(IDatasetCheck[] checks)
     {
-        return new AnalysisPipeline(checks, new CaptionLoader());
+        var mockDimensionReader = new Mock<IImageDimensionReader>();
+        var bucketAnalyzer = new BucketAnalyzer(mockDimensionReader.Object);
+        return new AnalysisPipeline(
+            checks,
+            Enumerable.Empty<IImageQualityCheck>(),
+            new CaptionLoader(),
+            bucketAnalyzer);
     }
 
     private void CreateFile(string name, string content) =>

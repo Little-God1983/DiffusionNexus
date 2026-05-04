@@ -10,6 +10,7 @@ using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using Serilog;
 using System.Text.Json;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -19,6 +20,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailAware
 {
+    private static readonly ILogger Logger = Log.ForContext<GenerationGalleryViewModel>();
     private readonly IAppSettingsService? _settingsService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IDatasetState? _datasetState;
@@ -109,6 +111,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public ObservableCollection<string> GroupingOptions { get; } = [];
 
+    public IReadOnlyList<string> LayoutModes { get; } = ["Showcase", "Grid"];
+
     public string ImageExtensionsDisplay => SupportedMediaTypes.ImageExtensionsDisplay;
 
     public string VideoExtensionsDisplay => SupportedMediaTypes.VideoExtensionsDisplay;
@@ -123,7 +127,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private string _selectedDateFilter = "Last 3 Months";
 
     [ObservableProperty]
-    private double _tileWidth = 220;
+    private double _tileHeight = 220;
 
     [ObservableProperty]
     private string? _noMediaMessage;
@@ -136,6 +140,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     [ObservableProperty]
     private bool _showFavoritesOnly;
+
+    private string _selectedLayoutMode = "Showcase";
+
+    public string SelectedLayoutMode
+    {
+        get => _selectedLayoutMode;
+        set
+        {
+            if (SetProperty(ref _selectedLayoutMode, value))
+            {
+                OnPropertyChanged(nameof(IsShowcaseLayout));
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the gallery uses the Showcase (aspect-ratio preserving) layout.
+    /// False selects the classic square Grid layout.
+    /// </summary>
+    public bool IsShowcaseLayout => SelectedLayoutMode == "Showcase";
 
     public int SelectionCount
     {
@@ -208,6 +232,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             var mediaItems = await CollectMediaItemsAsync(enabledPaths, IncludeSubFolders);
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
+
+            // Fire-and-forget: generate missing video thumbnails after gallery is displayed
+            StartBackgroundVideoThumbnailGeneration(mediaItems);
         }, "Loading gallery...");
     }
 
@@ -624,7 +651,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             index,
             showRatingControls: false,
             onToggleFavorite: toggleFavorite,
-            isFavoriteCheck: isFavoriteCheck);
+            isFavoriteCheck: isFavoriteCheck,
+            videoThumbnailService: _videoThumbnailService);
     }
 
     private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
@@ -771,6 +799,65 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         return items;
     }
 
+    /// <summary>
+    /// Generates missing video thumbnails in the background without blocking the gallery.
+    /// When a thumbnail is ready, the corresponding item's cache entry is invalidated
+    /// and its thumbnail is reloaded so the placeholder is replaced live.
+    /// </summary>
+    private void StartBackgroundVideoThumbnailGeneration(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
+    {
+        if (_videoThumbnailService is null)
+        {
+            return;
+        }
+
+        var videoItems = items
+            .Where(i => i.IsVideo && !File.Exists(MediaFileExtensions.GetVideoThumbnailPath(i.FilePath)))
+            .ToList();
+
+        if (videoItems.Count == 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            // Limit concurrency to avoid saturating CPU/disk with FFmpeg processes
+            using var semaphore = new SemaphoreSlim(2);
+
+            var tasks = videoItems.Select(async item =>
+            {
+                await semaphore.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    var result = await _videoThumbnailService.GenerateThumbnailAsync(item.FilePath).ConfigureAwait(false);
+
+                    if (result.Success)
+                    {
+                        // Invalidate the cached placeholder so the real thumbnail is loaded
+                        _thumbnailOrchestrator?.Invalidate(item.FilePath);
+                        item.ReloadThumbnail();
+                    }
+                    else
+                    {
+                        Logger.Warning("Video thumbnail generation failed for {Path}: {Error}",
+                            item.FilePath, result.ErrorMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Video thumbnail generation threw for {Path}", item.FilePath);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        });
+    }
+
     private static IEnumerable<string> EnumerateMediaFiles(string root, bool includeSubFolders)
     {
         if (!includeSubFolders)
@@ -857,6 +944,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             foreach (var directory in directories)
             {
+                // Skip .thumbnails subfolder used for video thumbnail storage
+                if (string.Equals(Path.GetFileName(directory), MediaFileExtensions.ThumbnailsSubfolder, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 pending.Push(directory);
             }
         }

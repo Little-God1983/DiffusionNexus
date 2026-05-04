@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services;
 
@@ -202,18 +203,16 @@ public class DialogService : IDialogService
         return dialog.Result ?? ExportDatasetResult.Cancelled();
     }
 
-    public async Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+    public async Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
         string datasetName,
         int datasetVersion,
-        IEnumerable<DatasetImageViewModel> mediaFiles,
-        IEnumerable<TrainingRunCardViewModel> trainingRuns,
-        IEnumerable<InstallerPackage>? aiToolkitInstances = null)
+        IEnumerable<TrainingRunCardViewModel> trainingRuns)
     {
-        var dialog = new UnifiedExportDialog()
-            .WithData(datasetName, datasetVersion, mediaFiles, trainingRuns, aiToolkitInstances);
+        var dialog = new ExportTrainingRunsDialog()
+            .WithData(datasetName, datasetVersion, trainingRuns);
 
         await dialog.ShowDialog(_window);
-        return dialog.Result ?? UnifiedExportResult.Cancelled();
+        return dialog.Result ?? ExportTrainingRunsResult.Cancelled();
     }
 
     public async Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories)
@@ -234,10 +233,11 @@ public class DialogService : IDialogService
         Action<DatasetImageViewModel>? onDeleteRequested = null,
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
-        Func<string, bool>? isFavoriteCheck = null)
+        Func<string, bool>? isFavoriteCheck = null,
+        IVideoThumbnailService? videoThumbnailService = null)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService);
 
         await dialog.ShowDialog(_window);
     }
@@ -542,6 +542,49 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
+    }
+
+    public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
+    {
+        var viewModel = new DownloadLoraDialogViewModel(
+            App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
+            App.Services?.GetService<IAppSettingsService>(),
+            this,
+            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+        await viewModel.InitializeAsync(sourceFolders);
+
+        var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? DownloadLoraResult.Cancelled();
+    }
+
+    public async Task<int> ShowDuplicateFixerAsync(IEnumerable<ViewModels.Tabs.DuplicateClusterItemViewModel> clusters)
+    {
+        var viewModel = new ViewModels.Dialogs.DuplicateFixerViewModel();
+        viewModel.LoadClusters(clusters);
+
+        var dialog = new DuplicateFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.DeletedCount;
+    }
+
+    public async Task<int> ShowColorFixerAsync(IEnumerable<ViewModels.Tabs.ColorDistributionItemViewModel> images)
+    {
+        var viewModel = new ViewModels.Dialogs.ColorFixerViewModel();
+        viewModel.LoadImages(images);
+
+        var dialog = new ColorFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.FixedCount;
+    }
+
+    public async Task ShowImageQualityFixerAsync(ViewModels.Dialogs.ImageQualityFixerViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+
+        var dialog = new ImageQualityFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
     }
 
     }

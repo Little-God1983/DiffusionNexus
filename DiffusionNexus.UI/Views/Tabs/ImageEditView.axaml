@@ -105,7 +105,8 @@
           <!-- Separator - always visible -->
           <Border Grid.Column="1" Width="1" Background="#444" Margin="16,4"/>
           <!-- Tool toggles - always visible but disabled when no image -->
-          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
+          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4"
+                      IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=True}">
             <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Color" IsChecked="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen, Mode=TwoWay}" Padding="12,6" 
@@ -139,7 +140,8 @@
           <!-- Separator - always visible -->
           <Border Grid.Column="6" Width="1" Background="#444" Margin="8,4"/>
           <!-- Transform buttons - always visible but disabled when no image -->
-          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4">
+          <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="4"
+                      IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=True}">
             <Button Content="L" Command="{Binding ImageEditor.RotateLeftCommand}" Padding="10,6" ToolTip.Tip="Rotate Left 90�" FontSize="12" FontWeight="Bold"
                     IsEnabled="{Binding ImageEditor.HasImage}"/>
             <Button Content="R" Command="{Binding ImageEditor.RotateRightCommand}" Padding="10,6" ToolTip.Tip="Rotate Right 90�" FontSize="12" FontWeight="Bold"
@@ -153,7 +155,7 @@
           </StackPanel>
           <Border Grid.Column="8"/>
           <!-- Save / Export dropdown - hidden until image is loaded -->
-          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
+          <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=True}">
             <Button Content="Save / Export" Background="#2D7D46" Padding="12,6" FontWeight="SemiBold">
               <Button.Flyout>
                 <MenuFlyout Placement="BottomEdgeAlignedRight">
@@ -164,6 +166,8 @@
                   <Separator/>
                   <MenuItem Header="Export as PNG" Command="{Binding ImageEditor.ExportAsPngCommand}"
                             ToolTip.Tip="Export a flattened PNG to any location"/>
+                  <MenuItem Header="Export as JPEG" Command="{Binding ImageEditor.ExportAsJpegCommand}"
+                            ToolTip.Tip="Export as JPEG without metadata"/>
                   <MenuItem Header="Export as Layered TIFF" Command="{Binding ImageEditor.ExportAsLayeredTiffCommand}"
                             ToolTip.Tip="Export all layers as a multi-page TIFF"/>
                 </MenuFlyout>
@@ -172,9 +176,10 @@
           </StackPanel>
           <!-- Separator before Reset/Clear - only visible when image is loaded -->
           <Border Grid.Column="10" Width="1" Background="#444" Margin="8,4" IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
-          <!-- Reset and Clear buttons - hidden until image is loaded -->
+          <!-- Reset button - image mode only -->
           <Button Grid.Column="11" Content="Reset" Command="{Binding ImageEditor.ResetImageCommand}" Margin="0,0,8,0" Padding="12,6"
-                  IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
+                  IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=False}"/>
+          <!-- Clear button - available for both image and video -->
           <Button Grid.Column="12" Content="Clear" Command="{Binding ImageEditor.ClearImageCommand}" Padding="12,6"
                   IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
         </Grid>
@@ -182,7 +187,7 @@
       
       <!-- Image Editor Canvas -->
       <Border Grid.Row="1" Background="#1A1A1A" Margin="16">
-        <Grid>
+        <Grid x:Name="ImageEditorGrid" DragDrop.AllowDrop="True">
           <!-- Empty state - Drop Zone -->
           <Border x:Name="ImageDropZone" IsVisible="{Binding !ImageEditor.HasImage}"
                   Background="#1A1A1A" BorderThickness="3" BorderBrush="#444" CornerRadius="12"
@@ -208,12 +213,15 @@
                                        ShapeFillColor="{Binding ImageEditor.DrawingTools.ShapeFillColor}"
                                        ShapeStrokeWidth="{Binding ImageEditor.DrawingTools.ShapeStrokeWidth}"
                                        IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}"/>
+          <!-- Video player shown when a video file is loaded -->
+          <controls:VideoPlayerControl DataContext="{Binding ImageEditor.VideoPlayer}"
+                                       IsVisible="{Binding $parent[Grid].((vmTabs:ImageEditTabViewModel)DataContext).ImageEditor.IsVideoMode, FallbackValue=False}"/>
         </Grid>
       </Border>
       
-      <!-- Bottom Status Bar - Information & Zoom -->
+      <!-- Bottom Status Bar - Image Info & Zoom (image mode only) -->
       <Border Grid.Row="2" Background="#1E1E1E" Padding="8,0" BorderBrush="#333" BorderThickness="0,1,0,0"
-              IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
+              IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=False}">
         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Height="22">
           <TextBlock Text="{Binding ImageEditor.ImageDimensions}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
           <TextBlock Text="|" FontSize="10" Opacity="0.4" VerticalAlignment="Center"/>
@@ -229,11 +237,21 @@
                      Foreground="#4CAF50" VerticalAlignment="Center"/>
         </StackPanel>
       </Border>
+
+      <!-- Bottom Status Bar - Video Info (video mode only) -->
+      <Border Grid.Row="2" Background="#1E1E1E" Padding="8,4" BorderBrush="#333" BorderThickness="0,1,0,0"
+              IsVisible="{Binding ImageEditor.IsVideoMode, FallbackValue=False}">
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Height="22">
+          <TextBlock Text="VIDEO" FontSize="10" FontWeight="SemiBold" Foreground="#4CAF50" VerticalAlignment="Center"/>
+          <TextBlock Text="|" FontSize="10" Opacity="0.4" VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding ImageEditor.ImageFileName}" FontSize="10" Opacity="0.7" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Border>
     </Grid>
     
-    <!-- Right Side Panel - Info -->
+    <!-- Right Side Panel - Info (image mode only) -->
     <Border Grid.Column="2" Width="300" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1,0,0,0"
-            IsVisible="{Binding ImageEditor.HasImage, FallbackValue=False}">
+            IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=False}">
       <ScrollViewer>
         <StackPanel Margin="12" Spacing="16">
           <!-- Layers Panel - At top -->
@@ -421,6 +439,41 @@
                   <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.Outpainting.CancelCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
                   <Button Grid.Column="1" Content="Reset" Command="{Binding ImageEditor.Outpainting.ResetCommand}" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+
+                <!-- ComfyUI Readiness Status -->
+                <reusable:ComfyUIReadinessPanel DataContext="{Binding ImageEditor.Outpainting.Readiness}"/>
+
+                <!-- Positive Prompt (used by nonVision Generate) -->
+                <TextBlock Text="Prompt (used by 'Generate')" FontSize="11" Opacity="0.7"/>
+                <TextBox x:Name="OutpaintPromptTextBox"
+                         Text="{Binding ImageEditor.Outpainting.PositivePrompt, Mode=TwoWay}"
+                         Watermark="Describe what should appear in the new area..."
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="120" FontSize="11"/>
+
+                <!-- Generate Buttons -->
+                <Button Content="Generate" Command="{Binding ImageEditor.Outpainting.GenerateCommand}"
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="12" FontWeight="SemiBold"
+                        Background="#2D7D46" Foreground="White"
+                        ToolTip.Tip="Outpaint using your prompt (nonVision workflow)"/>
+
+                <Button Content="Generate (Vision)" Command="{Binding ImageEditor.Outpainting.GenerateVisionCommand}"
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
+                        Background="#5E35B1" Foreground="White"
+                        ToolTip.Tip="Outpaint using a Qwen3-VL auto-generated description of the surroundings"/>
+
+                <!-- Progress -->
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Outpainting.IsProgressVisible}" Margin="0,4,0,0">
+                  <TextBlock Text="{Binding ImageEditor.Outpainting.ProgressDisplayText}"
+                             FontSize="10" Opacity="0.7" TextWrapping="Wrap" FontStyle="Italic"/>
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="{Binding ImageEditor.Outpainting.HasError, Converter={x:Static converters:BoolConverters.BoolToProgressBrush}}"
+                            CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.Outpainting.OutpaintProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
+                </StackPanel>
               </StackPanel>
             </Border>
           </StackPanel>

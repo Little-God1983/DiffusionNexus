@@ -43,6 +43,24 @@
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="BorderBrush" Value="#FFCC00"/>
     </Style>
+
+    <!-- Tag chips -->
+    <Style Selector="Border.normalTag">
+      <Setter Property="Background" Value="#333"/>
+      <Setter Property="BorderBrush" Value="#333"/>
+    </Style>
+    <Style Selector="TextBlock.normalTagText">
+      <Setter Property="Foreground" Value="#AAAAAA"/>
+    </Style>
+    <!-- Highlighted chip for the tag that drives the LoRA's category -->
+    <Style Selector="Border.categoryTag">
+      <Setter Property="Background" Value="#FFCC00"/>
+      <Setter Property="BorderBrush" Value="#FFE066"/>
+    </Style>
+    <Style Selector="TextBlock.categoryTagText">
+      <Setter Property="Foreground" Value="#1E1E1E"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
   </UserControl.Styles>
 
   <Border Background="#1E1E1E"
@@ -57,15 +75,52 @@
               Padding="16,12"
               BorderBrush="#333"
               BorderThickness="0,0,0,1">
-        <Grid ColumnDefinitions="*,Auto">
+        <Grid ColumnDefinitions="*,Auto,Auto">
           <TextBlock Grid.Column="0"
                      Text="{Binding ModelName}"
                      FontSize="18"
                      FontWeight="Bold"
                      Foreground="White"
                      TextWrapping="Wrap"
-                     VerticalAlignment="Center"/>
+                     VerticalAlignment="Center"
+                     IsVisible="{Binding !IsEditingName}"/>
+          <TextBox Grid.Column="0"
+                   Text="{Binding NameEditBuffer, Mode=TwoWay}"
+                   FontSize="18"
+                   FontWeight="Bold"
+                   Foreground="White"
+                   Background="#1A1A1A"
+                   VerticalAlignment="Center"
+                   IsVisible="{Binding IsEditingName}"/>
           <Button Grid.Column="1"
+                  Content="Edit"
+                  Command="{Binding BeginEditNameCommand}"
+                  IsVisible="{Binding !IsEditingName}"
+                  Padding="6,2"
+                  FontSize="11"
+                  Margin="6,0"
+                  Background="Transparent"
+                  Foreground="#66CCFF"
+                  ToolTip.Tip="Edit model name"/>
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      Spacing="4"
+                      Margin="6,0"
+                      IsVisible="{Binding IsEditingName}">
+            <Button Content="Save"
+                    Command="{Binding SaveNameCommand}"
+                    Padding="8,2"
+                    FontSize="11"
+                    Background="#0066CC"
+                    Foreground="White"/>
+            <Button Content="Cancel"
+                    Command="{Binding CancelEditNameCommand}"
+                    Padding="8,2"
+                    FontSize="11"
+                    Background="Transparent"
+                    Foreground="#888"/>
+          </StackPanel>
+          <Button Grid.Column="2"
                   Content="&#x2715;"
                   Command="{Binding CloseCommand}"
                   Background="Transparent"
@@ -78,7 +133,8 @@
       </Border>
 
       <!-- Scrollable Content -->
-      <ScrollViewer Grid.Row="1"
+      <ScrollViewer x:Name="DetailScrollViewer"
+                    Grid.Row="1"
                     VerticalScrollBarVisibility="Auto"
                     HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="0">
@@ -143,7 +199,7 @@
                   BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto">
 
-              <!-- Thumbnail -->
+              <!-- Thumbnail (with hover Upload overlay) -->
               <Border Grid.Column="0"
                       Width="180"
                       Height="220"
@@ -160,6 +216,18 @@
                              VerticalAlignment="Center"
                              Opacity="0.3"
                              IsVisible="{Binding ThumbnailImage, Converter={x:Static ObjectConverters.IsNull}}"/>
+                  <Button Content="↑ Upload"
+                          Command="{Binding UploadThumbnailCommand}"
+                          ToolTip.Tip="Replace thumbnail image"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Bottom"
+                          HorizontalContentAlignment="Center"
+                          Background="#AA000000"
+                          Foreground="White"
+                          FontSize="12"
+                          Padding="6,4"
+                          BorderThickness="0"
+                          CornerRadius="0"/>
                 </Grid>
               </Border>
 
@@ -193,11 +261,16 @@
                              Text="Base Model:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
-                             Margin="0,0,12,6"/>
-                  <TextBlock Grid.Row="2" Grid.Column="1"
-                             Text="{Binding BaseModelDisplay}"
-                             Foreground="White"
-                             Margin="0,0,0,6"/>
+                             Margin="0,0,12,6"
+                             VerticalAlignment="Center"/>
+                  <ComboBox Grid.Row="2" Grid.Column="1"
+                            ItemsSource="{Binding AvailableBaseModels}"
+                            SelectedItem="{Binding SelectedBaseModel, Mode=TwoWay}"
+                            Background="#1A1A1A"
+                            Foreground="White"
+                            Margin="0,0,0,6"
+                            HorizontalAlignment="Stretch"
+                            ToolTip.Tip="Override the base model for the currently selected version (saved per-version)"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0"
                              Text="File:"
@@ -225,12 +298,15 @@
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"
-                             IsVisible="{Binding HasCategory}"/>
-                  <TextBlock Grid.Row="5" Grid.Column="1"
-                             Text="{Binding CategoryDisplay}"
-                             Foreground="White"
-                             Margin="0,0,0,6"
-                             IsVisible="{Binding HasCategory}"/>
+                             VerticalAlignment="Center"/>
+                  <ComboBox Grid.Row="5" Grid.Column="1"
+                            ItemsSource="{Binding AvailableCategories}"
+                            SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                            Background="#1A1A1A"
+                            Foreground="White"
+                            Margin="0,0,0,6"
+                            HorizontalAlignment="Stretch"
+                            ToolTip.Tip="Select a category (overrides tag-based inference)"/>
 
                   <TextBlock Grid.Row="6" Grid.Column="0"
                              Text="Creator:"
@@ -245,13 +321,12 @@
             </Grid>
           </Border>
 
-          <!-- Trigger Words Section -->
+          <!-- Trigger Words Section (editable) -->
           <Border Padding="16,12"
                   BorderBrush="#333"
-                  BorderThickness="0,0,0,1"
-                  IsVisible="{Binding HasTriggerWords}">
+                  BorderThickness="0,0,0,1">
             <StackPanel Spacing="6">
-              <Grid ColumnDefinitions="*,Auto">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                 <TextBlock Grid.Column="0"
                            Text="Trigger Words"
                            FontWeight="Bold"
@@ -264,69 +339,176 @@
                         Padding="6,2"
                         FontSize="11"
                         Background="Transparent"
+                        Foreground="#66CCFF"
+                        IsVisible="{Binding HasTriggerWords}"/>
+                <Button Grid.Column="2"
+                        Content="Edit"
+                        Command="{Binding BeginEditTriggerWordsCommand}"
+                        IsVisible="{Binding !IsEditingTriggerWords}"
+                        Padding="6,2"
+                        FontSize="11"
+                        Background="Transparent"
                         Foreground="#66CCFF"/>
+                <StackPanel Grid.Column="3"
+                            Orientation="Horizontal"
+                            Spacing="4"
+                            IsVisible="{Binding IsEditingTriggerWords}">
+                  <Button Content="Save"
+                          Command="{Binding SaveTriggerWordsCommand}"
+                          Padding="8,2"
+                          FontSize="11"
+                          Background="#0066CC"
+                          Foreground="White"/>
+                  <Button Content="Cancel"
+                          Command="{Binding CancelEditTriggerWordsCommand}"
+                          Padding="8,2"
+                          FontSize="11"
+                          Background="Transparent"
+                          Foreground="#888"/>
+                </StackPanel>
               </Grid>
               <Border Background="#252525"
                       CornerRadius="4"
-                      Padding="10,8">
+                      Padding="10,8"
+                      IsVisible="{Binding HasTriggerWords}">
                 <TextBlock Text="{Binding TriggerWordsDisplay}"
                            Foreground="#66CCFF"
                            TextWrapping="Wrap"
-                           FontSize="13"/>
+                           FontSize="13"
+                           IsVisible="{Binding !IsEditingTriggerWords}"/>
               </Border>
+              <TextBox Text="{Binding TriggerWordsEditBuffer, Mode=TwoWay}"
+                       Watermark="Comma-separated trigger words"
+                       AcceptsReturn="False"
+                       FontSize="13"
+                       Foreground="#66CCFF"
+                       Background="#1A1A1A"
+                       IsVisible="{Binding IsEditingTriggerWords}"/>
             </StackPanel>
           </Border>
 
-          <!-- Tags Section -->
+          <!-- Tags Section (editable) -->
           <Border Padding="16,12"
                   BorderBrush="#333"
-                  BorderThickness="0,0,0,1"
-                  IsVisible="{Binding HasTags}">
+                  BorderThickness="0,0,0,1">
             <StackPanel Spacing="6">
               <TextBlock Text="Tags"
                          FontWeight="Bold"
                          FontSize="14"
                          Foreground="White"/>
-              <ItemsControl ItemsSource="{Binding TagItems}">
+              <ItemsControl ItemsSource="{Binding EditableTagItems}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
                     <WrapPanel Orientation="Horizontal"/>
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Border Background="#333"
+                  <DataTemplate x:DataType="vm:EditableTagItem">
+                    <Border Classes.categoryTag="{Binding IsCategoryTag}"
+                            Classes.normalTag="{Binding !IsCategoryTag}"
                             CornerRadius="4"
                             Padding="8,4"
-                            Margin="0,0,4,4">
-                      <TextBlock Text="{Binding}"
-                                 Foreground="#AAAAAA"
-                                 FontSize="12"/>
+                            Margin="0,0,4,4"
+                            BorderThickness="1"
+                            ToolTip.Tip="{Binding TooltipText}">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding Name}"
+                                   Classes.categoryTagText="{Binding IsCategoryTag}"
+                                   Classes.normalTagText="{Binding !IsCategoryTag}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="✕"
+                                Command="{Binding RemoveCommand}"
+                                ToolTip.Tip="Remove tag"
+                                IsVisible="{Binding !IsCategoryTag}"
+                                Background="Transparent"
+                                Foreground="#FF6677"
+                                FontSize="11"
+                                Padding="2,0"
+                                BorderThickness="0"/>
+                        <TextBlock Text="🔒"
+                                   IsVisible="{Binding IsCategoryTag}"
+                                   Foreground="#1E1E1E"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   ToolTip.Tip="This tag defines the LoRA's category and cannot be removed."/>
+                      </StackPanel>
                     </Border>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBox Text="{Binding NewTagText, Mode=TwoWay}"
+                         Watermark="Add tag..."
+                         Width="180"
+                         FontSize="12"
+                         Background="#1A1A1A"
+                         Foreground="#CCCCCC"/>
+                <Button Content="+ Add"
+                        Command="{Binding AddTagCommand}"
+                        Padding="8,4"
+                        FontSize="12"
+                        Background="#0066CC"
+                        Foreground="White"/>
+              </StackPanel>
             </StackPanel>
           </Border>
 
-          <!-- Description Section -->
+          <!-- Description Section (editable) -->
           <Border Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,0,0,1">
             <StackPanel Spacing="6">
-              <TextBlock Text="Description"
-                         FontWeight="Bold"
-                         FontSize="14"
-                         Foreground="White"/>
+              <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Description"
+                           FontWeight="Bold"
+                           FontSize="14"
+                           Foreground="White"/>
+                <Button Grid.Column="1"
+                        Content="Edit"
+                        Command="{Binding BeginEditDescriptionCommand}"
+                        IsVisible="{Binding !IsEditingDescription}"
+                        Padding="6,2"
+                        FontSize="11"
+                        Background="Transparent"
+                        Foreground="#66CCFF"/>
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="4"
+                            IsVisible="{Binding IsEditingDescription}">
+                  <Button Content="Save"
+                          Command="{Binding SaveDescriptionCommand}"
+                          Padding="8,2"
+                          FontSize="11"
+                          Background="#0066CC"
+                          Foreground="White"/>
+                  <Button Content="Cancel"
+                          Command="{Binding CancelEditDescriptionCommand}"
+                          Padding="8,2"
+                          FontSize="11"
+                          Background="Transparent"
+                          Foreground="#888"/>
+                </StackPanel>
+              </Grid>
               <Border Background="#252525"
                       CornerRadius="4"
-                      Padding="12,10">
+                      Padding="12,10"
+                      IsVisible="{Binding !IsEditingDescription}">
                 <TextBlock Text="{Binding DescriptionText}"
                            Foreground="#CCCCCC"
                            TextWrapping="Wrap"
                            FontSize="13"
                            LineHeight="20"/>
               </Border>
+              <TextBox Text="{Binding DescriptionEditBuffer, Mode=TwoWay}"
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       MinHeight="120"
+                       FontSize="13"
+                       Background="#1A1A1A"
+                       Foreground="#CCCCCC"
+                       IsVisible="{Binding IsEditingDescription}"/>
             </StackPanel>
           </Border>
 
@@ -334,13 +516,76 @@
           <Border Padding="16,12"
                   BorderBrush="#333"
                   BorderThickness="0,1,0,0">
-            <StackPanel Orientation="Horizontal"
-                        Spacing="8"
-                        HorizontalAlignment="Right">
-              <Button Content="Open on Civitai"
-                      Command="{Binding OpenOnCivitaiCommand}"
-                      Padding="10,6"
-                      FontSize="12"/>
+            <StackPanel Spacing="8">
+              <StackPanel Orientation="Horizontal"
+                          Spacing="8"
+                          HorizontalAlignment="Right">
+                <Button Content="Open on Civitai"
+                        Command="{Binding OpenOnCivitaiCommand}"
+                        IsEnabled="{Binding CanOpenOnCivitai}"
+                        ToolTip.Tip="{Binding OpenOnCivitaiButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
+                        Padding="10,6"
+                        FontSize="12"/>
+                <Button Content="Assign Civitai IDs Manually"
+                        Command="{Binding AssignCivitaiIdsManuallyCommand}"
+                        IsEnabled="{Binding !HasCivitaiId}"
+                        ToolTip.Tip="{Binding AssignCivitaiButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
+                        Padding="10,6"
+                        FontSize="12"
+                        Background="#0066CC"
+                        Foreground="White"/>
+                <Button Content="Delete Metadata"
+                        Command="{Binding RequestDeleteMetadataCommand}"
+                        IsEnabled="{Binding HasMetadata}"
+                        IsVisible="{Binding !IsConfirmingDeleteMetadata}"
+                        ToolTip.Tip="{Binding DeleteMetadataButtonTooltip}"
+                        ToolTip.ShowOnDisabled="True"
+                        Padding="10,6"
+                        FontSize="12"
+                        Background="#A02020"
+                        Foreground="White"/>
+              </StackPanel>
+
+              <!-- Inline confirmation strip (security question) -->
+              <Border IsVisible="{Binding IsConfirmingDeleteMetadata}"
+                      Background="#3A1A1A"
+                      BorderBrush="#A02020"
+                      BorderThickness="1"
+                      CornerRadius="4"
+                      Padding="12,10">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Delete all metadata for this LoRA?"
+                             FontWeight="SemiBold"
+                             Foreground="White"/>
+                  <TextBlock Text="This permanently removes the model record, all versions, files, images, trigger words and tags from the database. The .safetensors file on disk will NOT be deleted. This cannot be undone."
+                             FontSize="12"
+                             Opacity="0.85"
+                             Foreground="White"
+                             TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal"
+                              Spacing="8"
+                              HorizontalAlignment="Right">
+                    <Button Content="Cancel"
+                            Command="{Binding CancelDeleteMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"/>
+                    <Button Content="Yes, delete this version metadata"
+                            Command="{Binding ConfirmDeleteCurrentVersionMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"
+                            Background="#A65A20"
+                            Foreground="White"/>
+                    <Button Content="Yes, delete all metadata"
+                            Command="{Binding ConfirmDeleteMetadataCommand}"
+                            Padding="10,6"
+                            FontSize="12"
+                            Background="#C42B2B"
+                            Foreground="White"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
 

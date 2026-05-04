@@ -50,6 +50,14 @@ public class SpellCheckTextBox : TextBox
     // Guard to suppress autocomplete while we're programmatically editing text
     private bool _suppressAutoComplete;
 
+    // Async spell check cancellation
+    private CancellationTokenSource? _spellCheckCts;
+
+    // Viewport-based spell check: only check when visible in the ScrollViewer
+    private ScrollViewer? _parentScrollViewer;
+    private bool _isVisibleInViewport;
+    private bool _needsSpellCheck;
+
     /// <summary>
     /// Initializes the shared spell check and autocomplete services.
     /// Call once at startup from App.axaml.cs after DI is configured.
@@ -146,7 +154,7 @@ public class SpellCheckTextBox : TextBox
         _debounceTimer.Tick += (_, _) =>
         {
             _debounceTimer.Stop();
-            RunSpellCheck();
+            _ = RunSpellCheckAsync();
         };
 
         // Use NameScope to reliably find the TextPresenter template part.
@@ -174,8 +182,35 @@ public class SpellCheckTextBox : TextBox
         // Run initial spell check for text that was set via binding before the template existed
         if (!string.IsNullOrEmpty(Text))
         {
-            Dispatcher.UIThread.Post(RunSpellCheck, DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() => _ = RunSpellCheckAsync(), DispatcherPriority.Loaded);
         }
+    }
+
+    /// <inheritdoc />
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _parentScrollViewer = this.FindAncestorOfType<ScrollViewer>();
+        if (_parentScrollViewer is not null)
+        {
+            _parentScrollViewer.ScrollChanged += OnParentScrollChanged;
+        }
+        // Check initial visibility after layout
+        Dispatcher.UIThread.Post(UpdateViewportVisibility, DispatcherPriority.Loaded);
+    }
+
+    /// <inheritdoc />
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (_parentScrollViewer is not null)
+        {
+            _parentScrollViewer.ScrollChanged -= OnParentScrollChanged;
+            _parentScrollViewer = null;
+        }
+        _spellCheckCts?.Cancel();
+        _spellCheckCts?.Dispose();
+        _spellCheckCts = null;
+        base.OnDetachedFromVisualTree(e);
     }
 
     /// <inheritdoc />
@@ -185,9 +220,12 @@ public class SpellCheckTextBox : TextBox
 
         if (change.Property == TextProperty)
         {
-            // Restart debounce timer for spell checking
+            // Restart debounce timer for spell checking (only if visible in viewport)
             _debounceTimer?.Stop();
-            _debounceTimer?.Start();
+            if (_isVisibleInViewport)
+                _debounceTimer?.Start();
+            else
+                _needsSpellCheck = true;
 
             // Defer autocomplete so CaretIndex has time to update
             if (!_suppressAutoComplete)
@@ -303,7 +341,7 @@ public class SpellCheckTextBox : TextBox
         }
     }
 
-    private void RunSpellCheck()
+    private async Task RunSpellCheckAsync()
     {
         if (s_spellCheckService is null || !s_spellCheckService.IsReady)
         {
@@ -322,10 +360,67 @@ public class SpellCheckTextBox : TextBox
             return;
         }
 
-        _errors.Clear();
-        _errors.AddRange(s_spellCheckService.CheckText(text));
-        InvalidateVisual();
-        _overlay?.InvalidateVisual();
+        // Cancel any previous in-flight spell check
+        _spellCheckCts?.Cancel();
+        _spellCheckCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _spellCheckCts = cts;
+
+        try
+        {
+            var results = await s_spellCheckService.CheckTextAsync(text, cts.Token);
+
+            // If cancelled (e.g. newer check superseded this one), discard results
+            if (cts.Token.IsCancellationRequested) return;
+
+            _errors.Clear();
+            _errors.AddRange(results);
+            _needsSpellCheck = false;
+            InvalidateVisual();
+            _overlay?.InvalidateVisual();
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when a newer spell check supersedes this one
+        }
+    }
+
+    private void OnParentScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        UpdateViewportVisibility();
+    }
+
+    private void UpdateViewportVisibility()
+    {
+        if (_parentScrollViewer is null)
+        {
+            // No scroll viewer ancestor — always visible
+            _isVisibleInViewport = true;
+            if (_needsSpellCheck)
+                _ = RunSpellCheckAsync();
+            return;
+        }
+
+        var topLeft = this.TranslatePoint(new Point(0, 0), _parentScrollViewer);
+        var bottomRight = this.TranslatePoint(new Point(Bounds.Width, Bounds.Height), _parentScrollViewer);
+
+        if (topLeft is null || bottomRight is null)
+        {
+            _isVisibleInViewport = false;
+            return;
+        }
+
+        var viewport = new Rect(0, 0, _parentScrollViewer.Viewport.Width, _parentScrollViewer.Viewport.Height);
+        var controlBounds = new Rect(topLeft.Value, bottomRight.Value);
+
+        bool wasVisible = _isVisibleInViewport;
+        _isVisibleInViewport = viewport.Intersects(controlBounds);
+
+        // Trigger deferred spell check when scrolled into view
+        if (_isVisibleInViewport && !wasVisible && _needsSpellCheck)
+        {
+            _ = RunSpellCheckAsync();
+        }
     }
 
     private void UpdateAutoComplete()
@@ -548,7 +643,7 @@ public class SpellCheckTextBox : TextBox
                 var word = Text.Substring(_contextMenuWordStart, _contextMenuWordLength);
                 s_spellCheckService?.AddToUserDictionary(word);
                 _spellCheckPopup!.IsOpen = false;
-                RunSpellCheck();
+                _ = RunSpellCheckAsync();
                 return;
             }
 
@@ -561,7 +656,7 @@ public class SpellCheckTextBox : TextBox
             CaretIndex = before.Length + selected.Length;
 
             _spellCheckPopup!.IsOpen = false;
-            RunSpellCheck();
+            _ = RunSpellCheckAsync();
         }, DispatcherPriority.Input);
     }
 

@@ -97,8 +97,33 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isBackupInProgress;
 
+    /// <summary>
+    /// Hidden feature toggle exposed in the main window sidebar.
+    /// When enabled, the Diffusion Canvas navigation entry is shown.
+    /// (Previously this property gated the Dataset Quality tab; that tab is now always visible.)
+    /// </summary>
     [ObservableProperty]
-    private bool _isDatasetQualityEnabled;
+    private bool _isDiffusionCanvasEnabled;
+
+    private ModuleItem? _diffusionCanvasModule;
+
+    /// <summary>
+    /// Registers the Diffusion Canvas <see cref="ModuleItem"/> so its sidebar visibility
+    /// can be driven by <see cref="IsDiffusionCanvasEnabled"/>.
+    /// </summary>
+    public void SetDiffusionCanvasModule(ModuleItem module)
+    {
+        _diffusionCanvasModule = module;
+        _diffusionCanvasModule.IsVisible = IsDiffusionCanvasEnabled;
+    }
+
+    partial void OnIsDiffusionCanvasEnabledChanged(bool value)
+    {
+        if (_diffusionCanvasModule is not null)
+        {
+            _diffusionCanvasModule.IsVisible = value;
+        }
+    }
 
     /// <summary>
     /// Gets the application version from assembly metadata.

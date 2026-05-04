@@ -15,7 +15,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.3");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
@@ -352,6 +352,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<bool>("IsPoi")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsUserEdited")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<DateTimeOffset?>("LastSyncedAt")
                         .HasColumnType("TEXT");
 
@@ -376,6 +381,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserCategory")
+                        .HasMaxLength(20)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
@@ -681,6 +690,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<int>("EarlyAccessDays")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsUserEdited")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<int>("ModelId")
                         .HasColumnType("INTEGER");

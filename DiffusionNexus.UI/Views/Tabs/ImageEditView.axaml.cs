@@ -27,6 +27,7 @@ public partial class ImageEditView : UserControl
     private readonly int _instanceId;
     private ImageEditorControl? _imageEditorCanvas;
     private Border? _imageDropZone;
+    private Grid? _imageEditorGrid;
     private Button? _openImageButton;
     private bool _eventsWired;
     private long _lastSyncedInpaintBaseVersion = -1;
@@ -48,6 +49,7 @@ public partial class ImageEditView : UserControl
         AvaloniaXamlLoader.Load(this);
         _imageEditorCanvas = this.FindControl<ImageEditorControl>("ImageEditorCanvas");
         _imageDropZone = this.FindControl<Border>("ImageDropZone");
+        _imageEditorGrid = this.FindControl<Grid>("ImageEditorGrid");
         _openImageButton = this.FindControl<Button>("OpenImageButton");
         // Drag-drop and button handlers are registered in OnAttachedToVisualTree
         // so they survive TabControl detach/reattach cycles.
@@ -105,6 +107,14 @@ public partial class ImageEditView : UserControl
             _imageDropZone.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
         }
 
+        // Allow drag/drop on the editor grid so images can be dropped even when one is already loaded.
+        if (_imageEditorGrid is not null)
+        {
+            _imageEditorGrid.AddHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageEditorGrid.AddHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageEditorGrid.AddHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
         if (_openImageButton is not null)
             _openImageButton.Click += OnOpenImageButtonClick;
 
@@ -128,6 +138,13 @@ public partial class ImageEditView : UserControl
             _imageDropZone.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
             _imageDropZone.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
             _imageDropZone.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
+        }
+
+        if (_imageEditorGrid is not null)
+        {
+            _imageEditorGrid.RemoveHandler(DragDrop.DropEvent, OnImageDrop);
+            _imageEditorGrid.RemoveHandler(DragDrop.DragEnterEvent, OnImageDragEnter);
+            _imageEditorGrid.RemoveHandler(DragDrop.DragLeaveEvent, OnImageDragLeave);
         }
 
         if (_openImageButton is not null)
@@ -375,6 +392,110 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
+
+        var pendingExtendLeft = 0;
+        var pendingExtendTop = 0;
+        var pendingExtendRight = 0;
+        var pendingExtendBottom = 0;
+
+        EventHandler<OutpaintGenerateEventArgs> onOutpaintGenerate = async (_, args) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var tempPath = string.Empty;
+            try
+            {
+                var editorCore = _imageEditorCanvas.EditorCore;
+                var outpaintTool = editorCore.OutpaintTool;
+
+                var extLeft = outpaintTool.ExtendLeft;
+                var extTop = outpaintTool.ExtendTop;
+                var extRight = outpaintTool.ExtendRight;
+                var extBottom = outpaintTool.ExtendBottom;
+
+                pendingExtendLeft = extLeft;
+                pendingExtendTop = extTop;
+                pendingExtendRight = extRight;
+                pendingExtendBottom = extBottom;
+
+                if (extLeft + extTop + extRight + extBottom <= 0)
+                {
+                    imageEditor.StatusMessage = "Drag the outpaint arrows to extend the canvas before generating.";
+                    imageEditor.Outpainting.RefreshCommandStates();
+                    return;
+                }
+
+                tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
+
+                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath))
+                {
+                    imageEditor.StatusMessage = "Failed to export current image for outpainting.";
+                    imageEditor.Outpainting.RefreshCommandStates();
+                    return;
+                }
+
+                await imageEditor.Outpainting.ProcessOutpaintAsync(
+                    tempPath, args.UseVision, extLeft, extTop, extRight, extBottom);
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Outpainting failed: {ex.Message}";
+            }
+            finally
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+            }
+        };
+        imageEditor.Outpainting.GenerateRequested += onOutpaintGenerate;
+        _eventCleanup.Add(() => imageEditor.Outpainting.GenerateRequested -= onOutpaintGenerate);
+
+        EventHandler<byte[]> onOutpaintResult = (_, imageBytes) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            try
+            {
+                var editorCore = _imageEditorCanvas.EditorCore;
+                var resultBitmap = SkiaSharp.SKBitmap.Decode(imageBytes);
+                if (resultBitmap is null)
+                {
+                    imageEditor.StatusMessage = "Failed to decode outpainting result.";
+                    return;
+                }
+
+                var expectedWidth = editorCore.Width + pendingExtendLeft + pendingExtendRight;
+                var expectedHeight = editorCore.Height + pendingExtendTop + pendingExtendBottom;
+
+                if (resultBitmap.Width != expectedWidth || resultBitmap.Height != expectedHeight)
+                {
+                    var resized = new SkiaSharp.SKBitmap(expectedWidth, expectedHeight);
+                    using var canvas = new SkiaSharp.SKCanvas(resized);
+                    canvas.DrawBitmap(resultBitmap, new SkiaSharp.SKRect(0, 0, expectedWidth, expectedHeight));
+                    resultBitmap.Dispose();
+                    resultBitmap = resized;
+                }
+
+                editorCore.ResizeLayerCanvas(expectedWidth, expectedHeight, pendingExtendLeft, pendingExtendTop);
+                editorCore.AddLayerFromBitmap(resultBitmap, "Outpaint Result");
+                editorCore.OutpaintTool.Reset();
+
+                imageEditor.Outpainting.ClosePanel();
+                imageEditor.LayerPanel.SyncLayers(editorCore.Layers);
+                imageEditor.UpdateDimensions(editorCore.Width, editorCore.Height);
+                _imageEditorCanvas.InvalidateVisual();
+
+                pendingExtendLeft = 0;
+                pendingExtendTop = 0;
+                pendingExtendRight = 0;
+                pendingExtendBottom = 0;
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Failed to apply outpainting result: {ex.Message}";
+            }
+        };
+        imageEditor.Outpainting.ResultReady += onOutpaintResult;
+        _eventCleanup.Add(() => imageEditor.Outpainting.ResultReady -= onOutpaintResult);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
@@ -830,6 +951,12 @@ public partial class ImageEditView : UserControl
             return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
         };
 
+        imageEditor.SaveJpegFunc = path =>
+        {
+            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95) ?? false;
+        };
+
         imageEditor.SaveLayeredTiffFunc = path =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
@@ -1070,20 +1197,26 @@ public partial class ImageEditView : UserControl
 
     private void OnImageDragEnter(object? sender, DragEventArgs e)
     {
-        if (_imageDropZone is null) return;
-
         var hasValidImage = AnalyzeImageFilesInDrag(e);
 
         if (hasValidImage)
         {
-            _imageDropZone.BorderBrush = Brushes.LimeGreen;
-            _imageDropZone.BorderThickness = new Thickness(3);
+            if (_imageDropZone is { IsVisible: true })
+            {
+                _imageDropZone.BorderBrush = Brushes.LimeGreen;
+                _imageDropZone.BorderThickness = new Thickness(3);
+            }
+
             e.DragEffects = DragDropEffects.Copy;
         }
         else
         {
-            _imageDropZone.BorderBrush = Brushes.Red;
-            _imageDropZone.BorderThickness = new Thickness(3);
+            if (_imageDropZone is { IsVisible: true })
+            {
+                _imageDropZone.BorderBrush = Brushes.Red;
+                _imageDropZone.BorderThickness = new Thickness(3);
+            }
+
             e.DragEffects = DragDropEffects.None;
         }
     }

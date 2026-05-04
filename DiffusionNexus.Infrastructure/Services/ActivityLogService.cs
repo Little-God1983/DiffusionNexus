@@ -385,7 +385,7 @@ public sealed class ActivityLogService : IActivityLogService
             _downloadOperationName = operationName;
         }
 
-        LogInfo("Download", $"Starting: {operationName}");
+        LogDebug("Download", $"Starting: {operationName}");
         DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -417,13 +417,14 @@ public sealed class ActivityLogService : IActivityLogService
 
         if (success)
         {
-            LogSuccess("Download", message);
+            LogDebug("Download", message);
         }
         else
         {
             LogError("Download", message);
         }
 
+        SetStatus(message, success ? ActivitySeverity.Success : ActivitySeverity.Error);
         DownloadProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 

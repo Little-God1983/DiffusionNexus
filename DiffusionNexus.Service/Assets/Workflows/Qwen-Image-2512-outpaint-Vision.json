@@ -1,0 +1,364 @@
+{
+  "2": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "4": {
+    "inputs": {
+      "shift": 3.1000000000000005,
+      "model": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": [
+        "259",
+        0
+      ],
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "11",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "8": {
+    "inputs": {
+      "text": "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲",
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "9": {
+    "inputs": {
+      "lora_name": "Qwen-Image-Lightning-4steps-V1.0.safetensors",
+      "strength_model": 1,
+      "model": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "11": {
+    "inputs": {
+      "seed": 579472509479327,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "21",
+        1
+      ],
+      "latent_image": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "12": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "15": {
+    "inputs": {
+      "unet_name": "qwen-image-2512-Q8_0.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "16": {
+    "inputs": {
+      "image": "a5suJg6.jpeg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "17": {
+    "inputs": {
+      "upscale_method": "area",
+      "largest_size": 1536,
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToMaxDimension",
+    "_meta": {
+      "title": "ImageScaleToMaxDimension"
+    }
+  },
+  "18": {
+    "inputs": {
+      "pixels": [
+        "26",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "20": {
+    "inputs": {
+      "samples": [
+        "18",
+        0
+      ],
+      "mask": [
+        "19:253",
+        0
+      ]
+    },
+    "class_type": "SetLatentNoiseMask",
+    "_meta": {
+      "title": "Set Latent Noise Mask"
+    }
+  },
+  "21": {
+    "inputs": {
+      "strength": 1,
+      "start_percent": 0,
+      "end_percent": 1,
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "control_net": [
+        "24",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ],
+      "image": [
+        "26",
+        0
+      ],
+      "mask": [
+        "19:253",
+        0
+      ]
+    },
+    "class_type": "ControlNetInpaintingAliMamaApply",
+    "_meta": {
+      "title": "ControlNetInpaintingAliMamaApply"
+    }
+  },
+  "24": {
+    "inputs": {
+      "control_net_name": "Qwen-Image-InstantX-ControlNet-Inpainting.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": {
+      "title": "Load ControlNet Model"
+    }
+  },
+  "26": {
+    "inputs": {
+      "left": 256,
+      "top": 0,
+      "right": 256,
+      "bottom": 0,
+      "feathering": 24,
+      "image": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ImagePadForOutpaint",
+    "_meta": {
+      "title": "Pad Image for Outpainting"
+    }
+  },
+  "256": {
+    "inputs": {
+      "text": "Describe the sourroundings and the background of the image not the subject,\n",
+      "model": "Qwen3-VL-4B-Instruct-FP8",
+      "quantization": "none",
+      "keep_model_loaded": true,
+      "temperature": 0.3,
+      "max_new_tokens": 2048,
+      "min_pixels": 200704,
+      "max_pixels": 1003520,
+      "seed": 1602,
+      "attention": "eager",
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "Qwen3_VQA",
+    "_meta": {
+      "title": "Qwen3 VQA"
+    }
+  },
+  "257": {
+    "inputs": {
+      "text_0": "The surroundings and background of the image depict a serene, enchanting garden or park setting at dusk or twilight. The scene is rich with natural elements and soft, warm lighting that creates a magical, dreamlike atmosphere.\n\n- **Trees and Vegetation**: Lush green trees and bushes form the backdrop, with their leaves and branches creating a dense, textured canopy. The foliage is detailed, with some leaves catching the light, giving them a glowing, almost ethereal quality.\n  \n- **Lighting and Atmosphere**: The lighting is soft and diffused, with golden and warm hues illuminating the scene. There are numerous small, glowing orbs or particles floating in the air, resembling fireflies or magical sparks, which add to the whimsical and enchanting feel. The light seems to emanate from behind the trees, casting a gentle glow on the surroundings.\n\n- **Ground and Path**: The ground is paved with cobblestones, which are illuminated by the ambient light, creating a pattern of warm, glowing patches. The path appears to lead into the garden, with some steps visible in the background, suggesting a pathway or staircase leading deeper into the scene.\n\n- **Flowers and Plants**: Small flowers, including some with orange petals, are scattered throughout the garden, adding pops of color against the greenery. The plants are detailed and appear to be thriving, contributing to the overall sense of a vibrant, living environment.\n\n- **Overall Mood**: The background conveys a tranquil, magical ambiance, with the interplay of light, shadow, and nature creating a sense of peace and wonder. The scene feels like a hidden sanctuary, inviting the viewer to step into this enchanting world.",
+      "text": [
+        "256",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text"
+    }
+  },
+  "259": {
+    "inputs": {
+      "prefix": "",
+      "suffix": "",
+      "input": [
+        "257",
+        0
+      ]
+    },
+    "class_type": "SomethingToString",
+    "_meta": {
+      "title": "Something To String"
+    }
+  },
+  "19:253": {
+    "inputs": {
+      "channel": "red",
+      "image": [
+        "19:252",
+        0
+      ]
+    },
+    "class_type": "ImageToMask",
+    "_meta": {
+      "title": "Convert Image to Mask"
+    }
+  },
+  "19:251": {
+    "inputs": {
+      "mask": [
+        "19:199",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "19:199": {
+    "inputs": {
+      "expand": 30,
+      "tapered_corners": true,
+      "mask": [
+        "26",
+        1
+      ]
+    },
+    "class_type": "GrowMask",
+    "_meta": {
+      "title": "Grow Mask"
+    }
+  },
+  "19:252": {
+    "inputs": {
+      "blur_radius": 31,
+      "sigma": 1,
+      "image": [
+        "19:251",
+        0
+      ]
+    },
+    "class_type": "ImageBlur",
+    "_meta": {
+      "title": "Image Blur"
+    }
+  }
+}

@@ -118,7 +118,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Action<DatasetImageViewModel>? onDeleteRequested = null,
             bool showRatingControls = true,
             Func<string, Task<bool>>? onToggleFavorite = null,
-            Func<string, bool>? isFavoriteCheck = null) =>
+            Func<string, bool>? isFavoriteCheck = null,
+            IVideoThumbnailService? videoThumbnailService = null) =>
             Task.CompletedTask;
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets) =>
@@ -207,12 +208,22 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IReadOnlyList<string> sourceFolders, string? category = null) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
 
-        public Task<UnifiedExportResult> ShowUnifiedExportDialogAsync(
+        public Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders) =>
+            Task.FromResult(DownloadLoraResult.Cancelled());
+
+        public Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
             string datasetName,
             int datasetVersion,
-            IEnumerable<DatasetImageViewModel> mediaFiles,
-            IEnumerable<TrainingRunCardViewModel> trainingRuns,
-            IEnumerable<InstallerPackage>? aiToolkitInstances = null) =>
-            Task.FromResult(UnifiedExportResult.Cancelled());
+            IEnumerable<TrainingRunCardViewModel> trainingRuns) =>
+            Task.FromResult(ExportTrainingRunsResult.Cancelled());
+
+        public Task<int> ShowDuplicateFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.DuplicateClusterItemViewModel> clusters) =>
+            Task.FromResult(0);
+
+        public Task<int> ShowColorFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.ColorDistributionItemViewModel> images) =>
+            Task.FromResult(0);
+
+        public Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel) =>
+            Task.CompletedTask;
     }
 }
