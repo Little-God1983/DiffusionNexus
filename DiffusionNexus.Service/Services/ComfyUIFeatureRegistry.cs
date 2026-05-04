@@ -100,14 +100,63 @@ public static class ComfyUIFeatureRegistry
                     AutoDownloads: true)
             ]);
 
-        // ── Outpaint (planned) ──────────────────────────────────────────────
-        // TODO: Linux Implementation for Outpaint
-        // Requirements will be added when the workflow is finalized.
+        // ── Outpaint (Qwen-Image-2512-outpaint-nonVision.json) ──────────────
+        // Custom nodes: UnetLoaderGGUF, ControlNetInpaintingAliMamaApply,
+        //   ImageScaleToMaxDimension (KJNodes), ImagePadForOutpaint (built-in),
+        //   ImageBlur, GrowMask, ImageToMask, MaskToImage (built-in mask utilities).
+        // Model: qwen-image-2512 GGUF + Qwen-Image-InstantX-ControlNet-Inpainting.
         registry[ComfyUIFeature.Outpaint] = new ComfyUIFeatureRequirements(
             ComfyUIFeature.Outpaint,
-            "Outpaint (Planned)",
-            RequiredNodeTypes: [],
-            RequiredModels: []);
+            "Outpaint (Qwen-2512)",
+            RequiredNodeTypes: ["UnetLoaderGGUF", "ControlNetInpaintingAliMamaApply", "ImageScaleToMaxDimension"],
+            RequiredModels:
+            [
+                new ModelRequirement(
+                    NodeType: "UnetLoaderGGUF",
+                    InputName: "unet_name",
+                    ExpectedModelSubstring: "qwen-image-2512",
+                    DisplayName: "Qwen-Image-2512 GGUF",
+                    ApproximateSizeDescription: "~8 GB",
+                    AutoDownloads: true),
+                new ModelRequirement(
+                    NodeType: "ControlNetLoader",
+                    InputName: "control_net_name",
+                    ExpectedModelSubstring: "Qwen-Image-InstantX-ControlNet-Inpainting",
+                    DisplayName: "Qwen-Image-InstantX-ControlNet-Inpainting",
+                    ApproximateSizeDescription: "~2 GB",
+                    AutoDownloads: true)
+            ]);
+
+        // ── Outpaint Vision (Qwen-Image-2512-outpaint-Vision.json) ──────────
+        // Same as Outpaint plus Qwen3_VQA + SomethingToString for auto-prompt.
+        registry[ComfyUIFeature.OutpaintVision] = new ComfyUIFeatureRequirements(
+            ComfyUIFeature.OutpaintVision,
+            "Outpaint (Vision Auto-Prompt)",
+            RequiredNodeTypes: ["UnetLoaderGGUF", "ControlNetInpaintingAliMamaApply", "ImageScaleToMaxDimension", "Qwen3_VQA", "SomethingToString"],
+            RequiredModels:
+            [
+                new ModelRequirement(
+                    NodeType: "UnetLoaderGGUF",
+                    InputName: "unet_name",
+                    ExpectedModelSubstring: "qwen-image-2512",
+                    DisplayName: "Qwen-Image-2512 GGUF",
+                    ApproximateSizeDescription: "~8 GB",
+                    AutoDownloads: true),
+                new ModelRequirement(
+                    NodeType: "ControlNetLoader",
+                    InputName: "control_net_name",
+                    ExpectedModelSubstring: "Qwen-Image-InstantX-ControlNet-Inpainting",
+                    DisplayName: "Qwen-Image-InstantX-ControlNet-Inpainting",
+                    ApproximateSizeDescription: "~2 GB",
+                    AutoDownloads: true),
+                new ModelRequirement(
+                    NodeType: "Qwen3_VQA",
+                    InputName: "model",
+                    ExpectedModelSubstring: "Qwen3-VL-4B-Instruct-FP8",
+                    DisplayName: "Qwen3-VL-4B-Instruct-FP8",
+                    ApproximateSizeDescription: "~8 GB",
+                    AutoDownloads: true)
+            ]);
 
         return registry;
     }

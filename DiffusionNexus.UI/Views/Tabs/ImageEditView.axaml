@@ -439,6 +439,41 @@
                   <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.Outpainting.CancelCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
                   <Button Grid.Column="1" Content="Reset" Command="{Binding ImageEditor.Outpainting.ResetCommand}" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+
+                <!-- ComfyUI Readiness Status -->
+                <reusable:ComfyUIReadinessPanel DataContext="{Binding ImageEditor.Outpainting.Readiness}"/>
+
+                <!-- Positive Prompt (used by nonVision Generate) -->
+                <TextBlock Text="Prompt (used by 'Generate')" FontSize="11" Opacity="0.7"/>
+                <TextBox x:Name="OutpaintPromptTextBox"
+                         Text="{Binding ImageEditor.Outpainting.PositivePrompt, Mode=TwoWay}"
+                         Watermark="Describe what should appear in the new area..."
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="120" FontSize="11"/>
+
+                <!-- Generate Buttons -->
+                <Button Content="Generate" Command="{Binding ImageEditor.Outpainting.GenerateCommand}"
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="12" FontWeight="SemiBold"
+                        Background="#2D7D46" Foreground="White"
+                        ToolTip.Tip="Outpaint using your prompt (nonVision workflow)"/>
+
+                <Button Content="Generate (Vision)" Command="{Binding ImageEditor.Outpainting.GenerateVisionCommand}"
+                        HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
+                        Background="#5E35B1" Foreground="White"
+                        ToolTip.Tip="Outpaint using a Qwen3-VL auto-generated description of the surroundings"/>
+
+                <!-- Progress -->
+                <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Outpainting.IsProgressVisible}" Margin="0,4,0,0">
+                  <TextBlock Text="{Binding ImageEditor.Outpainting.ProgressDisplayText}"
+                             FontSize="10" Opacity="0.7" TextWrapping="Wrap" FontStyle="Italic"/>
+                  <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
+                    <Border Background="{Binding ImageEditor.Outpainting.HasError, Converter={x:Static converters:BoolConverters.BoolToProgressBrush}}"
+                            CornerRadius="2" HorizontalAlignment="Left"
+                            Width="{Binding ImageEditor.Outpainting.OutpaintProgress, Converter={x:Static converters:BoolConverters.PercentageToWidth}}"/>
+                  </Border>
+                </StackPanel>
               </StackPanel>
             </Border>
           </StackPanel>

@@ -392,6 +392,80 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
+
+        EventHandler<OutpaintGenerateEventArgs> onOutpaintGenerate = async (_, args) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            var tempPath = string.Empty;
+            try
+            {
+                var editorCore = _imageEditorCanvas.EditorCore;
+                var outpaintTool = editorCore.OutpaintTool;
+
+                var extLeft = outpaintTool.ExtendLeft;
+                var extTop = outpaintTool.ExtendTop;
+                var extRight = outpaintTool.ExtendRight;
+                var extBottom = outpaintTool.ExtendBottom;
+
+                if (extLeft + extTop + extRight + extBottom <= 0)
+                {
+                    imageEditor.StatusMessage = "Drag the outpaint arrows to extend the canvas before generating.";
+                    imageEditor.Outpainting.RefreshCommandStates();
+                    return;
+                }
+
+                tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
+
+                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath))
+                {
+                    imageEditor.StatusMessage = "Failed to export current image for outpainting.";
+                    imageEditor.Outpainting.RefreshCommandStates();
+                    return;
+                }
+
+                await imageEditor.Outpainting.ProcessOutpaintAsync(
+                    tempPath, args.UseVision, extLeft, extTop, extRight, extBottom);
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Outpainting failed: {ex.Message}";
+            }
+            finally
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+            }
+        };
+        imageEditor.Outpainting.GenerateRequested += onOutpaintGenerate;
+        _eventCleanup.Add(() => imageEditor.Outpainting.GenerateRequested -= onOutpaintGenerate);
+
+        EventHandler<byte[]> onOutpaintResult = (_, imageBytes) =>
+        {
+            if (_imageEditorCanvas is null) return;
+
+            try
+            {
+                // Outpainting changes canvas dimensions, so reload the image as the new base
+                // rather than adding a layer.
+                if (_imageEditorCanvas.LoadImage(imageBytes))
+                {
+                    imageEditor.Outpainting.ClosePanel();
+                    imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+                    imageEditor.UpdateDimensions(_imageEditorCanvas.EditorCore.Width, _imageEditorCanvas.EditorCore.Height);
+                    _imageEditorCanvas.InvalidateVisual();
+                }
+                else
+                {
+                    imageEditor.StatusMessage = "Failed to load outpainting result into the editor.";
+                }
+            }
+            catch (Exception ex)
+            {
+                imageEditor.StatusMessage = $"Failed to apply outpainting result: {ex.Message}";
+            }
+        };
+        imageEditor.Outpainting.ResultReady += onOutpaintResult;
+        _eventCleanup.Add(() => imageEditor.Outpainting.ResultReady -= onOutpaintResult);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
