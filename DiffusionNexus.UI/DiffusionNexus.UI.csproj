@@ -2,6 +2,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <!-- Force x64 codegen + RID. We deliberately do NOT set <Platforms> here:
+         doing so changes VS's output path to bin\x64\<Config>\... which breaks
+         the default debug profile and confuses CLI builds. PlatformTarget alone
+         is sufficient to prevent BadImageFormatException from x64-only natives. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
@@ -108,5 +114,34 @@
     </PropertyGroup>
     <Copy SourceFiles="$(_GgmlCpuSource)" DestinationFolder="$(OutDir)runtimes\win-x64\native\cuda12\" SkipUnchangedFiles="true" Condition="'$(_GgmlCpuSource)' != ''" />
     <Message Importance="high" Text="Copied ggml-cpu.dll to cuda12 backend directory (LLamaSharp workaround)" Condition="'$(_GgmlCpuSource)' != ''" />
+  </Target>
+
+  <!-- Microsoft.AI.DirectML ships DirectML.dll under bin\x64-win\ (non-standard layout),
+       so the SDK never copies it to the output and it is missing from single-file bundles.
+       OnnxRuntime.DirectML then fails to bind DirectML at first use, surfacing as
+       System.BadImageFormatException at startup. Inject the x64 native into the publish
+       items so it is copied next to onnxruntime.dll AND included in the single-file bundle.
+       TODO: Linux Implementation for Task DirectML-Native-Inclusion (DirectML is Windows-only;
+       gate this target on the win-x64 RID and add an equivalent abstraction when Linux ships). -->
+  <Target Name="IncludeDirectMLNative" BeforeTargets="ResolveRuntimePackAssets;ComputeFilesToPublish;_ComputeFilesToBundle" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <PropertyGroup>
+      <_DirectMLPackageDir>$(NuGetPackageRoot)microsoft.ai.directml\</_DirectMLPackageDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_DirectMLCandidate Include="$(_DirectMLPackageDir)**\bin\x64-win\DirectML.dll" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_DirectMLDll>@(_DirectMLCandidate->'%(FullPath)'->Distinct())</_DirectMLDll>
+    </PropertyGroup>
+    <Warning Text="DirectML.dll not found under $(_DirectMLPackageDir). Microsoft.ML.OnnxRuntime.DirectML will fail at runtime with BadImageFormatException." Condition="'$(_DirectMLDll)' == ''" />
+    <ItemGroup Condition="'$(_DirectMLDll)' != ''">
+      <None Include="$(_DirectMLDll)">
+        <Link>DirectML.dll</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <Visible>false</Visible>
+      </None>
+    </ItemGroup>
+    <Message Importance="high" Text="Including DirectML.dll from $(_DirectMLDll)" Condition="'$(_DirectMLDll)' != ''" />
   </Target>
 </Project>
