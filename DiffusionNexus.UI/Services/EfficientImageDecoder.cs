@@ -76,17 +76,26 @@ internal static class EfficientImageDecoder
                 // while the codec is still alive.
                 if (width > targetWidth * SmallImageMultiplier)
                 {
-                    return DecodeWithCodec(codec, info, targetWidth);
+                    var subsampled = DecodeWithCodec(codec, info, targetWidth);
+                    if (subsampled is not null)
+                        return subsampled;
+
+                    // SKCodec path failed (e.g. SKBitmap allocation failed for a very
+                    // large non-JPEG image). Fall through to the Avalonia stream-based
+                    // decoder which handles large images more gracefully.
+                    Log.Warning("[EfficientImageDecoder] SKCodec decode returned null for large image, falling back to Avalonia decode: {Path} ({W}x{H}, target={Target})",
+                        imagePath, width, height, targetWidth);
                 }
             }
 
-            // Image is small enough — use normal Avalonia decode with a fresh stream
+            // Image is small enough OR SKCodec path failed — use normal Avalonia decode with a fresh stream
             return FallbackDecode(imagePath, targetWidth);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "[EfficientImageDecoder] DecodeThumbnail failed for {Path}", imagePath);
-            return null;
+            // Last-ditch attempt: try Avalonia decode in case the failure was inside the SKCodec path
+            return FallbackDecode(imagePath, targetWidth);
         }
     }
 
@@ -134,7 +143,16 @@ internal static class EfficientImageDecoder
                         ? maxDimension
                         : (int)((float)maxDimension / info.Height * info.Width);
 
-                    return DecodeWithCodec(codec, info, targetWidth);
+                    var scaled = DecodeWithCodec(codec, info, targetWidth);
+                    if (scaled is not null)
+                        return scaled;
+
+                    // SKCodec path failed for a very large image (allocation failure or
+                    // unsupported codec scaling). Fall back to Avalonia's stream decoder
+                    // capped at the same target width to avoid loading the full bitmap.
+                    Log.Warning("[EfficientImageDecoder] SKCodec decode returned null for large image, falling back to Avalonia DecodeToWidth: {Path} ({W}x{H}, target={Target})",
+                        imagePath, info.Width, info.Height, targetWidth);
+                    return FallbackDecode(imagePath, targetWidth);
                 }
             }
 
@@ -144,7 +162,8 @@ internal static class EfficientImageDecoder
         catch (Exception ex)
         {
             Log.Warning(ex, "[EfficientImageDecoder] DecodeForDisplay failed for {Path}", imagePath);
-            return null;
+            // Last-ditch attempt: try Avalonia decode capped at the configured display dimension
+            return FallbackDecode(imagePath, maxDimension);
         }
     }
 
@@ -168,27 +187,50 @@ internal static class EfficientImageDecoder
             SKColorType.Bgra8888,
             SKAlphaType.Premul);
 
-        using var decoded = new SKBitmap(decodeInfo);
-        var result = codec.GetPixels(decodeInfo, decoded.GetPixels());
-
-        if (result is not SKCodecResult.Success and not SKCodecResult.IncompleteInput)
-            return null;
-
-        // The codec may have decoded at a larger size than our target (e.g., PNG returns
-        // full resolution). Resize if the decoded width is notably larger than the target.
-        if (decoded.Width > targetWidth * 1.25)
+        SKBitmap? decoded;
+        try
         {
-            float finalScale = (float)targetWidth / decoded.Width;
-            int finalHeight = Math.Max(1, (int)(decoded.Height * finalScale));
-
-#pragma warning disable CS0618 // SKFilterQuality is obsolete but Resize with SKSamplingOptions has different behavior
-            using var resized = decoded.Resize(new SKImageInfo(targetWidth, finalHeight), SKFilterQuality.Medium);
-#pragma warning restore CS0618
-
-            return resized is not null ? ToAvaloniaBitmap(resized) : ToAvaloniaBitmap(decoded);
+            decoded = new SKBitmap(decodeInfo);
+        }
+        catch (Exception ex)
+        {
+            // Pixel allocation failed (very large image). Caller will fall back to
+            // Avalonia's stream-based decoder which handles big images gracefully.
+            Log.Warning(ex, "[EfficientImageDecoder] SKBitmap allocation failed for {W}x{H}", scaledSize.Width, scaledSize.Height);
+            return null;
         }
 
-        return ToAvaloniaBitmap(decoded);
+        using (decoded)
+        {
+            // SKBitmap silently leaves Width=0 / pixels=IntPtr.Zero when allocation
+            // fails internally. Detect that and bail out so the caller can fall back.
+            if (decoded.Width == 0 || decoded.Height == 0 || decoded.GetPixels() == IntPtr.Zero)
+            {
+                Log.Warning("[EfficientImageDecoder] SKBitmap pixel buffer unavailable for {W}x{H}", scaledSize.Width, scaledSize.Height);
+                return null;
+            }
+
+            var result = codec.GetPixels(decodeInfo, decoded.GetPixels());
+
+            if (result is not SKCodecResult.Success and not SKCodecResult.IncompleteInput)
+                return null;
+
+            // The codec may have decoded at a larger size than our target (e.g., PNG returns
+            // full resolution). Resize if the decoded width is notably larger than the target.
+            if (decoded.Width > targetWidth * 1.25)
+            {
+                float finalScale = (float)targetWidth / decoded.Width;
+                int finalHeight = Math.Max(1, (int)(decoded.Height * finalScale));
+
+#pragma warning disable CS0618 // SKFilterQuality is obsolete but Resize with SKSamplingOptions has different behavior
+                using var resized = decoded.Resize(new SKImageInfo(targetWidth, finalHeight), SKFilterQuality.Medium);
+#pragma warning restore CS0618
+
+                return resized is not null ? ToAvaloniaBitmap(resized) : ToAvaloniaBitmap(decoded);
+            }
+
+            return ToAvaloniaBitmap(decoded);
+        }
     }
 
     /// <summary>

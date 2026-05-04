@@ -627,8 +627,9 @@ public class DatasetBackupService : IDatasetBackupService
 
         // No compression for already-compressed media (videos/images). Captions and other
         // text formats compress 5-10x with Deflate, so we keep Optimal for them.
-        if (SupportedMediaTypes.VideoExtensionSet.Contains(extension) ||
-            SupportedMediaTypes.ImageExtensionSet.Contains(extension))
+        if (extension is not null &&
+            (SupportedMediaTypes.VideoExtensionSet.Contains(extension) ||
+             SupportedMediaTypes.ImageExtensionSet.Contains(extension)))
         {
             return CompressionLevel.NoCompression;
         }

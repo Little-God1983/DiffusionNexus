@@ -396,6 +396,22 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
+    /// Resizes the layer stack canvas and offsets all existing layer content.
+    /// </summary>
+    public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        _width = newWidth;
+        _height = newHeight;
+
+        foreach (var layer in _layers)
+        {
+            layer.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+        }
+
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
     /// Crops all layers to the specified rectangle.
     /// </summary>
     /// <param name="cropRect">The crop rectangle in pixel coordinates.</param>

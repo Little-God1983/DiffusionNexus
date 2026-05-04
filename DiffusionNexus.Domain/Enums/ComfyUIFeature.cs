@@ -31,7 +31,14 @@ public enum ComfyUIFeature
     BatchUpscaleVision,
 
     /// <summary>
-    /// Image outpainting (planned). Reserved for future use.
+    /// Image outpainting via the Qwen-2512 outpaint workflow (user-supplied prompt).
+    /// Workflow: <c>Qwen-Image-2512-outpaint-nonVision.json</c>
     /// </summary>
-    Outpaint
+    Outpaint,
+
+    /// <summary>
+    /// Image outpainting with vision-model auto-prompt (Qwen3-VL describes the surroundings).
+    /// Workflow: <c>Qwen-Image-2512-outpaint-Vision.json</c>
+    /// </summary>
+    OutpaintVision
 }
