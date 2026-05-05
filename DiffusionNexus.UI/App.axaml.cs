@@ -2,10 +2,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
-using DiffusionNexus.Captioning;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
@@ -766,13 +764,7 @@ public partial class App : Application
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
 
-        // Captioning service (singleton - manages local LLM)
-        services.AddCaptioningServices();
-
-        // Captioning backends (strategy pattern - local inference + ComfyUI)
-        // NOTE: Local Inference is registered but hidden in the UI until fully implemented � do not delete
-        services.AddSingleton<ICaptioningBackend>(sp =>
-            new LocalInferenceCaptioningBackend(sp.GetRequiredService<ICaptioningService>()));
+        // Captioning backend - ComfyUI only
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),

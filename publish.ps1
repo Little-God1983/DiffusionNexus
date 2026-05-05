@@ -56,6 +56,25 @@ function Get-CurrentVersion {
     return $null
 }
 
+function Increment-Version {
+    param([string]$VersionString)
+
+    $parts = $VersionString.Split('.')
+    if ($parts.Length -eq 4) {
+        $parts[3] = ([int]$parts[3] + 1).ToString()
+        return $parts -join "."
+    }
+    return $VersionString
+}
+
+function Update-PropsFileVersion {
+    param([string]$NewVersion)
+    
+    $content = Get-Content $PropsFile -Raw
+    $newContent = $content -replace '<Version>(\d+\.\d+\.\d+\.\d+)</Version>', "<Version>$NewVersion</Version>"
+    Set-Content -Path $PropsFile -Value $newContent -NoNewline
+}
+
 # ============================================================
 # MAIN SCRIPT
 # ============================================================
@@ -79,6 +98,14 @@ if (-not $Version) {
     Write-Host "ERROR: Could not read version from Directory.Build.props" -ForegroundColor Red
     exit 1
 }
+
+Write-Host "Old Version: $Version" -ForegroundColor Yellow
+
+# Increment the version
+$Version = Increment-Version -VersionString $Version
+
+# Update the Directory.Build.Props file
+Update-PropsFileVersion -NewVersion $Version
 
 Write-Host "Current Version: $Version" -ForegroundColor Green
 Write-Host ""
