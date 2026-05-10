@@ -148,6 +148,26 @@ public partial class ModelTileViewModel : ViewModelBase
         ModelEntity = primary;
     }
 
+    /// <summary>
+    /// Updates the in-memory remote version count for every grouped model and
+    /// re-raises the "additional versions" badge properties so the tile reflects
+    /// the latest Civitai response without waiting for a full tile rebuild.
+    /// Call this after the detail panel fetches the model from Civitai.
+    /// </summary>
+    public void UpdateRemoteVersionCount(int totalVersionCount, DateTime checkedAtUtc)
+    {
+        foreach (var model in _allGroupedModels)
+        {
+            model.TotalVersionCount = totalVersionCount;
+            model.LastCheckedForUpdatesUtc = checkedAtUtc;
+        }
+
+        OnPropertyChanged(nameof(AdditionalVersionCount));
+        OnPropertyChanged(nameof(HasAdditionalVersions));
+        OnPropertyChanged(nameof(AdditionalVersionsBadge));
+        OnPropertyChanged(nameof(AdditionalVersionsTooltip));
+    }
+
     #endregion
 
     #region Collections
