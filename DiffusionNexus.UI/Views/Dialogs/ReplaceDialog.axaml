@@ -9,7 +9,7 @@
         CanResize="False"
         Background="#252526"
         Title="Replace Image"
-        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.ico">
+        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png">
   
   <Grid RowDefinitions="Auto,*,Auto">
       <StackPanel>
