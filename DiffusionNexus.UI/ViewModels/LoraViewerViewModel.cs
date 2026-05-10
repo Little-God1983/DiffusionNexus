@@ -1660,6 +1660,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             dbModel.IsPoi = civitaiModel.Poi;
             dbModel.Source = DataSource.CivitaiApi;
             dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
+            // Capture version-availability data from the same response so the
+            // "+N more versions" badge can be shown without an additional HTTP call.
+            dbModel.TotalVersionCount = civitaiModel.ModelVersions?.Count ?? 0;
+            dbModel.LastCheckedForUpdatesUtc = DateTime.UtcNow;
             dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
             dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
             dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;

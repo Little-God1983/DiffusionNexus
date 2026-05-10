@@ -49,6 +49,21 @@ public class Model : BaseEntity
     public DateTimeOffset? LastSyncedAt { get; set; }
 
     /// <summary>
+    /// When this model was last checked against Civitai for newer/other versions.
+    /// <c>null</c> means it has never been checked, in which case the
+    /// "more versions available" badge must not be displayed for this model.
+    /// </summary>
+    public DateTime? LastCheckedForUpdatesUtc { get; set; }
+
+    /// <summary>
+    /// Total number of versions that exist on Civitai for this model page,
+    /// captured at the most recent update check (or first metadata download).
+    /// Combined with the number of locally-owned versions of the same Civitai
+    /// model page this drives the "+N more versions" badge in the LoRA Viewer.
+    /// </summary>
+    public int TotalVersionCount { get; set; }
+
+    /// <summary>
     /// True when the user has manually edited this model (description, thumbnail, tags).
     /// Civitai sync flows must not overwrite user-edited models. Defaults to false.
     /// </summary>

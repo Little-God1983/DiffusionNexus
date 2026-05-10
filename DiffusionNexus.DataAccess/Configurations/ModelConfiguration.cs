@@ -27,6 +27,7 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
         entity.Property(e => e.AllowCommercialUse).HasConversion<string>().HasMaxLength(20);
         entity.Property(e => e.IsUserEdited).HasDefaultValue(false);
         entity.Property(e => e.UserCategory).HasConversion<string?>().HasMaxLength(20);
+        entity.Property(e => e.TotalVersionCount).HasDefaultValue(0);
 
         // Relationships
         entity.HasOne(e => e.Creator)

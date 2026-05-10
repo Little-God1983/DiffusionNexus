@@ -59,39 +59,21 @@
               <ProgressBar IsIndeterminate="True" Width="80" VerticalAlignment="Center"/>
             </Border>
 
-            <!-- NSFW Badge -->
-            <Border IsVisible="{Binding IsNsfw}"
-                    Background="#E53935"
-                    CornerRadius="4"
-                    Padding="6,2"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Margin="4">
-              <TextBlock Text="NSFW" FontSize="9" FontWeight="Bold" Foreground="White"/>
-            </Border>
+                </Grid>
+              </Border>
+            </Button>
 
-            <!-- Grouped Badge -->
-            <Border IsVisible="{Binding IsGrouped}"
-                    Background="#0078D4"
-                    CornerRadius="4"
-                    Padding="6,2"
+            <!-- Version Selector Label Buttons (overlay on thumbnail top).
+                 Only shown when there are multiple versions; left-aligned so it
+                 doesn't span the full top edge and cover the NSFW/extra-versions
+                 badges on the right. -->
+            <Border Grid.Row="0"
+                    IsVisible="{Binding HasMultipleVersions}"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Top"
-                    Margin="4"
-                    Opacity="0.9">
-              <TextBlock Text="{Binding VersionCountDisplay}" 
-                         FontSize="9" FontWeight="Bold" Foreground="White"/>
-            </Border>
-          </Grid>
-        </Border>
-      </Button>
-
-      <!-- Version Selector Label Buttons (overlay on thumbnail top) -->
-      <Border Grid.Row="0"
-              VerticalAlignment="Top"
-              Background="#CC000000"
-              Padding="4,4,4,2"
-              CornerRadius="8,8,0,0">
+                    Background="#CC000000"
+                    Padding="4,4,4,2"
+                    CornerRadius="8,0,0,0">
         <ItemsControl ItemsSource="{Binding VersionButtons}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
@@ -151,6 +133,50 @@
                      TextTrimming="CharacterEllipsis"
                      ToolTip.Tip="{Binding FileName}"/>
         </StackPanel>
+      </Border>
+
+      <!-- Top-right badges stacked vertically (NSFW first, additional versions below).
+           Declared after the version-selector overlay so they always render on top
+           and are no longer occluded by the dark version-selector strip. -->
+      <StackPanel Grid.Row="0"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Top"
+                  Margin="4"
+                  Spacing="4">
+        <!-- NSFW Badge -->
+        <Border IsVisible="{Binding IsNsfw}"
+                Background="#E53935"
+                CornerRadius="4"
+                Padding="6,2"
+                HorizontalAlignment="Right">
+          <TextBlock Text="NSFW" FontSize="9" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+        <!-- More Versions Available Badge (Civitai has versions the user does not own locally) -->
+        <Border IsVisible="{Binding HasAdditionalVersions}"
+                Background="#7B1FA2"
+                CornerRadius="4"
+                Padding="6,2"
+                HorizontalAlignment="Right"
+                Opacity="0.9"
+                ToolTip.Tip="{Binding AdditionalVersionsTooltip}">
+          <TextBlock Text="{Binding AdditionalVersionsBadge}"
+                     FontSize="9" FontWeight="Bold" Foreground="White"/>
+        </Border>
+      </StackPanel>
+
+      <!-- Grouped Badge (top-left, separate from version-selector overlay) -->
+      <Border Grid.Row="0"
+              IsVisible="{Binding IsGrouped}"
+              Background="#0078D4"
+              CornerRadius="4"
+              Padding="6,2"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Top"
+              Margin="4,32,0,0"
+              Opacity="0.9">
+        <TextBlock Text="{Binding VersionCountDisplay}"
+                   FontSize="9" FontWeight="Bold" Foreground="White"/>
       </Border>
 
       <!-- Bottom Action Buttons -->
