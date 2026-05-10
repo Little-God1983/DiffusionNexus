@@ -272,4 +272,31 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .ToDictionaryAsync(t => t.NormalizedName, StringComparer.OrdinalIgnoreCase, cancellationToken)
             .ConfigureAwait(false);
     }
+
+    /// <inheritdoc />
+    public async Task<int> UpdateUpdateCheckMetadataAsync(
+        int modelId,
+        int totalVersionCount,
+        DateTime checkedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        // Look up the model's CivitaiModelPageId so all grouped rows stay in sync.
+        // Falls back to a single-row update when the page id is unknown.
+        var pageId = await Context.Models
+            .Where(m => m.Id == modelId)
+            .Select(m => m.CivitaiModelPageId)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var query = pageId.HasValue
+            ? Context.Models.Where(m => m.CivitaiModelPageId == pageId.Value)
+            : Context.Models.Where(m => m.Id == modelId);
+
+        return await query
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.TotalVersionCount, totalVersionCount)
+                .SetProperty(m => m.LastCheckedForUpdatesUtc, checkedAtUtc),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
 }

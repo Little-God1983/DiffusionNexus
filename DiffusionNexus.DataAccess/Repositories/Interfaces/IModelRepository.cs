@@ -75,4 +75,22 @@ public interface IModelRepository : IRepository<Model>
     /// Used to reuse existing Tag rows when syncing tags from Civitai.
     /// </summary>
     Task<Dictionary<string, Tag>> GetAllTagsLookupAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates only <see cref="Model.TotalVersionCount"/> and
+    /// <see cref="Model.LastCheckedForUpdatesUtc"/> for the given model without
+    /// loading the full entity graph. Targets every <see cref="Model"/> that
+    /// shares the same <see cref="Model.CivitaiModelPageId"/> when the value is
+    /// known so all grouped rows stay consistent.
+    /// </summary>
+    /// <param name="modelId">Primary <see cref="Model.Id"/> identifying the row.</param>
+    /// <param name="totalVersionCount">Total versions returned by Civitai.</param>
+    /// <param name="checkedAtUtc">Timestamp of this update check.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Number of rows updated.</returns>
+    Task<int> UpdateUpdateCheckMetadataAsync(
+        int modelId,
+        int totalVersionCount,
+        DateTime checkedAtUtc,
+        CancellationToken cancellationToken = default);
 }

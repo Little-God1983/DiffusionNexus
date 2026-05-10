@@ -58,6 +58,14 @@ public class AppSettings
     /// </summary>
     public bool MergeLoraSources { get; set; }
 
+    /// <summary>
+    /// Maximum age (in days) of a model's <c>LastCheckedForUpdatesUtc</c> before
+    /// the LoRA Viewer will silently re-check Civitai for new versions of the
+    /// currently visible tiles. Defaults to 3 days; <c>0</c> disables the
+    /// automatic update check entirely.
+    /// </summary>
+    public int LoraUpdateCheckStalenessDays { get; set; } = 3;
+
     #endregion
 
     #region LoRA Sort Settings

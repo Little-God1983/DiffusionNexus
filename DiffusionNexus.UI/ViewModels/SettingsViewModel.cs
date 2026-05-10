@@ -72,6 +72,21 @@ public partial class SettingsViewModel : BusyViewModelBase
     private bool _mergeLoraSources;
 
     /// <summary>
+    /// Maximum age (in days) of a LoRA's last Civitai update check before the
+    /// LoRA Viewer re-checks for new versions on its next paginated load.
+    /// 0 disables the automatic update check.
+    /// </summary>
+    [ObservableProperty]
+    private int _loraUpdateCheckStalenessDays = 3;
+
+    /// <summary>
+    /// Selectable staleness intervals (in days) for the LoRA update check.
+    /// 0 means "disabled"; the UI displays a friendly label for the 0 entry.
+    /// </summary>
+    public IReadOnlyList<int> AvailableLoraUpdateCheckStalenessDays { get; } =
+        new[] { 0, 1, 3, 7, 14, 30 };
+
+    /// <summary>
     /// Default source folder for LoRA Sort.
     /// </summary>
     [ObservableProperty]
@@ -276,6 +291,7 @@ public partial class SettingsViewModel : BusyViewModelBase
             ShowVideoPreview = settings.ShowVideoPreview;
             UseForgeStylePrompts = settings.UseForgeStylePrompts;
             MergeLoraSources = settings.MergeLoraSources;
+            LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
             DatasetStoragePath = settings.DatasetStoragePath;
@@ -468,6 +484,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                 ShowVideoPreview = ShowVideoPreview,
                 UseForgeStylePrompts = UseForgeStylePrompts,
                 MergeLoraSources = MergeLoraSources,
+                LoraUpdateCheckStalenessDays = LoraUpdateCheckStalenessDays,
                 LoraSortSourcePath = LoraSortSourcePath,
                 LoraSortTargetPath = LoraSortTargetPath,
                 DatasetStoragePath = DatasetStoragePath,
@@ -1154,6 +1171,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnShowVideoPreviewChanged(bool value) => HasChanges = true;
     partial void OnUseForgeStylePromptsChanged(bool value) => HasChanges = true;
     partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
+    partial void OnLoraUpdateCheckStalenessDaysChanged(int value) => HasChanges = true;
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
     partial void OnDatasetStoragePathChanged(string? value)
