@@ -63,12 +63,12 @@
               </Border>
             </Button>
 
-            <!-- Version Selector Label Buttons (overlay on thumbnail top).
-                 Only shown when there are multiple versions; left-aligned so it
-                 doesn't span the full top edge and cover the NSFW/extra-versions
-                 badges on the right. -->
+            <!-- Version Selector / Base-Model Label Buttons (overlay on thumbnail top).
+                 Always shown when there is at least one version button so the base-model
+                 label (e.g. "SDXL") is visible even for single-version models.
+                 Left-aligned so it doesn't span the full top edge and cover the
+                 NSFW / extra-versions badges on the right. -->
             <Border Grid.Row="0"
-                    IsVisible="{Binding HasMultipleVersions}"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Top"
                     Background="#CC000000"
@@ -164,20 +164,6 @@
                      FontSize="9" FontWeight="Bold" Foreground="White"/>
         </Border>
       </StackPanel>
-
-      <!-- Grouped Badge (top-left, separate from version-selector overlay) -->
-      <Border Grid.Row="0"
-              IsVisible="{Binding IsGrouped}"
-              Background="#0078D4"
-              CornerRadius="4"
-              Padding="6,2"
-              HorizontalAlignment="Left"
-              VerticalAlignment="Top"
-              Margin="4,32,0,0"
-              Opacity="0.9">
-        <TextBlock Text="{Binding VersionCountDisplay}"
-                   FontSize="9" FontWeight="Bold" Foreground="White"/>
-      </Border>
 
       <!-- Bottom Action Buttons -->
       <Border Grid.Row="1"
