@@ -339,6 +339,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
 
+            // Per-LoRA trigger logging is intentionally suppressed for this path —
+            // a single batch entry is logged at the start so the log file isn't
+            // flooded with 10K identical "trigger=DownloadMetadataButton" lines.
+            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                $"Update batch started (trigger={LoraUpdateTriggerSource.DownloadMetadataButton})");
+
             // ── Phase 0: Discover new files and rebuild tiles so all models are visible ──
             // Without this, only previously loaded tiles are processed.
             var tiles = await Task.Run(async () =>
@@ -2158,7 +2164,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 }
 
                 await _updateChecker
-                    .CheckVisibleAsync(snapshot, TimeSpan.FromDays(stalenessDays), cts.Token)
+                    .CheckVisibleAsync(
+                        snapshot,
+                        TimeSpan.FromDays(stalenessDays),
+                        LoraUpdateTriggerSource.Stale,
+                        cts.Token)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException)

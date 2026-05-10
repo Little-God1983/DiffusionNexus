@@ -1106,6 +1106,13 @@ public partial class ModelDetailViewModel : ViewModelBase
             return;
         }
 
+        var tileName = tile.ModelEntity?.Name ?? tile.DisplayName;
+        var previousTotal = tile.ModelEntity?.TotalVersionCount ?? 0;
+        var lastCheckedDisplay = tile.ModelEntity?.LastCheckedForUpdatesUtc?.ToString("u") ?? "never";
+
+        _logger?.Trace(LogCategory.Network, "LoraUpdateChecker",
+            $"Attempting update check for '{tileName}' (trigger={LoraUpdateTriggerSource.DetailView}, civitaiId={modelId.Value}, lastChecked={lastCheckedDisplay}, previousTotal={previousTotal})");
+
         IsLoading = true;
         StatusMessage = "Fetching versions from Civitai...";
 
@@ -1117,6 +1124,8 @@ public partial class ModelDetailViewModel : ViewModelBase
             if (civitaiModel is null)
             {
                 StatusMessage = "Model not found on Civitai";
+                _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                    $"Civitai returned no model for '{tileName}' (trigger={LoraUpdateTriggerSource.DetailView}, civitaiId={modelId.Value})");
                 return;
             }
 
@@ -1129,6 +1138,16 @@ public partial class ModelDetailViewModel : ViewModelBase
             var totalRemoteVersions = civitaiModel.ModelVersions?.Count ?? 0;
             var checkedAtUtc = DateTime.UtcNow;
             await PersistRemoteVersionCountAsync(tile, totalRemoteVersions, checkedAtUtc);
+
+            var delta = totalRemoteVersions - previousTotal;
+            var deltaText = delta switch
+            {
+                > 0 => $"+{delta}",
+                < 0 => delta.ToString(),
+                _ => "no change",
+            };
+            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                $"Update check completed for '{tileName}' (trigger={LoraUpdateTriggerSource.DetailView}, civitaiId={modelId.Value}): remoteVersions={totalRemoteVersions} ({deltaText} vs previous {previousTotal})");
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {

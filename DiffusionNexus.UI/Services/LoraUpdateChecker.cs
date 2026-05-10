@@ -49,6 +49,7 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
     public async Task CheckVisibleAsync(
         IEnumerable<ModelTileViewModel> tiles,
         TimeSpan staleness,
+        LoraUpdateTriggerSource source,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tiles);
@@ -61,7 +62,7 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
         if (IsRateLimited())
         {
             _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                "Skipping update-check batch — backing off after recent 429.");
+                $"Skipping update-check batch (trigger={source}) — backing off after recent 429.");
             return;
         }
 
@@ -96,21 +97,31 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
         }
 
         _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-            $"Checking {pending.Count} visible LoRA(s) for new versions (staleness {staleness.TotalDays:0.##}d)");
+            $"Checking {pending.Count} visible LoRA(s) for new versions (trigger={source}, staleness {staleness.TotalDays:0.##}d)");
 
         using var semaphore = new SemaphoreSlim(MaxConcurrency);
-        var tasks = pending.Select(p => CheckOneAsync(p.CivitaiModelId, p.Tile, apiKey, semaphore, cancellationToken));
+        var tasks = pending.Select(p => CheckOneAsync(p.CivitaiModelId, p.Tile, source, apiKey, semaphore, cancellationToken));
         await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task CheckOneAsync(
         int civitaiModelId,
         ModelTileViewModel tile,
+        LoraUpdateTriggerSource source,
         string? apiKey,
         SemaphoreSlim semaphore,
         CancellationToken cancellationToken)
     {
         await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        var tileName = tile.ModelEntity?.Name ?? tile.DisplayName;
+        var lastChecked = tile.ModelEntity?.LastCheckedForUpdatesUtc;
+        var lastCheckedDisplay = lastChecked?.ToString("u") ?? "never";
+        var previousTotal = tile.ModelEntity?.TotalVersionCount ?? 0;
+
+        _logger?.Trace(LogCategory.Network, "LoraUpdateChecker",
+            $"Attempting update check for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}, lastChecked={lastCheckedDisplay}, previousTotal={previousTotal})");
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -118,6 +129,8 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
             // Honour a backoff that another in-flight call may have triggered.
             if (IsRateLimited())
             {
+                _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                    $"Skipped '{tileName}' (trigger={source}, civitaiId={civitaiModelId}) — backoff active");
                 return;
             }
 
@@ -128,6 +141,8 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
             if (remote is null)
             {
                 // 404 — model was removed or made private. Leave the tile alone.
+                _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                    $"Civitai returned no model for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}); tile left unchanged");
                 return;
             }
 
@@ -137,6 +152,8 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
             var modelId = tile.ModelEntity?.Id;
             if (modelId is null || modelId.Value <= 0)
             {
+                _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                    $"No local model id for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}); skipping persist");
                 return;
             }
 
@@ -145,25 +162,39 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
 
             await Dispatcher.UIThread.InvokeAsync(() =>
                 tile.UpdateRemoteVersionCount(totalVersions, checkedAtUtc));
+
+            var delta = totalVersions - previousTotal;
+            var deltaText = delta switch
+            {
+                > 0 => $"+{delta}",
+                < 0 => delta.ToString(),
+                _ => "no change",
+            };
+            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                $"Update check completed for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}): remoteVersions={totalVersions} ({deltaText} vs previous {previousTotal})");
         }
         catch (OperationCanceledException)
         {
             // User paginated or filter changed — drop quietly.
+            _logger?.Trace(LogCategory.Network, "LoraUpdateChecker",
+                $"Update check cancelled for '{tileName}' (trigger={source}, civitaiId={civitaiModelId})");
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
         {
             TriggerBackoff();
             _logger?.Warn(LogCategory.Network, "LoraUpdateChecker",
-                $"Civitai rate-limited update check for model {civitaiModelId}; pausing for {RateLimitBackoff.TotalSeconds:0}s");
+                $"Civitai rate-limited update check for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}); pausing for {RateLimitBackoff.TotalSeconds:0}s");
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Already handled above when GetModelAsync returns null, but kept for safety.
+            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                $"Civitai returned 404 for '{tileName}' (trigger={source}, civitaiId={civitaiModelId})");
         }
         catch (Exception ex)
         {
             _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                $"Update check failed for model {civitaiModelId}: {ex.Message}");
+                $"Update check failed for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}): {ex.Message}");
         }
         finally
         {
