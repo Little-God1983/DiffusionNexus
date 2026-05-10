@@ -7,7 +7,8 @@
          the default debug profile and confuses CLI builds. PlatformTarget alone
          is sufficient to prevent BadImageFormatException from x64-only natives. -->
     <PlatformTarget>x64</PlatformTarget>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Temporarily commented out to diagnose COR_E_EXECUTIONENGINE error -->
+    <!-- <RuntimeIdentifier>win-x64</RuntimeIdentifier> -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>

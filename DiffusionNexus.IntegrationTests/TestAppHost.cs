@@ -35,7 +35,7 @@ public sealed class TestAppHost : IAsyncLifetime, IDisposable
         CacheRoot = Path.Combine(RootPath, "cache");
     }
 
-    public async ValueTask InitializeAsync()
+    public async Task InitializeAsync()
     {
         Directory.CreateDirectory(DatasetRoot);
         Directory.CreateDirectory(DatabaseRoot);
@@ -55,10 +55,10 @@ public sealed class TestAppHost : IAsyncLifetime, IDisposable
         await settingsService.SaveSettingsAsync(settings);
     }
 
-    public ValueTask DisposeAsync()
+    public Task DisposeAsync()
     {
         Dispose();
-        return ValueTask.CompletedTask;
+        return Task.CompletedTask;
     }
 
     public void Dispose()

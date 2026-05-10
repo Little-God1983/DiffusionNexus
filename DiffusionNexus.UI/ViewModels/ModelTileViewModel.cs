@@ -148,6 +148,26 @@ public partial class ModelTileViewModel : ViewModelBase
         ModelEntity = primary;
     }
 
+    /// <summary>
+    /// Updates the in-memory remote version count for every grouped model and
+    /// re-raises the "additional versions" badge properties so the tile reflects
+    /// the latest Civitai response without waiting for a full tile rebuild.
+    /// Call this after the detail panel fetches the model from Civitai.
+    /// </summary>
+    public void UpdateRemoteVersionCount(int totalVersionCount, DateTime checkedAtUtc)
+    {
+        foreach (var model in _allGroupedModels)
+        {
+            model.TotalVersionCount = totalVersionCount;
+            model.LastCheckedForUpdatesUtc = checkedAtUtc;
+        }
+
+        OnPropertyChanged(nameof(AdditionalVersionCount));
+        OnPropertyChanged(nameof(HasAdditionalVersions));
+        OnPropertyChanged(nameof(AdditionalVersionsBadge));
+        OnPropertyChanged(nameof(AdditionalVersionsTooltip));
+    }
+
     #endregion
 
     #region Collections
@@ -279,6 +299,59 @@ public partial class ModelTileViewModel : ViewModelBase
     public string VersionCountDisplay => HasMultipleVersions
         ? $"{Versions.Count} versions"
         : string.Empty;
+
+    /// <summary>
+    /// Number of additional versions of this Civitai model that exist remotely
+    /// but are not present locally. Computed as
+    /// <c>max(TotalVersionCount - ownedVersions, 0)</c> across all grouped models
+    /// for the same Civitai model page.
+    /// Returns 0 (badge hidden) when no update check has ever run for any of the
+    /// grouped models — see <see cref="Model.LastCheckedForUpdatesUtc"/>.
+    /// </summary>
+    public int AdditionalVersionCount
+    {
+        get
+        {
+            if (_allGroupedModels.Count == 0)
+            {
+                return 0;
+            }
+
+            // No badge until at least one grouped model has been checked against Civitai.
+            if (!_allGroupedModels.Any(m => m.LastCheckedForUpdatesUtc.HasValue))
+            {
+                return 0;
+            }
+
+            var totalRemote = _allGroupedModels.Max(m => m.TotalVersionCount);
+            var ownedLocal = _allGroupedModels.Sum(m => m.Versions.Count);
+            var diff = totalRemote - ownedLocal;
+            return diff > 0 ? diff : 0;
+        }
+    }
+
+    /// <summary>
+    /// True when there are additional, not-yet-downloaded versions of this
+    /// Civitai model that the user could download.
+    /// </summary>
+    public bool HasAdditionalVersions => AdditionalVersionCount > 0;
+
+    /// <summary>
+    /// Short label for the "more versions available" badge (e.g. "+5").
+    /// </summary>
+    public string AdditionalVersionsBadge => HasAdditionalVersions
+        ? $"+{AdditionalVersionCount}"
+        : string.Empty;
+
+    /// <summary>
+    /// Tooltip text for the "more versions available" badge.
+    /// </summary>
+    public string AdditionalVersionsTooltip => AdditionalVersionCount switch
+    {
+        0 => string.Empty,
+        1 => "1 more version available on Civitai",
+        var n => $"{n} more versions available on Civitai",
+    };
 
     /// <summary>
     /// Creator name.
@@ -798,6 +871,10 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasMultipleVersions));
         OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
+        OnPropertyChanged(nameof(AdditionalVersionCount));
+        OnPropertyChanged(nameof(HasAdditionalVersions));
+        OnPropertyChanged(nameof(AdditionalVersionsBadge));
+        OnPropertyChanged(nameof(AdditionalVersionsTooltip));
         OnPropertyChanged(nameof(CreatorName));
         OnPropertyChanged(nameof(DownloadCountDisplay));
 
