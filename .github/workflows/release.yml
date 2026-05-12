@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-main
@@ -18,16 +18,13 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
 
     - name: Setup .NET 10
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
 
-    - name: Bump build number
+    - name: Stamp build number from run number
       id: bump
       shell: pwsh
       run: |
@@ -40,21 +37,12 @@ jobs:
         $major    = $matches[1]
         $minor    = $matches[2]
         $build    = $matches[3]
-        $revision = [int]$matches[4] + 1
+        $revision = $env:GITHUB_RUN_NUMBER
         $newVersion = "$major.$minor.$build.$revision"
         $content = $content -replace '<Version>\d+\.\d+\.\d+\.\d+</Version>', "<Version>$newVersion</Version>"
         Set-Content -Path $propsFile -Value $content -NoNewline
         "version=$newVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-        Write-Host "Bumped version to $newVersion"
-
-    - name: Commit version bump
-      shell: pwsh
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add Directory.Build.props
-        git commit -m "ci: bump version to ${{ steps.bump.outputs.version }}"
-        git push origin HEAD:main
+        Write-Host "Stamped version $newVersion (run #$revision) — not committed back to main"
 
     - name: Restore dependencies
       run: dotnet restore
