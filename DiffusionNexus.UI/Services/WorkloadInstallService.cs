@@ -260,6 +260,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         var repairedCount = 0;
         var skippedCount = 0;
         var failedCount = 0;
+        var trioUpgradeNeeded = false;
 
         foreach (var repo in gitRepositories)
         {
@@ -274,6 +275,11 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             {
                 skippedCount++;
                 continue;
+            }
+
+            if (!trioUpgradeNeeded && RequirementsContainsTrioTrigger(requirementsPath))
+            {
+                trioUpgradeNeeded = true;
             }
 
             // TODO: Pass repo.AdditionalPipPackages once SDK NuGet includes the property
@@ -328,14 +334,103 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             }
         }
 
+        var trioPinned = false;
+        if (trioUpgradeNeeded)
+        {
+            trioPinned = await EnforceTrioCompatibilityAsync(
+                pythonExe, customNodesPath, progress, cancellationToken);
+        }
+
         var parts = new List<string>();
         if (repairedCount > 0) parts.Add($"{repairedCount} node(s) repaired");
         if (skippedCount > 0) parts.Add($"{skippedCount} node(s) up-to-date");
         if (failedCount > 0) parts.Add($"{failedCount} node(s) failed");
+        if (trioUpgradeNeeded)
+        {
+            parts.Add(trioPinned
+                ? "kernels/transformers/huggingface_hub pinned to compatible versions"
+                : "trio compatibility pin failed");
+        }
 
         var result = parts.Count > 0 ? string.Join(", ", parts) : "Nothing to repair.";
         Logger.Information("Pip dependency repair complete: {Summary}", result);
         return result;
+    }
+
+    /// <summary>
+    /// Runs <c>pip install</c> with the pinned specs in <see cref="TrioPinnedSpecs"/> to
+    /// land the venv on a <c>kernels</c> / <c>transformers</c> / <c>huggingface_hub</c>
+    /// combination that survives FP8 inference (Qwen3-VL and friends). pip will downgrade
+    /// or upgrade as needed to satisfy the ranges. See <see cref="TrioPinnedSpecs"/> for
+    /// the rationale behind each bound.
+    /// </summary>
+    private static async Task<bool> EnforceTrioCompatibilityAsync(
+        string pythonExe,
+        string workingDirectory,
+        IProgress<WorkloadInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var packageList = string.Join(" ", TrioPinnedSpecs);
+        Logger.Information(
+            "Pinning kernels/transformers/huggingface_hub to compatible versions: pip install {Packages}",
+            packageList);
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = "Dependencies",
+            Message = $"Pinning {packageList} to compatible versions..."
+        });
+
+        var (success, _) = await RunPipInstallAsync(
+            pythonExe, workingDirectory,
+            $"-m pip install {packageList}",
+            "Dependencies", "trio compatibility pin",
+            progress, cancellationToken);
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = "Dependencies",
+            Message = success
+                ? $"Pinned {packageList}."
+                : $"Failed to pin {packageList}.",
+            IsSuccess = success,
+            IsFailed = !success
+        });
+
+        return success;
+    }
+
+    /// <summary>
+    /// Returns true if the requirements file contains any package that triggers the
+    /// trio upgrade (currently <c>transformers</c> or <c>kernels</c>).
+    /// </summary>
+    internal static bool RequirementsContainsTrioTrigger(string requirementsPath)
+    {
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(requirementsPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line[0] == '#')
+                continue;
+
+            var packageName = ExtractPackageName(line);
+            if (packageName.Length == 0)
+                continue;
+
+            if (TrioTriggerPackages.Contains(packageName))
+                return true;
+        }
+
+        return false;
     }
 
     #region Python / Requirements
@@ -526,12 +621,54 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     /// <summary>
     /// Known packages whose upstream <c>requirements.txt</c> omits required runtime deps.
     /// Mirrors the SDK's <c>SupplementaryPipPackageResolver.KnownSupplementaryPackages</c>.
+    /// <para>
+    /// The transformers/kernels/huggingface_hub triangle is repaired via a separate
+    /// pinned-version install at the end of <see cref="RepairPipDependenciesAsync"/>
+    /// when any installed node references <c>transformers</c> or <c>kernels</c>. See
+    /// <see cref="TrioPinnedSpecs"/>.
+    /// </para>
     /// </summary>
     internal static readonly Dictionary<string, string[]> SupplementaryPipPackages =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["transformers"] = ["kernels"],
-        };
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Pinned version ranges for the <c>kernels</c> / <c>transformers</c> /
+    /// <c>huggingface_hub</c> triangle. A bare <c>pip install -U</c> sweep is unsafe
+    /// because:
+    /// <list type="bullet">
+    ///   <item><c>kernels</c> 0.11.0 (PR #170, 2025-10-17) introduced a malformed
+    ///     <c>user_agent</c> that emits a leading <c>"; "</c>; <c>huggingface_hub</c>
+    ///     1.x's <c>_http_user_agent</c> still does not strip empty segments, so the
+    ///     resulting <c>"kernels/X; hf_hub/Y; python/Z; "</c> is rejected by
+    ///     <c>h11</c>/<c>httpx</c> as <c>LocalProtocolError: Illegal header value</c>
+    ///     during FP8 inference (Qwen3-VL etc.).</item>
+    ///   <item><c>kernels</c> 0.10.4 is the last release that calls <c>HfApi()</c>
+    ///     bare, never exercising the trailing-<c>"; "</c> path.</item>
+    ///   <item><c>transformers</c> v5.0–v5.3 pin <c>kernels&gt;=0.10.2,&lt;0.11</c>
+    ///     (matching the pre-bug ceiling) and already include Qwen3-VL.
+    ///     v5.4+ moved to <c>kernels&gt;=0.12,&lt;0.13</c>, which is back inside the
+    ///     bug window.</item>
+    ///   <item><c>huggingface_hub</c> 1.5.x–1.12.x satisfies transformers 5.3's
+    ///     <c>&gt;=1.3.0</c> floor while staying below 1.13/1.14 versions called out
+    ///     as having additional issues.</item>
+    /// </list>
+    /// Specs are passed verbatim to pip so it can downgrade or upgrade as needed to
+    /// land in this window. They must be safe to pass as separate command-line
+    /// arguments (no spaces).
+    /// </summary>
+    internal static readonly string[] TrioPinnedSpecs =
+    [
+        "kernels<0.11",
+        "transformers>=5.0,<5.4",
+        "huggingface_hub>=1.5.0,<1.13",
+    ];
+
+    /// <summary>
+    /// Package names (normalised) that, when present in a node's requirements, trigger
+    /// the trio upgrade after the per-node repair loop.
+    /// </summary>
+    private static readonly HashSet<string> TrioTriggerPackages =
+        new(StringComparer.OrdinalIgnoreCase) { "transformers", "kernels" };
 
     /// <summary>
     /// Scans a <c>requirements.txt</c> file and returns any supplementary packages that

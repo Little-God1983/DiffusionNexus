@@ -92,8 +92,11 @@ public class WorkloadInstallServicePipTests
     #region ResolveSupplementaryPackages
 
     [Fact]
-    public void WhenRequirementsContainTransformersThenReturnsKernels()
+    public void WhenRequirementsContainTransformersThenReturnsEmpty()
     {
+        // The transformers/kernels/huggingface_hub triangle is now handled by the
+        // post-loop trio upgrade in RepairPipDependenciesAsync, not by the per-node
+        // supplementary resolver. The dictionary is empty for now.
         var requirementsPath = CreateTempRequirements(
             "torch",
             "transformers>=4.57.1",
@@ -103,8 +106,7 @@ public class WorkloadInstallServicePipTests
         {
             var result = WorkloadInstallService.ResolveSupplementaryPackages(requirementsPath);
 
-            result.Should().ContainSingle()
-                .Which.Should().Be("kernels");
+            result.Should().BeEmpty();
         }
         finally
         {
@@ -147,28 +149,7 @@ public class WorkloadInstallServicePipTests
         {
             var result = WorkloadInstallService.ResolveSupplementaryPackages(requirementsPath);
 
-            result.Should().ContainSingle()
-                .Which.Should().Be("kernels");
-        }
-        finally
-        {
-            File.Delete(requirementsPath);
-        }
-    }
-
-    [Fact]
-    public void WhenTransformersAppearsMultipleTimesThenDeduplicatesSupplementary()
-    {
-        var requirementsPath = CreateTempRequirements(
-            "transformers>=4.57.1",
-            "transformers[torch]>=4.57.1");
-
-        try
-        {
-            var result = WorkloadInstallService.ResolveSupplementaryPackages(requirementsPath);
-
-            result.Should().ContainSingle()
-                .Which.Should().Be("kernels");
+            result.Should().BeEmpty();
         }
         finally
         {
@@ -183,6 +164,79 @@ public class WorkloadInstallServicePipTests
             Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "requirements.txt"));
 
         result.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region RequirementsContainsTrioTrigger
+
+    [Theory]
+    [InlineData("transformers>=4.57.1")]
+    [InlineData("transformers")]
+    [InlineData("transformers[torch]==5.0")]
+    [InlineData("kernels")]
+    [InlineData("kernels>=0.1")]
+    public void WhenRequirementsContainTransformersOrKernelsThenTriggersTrioUpgrade(
+        string line)
+    {
+        var requirementsPath = CreateTempRequirements("torch", line, "numpy");
+
+        try
+        {
+            var result = WorkloadInstallService.RequirementsContainsTrioTrigger(requirementsPath);
+
+            result.Should().BeTrue();
+        }
+        finally
+        {
+            File.Delete(requirementsPath);
+        }
+    }
+
+    [Fact]
+    public void WhenRequirementsHaveNoTrioPackagesThenDoesNotTrigger()
+    {
+        var requirementsPath = CreateTempRequirements("torch", "numpy", "pillow");
+
+        try
+        {
+            var result = WorkloadInstallService.RequirementsContainsTrioTrigger(requirementsPath);
+
+            result.Should().BeFalse();
+        }
+        finally
+        {
+            File.Delete(requirementsPath);
+        }
+    }
+
+    [Fact]
+    public void WhenTransformersOnlyAppearsInACommentThenDoesNotTrigger()
+    {
+        var requirementsPath = CreateTempRequirements(
+            "torch",
+            "# transformers >= 4.57.1 was removed",
+            "numpy");
+
+        try
+        {
+            var result = WorkloadInstallService.RequirementsContainsTrioTrigger(requirementsPath);
+
+            result.Should().BeFalse();
+        }
+        finally
+        {
+            File.Delete(requirementsPath);
+        }
+    }
+
+    [Fact]
+    public void WhenRequirementsFileMissingThenDoesNotTrigger()
+    {
+        var result = WorkloadInstallService.RequirementsContainsTrioTrigger(
+            Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "requirements.txt"));
+
+        result.Should().BeFalse();
     }
 
     #endregion

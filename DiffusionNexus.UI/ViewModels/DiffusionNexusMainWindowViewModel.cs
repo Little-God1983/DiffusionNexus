@@ -47,26 +47,26 @@ public partial class ModuleItem : ObservableObject
         _view = view;
         _isVisible = isVisible;
         
-        if (!string.IsNullOrEmpty(iconPath))
+        if (string.IsNullOrEmpty(iconPath))
+            return;
+
+        try
         {
-            try
+            using var stream = AssetLoader.Open(new Uri(iconPath));
+            if (stream is null)
             {
-                using var assetStream = AssetLoader.Open(new Uri(iconPath));
-                if (assetStream != null)
-                {
-                    // We must not dispose the MemoryStream because Avalonia decoding
-                    // might happen lazily or it retains the stream
-                    var memoryStream = new MemoryStream();
-                    assetStream.CopyTo(memoryStream);
-                    memoryStream.Position = 0;
-                    _icon = new Bitmap(memoryStream);
-                }
+                Serilog.Log.Warning("Asset not found: {IconPath}", iconPath);
+                return;
             }
-            catch (Exception ex)
-            {
-                Serilog.Log.Warning(ex, "Failed to load icon from {IconPath}", iconPath);
-                _icon = null;
-            }
+
+            _icon = new Bitmap(stream);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex,
+                "Module icon decode failed for {IconPath}. Skia cannot decode .ico; use PNG/JPEG/WebP.",
+                iconPath);
+            _icon = null;
         }
     }
 }

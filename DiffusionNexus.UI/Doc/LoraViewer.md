@@ -93,6 +93,18 @@ In most cases both hold the same integer (the Civitai page ID). The split exists
 | `CivitaiApi` | Created or enriched from a Civitai API call |
 | `Manual` | Manually added by the user |
 
+### Update-availability fields on `Model`
+
+| Column | Purpose |
+|--------|---------|
+| `TotalVersionCount` | Number of versions that exist on Civitai for this model page, captured during the most recent sync. Default `0`. |
+| `LastCheckedForUpdatesUtc` | UTC timestamp of the last successful Civitai check. `null` = never checked — the "more versions available" badge is hidden in this case. |
+
+These are populated **for free** during the existing first-time metadata download in `LoraViewerViewModel.UpdateModelFromCivitaiAsync` (no extra HTTP request — the version list is already in the `/api/v1/models/{id}` response).
+
+The "+N more versions" tile badge is computed as
+`max(TotalVersionCount − ownedLocalVersionsForSameCivitaiPage, 0)`. It is intentionally informational only: with this minimal schema the app does **not** distinguish a "newer version exists" badge from a generic "other versions exist" badge — adding a true *Update available* badge would require also storing the latest version id / publish date.
+
 ---
 
 ## 3. Data Flow — Startup / Refresh

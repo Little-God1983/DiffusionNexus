@@ -955,7 +955,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     private async Task ApplyMediaItemsAsync(List<GenerationGalleryMediaItemViewModel> items, int enabledSourceCount)
     {
-        if (Dispatcher.UIThread.CheckAccess())
+        // When no Avalonia Application is running (e.g. unit tests) the static
+        // Dispatcher.UIThread is bound to whichever thread first touched it and
+        // has no message pump on subsequent test threads. Posting to it would
+        // hang the test indefinitely, so we execute inline instead.
+        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
         {
             ApplyMediaItems(items, enabledSourceCount);
         }
