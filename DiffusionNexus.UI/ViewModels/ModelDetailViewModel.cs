@@ -1122,8 +1122,19 @@ public partial class ModelDetailViewModel : ViewModelBase
 
             _cachedCivitaiModel = civitaiModel;
 
+            // Persist the remote version count so the "+N more versions" tile badge
+            // reflects what Civitai reports right now, even for models whose metadata
+            // was last downloaded before TotalVersionCount existed. The detail panel
+            // is the natural refresh point: opening it already costs one Civitai call.
+            var totalRemoteVersions = civitaiModel.ModelVersions?.Count ?? 0;
+            var checkedAtUtc = DateTime.UtcNow;
+            await PersistRemoteVersionCountAsync(tile, totalRemoteVersions, checkedAtUtc);
+
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                // Refresh the tile's "+N" badge in-place without waiting for a reload.
+                tile.UpdateRemoteVersionCount(totalRemoteVersions, checkedAtUtc);
+
                 // Update model-level info
                 ModelName = civitaiModel.Name;
                 ModelIdDisplay = civitaiModel.Id.ToString();
@@ -1162,6 +1173,43 @@ public partial class ModelDetailViewModel : ViewModelBase
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Persists the latest remote version count and check timestamp to every
+    /// grouped model behind the tile so the "+N more versions" badge survives
+    /// app restarts. Best-effort: failures are logged and swallowed since the
+    /// in-memory tile update has already happened.
+    /// </summary>
+    private async Task PersistRemoteVersionCountAsync(ModelTileViewModel tile, int totalRemoteVersions, DateTime checkedAtUtc)
+    {
+        try
+        {
+            var modelIds = tile.GetAllModelIds();
+            if (modelIds.Count == 0) return;
+
+            var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
+            if (scopeFactory is null) return;
+
+            using var scope = scopeFactory.CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            foreach (var id in modelIds)
+            {
+                var model = await unitOfWork.Models.GetByIdWithIncludesAsync(id);
+                if (model is null) continue;
+
+                model.TotalVersionCount = totalRemoteVersions;
+                model.LastCheckedForUpdatesUtc = checkedAtUtc;
+            }
+
+            await unitOfWork.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Network, "ModelDetail",
+                $"Failed to persist remote version count: {ex.Message}");
         }
     }
 

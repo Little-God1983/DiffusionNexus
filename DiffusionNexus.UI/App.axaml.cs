@@ -2,10 +2,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
-using DiffusionNexus.Captioning;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
@@ -529,7 +527,7 @@ public partial class App : Application
             }
 
             Serilog.Log.Information("CheckAndRepairSchema: Found AppSettings columns: {Columns}", string.Join(", ", existingColumns));
-            
+
             // List of columns to verify and their add scripts
             var requiredColumns = new Dictionary<string, string>
             {
@@ -555,10 +553,75 @@ public partial class App : Application
                     }
                 }
             }
+
+            // Self-heal Models columns added by later migrations. Needed when a previous
+            // run marked the migration as applied (MarkPendingMigrationsAsApplied) but the
+            // ALTER TABLE never actually executed — leaving queries to fail with
+            // "no such column: …". Mirrors the AppSettings repair above.
+            RepairModelsTableColumns(dbContext, connection);
         }
         catch (Exception ex)
         {
              Serilog.Log.Error(ex, "CheckAndRepairSchema: Fatal error during check");
+        }
+    }
+
+    /// <summary>
+    /// Ensures every column EF expects on the <c>Models</c> table actually exists,
+    /// applying ALTER TABLE statements for any that were lost when a migration row
+    /// was force-marked as applied without the schema actually being updated.
+    /// Add new entries here whenever a migration adds nullable / defaulted columns
+    /// to the Models table.
+    /// </summary>
+    private static void RepairModelsTableColumns(DiffusionNexusCoreDbContext dbContext, System.Data.Common.DbConnection connection)
+    {
+        var wasOpen = connection.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) connection.Open();
+
+        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA table_info('Models');";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var name = reader["name"].ToString();
+                if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
+            }
+        }
+        finally
+        {
+            if (!wasOpen) connection.Close();
+        }
+
+        if (existingColumns.Count == 0)
+        {
+            // Table doesn't exist yet — initial migration will create it.
+            return;
+        }
+
+        // Migration 20260509105621_AddLoraUpdateCheckFields
+        var requiredModelsColumns = new Dictionary<string, string>
+        {
+            { "LastCheckedForUpdatesUtc", "ALTER TABLE Models ADD COLUMN LastCheckedForUpdatesUtc TEXT" },
+            { "TotalVersionCount",        "ALTER TABLE Models ADD COLUMN TotalVersionCount INTEGER NOT NULL DEFAULT 0" },
+        };
+
+        foreach (var col in requiredModelsColumns)
+        {
+            if (existingColumns.Contains(col.Key)) continue;
+
+            Serilog.Log.Warning("CheckAndRepairSchema: Missing Models.'{Column}' column. Attempting to add...", col.Key);
+            try
+            {
+                dbContext.Database.ExecuteSqlRaw(col.Value);
+                Serilog.Log.Information("CheckAndRepairSchema: Successfully added Models.'{Column}'", col.Key);
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "CheckAndRepairSchema: Failed to add Models.'{Column}'", col.Key);
+            }
         }
     }
 
@@ -766,13 +829,7 @@ public partial class App : Application
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
 
-        // Captioning service (singleton - manages local LLM)
-        services.AddCaptioningServices();
-
-        // Captioning backends (strategy pattern - local inference + ComfyUI)
-        // NOTE: Local Inference is registered but hidden in the UI until fully implemented � do not delete
-        services.AddSingleton<ICaptioningBackend>(sp =>
-            new LocalInferenceCaptioningBackend(sp.GetRequiredService<ICaptioningService>()));
+        // Captioning backend - ComfyUI only
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
