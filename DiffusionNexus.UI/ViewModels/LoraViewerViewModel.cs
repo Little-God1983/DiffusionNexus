@@ -29,6 +29,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
+    private readonly ILoraUpdateChecker? _updateChecker;
+
+    /// <summary>
+    /// Cancels the in-flight update-check batch when the visible tile set changes
+    /// (filter edits, refreshes, page navigation). A fresh token is issued
+    /// every time a new batch starts.
+    /// </summary>
+    private CancellationTokenSource? _updateCheckCts;
 
     #region Observable Properties
 
@@ -124,6 +132,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _secureStorage = null;
         _logger = null;
         _baseModelCatalog = null;
+        _updateChecker = null;
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -137,7 +146,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ICivitaiClient? civitaiClient = null,
         ISecureStorage? secureStorage = null,
         IUnifiedLogger? logger = null,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        ILoraUpdateChecker? updateChecker = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
@@ -145,6 +155,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _secureStorage = secureStorage;
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
+        _updateChecker = updateChecker;
     }
 
     #endregion
@@ -327,6 +338,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
+
+            // Per-LoRA trigger logging is intentionally suppressed for this path —
+            // a single batch entry is logged at the start so the log file isn't
+            // flooded with 10K identical "trigger=DownloadMetadataButton" lines.
+            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
+                $"Update batch started (trigger={LoraUpdateTriggerSource.DownloadMetadataButton})");
 
             // ── Phase 0: Discover new files and rebuild tiles so all models are visible ──
             // Without this, only previously loaded tiles are processed.
@@ -2098,6 +2115,72 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         }
 
         FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
+
+        // Trigger a silent background update check for the new visible set
+        // (filter/search/page change). Stale tiles are re-checked against Civitai.
+        TriggerVisibleUpdateCheck();
+    }
+
+    /// <summary>
+    /// Kicks off <see cref="ILoraUpdateChecker.CheckVisibleAsync"/> for the
+    /// current <see cref="FilteredTiles"/>. Cancels any previous batch first so
+    /// rapid filter / pagination changes don't pile up duplicate API calls.
+    /// </summary>
+    private void TriggerVisibleUpdateCheck()
+    {
+        if (_updateChecker is null || _settingsService is null)
+        {
+            return;
+        }
+
+        if (FilteredTiles.Count == 0)
+        {
+            return;
+        }
+
+        // Cancel any previous in-flight batch for the prior page.
+        var previousCts = Interlocked.Exchange(ref _updateCheckCts, new CancellationTokenSource());
+        previousCts?.Cancel();
+        previousCts?.Dispose();
+        var cts = _updateCheckCts;
+        if (cts is null)
+        {
+            return;
+        }
+
+        // Snapshot the tiles so concurrent collection edits don't surface as
+        // InvalidOperationException inside the checker.
+        var snapshot = FilteredTiles.ToArray();
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var settings = await _settingsService.GetSettingsAsync(cts.Token).ConfigureAwait(false);
+                var stalenessDays = settings.LoraUpdateCheckStalenessDays;
+                if (stalenessDays <= 0)
+                {
+                    return; // feature disabled by user
+                }
+
+                await _updateChecker
+                    .CheckVisibleAsync(
+                        snapshot,
+                        TimeSpan.FromDays(stalenessDays),
+                        LoraUpdateTriggerSource.Stale,
+                        cts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected — the user paginated/filtered to a new page.
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(LogCategory.Network, "LoraViewer",
+                    $"Visible update check failed: {ex.Message}");
+            }
+        }, cts.Token);
     }
 
     private void LoadDemoData()

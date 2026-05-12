@@ -57,6 +57,7 @@ public sealed class SettingsExportService : ISettingsExportService
             ShowVideoPreview = settings.ShowVideoPreview,
             UseForgeStylePrompts = settings.UseForgeStylePrompts,
             MergeLoraSources = settings.MergeLoraSources,
+            LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays,
 
             LoraSortSourcePath = settings.LoraSortSourcePath,
             LoraSortTargetPath = settings.LoraSortTargetPath,
@@ -143,6 +144,7 @@ public sealed class SettingsExportService : ISettingsExportService
             ShowVideoPreview = export.ShowVideoPreview,
             UseForgeStylePrompts = export.UseForgeStylePrompts,
             MergeLoraSources = export.MergeLoraSources,
+            LoraUpdateCheckStalenessDays = export.LoraUpdateCheckStalenessDays,
 
             LoraSortSourcePath = export.LoraSortSourcePath,
             LoraSortTargetPath = export.LoraSortTargetPath,
