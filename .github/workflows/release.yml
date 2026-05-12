@@ -51,7 +51,7 @@ jobs:
 
     - name: Publish (single-file zip)
       shell: pwsh
-      run: .\publish.ps1 -SkipDatabasePrompt
+      run: .\publish.ps1 -SkipDatabasePrompt -NoBump
       env:
         GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
 
