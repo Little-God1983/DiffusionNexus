@@ -3,6 +3,7 @@ using DiffusionNexus.Domain.Services;
 using LLama;
 using LLama.Common;
 using LLama.Native;
+using LLama.Sampling;
 using Serilog;
 
 namespace DiffusionNexus.Captioning;
@@ -18,7 +19,8 @@ public sealed class CaptioningService : ICaptioningService
     
     private LLamaWeights? _modelWeights;
     private LLamaContext? _context;
-    private LLavaWeights? _clipWeights;
+    private MtmdWeights? _clipModel;
+    private string _mediaMarker = "<media>";
     private CaptioningModelType? _loadedModelType;
     private bool _isProcessing;
     private bool _isGpuAvailable;
@@ -44,7 +46,7 @@ public sealed class CaptioningService : ICaptioningService
     public bool IsProcessing => _isProcessing;
 
     /// <inheritdoc />
-    public bool IsModelLoaded => _modelWeights is not null && _context is not null;
+    public bool IsModelLoaded => _modelWeights is not null && _context is not null && _clipModel is not null;
 
     /// <inheritdoc />
     public CaptioningModelType? LoadedModelType => _loadedModelType;
@@ -181,14 +183,27 @@ public sealed class CaptioningService : ICaptioningService
             };
 
             // Load model weights
-            _modelWeights = await Task.Run(() => LLamaWeights.LoadFromFile(modelParams), cancellationToken);
+            _modelWeights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
 
             // Create context
             _context = _modelWeights.CreateContext(modelParams);
 
-            // Load CLIP weights for vision
-            Log.Information("Loading CLIP projector from {Path}", clipPath);
-            _clipWeights = await Task.Run(() => LLavaWeights.LoadFromFile(clipPath), cancellationToken);
+            // Load multimodal projector (mmproj) and bind to the text model. The
+            // native side maps the legacy "llava_shared" DllImport name to the
+            // mtmd.dll shipped with the LLamaSharp.Backend.* package, so MtmdWeights
+            // is the supported path for Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA, etc.
+            Log.Information("Loading multimodal projector from {Path}", clipPath);
+            var mtmdParameters = MtmdContextParams.Default();
+            mtmdParameters.UseGpu = _isGpuAvailable;
+            _clipModel = await MtmdWeights.LoadFromFileAsync(clipPath, _modelWeights, mtmdParameters, cancellationToken);
+            _mediaMarker = mtmdParameters.MediaMarker ?? NativeApi.MtmdDefaultMarker() ?? "<media>";
+
+            if (!_clipModel.SupportsVision)
+            {
+                throw new InvalidOperationException(
+                    $"Multimodal projector at {clipPath} does not advertise vision support. " +
+                    "This model is unusable for image captioning.");
+            }
 
             _loadedModelType = modelType;
             
@@ -228,8 +243,8 @@ public sealed class CaptioningService : ICaptioningService
             Log.Information("Unloading model {ModelType}", _loadedModelType);
         }
 
-        _clipWeights?.Dispose();
-        _clipWeights = null;
+        _clipModel?.Dispose();
+        _clipModel = null;
 
         _context?.Dispose();
         _context = null;
@@ -364,55 +379,53 @@ public sealed class CaptioningService : ICaptioningService
             }
 
             await _inferencelock.WaitAsync(cancellationToken);
+            SafeMtmdEmbed? mediaEmbed = null;
             try
             {
-                if (_context is null || _clipWeights is null || _modelWeights is null)
+                if (_context is null || _clipModel is null || _modelWeights is null)
                 {
                     return CaptioningResult.Failed(imagePath, "Model is not loaded.");
                 }
 
-                // Build prompt based on model type
-                var prompt = BuildPrompt(_loadedModelType!.Value, systemPrompt);
+                // Each caption is an independent single-turn conversation. Reset the
+                // context's KV cache and any prior media so state from the previous
+                // image does not bleed into this one.
+                _context.NativeHandle.MemoryClear();
+                _clipModel.ClearMedia();
 
-                // Create image embedding
-                var imageEmbedding = _clipWeights.CreateImageEmbeddings(_context, preprocessResult.ImageData!);
+                // Load the (preprocessed) image bytes as an mtmd embed. Using the
+                // preprocessed buffer ensures we honour MaxImageDimension.
+                mediaEmbed = _clipModel.LoadMedia(preprocessResult.ImageData.AsSpan());
 
-                // Create inference parameters
+                // Build the chat-templated prompt with the media marker substituted
+                // for the literal "<image>" placeholder used by BuildPrompt.
+                var rawPrompt = BuildPrompt(_loadedModelType!.Value, systemPrompt);
+                var fullPrompt = rawPrompt.Replace("<image>", _mediaMarker, StringComparison.Ordinal);
+
                 var inferenceParams = new InferenceParams
                 {
-                    // Temperature = temperature,
+                    SamplingPipeline = new DefaultSamplingPipeline
+                    {
+                        Temperature = temperature
+                    },
                     MaxTokens = 512,
                     AntiPrompts = GetAntiPrompts(_loadedModelType.Value)
                 };
 
-                // Create executor
-                var executor = new InteractiveExecutor(_context);
+                var executor = new InteractiveExecutor(_context, _clipModel);
+                executor.Embeds.Add(mediaEmbed);
 
-                // Process the image with the prompt
-                // var imageWithPrompt = _clipWeights.CreateImagePlaceholderForPrompt();
-                // var fullPrompt = prompt.Replace("<image>", imageWithPrompt);
-                // For now, assume prompt with <image> is processed by the evaluator if it supports it, 
-                // BUT InteractiveExecutor is text-only. 
-                // We might need to use a specific LLaVA executor or inject embeddings differently.
-                // Disabling LLaVA specific logic to allow compilation for UI task.
-                
-                var fullPrompt = prompt; 
-
-                // Run inference
                 var caption = new System.Text.StringBuilder();
-                
                 await foreach (var token in executor.InferAsync(fullPrompt, inferenceParams, cancellationToken))
                 {
                     caption.Append(token);
                 }
 
-                // Post-process caption
                 var finalCaption = PostProcessCaption(
                     caption.ToString(),
                     triggerWord,
                     blacklistedWords);
 
-                // Save caption to file if path provided
                 if (!string.IsNullOrEmpty(captionFilePath))
                 {
                     var directory = Path.GetDirectoryName(captionFilePath);
@@ -427,6 +440,7 @@ public sealed class CaptioningService : ICaptioningService
             }
             finally
             {
+                mediaEmbed?.Dispose();
                 _inferencelock.Release();
             }
         }

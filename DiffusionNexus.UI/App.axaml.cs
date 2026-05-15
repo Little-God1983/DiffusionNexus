@@ -830,11 +830,22 @@ public partial class App : Application
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
 
-        // Captioning backend - ComfyUI only
+        // Captioning backends. Multiple ICaptioningBackend registrations resolve to a
+        // collection via sp.GetServices<ICaptioningBackend>(); the Captioning tab
+        // exposes them as a dropdown.
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
                 sp.GetService<IComfyUIReadinessService>()));
+
+        // Local LlamaSharp + MTMD captioning (vision-language inference in-process).
+        // CaptioningModelManager + CaptioningService come from the Captioning project's
+        // own AddCaptioningServices() helper; the adapter exposes them via ICaptioningBackend.
+        services.AddSingleton<DiffusionNexus.Captioning.CaptioningModelManager>();
+        services.AddSingleton<ICaptioningService, DiffusionNexus.Captioning.CaptioningService>();
+        services.AddSingleton<ICaptioningBackend>(sp =>
+            new DiffusionNexus.Captioning.LocalInferenceCaptioningBackend(
+                sp.GetRequiredService<ICaptioningService>()));
 
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();

@@ -98,6 +98,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             IsLoading = true;
             InstallerCards.Clear();
 
+            // Static "Diffusion Nexus Core" entry — the in-process captioning /
+            // embedding / future capabilities. Pinned to the top of the list so
+            // users find Workloads downloads regardless of how many installations
+            // they have. No backing DB row; the Workloads dialog is the only
+            // surfaced action.
+            InstallerCards.Add(CreateCoreCard());
+
             var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
             foreach (var package in packages)
@@ -471,7 +478,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         try
         {
-            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, _installService, card.InstallationPath);
+            // Core cards open the same dialog filtered to DiffusionNexusCore so
+            // captioning model bundles are the only thing shown. ComfyUI cards
+            // keep the existing combined view.
+            var filter = card.IsCore
+                ? (Installer.SDK.Models.Enums.WorkloadTargetType?)Installer.SDK.Models.Enums.WorkloadTargetType.DiffusionNexusCore
+                : null;
+
+            var vm = new WorkloadsViewModel(
+                _configurationRepository, _checkerService, _installService,
+                card.InstallationPath, filter);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog
@@ -490,6 +506,19 @@ public partial class InstallerManagerViewModel : ViewModelBase
             Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Builds the singleton "Diffusion Nexus Core" card pinned to the top of
+    /// the manager. Wires only the Workloads handler — the other actions
+    /// (Launch/Stop/Update/etc.) are unsupported on Core and the corresponding
+    /// buttons are hidden in the view.
+    /// </summary>
+    private InstallerPackageCardViewModel CreateCoreCard()
+    {
+        var card = InstallerPackageCardViewModel.CreateCoreCard();
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        return card;
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)

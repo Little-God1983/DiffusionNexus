@@ -86,6 +86,7 @@
     <ProjectReference Include="..\DiffusionNexus.Infrastructure\DiffusionNexus.Infrastructure.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Inference\DiffusionNexus.Inference.csproj" />
+    <ProjectReference Include="..\DiffusionNexus.Captioning\DiffusionNexus.Captioning.csproj" />
   </ItemGroup>
 
   <ItemGroup>

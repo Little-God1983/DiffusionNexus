@@ -342,12 +342,15 @@
                                     </StackPanel>
                                 </Border>
 
-                                <!-- Launch + Workloads (when not running) -->
+                                <!-- Launch + Workloads (when not running). Core cards
+                                     hide Launch and show only Workloads; ComfyUI cards
+                                     show both; other installer types show only Launch. -->
                                 <StackPanel Grid.Row="2"
                                             Spacing="4"
                                             Margin="12,4,12,4"
-                                            IsVisible="{Binding ShowLaunchButton}">
+                                            IsVisible="{Binding ShowActionsPanel}">
                                     <Button Classes="launch-btn"
+                                            IsVisible="{Binding ShowLaunchButton}"
                                             Command="{Binding LaunchCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Text="&#x1F680;" FontSize="14" VerticalAlignment="Center"/>
@@ -355,7 +358,7 @@
                                         </StackPanel>
                                     </Button>
                                     <Button Classes="workloads-btn"
-                                            IsVisible="{Binding IsComfyUi}"
+                                            IsVisible="{Binding ShowWorkloadsButton}"
                                             Command="{Binding ShowWorkloadsCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Text="&#x1F9F0;" FontSize="14" VerticalAlignment="Center"/>

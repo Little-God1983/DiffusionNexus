@@ -227,11 +227,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         || SelectedBackend.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Available captioning backends visible to the user.
-    /// NOTE: Local Inference (LlamaSharp) is temporarily hidden until fully implemented — do not delete it.
+    /// Available captioning backends visible to the user. The Local Inference
+    /// (LlamaSharp) backend is now wired through MtmdWeights and surfaces alongside
+    /// the ComfyUI backend.
     /// </summary>
-    public IReadOnlyList<ICaptioningBackend> AvailableBackends =>
-        _backends.Where(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase)).ToList();
+    public IReadOnlyList<ICaptioningBackend> AvailableBackends => _backends;
 
     /// <summary>
     /// The currently selected captioning backend.
@@ -1224,7 +1224,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
         else
         {
-            StatusMessage = "Compare cancelled — the newly generated caption remains on disk.";
+            StatusMessage = "Compare cancelled ï¿½ the newly generated caption remains on disk.";
         }
     }
 
