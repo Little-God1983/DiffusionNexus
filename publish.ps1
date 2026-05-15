@@ -9,7 +9,8 @@
 param(
     [switch]$SkipDatabasePrompt,
     [switch]$IncludeDatabase,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$NoBump
 )
 
 $ErrorActionPreference = "Stop"
@@ -101,11 +102,15 @@ if (-not $Version) {
 
 Write-Host "Old Version: $Version" -ForegroundColor Yellow
 
-# Increment the version
-$Version = Increment-Version -VersionString $Version
+if ($NoBump) {
+    Write-Host "Skipping version bump (-NoBump). Using version from Directory.Build.props." -ForegroundColor Yellow
+} else {
+    # Increment the version
+    $Version = Increment-Version -VersionString $Version
 
-# Update the Directory.Build.Props file
-Update-PropsFileVersion -NewVersion $Version
+    # Update the Directory.Build.Props file
+    Update-PropsFileVersion -NewVersion $Version
+}
 
 Write-Host "Current Version: $Version" -ForegroundColor Green
 Write-Host ""

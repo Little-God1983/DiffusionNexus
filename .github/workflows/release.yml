@@ -1,0 +1,64 @@
+name: Release on Main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Stamp build number from run number
+      id: bump
+      shell: pwsh
+      run: |
+        $propsFile = "Directory.Build.props"
+        $content = Get-Content $propsFile -Raw
+        if ($content -notmatch '<Version>(\d+)\.(\d+)\.(\d+)\.(\d+)</Version>') {
+            Write-Error "Could not parse <Version> in $propsFile"
+            exit 1
+        }
+        $major    = $matches[1]
+        $minor    = $matches[2]
+        $build    = $matches[3]
+        $revision = $env:GITHUB_RUN_NUMBER
+        $newVersion = "$major.$minor.$build.$revision"
+        $content = $content -replace '<Version>\d+\.\d+\.\d+\.\d+</Version>', "<Version>$newVersion</Version>"
+        Set-Content -Path $propsFile -Value $content -NoNewline
+        "version=$newVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        Write-Host "Stamped version $newVersion (run #$revision) — not committed back to main"
+
+    - name: Restore dependencies
+      run: dotnet restore
+      env:
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
+
+    - name: Publish (single-file zip)
+      shell: pwsh
+      run: .\publish.ps1 -SkipDatabasePrompt -NoBump
+      env:
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
+
+    - name: Upload zip artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: diffusion_nexus.V${{ steps.bump.outputs.version }}
+        path: diffusion_nexus.V${{ steps.bump.outputs.version }}.zip
+        if-no-files-found: error
+        retention-days: 90
