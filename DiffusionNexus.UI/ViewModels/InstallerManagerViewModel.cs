@@ -30,6 +30,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IWorkloadInstallService _installService;
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
     private readonly IUnifiedLogger _unifiedLogger;
+    private readonly DiffusionNexus.Inference.Captioning.CaptioningModelManager? _captioningModelManager;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -67,7 +68,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
         IEnumerable<IInstallerUpdateService> updateServices,
-        IUnifiedLogger unifiedLogger)
+        IUnifiedLogger unifiedLogger,
+        DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -78,6 +80,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _installService = installService;
         _updateServices = updateServices;
         _unifiedLogger = unifiedLogger;
+        _captioningModelManager = captioningModelManager;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -476,18 +479,21 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private async Task OnWorkloadsRequestedAsync(InstallerPackageCardViewModel card)
     {
+        // Diffusion Nexus Core has no ComfyUI-style workloads (custom nodes /
+        // model bundles), so the heavy ConfigurationChecker pipeline does not
+        // apply — running it against an empty install path is what made the
+        // dialog appear stuck. Show a focused captioning-models view instead.
+        if (card.IsCore)
+        {
+            await ShowCoreCaptioningOverviewAsync();
+            return;
+        }
+
         try
         {
-            // Core cards open the same dialog filtered to DiffusionNexusCore so
-            // captioning model bundles are the only thing shown. ComfyUI cards
-            // keep the existing combined view.
-            var filter = card.IsCore
-                ? (Installer.SDK.Models.Enums.WorkloadTargetType?)Installer.SDK.Models.Enums.WorkloadTargetType.DiffusionNexusCore
-                : null;
-
             var vm = new WorkloadsViewModel(
                 _configurationRepository, _checkerService, _installService,
-                card.InstallationPath, filter);
+                card.InstallationPath);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog
@@ -505,6 +511,52 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Opens the Diffusion Nexus Core captioning models dialog. Uses the same
+    /// dark-themed DataGrid layout as the ComfyUI workloads dialog so the two
+    /// surfaces feel consistent, but pulls its data from
+    /// <see cref="DiffusionNexus.Inference.Captioning.CaptioningModelManager"/>
+    /// — which now scans every registered ComfyUI installation (including
+    /// paths declared in <c>extra_model_paths.yaml</c>) for matching GGUF and
+    /// mmproj files. No ComfyUI configuration checker runs here, so the
+    /// dialog can never appear "stuck" against an empty install path.
+    /// </summary>
+    private async Task ShowCoreCaptioningOverviewAsync()
+    {
+        try
+        {
+            // Prefer the DI-managed manager (which has the ComfyUI path
+            // discovery wired in). When tests construct the viewmodel without
+            // it, fall back to a standalone manager so the action still works.
+            var manager = _captioningModelManager
+                ?? new DiffusionNexus.Inference.Captioning.CaptioningModelManager();
+
+            var vm = new CaptioningModelsDialogViewModel(manager);
+            var dialog = new Views.Dialogs.CaptioningModelsDialog
+            {
+                DataContext = vm
+            };
+
+            var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+
+            if (parentWindow is not null)
+            {
+                await dialog.ShowDialog(parentWindow);
+            }
+            else
+            {
+                dialog.Show();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open Diffusion Nexus Core captioning dialog");
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Core",
+                $"Could not open captioning models view: {ex.Message}");
         }
     }
 

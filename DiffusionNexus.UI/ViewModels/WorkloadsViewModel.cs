@@ -24,7 +24,6 @@ public partial class WorkloadsViewModel : ViewModelBase
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly string _comfyUIRootPath;
-    private readonly WorkloadTargetType? _filterTo;
 
     /// <summary>
     /// Cached configurations so we can pass them to the install service.
@@ -47,42 +46,21 @@ public partial class WorkloadsViewModel : ViewModelBase
     /// </summary>
     public ObservableCollection<WorkloadItemViewModel> InstallerWorkloads { get; } = [];
 
-    /// <summary>
-    /// True when the Installer tab should be hidden. Set when this dialog is
-    /// opened from a Core-only context (e.g. the Diffusion Nexus Core card).
-    /// </summary>
-    public bool ShowInstallerTab => _filterTo is null or WorkloadTargetType.Installer;
-
-    /// <summary>
-    /// True when the Diffusion Nexus tab should be visible. Hidden only when
-    /// the dialog is explicitly filtered to <see cref="WorkloadTargetType.Installer"/>.
-    /// </summary>
-    public bool ShowDiffusionNexusTab => _filterTo is null or WorkloadTargetType.DiffusionNexusCore;
-
     public WorkloadsViewModel(
         IConfigurationRepository configurationRepository,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
-        string comfyUIRootPath,
-        WorkloadTargetType? filterTo = null)
+        string comfyUIRootPath)
     {
         ArgumentNullException.ThrowIfNull(configurationRepository);
         ArgumentNullException.ThrowIfNull(checkerService);
         ArgumentNullException.ThrowIfNull(installService);
-
-        // Core-mode opens this dialog without an associated ComfyUI installation
-        // path. Permit an empty value in that case; the checker/installer paths
-        // that depend on a real ComfyUI root only run for non-Core workloads.
-        if (filterTo != WorkloadTargetType.DiffusionNexusCore)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
-        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
 
         _configurationRepository = configurationRepository;
         _checkerService = checkerService;
         _installService = installService;
-        _comfyUIRootPath = comfyUIRootPath ?? string.Empty;
-        _filterTo = filterTo;
+        _comfyUIRootPath = comfyUIRootPath;
     }
 
     /// <summary>
@@ -102,23 +80,13 @@ public partial class WorkloadsViewModel : ViewModelBase
 
             Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from SDK database", configurations.Count);
 
-            // Filter configurations:
-            //   - ComfyUI installs surface ComfyUI-targeted workloads (existing behaviour).
-            //   - Core mode surfaces only DiffusionNexusCore workloads (RepositoryType.None).
-            //   - When no explicit filter is set, behave as before for backwards compatibility.
-            var filteredConfigurations = configurations.Where(c => _filterTo switch
-            {
-                WorkloadTargetType.DiffusionNexusCore =>
-                    c.WorkloadTarget == WorkloadTargetType.DiffusionNexusCore,
-                WorkloadTargetType.Installer =>
-                    c.Repository.Type == RepositoryType.ComfyUI &&
-                    c.WorkloadTarget == WorkloadTargetType.Installer,
-                _ => c.Repository.Type == RepositoryType.ComfyUI
-            }).ToList();
+            var comfyConfigurations = configurations
+                .Where(c => c.Repository.Type == RepositoryType.ComfyUI)
+                .ToList();
 
-            _loadedConfigurations = filteredConfigurations;
+            _loadedConfigurations = comfyConfigurations;
 
-            foreach (var config in filteredConfigurations)
+            foreach (var config in comfyConfigurations)
             {
                 var item = new WorkloadItemViewModel(
                     config.Id,
@@ -144,13 +112,8 @@ public partial class WorkloadsViewModel : ViewModelBase
                 "WorkloadsViewModel: {DnCount} DiffusionNexus workloads, {InsCount} Installer workloads",
                 DiffusionNexusWorkloads.Count, InstallerWorkloads.Count);
 
-            // The configuration checker assumes a real ComfyUI install layout.
-            // Skip it when the dialog is filtered to Core workloads — those are
-            // installed via the captioning service rather than the ComfyUI pipeline.
-            if (_filterTo != WorkloadTargetType.DiffusionNexusCore)
-            {
-                await CheckAllWorkloadsAsync(filteredConfigurations);
-            }
+            // Run checks in parallel after populating the lists
+            await CheckAllWorkloadsAsync(comfyConfigurations);
         }
         catch (Exception ex)
         {

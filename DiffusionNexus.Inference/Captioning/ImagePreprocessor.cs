@@ -2,7 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using Serilog;
 using SkiaSharp;
 
-namespace DiffusionNexus.Captioning;
+namespace DiffusionNexus.Inference.Captioning;
 
 /// <summary>
 /// Result of image preprocessing.

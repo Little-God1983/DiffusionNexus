@@ -2,7 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using Serilog;
 
-namespace DiffusionNexus.Captioning;
+namespace DiffusionNexus.Inference.Captioning;
 
 /// <summary>
 /// Manages vision-language model files for AI image captioning.
@@ -42,22 +42,66 @@ public sealed class CaptioningModelManager
     private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf";
     private const long ExpectedQwen3VLClipSizeBytes = 1_159_029_824; // ~1.1GB
 
+    // Qwen 3 VL 8B Abliterated v2 (mradermacher GGUF — Q8_0). No upstream download
+    // URL is hardcoded because abliterated variants are user-supplied; the model is
+    // resolved by scanning the configured search paths for these filenames.
+    private const string Qwen3VLAbliteratedModelFileName = "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q8_0.gguf";
+    private const string Qwen3VLAbliteratedClipProjectorFileName = "Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-Q8_0.gguf";
+    private const long ExpectedQwen3VLAbliteratedSizeBytes = 8_700_000_000; // ~8.7GB Q8_0
+
+    /// <summary>
+    /// Default download/install directory, also the first search path.
+    /// </summary>
     private readonly string _modelsBasePath;
+
+    /// <summary>
+    /// Static search paths known at construction time: the default base path
+    /// plus anything from the <c>DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR</c>
+    /// environment variable. ComfyUI installation paths are added lazily via
+    /// <see cref="_extraSearchPathsProvider"/>.
+    /// </summary>
+    private readonly IReadOnlyList<string> _staticSearchPaths;
+
+    /// <summary>
+    /// Lazily evaluated callback that returns additional roots to scan — used
+    /// to wire ComfyUI installation directories (including paths from
+    /// <c>extra_model_paths.yaml</c>) without making this project depend on
+    /// the UI/data access layers.
+    /// </summary>
+    private readonly Func<IReadOnlyList<string>>? _extraSearchPathsProvider;
+
     private readonly HttpClient _httpClient;
     private readonly object _downloadLock = new();
     private readonly Dictionary<CaptioningModelType, bool> _downloadingModels = new();
 
     /// <summary>
+    /// Environment variable read at construction to add extra search paths.
+    /// Separator is the platform's <see cref="Path.PathSeparator"/> (';' on Windows).
+    /// </summary>
+    public const string ExtraSearchPathsEnvVar = "DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR";
+
+    /// <summary>
     /// Creates a new CaptioningModelManager with the default models directory.
     /// </summary>
-    public CaptioningModelManager() : this(null, null) { }
+    public CaptioningModelManager() : this(null, null, null) { }
 
     /// <summary>
     /// Creates a new CaptioningModelManager.
     /// </summary>
     /// <param name="modelsBasePath">Optional custom path for model storage.</param>
     /// <param name="httpClient">Optional HttpClient for downloads.</param>
-    public CaptioningModelManager(string? modelsBasePath, HttpClient? httpClient)
+    /// <param name="extraSearchPathsProvider">
+    /// Optional callback invoked at each resolution to obtain additional root
+    /// directories to scan recursively. Wire this to a ComfyUI installation
+    /// path provider so users' existing GGUF/mmproj files (including paths
+    /// declared in <c>extra_model_paths.yaml</c>) are discovered automatically.
+    /// The callback is invoked lazily, so it can return live results without
+    /// requiring the manager to be reconstructed when installations change.
+    /// </param>
+    public CaptioningModelManager(
+        string? modelsBasePath,
+        HttpClient? httpClient,
+        Func<IReadOnlyList<string>>? extraSearchPathsProvider = null)
     {
         _modelsBasePath = modelsBasePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -68,27 +112,140 @@ public sealed class CaptioningModelManager
         _httpClient.Timeout = TimeSpan.FromHours(2); // Large model download timeout
 
         Directory.CreateDirectory(_modelsBasePath);
+
+        _staticSearchPaths = BuildStaticSearchPaths(_modelsBasePath);
+        _extraSearchPathsProvider = extraSearchPathsProvider;
     }
 
     /// <summary>
-    /// Gets the full path to the model file for a given model type.
+    /// Builds the ordered list of directories to scan when resolving a model
+    /// file. The base path comes first, followed by any directories listed in
+    /// the <see cref="ExtraSearchPathsEnvVar"/> environment variable (separated
+    /// by <see cref="Path.PathSeparator"/>). Duplicates are removed; missing
+    /// directories are kept in the list so the order of preference stays
+    /// stable if the user later creates them.
+    /// </summary>
+    private static IReadOnlyList<string> BuildStaticSearchPaths(string basePath)
+    {
+        var paths = new List<string> { basePath };
+
+        var envValue = Environment.GetEnvironmentVariable(ExtraSearchPathsEnvVar);
+        if (!string.IsNullOrWhiteSpace(envValue))
+        {
+            foreach (var raw in envValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!paths.Contains(raw, StringComparer.OrdinalIgnoreCase))
+                {
+                    paths.Add(raw);
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    /// <summary>
+    /// All directories currently scanned when resolving a model — static paths
+    /// plus the live result from <see cref="_extraSearchPathsProvider"/>.
+    /// </summary>
+    private IReadOnlyList<string> GetCurrentSearchPaths()
+    {
+        if (_extraSearchPathsProvider is null)
+        {
+            return _staticSearchPaths;
+        }
+
+        var merged = new List<string>(_staticSearchPaths);
+        try
+        {
+            foreach (var extra in _extraSearchPathsProvider())
+            {
+                if (!string.IsNullOrWhiteSpace(extra) &&
+                    !merged.Contains(extra, StringComparer.OrdinalIgnoreCase))
+                {
+                    merged.Add(extra);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // A misbehaving provider should never block the default resolution.
+            Log.Warning(ex, "Extra captioning search-paths provider threw — falling back to static paths only.");
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// Walks every search path looking for <paramref name="fileName"/>. Each
+    /// path is checked as both a direct parent (file sits at <c>dir/fileName</c>)
+    /// and as a root to scan recursively — that recursive walk is what lets us
+    /// find a user-supplied GGUF stashed in ComfyUI's nested model tree (e.g.
+    /// <c>ComfyUI/models/text_encoders/.../*.gguf</c>) without hardcoding every
+    /// possible subfolder. Returns the first hit; falls back to the default
+    /// base path so download targets remain stable when nothing exists yet.
+    /// </summary>
+    private string ResolveFile(string fileName)
+    {
+        foreach (var dir in GetCurrentSearchPaths())
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+            {
+                continue;
+            }
+
+            var direct = Path.Combine(dir, fileName);
+            if (File.Exists(direct))
+            {
+                return direct;
+            }
+
+            // EnumerateFiles with a top-level pattern + AllDirectories is far
+            // cheaper than computing every subfolder. The pattern matches the
+            // exact filename so we get O(matches) work, not O(files).
+            try
+            {
+                var match = Directory.EnumerateFiles(dir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                if (match is not null)
+                {
+                    return match;
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip directories we can't read — common for partial ComfyUI layouts.
+            }
+            catch (IOException)
+            {
+                // Same — transient/locked subtrees should not abort discovery.
+            }
+        }
+
+        return Path.Combine(_modelsBasePath, fileName);
+    }
+
+    /// <summary>
+    /// Gets the full path to the model file for a given model type. The file is
+    /// resolved against the configured search paths so user-supplied GGUFs in a
+    /// custom directory are picked up without copying.
     /// </summary>
     public string GetModelPath(CaptioningModelType modelType) => modelType switch
     {
-        CaptioningModelType.LLaVA_v1_6_34B => Path.Combine(_modelsBasePath, LLaVaModelFileName),
-        CaptioningModelType.Qwen2_5_VL_7B => Path.Combine(_modelsBasePath, Qwen25VLModelFileName),
-        CaptioningModelType.Qwen3_VL_8B => Path.Combine(_modelsBasePath, Qwen3VLModelFileName),
+        CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaModelFileName),
+        CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLModelFileName),
+        CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLModelFileName),
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedModelFileName),
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
 
     /// <summary>
-    /// Gets the full path to the CLIP projector file for a given model type.
+    /// Gets the full path to the CLIP/mmproj projector file for a given model type.
     /// </summary>
     public string GetClipProjectorPath(CaptioningModelType modelType) => modelType switch
     {
-        CaptioningModelType.LLaVA_v1_6_34B => Path.Combine(_modelsBasePath, LLaVaClipProjectorFileName),
-        CaptioningModelType.Qwen2_5_VL_7B => Path.Combine(_modelsBasePath, Qwen25VLClipProjectorFileName),
-        CaptioningModelType.Qwen3_VL_8B => Path.Combine(_modelsBasePath, Qwen3VLClipProjectorFileName),
+        CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaClipProjectorFileName),
+        CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLClipProjectorFileName),
+        CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLClipProjectorFileName),
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedClipProjectorFileName),
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
 
@@ -100,6 +257,7 @@ public sealed class CaptioningModelManager
         CaptioningModelType.LLaVA_v1_6_34B => ExpectedLLaVaSizeBytes,
         CaptioningModelType.Qwen2_5_VL_7B => ExpectedQwen25VLSizeBytes,
         CaptioningModelType.Qwen3_VL_8B => ExpectedQwen3VLSizeBytes,
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ExpectedQwen3VLAbliteratedSizeBytes,
         _ => throw new ArgumentOutOfRangeException(nameof(modelType))
     };
 
@@ -111,6 +269,7 @@ public sealed class CaptioningModelManager
         CaptioningModelType.LLaVA_v1_6_34B => "LLaVA v1.6 34B",
         CaptioningModelType.Qwen2_5_VL_7B => "Qwen 2.5 VL 7B",
         CaptioningModelType.Qwen3_VL_8B => "Qwen 3 VL 8B",
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Qwen 3 VL 8B — Abliterated v2 (Q8_0)",
         _ => modelType.ToString()
     };
 
@@ -122,8 +281,16 @@ public sealed class CaptioningModelManager
         CaptioningModelType.LLaVA_v1_6_34B => "High quality vision-language model. Excellent for detailed descriptions. Requires ~20GB disk space and significant GPU VRAM.",
         CaptioningModelType.Qwen2_5_VL_7B => "Efficient vision-language model with strong performance. Good balance of quality and resource usage. Requires ~5GB disk space.",
         CaptioningModelType.Qwen3_VL_8B => "Most powerful Qwen VLM. Features 256K context, visual agent capabilities, 3D grounding, and 32-language OCR. Requires ~5.5GB disk space.",
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Uncensored Qwen3-VL 8B (Q8_0 quant). User-supplied — drop the .gguf and .mmproj files into the captioning models folder or set the DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR environment variable.",
         _ => "Unknown model."
     };
+
+    /// <summary>
+    /// Configured search paths in resolution order. Exposed so the UI can show
+    /// the user where files are looked up. Includes static (default + env var)
+    /// and live (extra-paths-provider) entries.
+    /// </summary>
+    public IReadOnlyList<string> SearchPaths => GetCurrentSearchPaths();
 
     /// <summary>
     /// Gets the current status of a model.
@@ -202,6 +369,17 @@ public sealed class CaptioningModelManager
 
         try
         {
+            // Abliterated builds are user-supplied; there is no canonical upstream
+            // URL we trust to host them. Make the absence explicit instead of
+            // letting a switch-default fall through to a confusing exception.
+            if (modelType == CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8)
+            {
+                progress?.Report(new ModelDownloadProgress(0, ExpectedQwen3VLAbliteratedSizeBytes,
+                    "Abliterated builds are user-supplied; place the .gguf and .mmproj files in the captioning models folder or set DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR."));
+                Log.Warning("DownloadModelAsync called for {ModelType}, which has no upstream URL — skipping.", modelType);
+                return false;
+            }
+
             var (modelUrl, modelPath, modelSize) = modelType switch
             {
                 CaptioningModelType.LLaVA_v1_6_34B => (LLaVaModelUrl, GetModelPath(modelType), ExpectedLLaVaSizeBytes),

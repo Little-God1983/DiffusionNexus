@@ -839,12 +839,25 @@ public partial class App : Application
                 sp.GetService<IComfyUIReadinessService>()));
 
         // Local LlamaSharp + MTMD captioning (vision-language inference in-process).
-        // CaptioningModelManager + CaptioningService come from the Captioning project's
-        // own AddCaptioningServices() helper; the adapter exposes them via ICaptioningBackend.
-        services.AddSingleton<DiffusionNexus.Captioning.CaptioningModelManager>();
-        services.AddSingleton<ICaptioningService, DiffusionNexus.Captioning.CaptioningService>();
+        // Lives in DiffusionNexus.Inference alongside the stable-diffusion.cpp image
+        // generation backend — one project owns all native model inference.
+        //
+        // The model manager is registered via a factory so it can be given a
+        // live ComfyUI path discovery callback. That lets GGUF/mmproj files in
+        // any existing ComfyUI install (including paths declared via
+        // extra_model_paths.yaml) be picked up automatically — no copying, no
+        // env var required.
+        services.AddSingleton<Inference.Captioning.CaptioningModelManager>(sp =>
+        {
+            var uow = sp.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            return new Inference.Captioning.CaptioningModelManager(
+                modelsBasePath: null,
+                httpClient: null,
+                extraSearchPathsProvider: () => DiscoverComfyUiCaptioningPaths(uow));
+        });
+        services.AddSingleton<ICaptioningService, Inference.Captioning.CaptioningService>();
         services.AddSingleton<ICaptioningBackend>(sp =>
-            new DiffusionNexus.Captioning.LocalInferenceCaptioningBackend(
+            new Inference.Captioning.LocalInferenceCaptioningBackend(
                 sp.GetRequiredService<ICaptioningService>()));
 
         // Dataset Helper services (singletons - shared state across all components)
@@ -911,7 +924,8 @@ public partial class App : Application
             sp.GetRequiredService<IConfigurationCheckerService>(),
             sp.GetRequiredService<IWorkloadInstallService>(),
             sp.GetServices<Domain.Services.IInstallerUpdateService>(),
-            sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Inference.Captioning.CaptioningModelManager>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -941,6 +955,48 @@ public partial class App : Application
             sp.GetService<AnalysisRunStore>(),
             sp.GetService<DuplicateDetector>(),
             sp.GetService<ColorDistributionAnalyzer>()));
+    }
+
+    /// <summary>
+    /// Builds the live list of additional model search paths the captioning
+    /// service should scan. For every registered ComfyUI installation, we add
+    /// the standard <c>models/</c> root plus any <c>base_path</c>/model-type
+    /// entries declared in <c>extra_model_paths.yaml</c>. Invoked lazily by
+    /// <see cref="Inference.Captioning.CaptioningModelManager"/> on each file
+    /// lookup so install changes are picked up without restarting the app.
+    /// </summary>
+    private static IReadOnlyList<string> DiscoverComfyUiCaptioningPaths(DataAccess.UnitOfWork.IUnitOfWork uow)
+    {
+        try
+        {
+            // Blocking on the async call is acceptable here: it runs on a
+            // background captioning lookup, not the UI thread, and queries
+            // the local SQLite repository which is effectively synchronous.
+            var packages = uow.InstallerPackages.GetAllAsync().GetAwaiter().GetResult();
+
+            var aggregated = new List<string>();
+            foreach (var package in packages)
+            {
+                if (package.Type != Domain.Enums.InstallerType.ComfyUI)
+                {
+                    continue;
+                }
+
+                foreach (var root in DiffusionNexus.UI.Services.ComfyUiPathDiscovery.EnumerateModelSearchPaths(package.InstallationPath))
+                {
+                    if (!aggregated.Contains(root, StringComparer.OrdinalIgnoreCase))
+                    {
+                        aggregated.Add(root);
+                    }
+                }
+            }
+            return aggregated;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to enumerate ComfyUI captioning paths — falling back to defaults.");
+            return [];
+        }
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
