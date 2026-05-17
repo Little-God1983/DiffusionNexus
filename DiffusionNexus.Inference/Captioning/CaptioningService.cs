@@ -593,9 +593,16 @@ public sealed class CaptioningService : ICaptioningService
                 <|im_start|>assistant
                 """,
 
-            // Qwen 3 VL uses ChatML format (same as 2.5). Abliterated variants
-            // share the architecture and template — only the weights differ.
-            CaptioningModelType.Qwen3_VL_8B or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => $"""
+            // Qwen 3 VL uses ChatML format (same as 2.5). Every Qwen3-VL-8B
+            // derivative we ship — the vanilla upstream weights, the
+            // abliterated Q8, the Caption-it fine-tune, and the NSFW-Caption
+            // V4 fine-tune — shares the same architecture and prompt template;
+            // only the trained weights differ. Keep them coalesced so adding
+            // another sibling variant later is one enum value, no new branch.
+            CaptioningModelType.Qwen3_VL_8B
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => $"""
                 <|im_start|>system
                 You are a helpful assistant.<|im_end|>
                 <|im_start|>user
@@ -604,7 +611,8 @@ public sealed class CaptioningService : ICaptioningService
                 <|im_start|>assistant
                 """,
 
-            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType),
+                $"BuildPrompt has no template defined for {modelType}.")
         };
     }
 
@@ -617,7 +625,10 @@ public sealed class CaptioningService : ICaptioningService
         {
             CaptioningModelType.LLaVA_v1_6_34B => ["USER:", "</s>"],
             CaptioningModelType.Qwen2_5_VL_7B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
-            CaptioningModelType.Qwen3_VL_8B or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8
+            CaptioningModelType.Qwen3_VL_8B
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4
                 => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             _ => []
         };

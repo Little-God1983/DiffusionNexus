@@ -33,6 +33,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly DiffusionNexus.Inference.Captioning.CaptioningModelManager? _captioningModelManager;
     private readonly ICaptioningService? _captioningService;
     private readonly IActivityLogService? _activityLogService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -73,7 +74,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IUnifiedLogger unifiedLogger,
         DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null,
         ICaptioningService? captioningService = null,
-        IActivityLogService? activityLogService = null)
+        IActivityLogService? activityLogService = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -87,6 +89,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _captioningModelManager = captioningModelManager;
         _captioningService = captioningService;
         _activityLogService = activityLogService;
+        _downloadCoordinator = downloadCoordinator;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -584,7 +587,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     optionsDialog.SelectedDestination);
             };
 
-            var vm = new CaptioningModelsDialogViewModel(manager, service, _activityLogService, optionsPicker);
+            var vm = new CaptioningModelsDialogViewModel(manager, service, _downloadCoordinator, optionsPicker);
             var dialog = new Views.Dialogs.CaptioningModelsDialog
             {
                 DataContext = vm

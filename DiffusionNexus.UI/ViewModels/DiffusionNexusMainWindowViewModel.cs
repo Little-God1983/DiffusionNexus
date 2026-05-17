@@ -166,7 +166,8 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         {
             var unifiedLogger = App.Services?.GetService<IUnifiedLogger>();
             var taskTracker = App.Services?.GetService<ITaskTracker>();
-            StatusBar = new StatusBarViewModel(_activityLogService, unifiedLogger, taskTracker);
+            var downloadCoordinator = App.Services?.GetService<IDownloadCoordinator>();
+            StatusBar = new StatusBarViewModel(_activityLogService, unifiedLogger, taskTracker, downloadCoordinator);
             _activityLogService.LogInfo("App", "Application started");
 
             // Subscribe to backup progress changes

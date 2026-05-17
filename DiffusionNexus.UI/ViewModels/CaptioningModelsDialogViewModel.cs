@@ -26,7 +26,7 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
 {
     private readonly CaptioningModelManager _manager;
     private readonly ICaptioningService _captioningService;
-    private readonly IActivityLogService? _activityLog;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> _optionsPicker;
 
     public CaptioningModelType ModelType { get; }
@@ -100,13 +100,13 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
     internal CaptioningModelRowViewModel(
         CaptioningModelManager manager,
         ICaptioningService captioningService,
-        IActivityLogService? activityLog,
+        IDownloadCoordinator? downloadCoordinator,
         CaptioningModelType modelType,
         Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker)
     {
         _manager = manager;
         _captioningService = captioningService;
-        _activityLog = activityLog;
+        _downloadCoordinator = downloadCoordinator;
         _optionsPicker = optionsPicker;
         ModelType = modelType;
         Name = CaptioningModelManager.GetDisplayName(modelType);
@@ -147,37 +147,40 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
         Status = CaptioningModelStatus.Downloading;
 
         var operationName = $"{Name} ({choice.VramGb} GB tier)";
-        _activityLog?.StartDownloadProgress(operationName);
-
-        var success = false;
-        var failureMessage = string.Empty;
 
         try
         {
-            // Route progress to BOTH the activity log (visible in the status
-            // bar regardless of whether the dialog is open) and a local hook
-            // we could use later for richer in-dialog UI. The activity log is
-            // the load-bearing channel — see LoraDownloadService for the same
-            // pattern.
-            var progress = new Progress<ModelDownloadProgress>(p =>
+            // If a coordinator is wired in, enqueue through it — that owns the
+            // 3-slot concurrency limit and aggregates per-task progress into
+            // the status bar. Otherwise fall back to a direct service call so
+            // unit-test scenarios still work.
+            if (_downloadCoordinator is not null)
             {
-                var percent = p.TotalBytes > 0
-                    ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
-                    : 0;
-                _activityLog?.ReportDownloadProgress(percent, p.Status);
-            });
+                await _downloadCoordinator.EnqueueAsync(operationName, async (taskProgress, ct) =>
+                {
+                    var fileProgress = new Progress<ModelDownloadProgress>(p =>
+                    {
+                        var percent = p.TotalBytes > 0
+                            ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
+                            : 0;
+                        taskProgress.Report(new DownloadTaskProgress(percent, p.Status));
+                    });
 
-            success = await _captioningService.DownloadModelAsync(
-                ModelType, choice.VramGb, choice.DestinationDirectory, progress);
-            if (!success)
+                    return await _captioningService.DownloadModelAsync(
+                        ModelType, choice.VramGb, choice.DestinationDirectory, fileProgress, ct);
+                });
+            }
+            else
             {
-                failureMessage = "Download did not complete successfully.";
+                await _captioningService.DownloadModelAsync(
+                    ModelType, choice.VramGb, choice.DestinationDirectory, progress: null, CancellationToken.None);
             }
         }
         catch (Exception ex)
         {
-            failureMessage = ex.Message;
-            success = false;
+            // Coordinator swallows download exceptions and marks the task
+            // Failed in its own state; we just need to surface that to the row.
+            Serilog.Log.Error(ex, "Captioning download for {Model} failed", operationName);
         }
         finally
         {
@@ -189,12 +192,6 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
                 Status = refreshed.Status;
                 FilePath = refreshed.FilePath;
             });
-
-            _activityLog?.CompleteDownloadProgress(
-                success,
-                success
-                    ? $"{operationName} downloaded successfully to {choice.DestinationDirectory}."
-                    : $"{operationName} download failed: {failureMessage}");
         }
     }
 }
@@ -208,7 +205,7 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
 {
     private readonly CaptioningModelManager _manager;
     private readonly ICaptioningService _captioningService;
-    private readonly IActivityLogService? _activityLog;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> _optionsPicker;
 
     /// <summary>
@@ -231,14 +228,15 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
     /// when the user clicks Download on a tiered model row; it opens the
     /// combined VRAM+destination+space dialog and returns the user's chosen
     /// tier and destination directory (or null on cancel).
-    /// <paramref name="activityLog"/> is optional but recommended — when
-    /// supplied, download progress shows in the status-bar globally and
-    /// survives this dialog being closed and reopened.
+    /// <paramref name="downloadCoordinator"/> is optional but recommended —
+    /// when supplied, downloads run through its 3-slot concurrency queue and
+    /// surface as aggregated progress in the status-bar so closing this
+    /// dialog mid-fetch doesn't lose visibility.
     /// </summary>
     public CaptioningModelsDialogViewModel(
         CaptioningModelManager manager,
         ICaptioningService captioningService,
-        IActivityLogService? activityLog,
+        IDownloadCoordinator? downloadCoordinator,
         Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker)
     {
         ArgumentNullException.ThrowIfNull(manager);
@@ -246,7 +244,7 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
         ArgumentNullException.ThrowIfNull(optionsPicker);
         _manager = manager;
         _captioningService = captioningService;
-        _activityLog = activityLog;
+        _downloadCoordinator = downloadCoordinator;
         _optionsPicker = optionsPicker;
         Load();
     }
@@ -262,7 +260,7 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
             foreach (var modelType in Enum.GetValues<CaptioningModelType>())
             {
                 Models.Add(new CaptioningModelRowViewModel(
-                    _manager, _captioningService, _activityLog, modelType, _optionsPicker));
+                    _manager, _captioningService, _downloadCoordinator, modelType, _optionsPicker));
             }
 
             foreach (var path in _manager.SearchPaths)

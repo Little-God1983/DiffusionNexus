@@ -532,17 +532,35 @@ public sealed class CaptioningModelManager
 
     /// <summary>
     /// A potential download target for the user to pick from in the download
-    /// options dialog. Combines the directory itself with metadata for UI
-    /// display (label, free disk space) and the manager-known fact of whether
-    /// this is the canonical Core folder.
+    /// options dialog.
     /// </summary>
+    /// <param name="Path">
+    /// The directory captioning files will actually be written into. For
+    /// ComfyUI model roots this is a <c>Captioning</c> subfolder inside the
+    /// install's <c>models/</c> directory; for the Core default it's the
+    /// canonical Core folder. The caller passes this verbatim to
+    /// <see cref="DownloadModelAsync(CaptioningModelType, int, string, IProgress{ModelDownloadProgress}?, CancellationToken)"/>.
+    /// </param>
+    /// <param name="Label">Multi-line display string for the picker row.</param>
+    /// <param name="FreeBytes">Free disk space on the destination's volume.</param>
+    /// <param name="IsDefault">True for the Core default folder.</param>
     public sealed record DownloadDestination(string Path, string Label, long FreeBytes, bool IsDefault);
 
     /// <summary>
+    /// Subfolder appended under each ComfyUI <c>models</c> root so captioning
+    /// GGUFs don't pollute the top level of the user's model tree. The path
+    /// resolver scans recursively, so files placed here remain discoverable.
+    /// </summary>
+    private const string CaptioningSubfolderName = "Captioning";
+
+    /// <summary>
     /// Enumerates writable directories the user can choose as a download target.
-    /// Composes the default Core folder with every ComfyUI search path so users
-    /// can drop the GGUF straight into their ComfyUI tree (or a folder declared
-    /// in <c>extra_model_paths.yaml</c>) without copying afterwards.
+    /// Only the Core default and each install's <c>models</c>/<c>Models</c>
+    /// root are offered — never their per-model-type subfolders — so the user
+    /// isn't forced to pick between a dozen near-identical paths like
+    /// <c>D:\Matrix\Models\StableDiffusion</c>, <c>...\TextEncoders</c>,
+    /// <c>...\Lora</c> etc. For ComfyUI roots the actual write target is
+    /// the <c>Captioning</c> subfolder of that root.
     /// </summary>
     public IReadOnlyList<DownloadDestination> GetDownloadDestinations()
     {
@@ -557,19 +575,33 @@ public sealed class CaptioningModelManager
             IsDefault: true));
         seen.Add(_modelsBasePath);
 
-        // Every other live search path (ComfyUI roots, env var dirs, YAML
-        // base_paths). We deliberately skip paths that don't exist on disk
-        // since writing into them creates surprise folders the user didn't
-        // ask for.
-        foreach (var path in GetCurrentSearchPaths())
+        // Walk the live search paths and keep only the canonical "models"
+        // root for each install. Subfolders inside a models root (the
+        // per-model-type entries declared in extra_model_paths.yaml) are
+        // skipped because writing inside them is the wrong contract — those
+        // folders are reserved for ComfyUI's own model-type categories.
+        foreach (var rawPath in GetCurrentSearchPaths())
         {
-            if (string.IsNullOrWhiteSpace(path)) continue;
-            if (!seen.Add(path)) continue;
-            if (!Directory.Exists(path)) continue;
+            if (string.IsNullOrWhiteSpace(rawPath)) continue;
+            if (!Directory.Exists(rawPath)) continue;
 
+            // Trim trailing separators so basename comparison is stable.
+            var path = rawPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+            var basename = System.IO.Path.GetFileName(path);
+
+            if (!basename.Equals("models", StringComparison.OrdinalIgnoreCase))
+            {
+                // Skip per-type subdirs (text_encoders, clip_vision, loras, …).
+                // The /models root will already be present in the same list.
+                continue;
+            }
+
+            if (!seen.Add(path)) continue;
+
+            var writeTarget = System.IO.Path.Combine(path, CaptioningSubfolderName);
             results.Add(new DownloadDestination(
-                path,
-                path,
+                writeTarget,
+                $"{path}\n→ {CaptioningSubfolderName} subfolder will be created",
                 GetFreeBytes(path),
                 IsDefault: false));
         }
