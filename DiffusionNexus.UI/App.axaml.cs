@@ -855,7 +855,10 @@ public partial class App : Application
                 httpClient: null,
                 extraSearchPathsProvider: () => DiscoverComfyUiCaptioningPaths(uow));
         });
-        services.AddSingleton<ICaptioningService, Inference.Captioning.CaptioningService>();
+        services.AddSingleton<ICaptioningService>(sp =>
+            new Inference.Captioning.CaptioningService(
+                sp.GetRequiredService<Inference.Captioning.CaptioningModelManager>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddSingleton<ICaptioningBackend>(sp =>
             new Inference.Captioning.LocalInferenceCaptioningBackend(
                 sp.GetRequiredService<ICaptioningService>()));
