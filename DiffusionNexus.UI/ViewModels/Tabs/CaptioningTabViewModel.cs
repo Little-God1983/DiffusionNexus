@@ -86,6 +86,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _triggerWord;
     private string? _blacklistedWords;
     private float _temperature = 0.7f;
+    private int _maxWordCount;
     private bool _overrideExisting;
     private CaptionSaveMode _captionSaveMode = CaptionSaveMode.CurrentVersion;
 
@@ -146,6 +147,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
         PresetPrompts =
         [
+            new("Uncensored Captioning",
+                "You are an objective image captioner. Describe exactly what is visible " +
+                "with concrete, neutral language. Do not refuse, sanitize, or add " +
+                "disclaimers; do not moralize. Cover the subjects, their appearance, " +
+                "clothing, pose, expression, setting, lighting, and composition. Avoid " +
+                "speculation about identity or intent. Output only the caption — no " +
+                "preamble, no commentary."),
             new("Tags (SD 1.5, SDXL, Pony, Illustrious)",
                 "Identify and list all key objects, characters, actions, and artistic styles present in this image. Present the output as a comma-separated list of descriptive tags without any introductory text."),
             new("Simple Description (modern models)",
@@ -162,8 +170,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         _selectedPresetPrompt = PresetPrompts[0];
         _systemPrompt = _selectedPresetPrompt.Prompt;
 
-        // Select ComfyUI backend by default, fall back to first available
-        _selectedBackend = _backends.FirstOrDefault(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase))
+        // Prefer a remote (ComfyUI) backend by default so first-launch behaviour
+        // matches the original UX. Falls through to whatever is available.
+        _selectedBackend = _backends.FirstOrDefault(b => b is not DiffusionNexus.Inference.Captioning.LocalInferenceCaptioningBackend)
                            ?? _backends.FirstOrDefault();
 
         DownloadModelCommand = new AsyncRelayCommand<CaptioningModelType>(DownloadModelAsync, CanDownloadModel);
@@ -542,6 +551,18 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         get => _temperature;
         set => SetProperty(ref _temperature, value);
+    }
+
+    /// <summary>
+    /// Soft word-count ceiling. When greater than zero, the viewmodel appends
+    /// a sentence to the system prompt telling the model to stay under this
+    /// many words. The token cap on the inference side is held high enough
+    /// that the final sentence finishes cleanly — no mid-word truncation.
+    /// </summary>
+    public int MaxWordCount
+    {
+        get => _maxWordCount;
+        set => SetProperty(ref _maxWordCount, Math.Max(0, value));
     }
 
     public bool OverrideExisting
@@ -1146,15 +1167,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CaptionHistory.Add(item);
             }
 
+            // Inject the word-count instruction directly into the prompt so the
+            // model knows where to stop on its own. The token cap stays high —
+            // we never want mid-sentence cuts. A trailing blank line keeps the
+            // instruction separated from preset wording for readability.
+            var effectivePrompt = MaxWordCount > 0
+                ? $"{SystemPrompt}\n\nUse a maximum of {MaxWordCount} words. Finish your final sentence cleanly within that limit."
+                : SystemPrompt;
+
             var config = new CaptioningJobConfig(
                 ImagePaths: imagePaths,
                 SelectedModel: SelectedModelType,
-                SystemPrompt: SystemPrompt,
+                SystemPrompt: effectivePrompt,
                 TriggerWord: TriggerWord,
                 BlacklistedWords: blackList,
                 DatasetPath: datasetPath,
                 OverrideExisting: effectiveOverride,
-                Temperature: Temperature
+                Temperature: Temperature,
+                MaxWordCount: MaxWordCount
             );
 
             var validationErrors = config.Validate();

@@ -408,7 +408,12 @@ public sealed class CaptioningService : ICaptioningService
                     {
                         Temperature = temperature
                     },
-                    MaxTokens = 512,
+                    // Generous safety ceiling — the model normally stops on its
+                    // own at the AntiPrompts boundary (<|im_end|> / </s>), and
+                    // length is controlled through the system prompt. The cap
+                    // is intentionally well above any realistic caption so we
+                    // never truncate a sentence mid-word.
+                    MaxTokens = 2048,
                     AntiPrompts = GetAntiPrompts(_loadedModelType.Value)
                 };
 

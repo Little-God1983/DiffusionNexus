@@ -266,11 +266,19 @@
                           TickFrequency="0.1" IsSnapToTickEnabled="True"/>
                 </StackPanel>
 
-                <!-- Override Option -->
-                <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                  <CheckBox Content="Override Existing Captions" IsChecked="{Binding OverrideExisting}"/>
+                <!-- Max words (soft, prompt-driven limit; 0 = no limit) -->
+                <StackPanel Grid.Column="2">
+                  <TextBlock Text="{Binding MaxWordCount, StringFormat='Max words: {0} (0 = no limit)'}"
+                             Margin="0,0,0,4"/>
+                  <NumericUpDown Value="{Binding MaxWordCount}"
+                                 Minimum="0" Maximum="2000" Increment="10"
+                                 FormatString="0"
+                                 HorizontalAlignment="Stretch"/>
                 </StackPanel>
               </Grid>
+
+              <!-- Override option (own row so it isn't competing with Max words for space). -->
+              <CheckBox Content="Override Existing Captions" IsChecked="{Binding OverrideExisting}"/>
             </StackPanel>
           </Border>
 
