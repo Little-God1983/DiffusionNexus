@@ -100,6 +100,22 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private bool _isBackupInProgress;
 
     /// <summary>
+    /// True when <see cref="IActivityLogService"/> is currently tracking a
+    /// download. Used by <c>DiffusionNexusMainWindow</c> to prompt the user
+    /// before closing — losing a partly-fetched 5–9 GB GGUF mid-stream is
+    /// expensive on metered connections.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDownloadInProgress;
+
+    /// <summary>
+    /// Display name of the currently running download, surfaced in the close
+    /// confirmation dialog so the user knows what they'd be aborting.
+    /// </summary>
+    [ObservableProperty]
+    private string? _activeDownloadName;
+
+    /// <summary>
     /// Hidden feature toggle exposed in the main window sidebar.
     /// When enabled, the Diffusion Canvas navigation entry is shown.
     /// (Previously this property gated the Dataset Quality tab; that tab is now always visible.)
@@ -156,6 +172,12 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             // Subscribe to backup progress changes
             _activityLogService.BackupProgressChanged += OnBackupProgressChanged;
 
+            // Subscribe to download progress changes — the close handler reads
+            // IsDownloadInProgress and warns before aborting a partial fetch.
+            _activityLogService.DownloadProgressChanged += OnDownloadProgressChanged;
+            IsDownloadInProgress = _activityLogService.IsDownloadInProgress;
+            ActiveDownloadName = _activityLogService.DownloadOperationName;
+
             // Wire instance management (Start/Stop/Restart) into the Unified Console
             var processManager = App.Services?.GetService<Services.PackageProcessManager>();
             if (processManager is not null && App.Services is not null)
@@ -170,6 +192,15 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             IsBackupInProgress = _activityLogService?.IsBackupInProgress ?? false;
+        });
+    }
+
+    private void OnDownloadProgressChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            IsDownloadInProgress = _activityLogService?.IsDownloadInProgress ?? false;
+            ActiveDownloadName = _activityLogService?.DownloadOperationName;
         });
     }
 

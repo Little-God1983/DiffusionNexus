@@ -545,27 +545,46 @@ public partial class InstallerManagerViewModel : ViewModelBase
             var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
                 as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
 
-            // VRAM picker callback: opens the shared VramSelectionDialog (same
-            // window the ComfyUI workload install flow uses) and returns the
-            // user's choice. Returning null from cancel propagates as a clean
-            // abort with no side effects on the row.
-            Func<int[], Task<int?>> vramPicker = async tiers =>
+            // Options picker callback: opens the combined VRAM + destination +
+            // disk-space dialog and returns both the tier and the target
+            // directory the user chose (or null on cancel). The destinations
+            // list is built from the manager's known search paths — Core
+            // default first, then any registered ComfyUI install roots and
+            // their extra_model_paths.yaml entries.
+            Func<DiffusionNexus.Domain.Enums.CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker =
+                async (modelType, tiers) =>
             {
                 if (tiers is null || tiers.Length == 0) return null;
-                var vramDialog = new Views.Dialogs.VramSelectionDialog(tiers);
+
+                var destinations = manager.GetDownloadDestinations();
+                var optionsVm = new CaptioningDownloadOptionsViewModel(manager, modelType, tiers, destinations);
+
+                var optionsDialog = new Views.Dialogs.CaptioningDownloadOptionsDialog
+                {
+                    DataContext = optionsVm
+                };
+
                 if (parentWindow is not null)
                 {
-                    await vramDialog.ShowDialog(parentWindow);
+                    await optionsDialog.ShowDialog(parentWindow);
                 }
                 else
                 {
-                    vramDialog.Show();
+                    optionsDialog.Show();
                     await Task.Yield();
                 }
-                return vramDialog.SelectedVramGb;
+
+                if (optionsDialog.SelectedVramGb is null || optionsDialog.SelectedDestination is null)
+                {
+                    return null;
+                }
+
+                return new CaptioningDownloadChoice(
+                    optionsDialog.SelectedVramGb.Value,
+                    optionsDialog.SelectedDestination);
             };
 
-            var vm = new CaptioningModelsDialogViewModel(manager, service, _activityLogService, vramPicker);
+            var vm = new CaptioningModelsDialogViewModel(manager, service, _activityLogService, optionsPicker);
             var dialog = new Views.Dialogs.CaptioningModelsDialog
             {
                 DataContext = vm

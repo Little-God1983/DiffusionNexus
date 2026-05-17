@@ -192,6 +192,18 @@ public sealed class CaptioningService : ICaptioningService
     }
 
     /// <inheritdoc />
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        LogInfo($"Download requested: {modelType} ({vramGb} GB tier)", $"target={destinationDirectory}");
+        return _modelManager.DownloadModelAsync(modelType, vramGb, destinationDirectory, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<bool> LoadModelAsync(
         CaptioningModelType modelType,
         CancellationToken cancellationToken = default)

@@ -9,18 +9,25 @@ using DiffusionNexus.Inference.Captioning;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
+/// Result returned from the combined VRAM+destination options dialog. Null
+/// when the user cancelled. The row's Download command consumes this.
+/// </summary>
+public sealed record CaptioningDownloadChoice(int VramGb, string DestinationDirectory);
+
+/// <summary>
 /// Row in the Diffusion Nexus Core captioning dialog. One entry per
 /// <see cref="CaptioningModelType"/>. For tiered models exposes a Download
-/// command that opens the shared VramSelectionDialog and routes progress
-/// through <see cref="IActivityLogService"/> so the status-bar progress
-/// indicator keeps updating even after the dialog is closed.
+/// command that opens the combined options dialog (VRAM tier + destination +
+/// disk-space check) and routes progress through <see cref="IActivityLogService"/>
+/// so the status-bar progress indicator keeps updating even after the dialog
+/// is closed.
 /// </summary>
 public sealed partial class CaptioningModelRowViewModel : ObservableObject
 {
     private readonly CaptioningModelManager _manager;
     private readonly ICaptioningService _captioningService;
     private readonly IActivityLogService? _activityLog;
-    private readonly Func<int[], Task<int?>> _vramPicker;
+    private readonly Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> _optionsPicker;
 
     public CaptioningModelType ModelType { get; }
     public string Name { get; }
@@ -95,12 +102,12 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
         ICaptioningService captioningService,
         IActivityLogService? activityLog,
         CaptioningModelType modelType,
-        Func<int[], Task<int?>> vramPicker)
+        Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker)
     {
         _manager = manager;
         _captioningService = captioningService;
         _activityLog = activityLog;
-        _vramPicker = vramPicker;
+        _optionsPicker = optionsPicker;
         ModelType = modelType;
         Name = CaptioningModelManager.GetDisplayName(modelType);
         Description = CaptioningModelManager.GetDescription(modelType);
@@ -130,8 +137,8 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
     {
         if (!IsTieredDownloadable) return;
 
-        var vramGb = await _vramPicker(SupportedVramTiers);
-        if (vramGb is null) return; // user cancelled
+        var choice = await _optionsPicker(ModelType, SupportedVramTiers);
+        if (choice is null) return; // user cancelled
 
         // Flip our local Status immediately so the button disables before the
         // async machinery spins up. The manager flips its own _downloadingModels
@@ -139,7 +146,7 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
         // later will see Downloading too.
         Status = CaptioningModelStatus.Downloading;
 
-        var operationName = $"{Name} ({vramGb} GB tier)";
+        var operationName = $"{Name} ({choice.VramGb} GB tier)";
         _activityLog?.StartDownloadProgress(operationName);
 
         var success = false;
@@ -160,7 +167,8 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
                 _activityLog?.ReportDownloadProgress(percent, p.Status);
             });
 
-            success = await _captioningService.DownloadModelAsync(ModelType, vramGb.Value, progress);
+            success = await _captioningService.DownloadModelAsync(
+                ModelType, choice.VramGb, choice.DestinationDirectory, progress);
             if (!success)
             {
                 failureMessage = "Download did not complete successfully.";
@@ -185,7 +193,7 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
             _activityLog?.CompleteDownloadProgress(
                 success,
                 success
-                    ? $"{operationName} downloaded successfully."
+                    ? $"{operationName} downloaded successfully to {choice.DestinationDirectory}."
                     : $"{operationName} download failed: {failureMessage}");
         }
     }
@@ -201,7 +209,7 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
     private readonly CaptioningModelManager _manager;
     private readonly ICaptioningService _captioningService;
     private readonly IActivityLogService? _activityLog;
-    private readonly Func<int[], Task<int?>> _vramPicker;
+    private readonly Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> _optionsPicker;
 
     /// <summary>
     /// The rows displayed in the DataGrid — one per captioning model.
@@ -219,9 +227,10 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
     private bool _isLoading;
 
     /// <summary>
-    /// Creates a dialog viewmodel. <paramref name="vramPicker"/> is invoked
-    /// when the user clicks Download on a tiered model row; it gets the row's
-    /// supported tiers and returns the chosen GB value (or null on cancel).
+    /// Creates a dialog viewmodel. <paramref name="optionsPicker"/> is invoked
+    /// when the user clicks Download on a tiered model row; it opens the
+    /// combined VRAM+destination+space dialog and returns the user's chosen
+    /// tier and destination directory (or null on cancel).
     /// <paramref name="activityLog"/> is optional but recommended — when
     /// supplied, download progress shows in the status-bar globally and
     /// survives this dialog being closed and reopened.
@@ -230,15 +239,15 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
         CaptioningModelManager manager,
         ICaptioningService captioningService,
         IActivityLogService? activityLog,
-        Func<int[], Task<int?>> vramPicker)
+        Func<CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker)
     {
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(captioningService);
-        ArgumentNullException.ThrowIfNull(vramPicker);
+        ArgumentNullException.ThrowIfNull(optionsPicker);
         _manager = manager;
         _captioningService = captioningService;
         _activityLog = activityLog;
-        _vramPicker = vramPicker;
+        _optionsPicker = optionsPicker;
         Load();
     }
 
@@ -253,7 +262,7 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
             foreach (var modelType in Enum.GetValues<CaptioningModelType>())
             {
                 Models.Add(new CaptioningModelRowViewModel(
-                    _manager, _captioningService, _activityLog, modelType, _vramPicker));
+                    _manager, _captioningService, _activityLog, modelType, _optionsPicker));
             }
 
             foreach (var path in _manager.SearchPaths)

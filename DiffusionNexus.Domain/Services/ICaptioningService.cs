@@ -186,6 +186,18 @@ public interface ICaptioningService : IDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Downloads a VRAM-tiered captioning model into a specific destination
+    /// directory chosen by the user (e.g. a ComfyUI install's models folder).
+    /// Same tier-selection logic as the no-destination overload.
+    /// </summary>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a model into memory for inference.
     /// </summary>
     /// <param name="modelType">The model to load.</param>

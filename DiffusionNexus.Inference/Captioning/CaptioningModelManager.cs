@@ -531,6 +531,73 @@ public sealed class CaptioningModelManager
     public IReadOnlyList<string> SearchPaths => GetCurrentSearchPaths();
 
     /// <summary>
+    /// A potential download target for the user to pick from in the download
+    /// options dialog. Combines the directory itself with metadata for UI
+    /// display (label, free disk space) and the manager-known fact of whether
+    /// this is the canonical Core folder.
+    /// </summary>
+    public sealed record DownloadDestination(string Path, string Label, long FreeBytes, bool IsDefault);
+
+    /// <summary>
+    /// Enumerates writable directories the user can choose as a download target.
+    /// Composes the default Core folder with every ComfyUI search path so users
+    /// can drop the GGUF straight into their ComfyUI tree (or a folder declared
+    /// in <c>extra_model_paths.yaml</c>) without copying afterwards.
+    /// </summary>
+    public IReadOnlyList<DownloadDestination> GetDownloadDestinations()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<DownloadDestination>();
+
+        // Default Core folder — always first, always offered even if empty.
+        results.Add(new DownloadDestination(
+            _modelsBasePath,
+            $"Diffusion Nexus Core (default)\n{_modelsBasePath}",
+            GetFreeBytes(_modelsBasePath),
+            IsDefault: true));
+        seen.Add(_modelsBasePath);
+
+        // Every other live search path (ComfyUI roots, env var dirs, YAML
+        // base_paths). We deliberately skip paths that don't exist on disk
+        // since writing into them creates surprise folders the user didn't
+        // ask for.
+        foreach (var path in GetCurrentSearchPaths())
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            if (!seen.Add(path)) continue;
+            if (!Directory.Exists(path)) continue;
+
+            results.Add(new DownloadDestination(
+                path,
+                path,
+                GetFreeBytes(path),
+                IsDefault: false));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Free-space lookup with a forgiving fallback: any failure (UNC paths
+    /// without a drive letter, missing root, access denied) returns 0 rather
+    /// than throwing — the UI surfaces "unknown" for that destination.
+    /// </summary>
+    private static long GetFreeBytes(string path)
+    {
+        try
+        {
+            var root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
+            if (string.IsNullOrWhiteSpace(root)) return 0;
+            var drive = new DriveInfo(root);
+            return drive.IsReady ? drive.AvailableFreeSpace : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
     /// Gets the current status of a model.
     /// </summary>
     public CaptioningModelStatus GetModelStatus(CaptioningModelType modelType)
@@ -689,14 +756,30 @@ public sealed class CaptioningModelManager
     }
 
     /// <summary>
-    /// Downloads a VRAM-tiered captioning model and its matching mmproj. The
-    /// tier table picks the quantization; if <paramref name="vramGb"/> exceeds
-    /// any defined tier we fall back to the largest one defined (same policy
-    /// as the ComfyUI <c>VramProfileHelper.SelectBestMatchingLinks</c>).
+    /// Downloads a VRAM-tiered captioning model and its matching mmproj to
+    /// the default Core models folder. The tier table picks the quantization;
+    /// if <paramref name="vramGb"/> exceeds any defined tier we fall back to
+    /// the largest one defined (same policy as the ComfyUI
+    /// <c>VramProfileHelper.SelectBestMatchingLinks</c>).
+    /// </summary>
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => DownloadModelAsync(modelType, vramGb, _modelsBasePath, progress, cancellationToken);
+
+    /// <summary>
+    /// Downloads a VRAM-tiered captioning model into a specific destination
+    /// directory. Use this overload to honour a user-picked target (e.g. a
+    /// ComfyUI install's models folder or a path declared in extra_model_paths.yaml).
+    /// The directory is created if missing; the resulting files are written
+    /// directly there, not in the default Core folder.
     /// </summary>
     public async Task<bool> DownloadModelAsync(
         CaptioningModelType modelType,
         int vramGb,
+        string destinationDirectory,
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -707,6 +790,9 @@ public sealed class CaptioningModelManager
             return await DownloadModelAsync(modelType, progress, cancellationToken);
         }
 
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
+        Directory.CreateDirectory(destinationDirectory);
+
         var tier = PickFittingTier(modelType, vramGb)
             ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
                 $"No VRAM tier defined for {modelType} at or below {vramGb} GB.");
@@ -714,8 +800,8 @@ public sealed class CaptioningModelManager
         var totalSize = tier.ModelSizeBytes + tier.MmprojSizeBytes;
         var displayName = GetDisplayName(modelType);
 
-        var modelDestPath = Path.Combine(_modelsBasePath, tier.ModelFileName);
-        var mmprojDestPath = Path.Combine(_modelsBasePath, tier.MmprojFileName);
+        var modelDestPath = Path.Combine(destinationDirectory, tier.ModelFileName);
+        var mmprojDestPath = Path.Combine(destinationDirectory, tier.MmprojFileName);
 
         // Resolve current presence via search paths (the user may already have
         // the files under a configured extra path). Only download what's
