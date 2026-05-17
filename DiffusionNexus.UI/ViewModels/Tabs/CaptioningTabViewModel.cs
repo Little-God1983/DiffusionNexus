@@ -225,8 +225,20 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Whether the selected backend uses local model management (download, load, etc.).
     /// Controls visibility of the model selection panel in the UI.
     /// </summary>
+    /// <summary>
+    /// True when the selected backend runs locally via LlamaSharp (the
+    /// Diffusion Nexus Core capability). Checked by reference type rather than
+    /// display name so renaming the user-visible label doesn't break the wiring.
+    /// </summary>
     public bool IsLocalInferenceBackend => SelectedBackend is null
-        || SelectedBackend.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase);
+        || SelectedBackend is DiffusionNexus.Inference.Captioning.LocalInferenceCaptioningBackend;
+
+    /// <summary>
+    /// True when the selected backend needs a running ComfyUI server.
+    /// Drives the visibility of the ComfyUI readiness panel and gates the
+    /// readiness check itself — the local backend has no such dependency.
+    /// </summary>
+    public bool RequiresComfyUiReadiness => SelectedBackend is not null && !IsLocalInferenceBackend;
 
     /// <summary>
     /// Available captioning backends visible to the user. The Local Inference
@@ -246,10 +258,18 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             if (SetProperty(ref _selectedBackend, value))
             {
                 OnPropertyChanged(nameof(IsLocalInferenceBackend));
+                OnPropertyChanged(nameof(RequiresComfyUiReadiness));
                 OnPropertyChanged(nameof(IsModelReady));
                 OnPropertyChanged(nameof(IsModelMissing));
                 GenerateCommand.NotifyCanExecuteChanged();
-                Readiness.CheckReadinessCommand.Execute(null);
+
+                // Only poll the ComfyUI server when the selected backend actually
+                // depends on it. The Diffusion Nexus Core backend runs in-process
+                // via LlamaSharp and has no HTTP dependency.
+                if (RequiresComfyUiReadiness)
+                {
+                    Readiness.CheckReadinessCommand.Execute(null);
+                }
             }
         }
     }

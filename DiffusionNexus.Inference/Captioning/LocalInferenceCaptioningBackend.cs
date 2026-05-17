@@ -23,7 +23,7 @@ public sealed class LocalInferenceCaptioningBackend : ICaptioningBackend
     }
 
     /// <inheritdoc />
-    public string DisplayName => "Local Inference (LlamaSharp)";
+    public string DisplayName => "Diffusion Nexus Core";
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements => [];

@@ -52,8 +52,13 @@
                 </ComboBox.ItemTemplate>
               </ComboBox>
 
-              <!-- ComfyUI Readiness Status (unified check) -->
-              <controls:ComfyUIReadinessPanel DataContext="{Binding Readiness}"/>
+              <!-- ComfyUI Readiness Status (unified check). Hidden for the
+                   Diffusion Nexus Core backend, which has no ComfyUI dependency.
+                   IsVisible is bound against the tab viewmodel via the ancestor
+                   UserControl since the panel's own DataContext is Readiness. -->
+              <controls:ComfyUIReadinessPanel
+                  DataContext="{Binding Readiness}"
+                  IsVisible="{Binding $parent[UserControl].((vm:CaptioningTabViewModel)DataContext).RequiresComfyUiReadiness}"/>
 
               <!-- Local inference model panel (hidden when ComfyUI is selected) -->
               <StackPanel Spacing="8" IsVisible="{Binding IsLocalInferenceBackend}">
