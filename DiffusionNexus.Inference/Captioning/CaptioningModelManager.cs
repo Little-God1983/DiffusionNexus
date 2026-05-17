@@ -50,6 +50,109 @@ public sealed class CaptioningModelManager
     private const long ExpectedQwen3VLAbliteratedSizeBytes = 8_700_000_000; // ~8.7GB Q8_0
 
     /// <summary>
+    /// One row in the VRAM tier table for a downloadable captioning model.
+    /// Mirrors the pair of files (base GGUF + matching mmproj) that need to
+    /// land on disk for a given VRAM budget. Sizes are nominal HuggingFace
+    /// figures used for status checks and progress totals; actual on-disk
+    /// sizes may differ by a few percent due to LFS metadata.
+    /// </summary>
+    private sealed record VramTier(
+        int VramGb,
+        string ModelFileName, string ModelUrl, long ModelSizeBytes,
+        string MmprojFileName, string MmprojUrl, long MmprojSizeBytes);
+
+    private const string AbliteratedCaptionBase =
+        "https://huggingface.co/mradermacher/Qwen3-VL-8B-Abliterated-Caption-it-GGUF/resolve/main/";
+    private const string NsfwCaptionV4Base =
+        "https://huggingface.co/mradermacher/Qwen3-VL-8B-NSFW-Caption-V4-GGUF/resolve/main/";
+
+    /// <summary>
+    /// VRAM tier lookup. Conservative quant picks per tier, leaving ~30% VRAM
+    /// headroom for KV cache + Qwen3-VL's image-token budget. 32 GB stays on
+    /// Q8_0 because Q8 is near-lossless and the jump to f16 doubles memory
+    /// for negligible quality gain.
+    /// </summary>
+    private static readonly Dictionary<(CaptioningModelType, int), VramTier> _vramTiers = new()
+    {
+        // ── Abliterated-Caption-it ──────────────────────────────────────
+        { (CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption,  8), new VramTier( 8,
+            "Qwen3-VL-8B-Abliterated-Caption-it.Q4_K_M.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.Q4_K_M.gguf",
+            5_030_000_000,
+            "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-Q8_0.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-Q8_0.gguf",
+            752_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, 12), new VramTier(12,
+            "Qwen3-VL-8B-Abliterated-Caption-it.Q5_K_M.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.Q5_K_M.gguf",
+            5_850_000_000,
+            "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            1_160_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, 16), new VramTier(16,
+            "Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
+            6_730_000_000,
+            "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            1_160_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, 24), new VramTier(24,
+            "Qwen3-VL-8B-Abliterated-Caption-it.Q8_0.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.Q8_0.gguf",
+            8_710_000_000,
+            "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            1_160_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, 32), new VramTier(32,
+            "Qwen3-VL-8B-Abliterated-Caption-it.Q8_0.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.Q8_0.gguf",
+            8_710_000_000,
+            "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            AbliteratedCaptionBase + "Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+            1_160_000_000) },
+
+        // ── NSFW-Caption-V4 ────────────────────────────────────────────
+        { (CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4,  8), new VramTier( 8,
+            "Qwen3-VL-8B-NSFW-Caption-V4.Q4_K_M.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.Q4_K_M.gguf",
+            4_680_000_000,
+            "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-Q8_0.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-Q8_0.gguf",
+            701_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4, 12), new VramTier(12,
+            "Qwen3-VL-8B-NSFW-Caption-V4.Q5_K_M.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.Q5_K_M.gguf",
+            5_450_000_000,
+            "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            1_080_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4, 16), new VramTier(16,
+            "Qwen3-VL-8B-NSFW-Caption-V4.Q6_K.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.Q6_K.gguf",
+            6_260_000_000,
+            "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            1_080_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4, 24), new VramTier(24,
+            "Qwen3-VL-8B-NSFW-Caption-V4.Q8_0.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.Q8_0.gguf",
+            8_110_000_000,
+            "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            1_080_000_000) },
+        { (CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4, 32), new VramTier(32,
+            "Qwen3-VL-8B-NSFW-Caption-V4.Q8_0.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.Q8_0.gguf",
+            8_110_000_000,
+            "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            NsfwCaptionV4Base + "Qwen3-VL-8B-NSFW-Caption-V4.mmproj-f16.gguf",
+            1_080_000_000) },
+    };
+
+    /// <summary>Canonical VRAM tiers offered for downloadable captioning models.</summary>
+    private static readonly int[] DefaultVramTiers = { 8, 12, 16, 24, 32 };
+
+    /// <summary>
     /// Default download/install directory, also the first search path.
     /// </summary>
     private readonly string _modelsBasePath;
@@ -224,42 +327,173 @@ public sealed class CaptioningModelManager
     }
 
     /// <summary>
+    /// True for models that support VRAM-tier-aware downloads (a row exists in
+    /// <see cref="_vramTiers"/>). The legacy upstream-URL models and the
+    /// user-supplied abliterated entry return false here.
+    /// </summary>
+    public static bool IsTieredDownloadable(CaptioningModelType modelType)
+        => modelType is CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                     or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4;
+
+    /// <summary>
+    /// VRAM tiers (in GB) available for a downloadable model. Empty array for
+    /// models that don't support tiered downloads.
+    /// </summary>
+    public static int[] GetSupportedVramTiers(CaptioningModelType modelType)
+        => IsTieredDownloadable(modelType) ? (int[])DefaultVramTiers.Clone() : Array.Empty<int>();
+
+    /// <summary>
+    /// Picks the largest VRAM tier whose budget is &lt;= <paramref name="requestedGb"/>.
+    /// Mirrors the ComfyUI <c>VramProfileHelper</c> "best fitting profile"
+    /// behaviour so a card with more VRAM than any defined tier still maps
+    /// onto our top tier instead of erroring out.
+    /// </summary>
+    private static VramTier? PickFittingTier(CaptioningModelType modelType, int requestedGb)
+    {
+        VramTier? best = null;
+        foreach (var ((t, gb), tier) in _vramTiers)
+        {
+            if (t != modelType || gb > requestedGb) continue;
+            if (best is null || gb > best.VramGb) best = tier;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Returns the on-disk path to the tier-specific GGUF for a tiered model.
+    /// </summary>
+    public string GetModelPath(CaptioningModelType modelType, int vramGb)
+    {
+        if (!IsTieredDownloadable(modelType))
+            return GetModelPath(modelType);
+
+        var tier = PickFittingTier(modelType, vramGb)
+            ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
+                $"No VRAM tier defined for {modelType} at or below {vramGb} GB.");
+        return ResolveFile(tier.ModelFileName);
+    }
+
+    /// <summary>
+    /// Returns the on-disk path to the tier-specific mmproj for a tiered model.
+    /// </summary>
+    public string GetClipProjectorPath(CaptioningModelType modelType, int vramGb)
+    {
+        if (!IsTieredDownloadable(modelType))
+            return GetClipProjectorPath(modelType);
+
+        var tier = PickFittingTier(modelType, vramGb)
+            ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
+                $"No VRAM tier defined for {modelType} at or below {vramGb} GB.");
+        return ResolveFile(tier.MmprojFileName);
+    }
+
+    /// <summary>
+    /// For tiered models, finds the largest tier whose GGUF + mmproj pair is
+    /// already present in the search paths. Lets the captioning service load
+    /// whatever the user actually downloaded without forcing them to re-pick
+    /// the VRAM tier every time.
+    /// </summary>
+    private VramTier? FindLargestPresentTier(CaptioningModelType modelType)
+    {
+        VramTier? best = null;
+        foreach (var ((t, _), tier) in _vramTiers)
+        {
+            if (t != modelType) continue;
+            var modelPath = ResolveFile(tier.ModelFileName);
+            var mmprojPath = ResolveFile(tier.MmprojFileName);
+            if (!File.Exists(modelPath) || !File.Exists(mmprojPath)) continue;
+            if (best is null || tier.ModelSizeBytes > best.ModelSizeBytes) best = tier;
+        }
+        return best;
+    }
+
+    /// <summary>
     /// Gets the full path to the model file for a given model type. The file is
     /// resolved against the configured search paths so user-supplied GGUFs in a
-    /// custom directory are picked up without copying.
+    /// custom directory are picked up without copying. For tiered models,
+    /// returns whichever quantization is already on disk (largest preferred),
+    /// or the default 8 GB tier path as the download target if nothing exists.
     /// </summary>
-    public string GetModelPath(CaptioningModelType modelType) => modelType switch
+    public string GetModelPath(CaptioningModelType modelType)
     {
-        CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaModelFileName),
-        CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLModelFileName),
-        CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLModelFileName),
-        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedModelFileName),
-        _ => throw new ArgumentOutOfRangeException(nameof(modelType))
-    };
+        if (IsTieredDownloadable(modelType))
+        {
+            var present = FindLargestPresentTier(modelType);
+            if (present is not null) return ResolveFile(present.ModelFileName);
+            var defaultTier = PickFittingTier(modelType, DefaultVramTiers[0])!;
+            return ResolveFile(defaultTier.ModelFileName);
+        }
+
+        return modelType switch
+        {
+            CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaModelFileName),
+            CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLModelFileName),
+            CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLModelFileName),
+            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedModelFileName),
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+        };
+    }
 
     /// <summary>
     /// Gets the full path to the CLIP/mmproj projector file for a given model type.
     /// </summary>
-    public string GetClipProjectorPath(CaptioningModelType modelType) => modelType switch
+    public string GetClipProjectorPath(CaptioningModelType modelType)
     {
-        CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaClipProjectorFileName),
-        CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLClipProjectorFileName),
-        CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLClipProjectorFileName),
-        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedClipProjectorFileName),
-        _ => throw new ArgumentOutOfRangeException(nameof(modelType))
-    };
+        if (IsTieredDownloadable(modelType))
+        {
+            var present = FindLargestPresentTier(modelType);
+            if (present is not null) return ResolveFile(present.MmprojFileName);
+            var defaultTier = PickFittingTier(modelType, DefaultVramTiers[0])!;
+            return ResolveFile(defaultTier.MmprojFileName);
+        }
+
+        return modelType switch
+        {
+            CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaClipProjectorFileName),
+            CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLClipProjectorFileName),
+            CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLClipProjectorFileName),
+            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedClipProjectorFileName),
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+        };
+    }
 
     /// <summary>
-    /// Gets the expected size of the model file in bytes.
+    /// Gets the expected size of the model file in bytes. For tiered models we
+    /// report the size of whichever tier is currently on disk (so the corruption
+    /// check has a sensible target) or the smallest tier's size as a download
+    /// estimate when nothing is present yet.
     /// </summary>
-    public long GetExpectedModelSize(CaptioningModelType modelType) => modelType switch
+    public long GetExpectedModelSize(CaptioningModelType modelType)
     {
-        CaptioningModelType.LLaVA_v1_6_34B => ExpectedLLaVaSizeBytes,
-        CaptioningModelType.Qwen2_5_VL_7B => ExpectedQwen25VLSizeBytes,
-        CaptioningModelType.Qwen3_VL_8B => ExpectedQwen3VLSizeBytes,
-        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ExpectedQwen3VLAbliteratedSizeBytes,
-        _ => throw new ArgumentOutOfRangeException(nameof(modelType))
-    };
+        if (IsTieredDownloadable(modelType))
+        {
+            var present = FindLargestPresentTier(modelType);
+            if (present is not null) return present.ModelSizeBytes;
+            var defaultTier = PickFittingTier(modelType, DefaultVramTiers[0])!;
+            return defaultTier.ModelSizeBytes;
+        }
+
+        return modelType switch
+        {
+            CaptioningModelType.LLaVA_v1_6_34B => ExpectedLLaVaSizeBytes,
+            CaptioningModelType.Qwen2_5_VL_7B => ExpectedQwen25VLSizeBytes,
+            CaptioningModelType.Qwen3_VL_8B => ExpectedQwen3VLSizeBytes,
+            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ExpectedQwen3VLAbliteratedSizeBytes,
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+        };
+    }
+
+    /// <summary>
+    /// Total bytes for a specific tier (model + mmproj). Used by the download
+    /// dialog to report a meaningful total before bytes start flowing.
+    /// </summary>
+    public long GetExpectedTierTotalBytes(CaptioningModelType modelType, int vramGb)
+    {
+        var tier = PickFittingTier(modelType, vramGb)
+            ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
+                $"No VRAM tier defined for {modelType} at or below {vramGb} GB.");
+        return tier.ModelSizeBytes + tier.MmprojSizeBytes;
+    }
 
     /// <summary>
     /// Gets the display name for a model type.
@@ -270,6 +504,8 @@ public sealed class CaptioningModelManager
         CaptioningModelType.Qwen2_5_VL_7B => "Qwen 2.5 VL 7B",
         CaptioningModelType.Qwen3_VL_8B => "Qwen 3 VL 8B",
         CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Qwen 3 VL 8B — Abliterated v2 (Q8_0)",
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption => "Qwen 3 VL 8B — Abliterated Caption-it",
+        CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => "Qwen 3 VL 8B — NSFW Caption V4",
         _ => modelType.ToString()
     };
 
@@ -282,6 +518,8 @@ public sealed class CaptioningModelManager
         CaptioningModelType.Qwen2_5_VL_7B => "Efficient vision-language model with strong performance. Good balance of quality and resource usage. Requires ~5GB disk space.",
         CaptioningModelType.Qwen3_VL_8B => "Most powerful Qwen VLM. Features 256K context, visual agent capabilities, 3D grounding, and 32-language OCR. Requires ~5.5GB disk space.",
         CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Uncensored Qwen3-VL 8B (Q8_0 quant). User-supplied — drop the .gguf and .mmproj files into the captioning models folder or set the DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR environment variable.",
+        CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption => "Uncensored Qwen3-VL 8B fine-tuned for general image captioning (mradermacher/Qwen3-VL-8B-Abliterated-Caption-it-GGUF). Picks a quantization based on your VRAM tier; 8 GB → Q4_K_M up to 24/32 GB → Q8_0.",
+        CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => "Qwen3-VL 8B fine-tuned specifically for NSFW image captioning (mradermacher/Qwen3-VL-8B-NSFW-Caption-V4-GGUF). Same VRAM-tier quantization picks as the Caption-it sibling.",
         _ => "Unknown model."
     };
 
@@ -380,6 +618,17 @@ public sealed class CaptioningModelManager
                 return false;
             }
 
+            // Tiered models need a VRAM budget to pick a quant; the no-tier
+            // overload can't service them. Direct the caller to the (type,
+            // vramGb) overload instead of guessing.
+            if (IsTieredDownloadable(modelType))
+            {
+                progress?.Report(new ModelDownloadProgress(0, 0,
+                    $"{GetDisplayName(modelType)} requires a VRAM tier — call DownloadModelAsync(type, vramGb)."));
+                Log.Warning("Non-tiered DownloadModelAsync called for tiered model {ModelType}; caller must pass vramGb.", modelType);
+                return false;
+            }
+
             var (modelUrl, modelPath, modelSize) = modelType switch
             {
                 CaptioningModelType.LLaVA_v1_6_34B => (LLaVaModelUrl, GetModelPath(modelType), ExpectedLLaVaSizeBytes),
@@ -428,6 +677,100 @@ public sealed class CaptioningModelManager
             }
 
             progress?.Report(new ModelDownloadProgress(totalSize, totalSize, "Download complete"));
+            return true;
+        }
+        finally
+        {
+            lock (_downloadLock)
+            {
+                _downloadingModels[modelType] = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Downloads a VRAM-tiered captioning model and its matching mmproj. The
+    /// tier table picks the quantization; if <paramref name="vramGb"/> exceeds
+    /// any defined tier we fall back to the largest one defined (same policy
+    /// as the ComfyUI <c>VramProfileHelper.SelectBestMatchingLinks</c>).
+    /// </summary>
+    public async Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsTieredDownloadable(modelType))
+        {
+            // Forward to the non-tiered path for legacy models so callers can
+            // safely use the new overload unconditionally.
+            return await DownloadModelAsync(modelType, progress, cancellationToken);
+        }
+
+        var tier = PickFittingTier(modelType, vramGb)
+            ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
+                $"No VRAM tier defined for {modelType} at or below {vramGb} GB.");
+
+        var totalSize = tier.ModelSizeBytes + tier.MmprojSizeBytes;
+        var displayName = GetDisplayName(modelType);
+
+        var modelDestPath = Path.Combine(_modelsBasePath, tier.ModelFileName);
+        var mmprojDestPath = Path.Combine(_modelsBasePath, tier.MmprojFileName);
+
+        // Resolve current presence via search paths (the user may already have
+        // the files under a configured extra path). Only download what's
+        // actually missing.
+        var modelOnDisk = ResolveFile(tier.ModelFileName);
+        var mmprojOnDisk = ResolveFile(tier.MmprojFileName);
+        var modelPresent = File.Exists(modelOnDisk) && new FileInfo(modelOnDisk).Length >= tier.ModelSizeBytes * 0.8;
+        var mmprojPresent = File.Exists(mmprojOnDisk) && new FileInfo(mmprojOnDisk).Length >= tier.MmprojSizeBytes * 0.8;
+
+        if (modelPresent && mmprojPresent)
+        {
+            progress?.Report(new ModelDownloadProgress(totalSize, totalSize,
+                $"{displayName} ({tier.VramGb} GB tier) already downloaded"));
+            return true;
+        }
+
+        lock (_downloadLock)
+        {
+            if (_downloadingModels.TryGetValue(modelType, out var isDownloading) && isDownloading)
+            {
+                Log.Warning("{ModelType} download already in progress", modelType);
+                return false;
+            }
+            _downloadingModels[modelType] = true;
+        }
+
+        try
+        {
+            // mmproj first (smaller — quicker feedback that the connection works).
+            if (!mmprojPresent)
+            {
+                progress?.Report(new ModelDownloadProgress(0, totalSize,
+                    $"Downloading {displayName} mmproj ({tier.VramGb} GB tier)..."));
+                var mmprojSuccess = await DownloadFileInternalAsync(
+                    tier.MmprojUrl, mmprojDestPath, tier.MmprojSizeBytes, $"{displayName} mmproj",
+                    new Progress<ModelDownloadProgress>(p =>
+                        progress?.Report(new ModelDownloadProgress(p.BytesDownloaded, totalSize, p.Status))),
+                    cancellationToken);
+                if (!mmprojSuccess) return false;
+            }
+
+            if (!modelPresent)
+            {
+                progress?.Report(new ModelDownloadProgress(tier.MmprojSizeBytes, totalSize,
+                    $"Downloading {displayName} model ({tier.VramGb} GB tier)..."));
+                var modelSuccess = await DownloadFileInternalAsync(
+                    tier.ModelUrl, modelDestPath, tier.ModelSizeBytes, $"{displayName} model",
+                    new Progress<ModelDownloadProgress>(p =>
+                        progress?.Report(new ModelDownloadProgress(tier.MmprojSizeBytes + p.BytesDownloaded, totalSize, p.Status))),
+                    cancellationToken);
+                if (!modelSuccess) return false;
+            }
+
+            progress?.Report(new ModelDownloadProgress(totalSize, totalSize,
+                $"{displayName} ({tier.VramGb} GB tier) download complete"));
             return true;
         }
         finally

@@ -928,7 +928,9 @@ public partial class App : Application
             sp.GetRequiredService<IWorkloadInstallService>(),
             sp.GetServices<Domain.Services.IInstallerUpdateService>(),
             sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Inference.Captioning.CaptioningModelManager>()));
+            sp.GetService<Inference.Captioning.CaptioningModelManager>(),
+            sp.GetService<ICaptioningService>(),
+            sp.GetService<IActivityLogService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

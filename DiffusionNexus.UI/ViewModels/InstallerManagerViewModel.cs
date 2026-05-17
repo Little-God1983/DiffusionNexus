@@ -31,6 +31,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
     private readonly IUnifiedLogger _unifiedLogger;
     private readonly DiffusionNexus.Inference.Captioning.CaptioningModelManager? _captioningModelManager;
+    private readonly ICaptioningService? _captioningService;
+    private readonly IActivityLogService? _activityLogService;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -69,7 +71,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IWorkloadInstallService installService,
         IEnumerable<IInstallerUpdateService> updateServices,
         IUnifiedLogger unifiedLogger,
-        DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null)
+        DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null,
+        ICaptioningService? captioningService = null,
+        IActivityLogService? activityLogService = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -81,6 +85,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _updateServices = updateServices;
         _unifiedLogger = unifiedLogger;
         _captioningModelManager = captioningModelManager;
+        _captioningService = captioningService;
+        _activityLogService = activityLogService;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -533,15 +539,37 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // it, fall back to a standalone manager so the action still works.
             var manager = _captioningModelManager
                 ?? new DiffusionNexus.Inference.Captioning.CaptioningModelManager();
+            var service = _captioningService
+                ?? new DiffusionNexus.Inference.Captioning.CaptioningService(manager);
 
-            var vm = new CaptioningModelsDialogViewModel(manager);
+            var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+
+            // VRAM picker callback: opens the shared VramSelectionDialog (same
+            // window the ComfyUI workload install flow uses) and returns the
+            // user's choice. Returning null from cancel propagates as a clean
+            // abort with no side effects on the row.
+            Func<int[], Task<int?>> vramPicker = async tiers =>
+            {
+                if (tiers is null || tiers.Length == 0) return null;
+                var vramDialog = new Views.Dialogs.VramSelectionDialog(tiers);
+                if (parentWindow is not null)
+                {
+                    await vramDialog.ShowDialog(parentWindow);
+                }
+                else
+                {
+                    vramDialog.Show();
+                    await Task.Yield();
+                }
+                return vramDialog.SelectedVramGb;
+            };
+
+            var vm = new CaptioningModelsDialogViewModel(manager, service, _activityLogService, vramPicker);
             var dialog = new Views.Dialogs.CaptioningModelsDialog
             {
                 DataContext = vm
             };
-
-            var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
-                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
 
             if (parentWindow is not null)
             {

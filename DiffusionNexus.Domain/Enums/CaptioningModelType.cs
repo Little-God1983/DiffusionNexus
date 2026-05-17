@@ -30,5 +30,21 @@ public enum CaptioningModelType
     /// removed. Looked up from any configured captioning-models directory; not
     /// downloaded automatically because no canonical upstream URL is shipped.
     /// </summary>
-    Qwen3_VL_8B_Abliterated_Q8 = 3
+    Qwen3_VL_8B_Abliterated_Q8 = 3,
+
+    /// <summary>
+    /// Qwen 3 VL 8B - Abliterated Caption-it. General-purpose uncensored
+    /// captioning fine-tune on top of the abliterated base model. Downloadable
+    /// from mradermacher with VRAM-tier-aware quantization selection (Q4_K_M
+    /// through Q8_0 plus matching mmproj projector).
+    /// </summary>
+    Qwen3_VL_8B_Abliterated_Caption = 4,
+
+    /// <summary>
+    /// Qwen 3 VL 8B - NSFW Caption V4. NSFW-specialised fine-tune of the same
+    /// Qwen3-VL-8B base (sibling lineage to Abliterated_Caption, not a
+    /// successor). Downloadable from mradermacher with VRAM-tier-aware
+    /// quantization selection.
+    /// </summary>
+    Qwen3_VL_8B_NSFW_Caption_V4 = 5
 }

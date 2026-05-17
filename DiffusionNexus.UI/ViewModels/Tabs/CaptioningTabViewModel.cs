@@ -473,6 +473,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CaptioningModelType.Qwen2_5_VL_7B => IsQwenReady,
                 CaptioningModelType.Qwen3_VL_8B => IsQwen3Ready,
                 CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => IsQwen3AbliteratedReady,
+                // Tiered models are managed from the Core Workloads dialog;
+                // for the tab's readiness gate we ask the service directly
+                // since there's no per-VRAM-tier UI on this tab.
+                CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                    or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4
+                    => _captioningService?.GetModelInfo(SelectedModelType).Status
+                        is CaptioningModelStatus.Ready or CaptioningModelStatus.Loaded,
                 _ => false
             };
         }
@@ -1005,6 +1012,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             CaptioningModelType.Qwen3_VL_8B => !IsQwen3Downloading,
             // Abliterated builds are user-supplied — no upstream URL to download from.
             CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => false,
+            // Tiered downloads happen through the Core Workloads dialog where
+            // the VRAM picker lives, not from the captioning tab's Download
+            // command. Return false here so the tab's button stays disabled.
+            CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => false,
             _ => false
         };
     }

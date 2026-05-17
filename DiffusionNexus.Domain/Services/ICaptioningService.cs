@@ -169,6 +169,23 @@ public interface ICaptioningService : IDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Downloads a VRAM-tiered captioning model. The implementation selects
+    /// the largest quantization that fits the given VRAM budget (8/12/16/24/32 GB
+    /// are the canonical tiers) and fetches both the GGUF and matching mmproj.
+    /// For non-tiered models this falls through to the regular overload.
+    /// </summary>
+    /// <param name="modelType">The model to download.</param>
+    /// <param name="vramGb">User-selected VRAM budget in GB.</param>
+    /// <param name="progress">Optional progress callback.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if download succeeded.</returns>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a model into memory for inference.
     /// </summary>
     /// <param name="modelType">The model to load.</param>

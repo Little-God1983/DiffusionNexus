@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Inference.Captioning;
@@ -8,19 +10,62 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// Row in the Diffusion Nexus Core captioning dialog. One entry per
-/// <see cref="CaptioningModelType"/>, with the live on-disk status of its
-/// GGUF/mmproj pair.
+/// <see cref="CaptioningModelType"/>. For tiered models exposes a Download
+/// command that opens the shared VramSelectionDialog and routes progress
+/// through <see cref="IActivityLogService"/> so the status-bar progress
+/// indicator keeps updating even after the dialog is closed.
 /// </summary>
-public sealed class CaptioningModelRowViewModel(
-    string name,
-    string description,
-    string filePath,
-    CaptioningModelStatus status)
+public sealed partial class CaptioningModelRowViewModel : ObservableObject
 {
-    public string Name { get; } = name;
-    public string Description { get; } = description;
-    public string FilePath { get; } = filePath;
-    public CaptioningModelStatus Status { get; } = status;
+    private readonly CaptioningModelManager _manager;
+    private readonly ICaptioningService _captioningService;
+    private readonly IActivityLogService? _activityLog;
+    private readonly Func<int[], Task<int?>> _vramPicker;
+
+    public CaptioningModelType ModelType { get; }
+    public string Name { get; }
+    public string Description { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusLabel))]
+    [NotifyPropertyChangedFor(nameof(StatusColor))]
+    [NotifyPropertyChangedFor(nameof(CanDownload))]
+    [NotifyPropertyChangedFor(nameof(DownloadButtonLabel))]
+    [NotifyPropertyChangedFor(nameof(IsDownloading))]
+    private CaptioningModelStatus _status;
+
+    [ObservableProperty] private string _filePath;
+
+    /// <summary>
+    /// VRAM tiers this model supports. Empty for the non-tiered legacy entries
+    /// (LLaVA / Qwen2.5 / Qwen3 vanilla / Abliterated_Q8) so their rows hide
+    /// the Download button entirely.
+    /// </summary>
+    public int[] SupportedVramTiers { get; }
+
+    public bool IsTieredDownloadable => SupportedVramTiers.Length > 0;
+
+    /// <summary>
+    /// Derived from Status — true while the manager reports an active fetch
+    /// for this model type. Drives both the per-row "Downloading…" label and
+    /// the button's disabled state. The download itself is observed through
+    /// the singleton ActivityLogService, so closing and reopening the dialog
+    /// still reflects the in-flight state correctly.
+    /// </summary>
+    public bool IsDownloading => Status == CaptioningModelStatus.Downloading;
+
+    /// <summary>
+    /// True when the Download button should be enabled. Hidden entirely for
+    /// non-tiered rows (no upstream URL or user-supplied entries).
+    /// </summary>
+    public bool CanDownload => IsTieredDownloadable && !IsDownloading;
+
+    public string DownloadButtonLabel => Status switch
+    {
+        CaptioningModelStatus.Downloading => "Downloading…",
+        CaptioningModelStatus.Ready or CaptioningModelStatus.Loaded => "Re-download",
+        _ => "Download"
+    };
 
     public string StatusLabel => Status switch
     {
@@ -42,6 +87,108 @@ public sealed class CaptioningModelRowViewModel(
         CaptioningModelStatus.Corrupted => "#F44336",
         _ => "#999999"
     };
+
+    public IAsyncRelayCommand DownloadCommand { get; }
+
+    internal CaptioningModelRowViewModel(
+        CaptioningModelManager manager,
+        ICaptioningService captioningService,
+        IActivityLogService? activityLog,
+        CaptioningModelType modelType,
+        Func<int[], Task<int?>> vramPicker)
+    {
+        _manager = manager;
+        _captioningService = captioningService;
+        _activityLog = activityLog;
+        _vramPicker = vramPicker;
+        ModelType = modelType;
+        Name = CaptioningModelManager.GetDisplayName(modelType);
+        Description = CaptioningModelManager.GetDescription(modelType);
+        SupportedVramTiers = CaptioningModelManager.GetSupportedVramTiers(modelType);
+
+        // Read live status — this means reopening the dialog mid-download
+        // sees "Downloading…" and a disabled button, instead of an enabled
+        // button that would start a duplicate fetch.
+        var info = manager.GetModelInfo(modelType);
+        _status = info.Status;
+        _filePath = info.FilePath;
+
+        DownloadCommand = new AsyncRelayCommand(DownloadAsync, () => CanDownload);
+    }
+
+    /// <summary>
+    /// CommunityToolkit source-generator hook — runs whenever Status changes.
+    /// Forces the command's CanExecute to re-evaluate so the button visually
+    /// toggles enabled/disabled in sync with the download state.
+    /// </summary>
+    partial void OnStatusChanged(CaptioningModelStatus value)
+    {
+        DownloadCommand.NotifyCanExecuteChanged();
+    }
+
+    private async Task DownloadAsync()
+    {
+        if (!IsTieredDownloadable) return;
+
+        var vramGb = await _vramPicker(SupportedVramTiers);
+        if (vramGb is null) return; // user cancelled
+
+        // Flip our local Status immediately so the button disables before the
+        // async machinery spins up. The manager flips its own _downloadingModels
+        // flag inside DownloadModelAsync, so a parallel dialog opened a moment
+        // later will see Downloading too.
+        Status = CaptioningModelStatus.Downloading;
+
+        var operationName = $"{Name} ({vramGb} GB tier)";
+        _activityLog?.StartDownloadProgress(operationName);
+
+        var success = false;
+        var failureMessage = string.Empty;
+
+        try
+        {
+            // Route progress to BOTH the activity log (visible in the status
+            // bar regardless of whether the dialog is open) and a local hook
+            // we could use later for richer in-dialog UI. The activity log is
+            // the load-bearing channel — see LoraDownloadService for the same
+            // pattern.
+            var progress = new Progress<ModelDownloadProgress>(p =>
+            {
+                var percent = p.TotalBytes > 0
+                    ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
+                    : 0;
+                _activityLog?.ReportDownloadProgress(percent, p.Status);
+            });
+
+            success = await _captioningService.DownloadModelAsync(ModelType, vramGb.Value, progress);
+            if (!success)
+            {
+                failureMessage = "Download did not complete successfully.";
+            }
+        }
+        catch (Exception ex)
+        {
+            failureMessage = ex.Message;
+            success = false;
+        }
+        finally
+        {
+            // Refresh from disk so the row flips from Downloading to Ready
+            // (or back to NotDownloaded on failure).
+            var refreshed = _manager.GetModelInfo(ModelType);
+            Dispatcher.UIThread.Post(() =>
+            {
+                Status = refreshed.Status;
+                FilePath = refreshed.FilePath;
+            });
+
+            _activityLog?.CompleteDownloadProgress(
+                success,
+                success
+                    ? $"{operationName} downloaded successfully."
+                    : $"{operationName} download failed: {failureMessage}");
+        }
+    }
 }
 
 /// <summary>
@@ -51,6 +198,11 @@ public sealed class CaptioningModelRowViewModel(
 /// </summary>
 public partial class CaptioningModelsDialogViewModel : ViewModelBase
 {
+    private readonly CaptioningModelManager _manager;
+    private readonly ICaptioningService _captioningService;
+    private readonly IActivityLogService? _activityLog;
+    private readonly Func<int[], Task<int?>> _vramPicker;
+
     /// <summary>
     /// The rows displayed in the DataGrid — one per captioning model.
     /// </summary>
@@ -66,13 +218,31 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isLoading;
 
-    public CaptioningModelsDialogViewModel(CaptioningModelManager manager)
+    /// <summary>
+    /// Creates a dialog viewmodel. <paramref name="vramPicker"/> is invoked
+    /// when the user clicks Download on a tiered model row; it gets the row's
+    /// supported tiers and returns the chosen GB value (or null on cancel).
+    /// <paramref name="activityLog"/> is optional but recommended — when
+    /// supplied, download progress shows in the status-bar globally and
+    /// survives this dialog being closed and reopened.
+    /// </summary>
+    public CaptioningModelsDialogViewModel(
+        CaptioningModelManager manager,
+        ICaptioningService captioningService,
+        IActivityLogService? activityLog,
+        Func<int[], Task<int?>> vramPicker)
     {
         ArgumentNullException.ThrowIfNull(manager);
-        Load(manager);
+        ArgumentNullException.ThrowIfNull(captioningService);
+        ArgumentNullException.ThrowIfNull(vramPicker);
+        _manager = manager;
+        _captioningService = captioningService;
+        _activityLog = activityLog;
+        _vramPicker = vramPicker;
+        Load();
     }
 
-    private void Load(CaptioningModelManager manager)
+    private void Load()
     {
         try
         {
@@ -82,15 +252,11 @@ public partial class CaptioningModelsDialogViewModel : ViewModelBase
 
             foreach (var modelType in Enum.GetValues<CaptioningModelType>())
             {
-                var info = manager.GetModelInfo(modelType);
                 Models.Add(new CaptioningModelRowViewModel(
-                    info.DisplayName,
-                    info.Description,
-                    info.FilePath,
-                    info.Status));
+                    _manager, _captioningService, _activityLog, modelType, _vramPicker));
             }
 
-            foreach (var path in manager.SearchPaths)
+            foreach (var path in _manager.SearchPaths)
             {
                 SearchPaths.Add(path);
             }
