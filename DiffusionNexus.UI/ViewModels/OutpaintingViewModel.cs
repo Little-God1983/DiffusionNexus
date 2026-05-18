@@ -45,10 +45,12 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
+    private const string ImageScaleNodeId = "17";
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
     private const string DefaultNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
+    private const long HighResolutionPixelThreshold = 2_000_000;
 
     private static readonly string[] FunProgressMessages =
     [
@@ -81,6 +83,8 @@ public partial class OutpaintingViewModel : ObservableObject
     private bool _hasExtension;
     private OutpaintWarningLevel _warningLevel = OutpaintWarningLevel.Hidden;
     private string? _warningMessage;
+    private bool _isHighResolutionWarning;
+    private string? _highResolutionWarningMessage;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
     private bool _isBusy;
@@ -214,6 +218,24 @@ public partial class OutpaintingViewModel : ObservableObject
 
     /// <summary>True when extension is past +60% area — quality likely drops noticeably.</summary>
     public bool IsStrongWarning => _warningLevel == OutpaintWarningLevel.Strong;
+
+    /// <summary>
+    /// True when the resulting canvas exceeds the high-resolution pixel threshold.
+    /// Independent of <see cref="WarningLevel"/> so it can display alongside area-ratio
+    /// warnings — a small extension on a 4K source is still VRAM-heavy.
+    /// </summary>
+    public bool IsHighResolutionWarning
+    {
+        get => _isHighResolutionWarning;
+        private set => SetProperty(ref _isHighResolutionWarning, value);
+    }
+
+    /// <summary>Free-text message that pairs with <see cref="IsHighResolutionWarning"/>.</summary>
+    public string? HighResolutionWarningMessage
+    {
+        get => _highResolutionWarningMessage;
+        private set => SetProperty(ref _highResolutionWarningMessage, value);
+    }
 
     /// <summary>User-supplied positive prompt (used by the nonVision workflow).</summary>
     public string PositivePrompt
@@ -376,6 +398,8 @@ public partial class OutpaintingViewModel : ObservableObject
         {
             WarningLevel = OutpaintWarningLevel.NeedsExtension;
             WarningMessage = "Drag the arrows on the canvas\nto extend it before generating.";
+            IsHighResolutionWarning = false;
+            HighResolutionWarningMessage = null;
             return;
         }
 
@@ -394,6 +418,21 @@ public partial class OutpaintingViewModel : ObservableObject
         {
             WarningLevel = OutpaintWarningLevel.Hidden;
             WarningMessage = null;
+        }
+
+        var totalPixels = (long)Math.Max(0, newWidth) * Math.Max(0, newHeight);
+        if (totalPixels > HighResolutionPixelThreshold)
+        {
+            var mp = totalPixels / 1_000_000.0;
+            IsHighResolutionWarning = true;
+            HighResolutionWarningMessage =
+                $"Result canvas is {newWidth}×{newHeight} (~{mp:0.0} MP). " +
+                "Generation may be slow or run out of VRAM on lower-end GPUs.";
+        }
+        else
+        {
+            IsHighResolutionWarning = false;
+            HighResolutionWarningMessage = null;
         }
     }
 
@@ -554,6 +593,15 @@ public partial class OutpaintingViewModel : ObservableObject
                     node["inputs"]!["top"] = extendTop;
                     node["inputs"]!["right"] = extendRight;
                     node["inputs"]!["bottom"] = extendBottom;
+                },
+                // Neutralize ImageScaleToMaxDimension: without this the workflow rescales
+                // the input to 1536 on its largest edge, and the receiver then non-uniformly
+                // stretches the result onto the canvas the UI computed at native resolution.
+                [ImageScaleNodeId] = node =>
+                {
+                    var origW = _getImageWidth();
+                    var origH = _getImageHeight();
+                    node["inputs"]!["largest_size"] = Math.Max(origW, origH);
                 }
             };
 
