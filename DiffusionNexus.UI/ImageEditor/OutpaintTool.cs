@@ -21,8 +21,8 @@ public enum OutpaintHandle
 /// </summary>
 public class OutpaintTool
 {
-    private const float ArrowSize = 16f;
-    private const float ArrowHitSize = 24f;
+    private const float ArrowSize = 32f;
+    private const float ArrowHitSize = 40f;
     private const float MinExtensionPixels = 0f;
 
     private SKRect _imageRect;
@@ -407,7 +407,7 @@ public class OutpaintTool
         {
             Color = isActive ? new SKColor(56, 142, 60) : new SKColor(100, 100, 100),
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1.5f,
+            StrokeWidth = 2f,
             IsAntialias = true
         };
 

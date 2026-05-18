@@ -67,6 +67,7 @@ public partial class OutpaintingViewModel : ObservableObject
 
     private bool _isPanelOpen;
     private string _outpaintResolutionText = string.Empty;
+    private bool _hasExtension;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
     private bool _isBusy;
@@ -104,10 +105,10 @@ public partial class OutpaintingViewModel : ObservableObject
         SetAspectRatioCommand = new RelayCommand<string>(ExecuteSetAspectRatio, _ => _hasImage() && IsPanelOpen);
         GenerateCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: false),
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
         GenerateVisionCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: true),
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
@@ -152,6 +153,20 @@ public partial class OutpaintingViewModel : ObservableObject
     {
         get => _outpaintResolutionText;
         set => SetProperty(ref _outpaintResolutionText, value);
+    }
+
+    /// <summary>
+    /// True only once the user has actually extended the canvas via the arrow handles
+    /// or an aspect-ratio preset. Generate commands stay disabled until this flips on.
+    /// </summary>
+    public bool HasExtension
+    {
+        get => _hasExtension;
+        private set
+        {
+            if (SetProperty(ref _hasExtension, value))
+                NotifyGenerateCommandsCanExecuteChanged();
+        }
     }
 
     /// <summary>User-supplied positive prompt (used by the nonVision workflow).</summary>
@@ -302,10 +317,11 @@ public partial class OutpaintingViewModel : ObservableObject
         }
     }
 
-    /// <summary>Updates the resolution text from the current outpaint dimensions.</summary>
-    public void UpdateResolution(int width, int height)
+    /// <summary>Updates the resolution text and whether any extension is currently applied.</summary>
+    public void UpdateResolution(int width, int height, bool hasExtension)
     {
         OutpaintResolutionText = width > 0 && height > 0 ? $"{width} x {height}" : string.Empty;
+        HasExtension = hasExtension;
     }
 
     #endregion

@@ -387,8 +387,9 @@ public partial class ImageEditView : UserControl
 
         EventHandler onOutpaintRegionChanged = (_, _) =>
         {
-            var (w, h) = _imageEditorCanvas!.EditorCore.OutpaintTool.GetNewDimensions();
-            imageEditor.Outpainting.UpdateResolution(w, h);
+            var tool = _imageEditorCanvas!.EditorCore.OutpaintTool;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.Outpainting.UpdateResolution(w, h, tool.HasExtension);
         };
         _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
@@ -417,13 +418,6 @@ public partial class ImageEditView : UserControl
                 pendingExtendTop = extTop;
                 pendingExtendRight = extRight;
                 pendingExtendBottom = extBottom;
-
-                if (extLeft + extTop + extRight + extBottom <= 0)
-                {
-                    imageEditor.StatusMessage = "Drag the outpaint arrows to extend the canvas before generating.";
-                    imageEditor.Outpainting.RefreshCommandStates();
-                    return;
-                }
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
 
