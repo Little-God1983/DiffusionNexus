@@ -97,7 +97,7 @@
                             <Button Classes="download-btn"
                                     Content="{Binding DownloadButtonLabel}"
                                     Command="{Binding DownloadCommand}"
-                                    IsVisible="{Binding IsTieredDownloadable}"
+                                    IsVisible="{Binding IsDownloadable}"
                                     HorizontalAlignment="Stretch"
                                     Margin="4,0"
                                     VerticalAlignment="Center"/>

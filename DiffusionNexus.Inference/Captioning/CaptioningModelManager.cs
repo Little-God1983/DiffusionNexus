@@ -42,13 +42,6 @@ public sealed class CaptioningModelManager
     private const string Qwen3VLClipProjectorUrl = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf";
     private const long ExpectedQwen3VLClipSizeBytes = 1_159_029_824; // ~1.1GB
 
-    // Qwen 3 VL 8B Abliterated v2 (mradermacher GGUF — Q8_0). No upstream download
-    // URL is hardcoded because abliterated variants are user-supplied; the model is
-    // resolved by scanning the configured search paths for these filenames.
-    private const string Qwen3VLAbliteratedModelFileName = "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q8_0.gguf";
-    private const string Qwen3VLAbliteratedClipProjectorFileName = "Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-Q8_0.gguf";
-    private const long ExpectedQwen3VLAbliteratedSizeBytes = 8_700_000_000; // ~8.7GB Q8_0
-
     /// <summary>
     /// One row in the VRAM tier table for a downloadable captioning model.
     /// Mirrors the pair of files (base GGUF + matching mmproj) that need to
@@ -336,6 +329,19 @@ public sealed class CaptioningModelManager
                      or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4;
 
     /// <summary>
+    /// True for any model the manager knows how to fetch. Drives whether the
+    /// Captioning dialog row shows a Download button. Tiered models route
+    /// through the VRAM-tier-aware overload; non-tiered models (LLaVA,
+    /// Qwen2.5, Qwen3 vanilla) use the legacy single-file URL constants.
+    /// </summary>
+    public static bool IsDownloadable(CaptioningModelType modelType)
+        => modelType is CaptioningModelType.LLaVA_v1_6_34B
+                     or CaptioningModelType.Qwen2_5_VL_7B
+                     or CaptioningModelType.Qwen3_VL_8B
+                     or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                     or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4;
+
+    /// <summary>
     /// VRAM tiers (in GB) available for a downloadable model. Empty array for
     /// models that don't support tiered downloads.
     /// </summary>
@@ -429,7 +435,6 @@ public sealed class CaptioningModelManager
             CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaModelFileName),
             CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLModelFileName),
             CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLModelFileName),
-            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedModelFileName),
             _ => throw new ArgumentOutOfRangeException(nameof(modelType))
         };
     }
@@ -452,7 +457,6 @@ public sealed class CaptioningModelManager
             CaptioningModelType.LLaVA_v1_6_34B => ResolveFile(LLaVaClipProjectorFileName),
             CaptioningModelType.Qwen2_5_VL_7B => ResolveFile(Qwen25VLClipProjectorFileName),
             CaptioningModelType.Qwen3_VL_8B => ResolveFile(Qwen3VLClipProjectorFileName),
-            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ResolveFile(Qwen3VLAbliteratedClipProjectorFileName),
             _ => throw new ArgumentOutOfRangeException(nameof(modelType))
         };
     }
@@ -478,7 +482,6 @@ public sealed class CaptioningModelManager
             CaptioningModelType.LLaVA_v1_6_34B => ExpectedLLaVaSizeBytes,
             CaptioningModelType.Qwen2_5_VL_7B => ExpectedQwen25VLSizeBytes,
             CaptioningModelType.Qwen3_VL_8B => ExpectedQwen3VLSizeBytes,
-            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => ExpectedQwen3VLAbliteratedSizeBytes,
             _ => throw new ArgumentOutOfRangeException(nameof(modelType))
         };
     }
@@ -503,7 +506,6 @@ public sealed class CaptioningModelManager
         CaptioningModelType.LLaVA_v1_6_34B => "LLaVA v1.6 34B",
         CaptioningModelType.Qwen2_5_VL_7B => "Qwen 2.5 VL 7B",
         CaptioningModelType.Qwen3_VL_8B => "Qwen 3 VL 8B",
-        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Qwen 3 VL 8B — Abliterated v2 (Q8_0)",
         CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption => "Qwen 3 VL 8B — Abliterated Caption-it",
         CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => "Qwen 3 VL 8B — NSFW Caption V4",
         _ => modelType.ToString()
@@ -517,7 +519,6 @@ public sealed class CaptioningModelManager
         CaptioningModelType.LLaVA_v1_6_34B => "High quality vision-language model. Excellent for detailed descriptions. Requires ~20GB disk space and significant GPU VRAM.",
         CaptioningModelType.Qwen2_5_VL_7B => "Efficient vision-language model with strong performance. Good balance of quality and resource usage. Requires ~5GB disk space.",
         CaptioningModelType.Qwen3_VL_8B => "Most powerful Qwen VLM. Features 256K context, visual agent capabilities, 3D grounding, and 32-language OCR. Requires ~5.5GB disk space.",
-        CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => "Uncensored Qwen3-VL 8B (Q8_0 quant). User-supplied — drop the .gguf and .mmproj files into the captioning models folder or set the DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR environment variable.",
         CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption => "Uncensored Qwen3-VL 8B fine-tuned for general image captioning (mradermacher/Qwen3-VL-8B-Abliterated-Caption-it-GGUF). Picks a quantization based on your VRAM tier; 8 GB → Q4_K_M up to 24/32 GB → Q8_0.",
         CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => "Qwen3-VL 8B fine-tuned specifically for NSFW image captioning (mradermacher/Qwen3-VL-8B-NSFW-Caption-V4-GGUF). Same VRAM-tier quantization picks as the Caption-it sibling.",
         _ => "Unknown model."
@@ -677,20 +678,81 @@ public sealed class CaptioningModelManager
     }
 
     /// <summary>
-    /// Downloads a model and its CLIP projector from HuggingFace.
+    /// Downloads a non-tiered captioning model and its mmproj into the default
+    /// Core models folder.
     /// </summary>
-    public async Task<bool> DownloadModelAsync(
+    public Task<bool> DownloadModelAsync(
         CaptioningModelType modelType,
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
+        => DownloadModelAsync(modelType, _modelsBasePath, progress, cancellationToken);
+
+    /// <summary>
+    /// Downloads a non-tiered captioning model and its mmproj into a
+    /// user-picked destination directory (e.g. a ComfyUI install's
+    /// <c>Captioning</c> subfolder). Mirrors the behaviour of the
+    /// VRAM-tiered overload so the dialog flow can treat both kinds of
+    /// model uniformly.
+    /// </summary>
+    public async Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        var status = GetModelStatus(modelType);
-        if (status == CaptioningModelStatus.Ready)
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
+
+        // Tiered models need a VRAM budget to pick a quant; the no-tier
+        // overload can't service them. Direct the caller to the (type,
+        // vramGb, …) overload instead of guessing.
+        if (IsTieredDownloadable(modelType))
+        {
+            progress?.Report(new ModelDownloadProgress(0, 0,
+                $"{GetDisplayName(modelType)} requires a VRAM tier — call DownloadModelAsync(type, vramGb, …)."));
+            Log.Warning("Non-tiered DownloadModelAsync called for tiered model {ModelType}; caller must pass vramGb.", modelType);
+            return false;
+        }
+
+        Directory.CreateDirectory(destinationDirectory);
+
+        var (modelFileName, modelUrl, modelSize) = modelType switch
+        {
+            CaptioningModelType.LLaVA_v1_6_34B => (LLaVaModelFileName, LLaVaModelUrl, ExpectedLLaVaSizeBytes),
+            CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLModelFileName, Qwen25VLModelUrl, ExpectedQwen25VLSizeBytes),
+            CaptioningModelType.Qwen3_VL_8B => (Qwen3VLModelFileName, Qwen3VLModelUrl, ExpectedQwen3VLSizeBytes),
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+        };
+
+        var (clipFileName, clipUrl, clipSize) = modelType switch
+        {
+            CaptioningModelType.LLaVA_v1_6_34B => (LLaVaClipProjectorFileName, LLaVaClipProjectorUrl, ExpectedLLaVaClipSizeBytes),
+            CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLClipProjectorFileName, Qwen25VLClipProjectorUrl, ExpectedQwen25VLClipSizeBytes),
+            CaptioningModelType.Qwen3_VL_8B => (Qwen3VLClipProjectorFileName, Qwen3VLClipProjectorUrl, ExpectedQwen3VLClipSizeBytes),
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+        };
+
+        // Resolve to "exists somewhere in search paths" first — if the user
+        // already has the file in their tree we don't redownload. New files
+        // land in the picked destination.
+        var modelExistingPath = ResolveFile(modelFileName);
+        var modelDestPath = File.Exists(modelExistingPath)
+            ? modelExistingPath
+            : Path.Combine(destinationDirectory, modelFileName);
+
+        var clipExistingPath = ResolveFile(clipFileName);
+        var clipDestPath = File.Exists(clipExistingPath)
+            ? clipExistingPath
+            : Path.Combine(destinationDirectory, clipFileName);
+
+        var alreadyPresent =
+            File.Exists(modelDestPath) && new FileInfo(modelDestPath).Length >= modelSize * 0.8 &&
+            File.Exists(clipDestPath) && new FileInfo(clipDestPath).Length >= clipSize * 0.8;
+
+        if (alreadyPresent)
         {
             progress?.Report(new ModelDownloadProgress(
-                GetExpectedModelSize(modelType),
-                GetExpectedModelSize(modelType),
-                "Model already downloaded"));
+                modelSize + clipSize, modelSize + clipSize,
+                $"{GetDisplayName(modelType)} already downloaded"));
             return true;
         }
 
@@ -706,53 +768,15 @@ public sealed class CaptioningModelManager
 
         try
         {
-            // Abliterated builds are user-supplied; there is no canonical upstream
-            // URL we trust to host them. Make the absence explicit instead of
-            // letting a switch-default fall through to a confusing exception.
-            if (modelType == CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8)
-            {
-                progress?.Report(new ModelDownloadProgress(0, ExpectedQwen3VLAbliteratedSizeBytes,
-                    "Abliterated builds are user-supplied; place the .gguf and .mmproj files in the captioning models folder or set DIFFUSION_NEXUS_CAPTIONING_MODELS_DIR."));
-                Log.Warning("DownloadModelAsync called for {ModelType}, which has no upstream URL — skipping.", modelType);
-                return false;
-            }
-
-            // Tiered models need a VRAM budget to pick a quant; the no-tier
-            // overload can't service them. Direct the caller to the (type,
-            // vramGb) overload instead of guessing.
-            if (IsTieredDownloadable(modelType))
-            {
-                progress?.Report(new ModelDownloadProgress(0, 0,
-                    $"{GetDisplayName(modelType)} requires a VRAM tier — call DownloadModelAsync(type, vramGb)."));
-                Log.Warning("Non-tiered DownloadModelAsync called for tiered model {ModelType}; caller must pass vramGb.", modelType);
-                return false;
-            }
-
-            var (modelUrl, modelPath, modelSize) = modelType switch
-            {
-                CaptioningModelType.LLaVA_v1_6_34B => (LLaVaModelUrl, GetModelPath(modelType), ExpectedLLaVaSizeBytes),
-                CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLModelUrl, GetModelPath(modelType), ExpectedQwen25VLSizeBytes),
-                CaptioningModelType.Qwen3_VL_8B => (Qwen3VLModelUrl, GetModelPath(modelType), ExpectedQwen3VLSizeBytes),
-                _ => throw new ArgumentOutOfRangeException(nameof(modelType))
-            };
-
-            var (clipUrl, clipPath, clipSize) = modelType switch
-            {
-                CaptioningModelType.LLaVA_v1_6_34B => (LLaVaClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedLLaVaClipSizeBytes),
-                CaptioningModelType.Qwen2_5_VL_7B => (Qwen25VLClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedQwen25VLClipSizeBytes),
-                CaptioningModelType.Qwen3_VL_8B => (Qwen3VLClipProjectorUrl, GetClipProjectorPath(modelType), ExpectedQwen3VLClipSizeBytes),
-                _ => throw new ArgumentOutOfRangeException(nameof(modelType))
-            };
-
             var totalSize = modelSize + clipSize;
             var displayName = GetDisplayName(modelType);
 
-            // Download CLIP projector first (smaller file)
-            if (!File.Exists(clipPath) || new FileInfo(clipPath).Length < clipSize * 0.8)
+            // CLIP/mmproj first — smaller, fails fast on connectivity issues.
+            if (!File.Exists(clipDestPath) || new FileInfo(clipDestPath).Length < clipSize * 0.8)
             {
                 progress?.Report(new ModelDownloadProgress(0, totalSize, $"Downloading {displayName} CLIP projector..."));
                 var clipSuccess = await DownloadFileInternalAsync(
-                    clipUrl, clipPath, clipSize, $"{displayName} CLIP",
+                    clipUrl, clipDestPath, clipSize, $"{displayName} CLIP",
                     new Progress<ModelDownloadProgress>(p =>
                         progress?.Report(new ModelDownloadProgress(p.BytesDownloaded, totalSize, p.Status))),
                     cancellationToken);
@@ -761,12 +785,11 @@ public sealed class CaptioningModelManager
                     return false;
             }
 
-            // Download main model
-            if (!File.Exists(modelPath) || new FileInfo(modelPath).Length < modelSize * 0.8)
+            if (!File.Exists(modelDestPath) || new FileInfo(modelDestPath).Length < modelSize * 0.8)
             {
                 progress?.Report(new ModelDownloadProgress(clipSize, totalSize, $"Downloading {displayName} model..."));
                 var modelSuccess = await DownloadFileInternalAsync(
-                    modelUrl, modelPath, modelSize, displayName,
+                    modelUrl, modelDestPath, modelSize, displayName,
                     new Progress<ModelDownloadProgress>(p =>
                         progress?.Report(new ModelDownloadProgress(clipSize + p.BytesDownloaded, totalSize, p.Status))),
                     cancellationToken);
@@ -818,8 +841,9 @@ public sealed class CaptioningModelManager
         if (!IsTieredDownloadable(modelType))
         {
             // Forward to the non-tiered path for legacy models so callers can
-            // safely use the new overload unconditionally.
-            return await DownloadModelAsync(modelType, progress, cancellationToken);
+            // safely use this overload unconditionally — including the
+            // user-picked destination.
+            return await DownloadModelAsync(modelType, destinationDirectory, progress, cancellationToken);
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);

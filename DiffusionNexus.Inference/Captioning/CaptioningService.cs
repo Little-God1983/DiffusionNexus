@@ -183,6 +183,17 @@ public sealed class CaptioningService : ICaptioningService
     /// <inheritdoc />
     public Task<bool> DownloadModelAsync(
         CaptioningModelType modelType,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        LogInfo($"Download requested: {modelType}", $"target={destinationDirectory}");
+        return _modelManager.DownloadModelAsync(modelType, destinationDirectory, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
         int vramGb,
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
@@ -600,7 +611,6 @@ public sealed class CaptioningService : ICaptioningService
             // only the trained weights differ. Keep them coalesced so adding
             // another sibling variant later is one enum value, no new branch.
             CaptioningModelType.Qwen3_VL_8B
-                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8
                 or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
                 or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => $"""
                 <|im_start|>system
@@ -626,7 +636,6 @@ public sealed class CaptioningService : ICaptioningService
             CaptioningModelType.LLaVA_v1_6_34B => ["USER:", "</s>"],
             CaptioningModelType.Qwen2_5_VL_7B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             CaptioningModelType.Qwen3_VL_8B
-                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8
                 or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
                 or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4
                 => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],

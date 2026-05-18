@@ -74,11 +74,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private CaptioningModelStatus _llavaStatus;
     private CaptioningModelStatus _qwenStatus;
     private CaptioningModelStatus _qwen3Status;
-    private CaptioningModelStatus _qwen3AbliteratedStatus;
     private double _llavaDownloadProgress;
     private double _qwenDownloadProgress;
     private double _qwen3DownloadProgress;
-    private double _qwen3AbliteratedDownloadProgress;
     private string? _statusMessage;
 
     // Job Config
@@ -380,25 +378,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
     }
 
-    /// <summary>
-    /// Status of the user-supplied Qwen3-VL 8B Abliterated (Q8_0) GGUF.
-    /// </summary>
-    public CaptioningModelStatus Qwen3AbliteratedStatus
-    {
-        get => _qwen3AbliteratedStatus;
-        private set
-        {
-            if (SetProperty(ref _qwen3AbliteratedStatus, value))
-            {
-                OnPropertyChanged(nameof(IsQwen3AbliteratedReady));
-                OnPropertyChanged(nameof(IsQwen3AbliteratedMissing));
-                OnPropertyChanged(nameof(IsQwen3AbliteratedDownloading));
-                OnPropertyChanged(nameof(Qwen3AbliteratedStatusText));
-                RefreshGlobalModelStatus();
-            }
-        }
-    }
-
     public double LlavaDownloadProgress
     {
         get => _llavaDownloadProgress;
@@ -415,12 +394,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         get => _qwen3DownloadProgress;
         private set => SetProperty(ref _qwen3DownloadProgress, value);
-    }
-
-    public double Qwen3AbliteratedDownloadProgress
-    {
-        get => _qwen3AbliteratedDownloadProgress;
-        private set => SetProperty(ref _qwen3AbliteratedDownloadProgress, value);
     }
 
     public string? StatusMessage
@@ -447,12 +420,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public bool IsQwen3Downloading => Qwen3Status is CaptioningModelStatus.Downloading;
     public string Qwen3StatusText => GetStatusText(Qwen3Status);
 
-    // Qwen 3 Abliterated computed helpers
-    public bool IsQwen3AbliteratedReady => Qwen3AbliteratedStatus is CaptioningModelStatus.Ready or CaptioningModelStatus.Loaded;
-    public bool IsQwen3AbliteratedMissing => Qwen3AbliteratedStatus is CaptioningModelStatus.NotDownloaded or CaptioningModelStatus.Corrupted;
-    public bool IsQwen3AbliteratedDownloading => Qwen3AbliteratedStatus is CaptioningModelStatus.Downloading;
-    public string Qwen3AbliteratedStatusText => GetStatusText(Qwen3AbliteratedStatus);
-
     /// <summary>
     /// Whether the currently selected backend/model is ready for inference.
     /// For ComfyUI backends this is driven by server availability.
@@ -472,7 +439,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CaptioningModelType.LLaVA_v1_6_34B => IsLlavaReady,
                 CaptioningModelType.Qwen2_5_VL_7B => IsQwenReady,
                 CaptioningModelType.Qwen3_VL_8B => IsQwen3Ready,
-                CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => IsQwen3AbliteratedReady,
                 // Tiered models are managed from the Core Workloads dialog;
                 // for the tab's readiness gate we ask the service directly
                 // since there's no per-VRAM-tier UI on this tab.
@@ -980,16 +946,12 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
             var qwen3Info = _captioningService.GetModelInfo(CaptioningModelType.Qwen3_VL_8B);
             Qwen3Status = qwen3Info.Status;
-
-            var qwen3AbliteratedInfo = _captioningService.GetModelInfo(CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8);
-            Qwen3AbliteratedStatus = qwen3AbliteratedInfo.Status;
         }
         catch
         {
             LlavaStatus = CaptioningModelStatus.NotDownloaded;
             QwenStatus = CaptioningModelStatus.NotDownloaded;
             Qwen3Status = CaptioningModelStatus.NotDownloaded;
-            Qwen3AbliteratedStatus = CaptioningModelStatus.NotDownloaded;
         }
     }
 
@@ -1010,11 +972,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             CaptioningModelType.LLaVA_v1_6_34B => !IsLlavaDownloading,
             CaptioningModelType.Qwen2_5_VL_7B => !IsQwenDownloading,
             CaptioningModelType.Qwen3_VL_8B => !IsQwen3Downloading,
-            // Abliterated builds are user-supplied — no upstream URL to download from.
-            CaptioningModelType.Qwen3_VL_8B_Abliterated_Q8 => false,
-            // Tiered downloads happen through the Core Workloads dialog where
-            // the VRAM picker lives, not from the captioning tab's Download
-            // command. Return false here so the tab's button stays disabled.
+            // Downloads of all captioning models happen through the Core
+            // Workloads dialog (with destination + disk-space check, and a
+            // VRAM picker for tiered variants). Keep this tab's Download
+            // command disabled — it would race the coordinator otherwise.
             CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
                 or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => false,
             _ => false

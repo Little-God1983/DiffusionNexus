@@ -157,7 +157,7 @@ public interface ICaptioningService : IDisposable
     IReadOnlyList<CaptioningModelInfo> GetAllModels();
 
     /// <summary>
-    /// Downloads a model from HuggingFace.
+    /// Downloads a model from HuggingFace into the default Core models folder.
     /// </summary>
     /// <param name="modelType">The model to download.</param>
     /// <param name="progress">Optional progress callback.</param>
@@ -165,6 +165,16 @@ public interface ICaptioningService : IDisposable
     /// <returns>True if download succeeded.</returns>
     Task<bool> DownloadModelAsync(
         CaptioningModelType modelType,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads a non-tiered captioning model into a specific destination
+    /// directory (e.g. a ComfyUI install's Captioning subfolder).
+    /// </summary>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        string destinationDirectory,
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default);
 

@@ -52,12 +52,16 @@
                    FontSize="16" FontWeight="Bold" Foreground="White"
                    TextWrapping="Wrap"/>
 
-        <!-- VRAM tier picker -->
-        <TextBlock Grid.Row="1" Text="GPU VRAM" Classes="section-label"/>
+        <!-- VRAM tier picker — only shown for tiered models. Non-tiered
+             models (LLaVA / Qwen2.5 / Qwen3 vanilla) ship a single fixed quant
+             so there's nothing for the user to choose. -->
+        <TextBlock Grid.Row="1" Text="GPU VRAM" Classes="section-label"
+                   IsVisible="{Binding HasVramTiers}"/>
         <ComboBox Grid.Row="2"
                   ItemsSource="{Binding VramTiers}"
                   SelectedItem="{Binding SelectedVramGb}"
-                  HorizontalAlignment="Stretch">
+                  HorizontalAlignment="Stretch"
+                  IsVisible="{Binding HasVramTiers}">
             <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="x:Int32">
                     <TextBlock Text="{Binding StringFormat='{}{0} GB'}"/>

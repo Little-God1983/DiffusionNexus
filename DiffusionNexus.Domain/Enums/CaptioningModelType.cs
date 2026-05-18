@@ -24,13 +24,14 @@ public enum CaptioningModelType
     /// </summary>
     Qwen3_VL_8B = 2,
 
-    /// <summary>
-    /// Qwen 3 VL 8B Instruct - Abliterated v2 (Q8_0 quant by mradermacher).
-    /// Same architecture as <see cref="Qwen3_VL_8B"/> but with refusal behaviour
-    /// removed. Looked up from any configured captioning-models directory; not
-    /// downloaded automatically because no canonical upstream URL is shipped.
-    /// </summary>
-    Qwen3_VL_8B_Abliterated_Q8 = 3,
+    // Enum value 3 (Qwen3_VL_8B_Abliterated_Q8) was the previous "user-supplied
+    // file drop" entry. Removed once the Abliterated Caption-it fine-tune
+    // became a proper VRAM-tiered downloadable workload — any plain abliterated
+    // weights on disk are still picked up by the manager's recursive path scan,
+    // they just appear as the matching tiered entry's Ready state if the
+    // filename happens to align. The enum value is intentionally retired (not
+    // reused) so old persisted selections don't silently land on a different
+    // model.
 
     /// <summary>
     /// Qwen 3 VL 8B - Abliterated Caption-it. General-purpose uncensored

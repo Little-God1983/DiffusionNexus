@@ -29,7 +29,10 @@ public partial class CaptioningDownloadOptionsDialog : Window
             && vm.CanConfirm
             && vm.SelectedDestination is not null)
         {
-            SelectedVramGb = vm.SelectedVramGb;
+            // For non-tiered models we still surface a SelectedVramGb (0)
+            // back so the row download flow can decide based on whether the
+            // model has tiers; it doesn't use the value otherwise.
+            SelectedVramGb = vm.HasVramTiers ? vm.SelectedVramGb : 0;
             SelectedDestination = vm.SelectedDestination.Path;
         }
         Close();

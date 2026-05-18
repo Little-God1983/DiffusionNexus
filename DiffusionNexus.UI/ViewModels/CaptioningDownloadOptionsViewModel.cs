@@ -73,6 +73,13 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
     public ObservableCollection<int> VramTiers { get; } = [];
     public ObservableCollection<DestinationOptionViewModel> Destinations { get; } = [];
 
+    /// <summary>
+    /// True when the model has VRAM tiers — the dialog shows its picker.
+    /// False for non-tiered (legacy single-file) models so users only choose
+    /// a destination.
+    /// </summary>
+    public bool HasVramTiers => VramTiers.Count > 0;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(RequiredSpaceLabel))]
     [NotifyPropertyChangedFor(nameof(CanConfirm))]
@@ -87,10 +94,21 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
     {
         get
         {
-            if (SelectedVramGb <= 0) return string.Empty;
             try
             {
-                var required = _manager.GetExpectedTierTotalBytes(_modelType, SelectedVramGb);
+                long required;
+                if (HasVramTiers)
+                {
+                    if (SelectedVramGb <= 0) return string.Empty;
+                    required = _manager.GetExpectedTierTotalBytes(_modelType, SelectedVramGb);
+                }
+                else
+                {
+                    // Non-tiered model — single fixed quant; the manager's
+                    // GetExpectedModelSize is the model alone, so we add the
+                    // expected mmproj separately via the resolved file size.
+                    required = _manager.GetExpectedModelSize(_modelType);
+                }
                 return $"Required: {FormatBytes(required)} (model + mmproj)";
             }
             catch
@@ -105,8 +123,12 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
             ? $"⚠ The selected location has only {FormatBytes(SelectedDestination.FreeBytes)} free — not enough for this download."
             : string.Empty;
 
+    /// <summary>
+    /// OK to confirm only when a destination is picked and it has enough
+    /// space. Tiered models additionally need a tier selected.
+    /// </summary>
     public bool CanConfirm =>
-        SelectedVramGb > 0
+        (!HasVramTiers || SelectedVramGb > 0)
         && SelectedDestination is { HasEnoughSpace: true };
 
     public CaptioningDownloadOptionsViewModel(
@@ -137,9 +159,16 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
         long required;
         try
         {
-            required = SelectedVramGb > 0
-                ? _manager.GetExpectedTierTotalBytes(_modelType, SelectedVramGb)
-                : 0;
+            if (HasVramTiers)
+            {
+                required = SelectedVramGb > 0
+                    ? _manager.GetExpectedTierTotalBytes(_modelType, SelectedVramGb)
+                    : 0;
+            }
+            else
+            {
+                required = _manager.GetExpectedModelSize(_modelType);
+            }
         }
         catch
         {

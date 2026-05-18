@@ -68,56 +68,118 @@
                           SelectedItem="{Binding SelectedModelType}"
                           HorizontalAlignment="Stretch"/>
 
-                <!-- LLaVA Status/Download -->
+                <!-- Each model entry shows live status + a small inline hint
+                     pointing at the Installer Manager when not Ready. All
+                     captioning model downloads are managed from one place
+                     (Installer Manager → Diffusion Nexus Core → Workloads)
+                     so the tab here is purely a selector. -->
+
+                <!-- LLaVA -->
                 <Grid ColumnDefinitions="*,Auto"
                       IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}}">
                   <StackPanel Grid.Column="0" VerticalAlignment="Center">
                     <TextBlock Text="LLaVA v1.6 34B" FontWeight="Bold"/>
                     <TextBlock Text="{Binding LlavaStatusText}" FontSize="12" Opacity="0.7"/>
-                    <ProgressBar Value="{Binding LlavaDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                                 IsVisible="{Binding IsLlavaDownloading}"/>
                   </StackPanel>
-                  <Button Grid.Column="1" Content="Download"
-                          Command="{Binding DownloadModelCommand}"
-                          CommandParameter="{x:Static enums:CaptioningModelType.LLaVA_v1_6_34B}"
-                          IsVisible="{Binding IsLlavaMissing}"/>
-                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                  <TextBlock Grid.Column="1"
+                             Text="Ready" Foreground="#4CAF50"
+                             VerticalAlignment="Center" FontWeight="Bold"
                              IsVisible="{Binding IsLlavaReady}"/>
+                  <TextBlock Grid.Column="1"
+                             Text="↳ Download via Installer Manager"
+                             Foreground="#FFC107" FontSize="11"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="Captioning models are downloaded from the Installer Manager: Diffusion Nexus Core → Workloads."
+                             IsVisible="{Binding IsLlavaMissing}"/>
                 </Grid>
 
-                <!-- Qwen 2.5 Status/Download -->
+                <!-- Qwen 2.5 -->
                 <Grid ColumnDefinitions="*,Auto"
                       IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}}">
                   <StackPanel Grid.Column="0" VerticalAlignment="Center">
                     <TextBlock Text="Qwen 2.5 VL 7B" FontWeight="Bold"/>
                     <TextBlock Text="{Binding QwenStatusText}" FontSize="12" Opacity="0.7"/>
-                    <ProgressBar Value="{Binding QwenDownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                                 IsVisible="{Binding IsQwenDownloading}"/>
                   </StackPanel>
-                  <Button Grid.Column="1" Content="Download"
-                          Command="{Binding DownloadModelCommand}"
-                          CommandParameter="{x:Static enums:CaptioningModelType.Qwen2_5_VL_7B}"
-                          IsVisible="{Binding IsQwenMissing}"/>
-                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                  <TextBlock Grid.Column="1"
+                             Text="Ready" Foreground="#4CAF50"
+                             VerticalAlignment="Center" FontWeight="Bold"
                              IsVisible="{Binding IsQwenReady}"/>
+                  <TextBlock Grid.Column="1"
+                             Text="↳ Download via Installer Manager"
+                             Foreground="#FFC107" FontSize="11"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="Captioning models are downloaded from the Installer Manager: Diffusion Nexus Core → Workloads."
+                             IsVisible="{Binding IsQwenMissing}"/>
                 </Grid>
 
-                <!-- Qwen 3 Status/Download -->
+                <!-- Qwen 3 -->
                 <Grid ColumnDefinitions="*,Auto"
                       IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B}}">
                   <StackPanel Grid.Column="0" VerticalAlignment="Center">
                     <TextBlock Text="Qwen 3 VL 8B" FontWeight="Bold"/>
                     <TextBlock Text="{Binding Qwen3StatusText}" FontSize="12" Opacity="0.7"/>
-                    <ProgressBar Value="{Binding Qwen3DownloadProgress}" Maximum="100" Height="2" Margin="0,4,8,0"
-                                 IsVisible="{Binding IsQwen3Downloading}"/>
                   </StackPanel>
-                  <Button Grid.Column="1" Content="Download"
-                          Command="{Binding DownloadModelCommand}"
-                          CommandParameter="{x:Static enums:CaptioningModelType.Qwen3_VL_8B}"
-                          IsVisible="{Binding IsQwen3Missing}"/>
-                  <TextBlock Grid.Column="1" Text="Ready" Foreground="#4CAF50" VerticalAlignment="Center" FontWeight="Bold"
+                  <TextBlock Grid.Column="1"
+                             Text="Ready" Foreground="#4CAF50"
+                             VerticalAlignment="Center" FontWeight="Bold"
                              IsVisible="{Binding IsQwen3Ready}"/>
+                  <TextBlock Grid.Column="1"
+                             Text="↳ Download via Installer Manager"
+                             Foreground="#FFC107" FontSize="11"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="Captioning models are downloaded from the Installer Manager: Diffusion Nexus Core → Workloads."
+                             IsVisible="{Binding IsQwen3Missing}"/>
                 </Grid>
+
+                <!-- Qwen 3 VL 8B — Abliterated Caption-it.
+                     Tiered model with no per-model status property; uses the
+                     shared IsModelReady/IsModelMissing (those reflect the
+                     currently selected model, which is exactly what this row
+                     wraps via IsVisible). Same pattern for NSFW Caption V4. -->
+                <Grid ColumnDefinitions="*,Auto"
+                      IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption}}">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Qwen 3 VL 8B — Abliterated Caption-it" FontWeight="Bold"/>
+                    <TextBlock Text="Uncensored general captioning fine-tune (mradermacher)." FontSize="12" Opacity="0.7"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="Ready" Foreground="#4CAF50"
+                             VerticalAlignment="Center" FontWeight="Bold"
+                             IsVisible="{Binding IsModelReady}"/>
+                  <TextBlock Grid.Column="1"
+                             Text="↳ Download via Installer Manager"
+                             Foreground="#FFC107" FontSize="11"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="Captioning models are downloaded from the Installer Manager: Diffusion Nexus Core → Workloads."
+                             IsVisible="{Binding IsModelMissing}"/>
+                </Grid>
+
+                <!-- Qwen 3 VL 8B — NSFW Caption V4 -->
+                <Grid ColumnDefinitions="*,Auto"
+                      IsVisible="{Binding SelectedModelType, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static enums:CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4}}">
+                  <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Qwen 3 VL 8B — NSFW Caption V4" FontWeight="Bold"/>
+                    <TextBlock Text="NSFW-specialised captioning fine-tune (mradermacher)." FontSize="12" Opacity="0.7"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="Ready" Foreground="#4CAF50"
+                             VerticalAlignment="Center" FontWeight="Bold"
+                             IsVisible="{Binding IsModelReady}"/>
+                  <TextBlock Grid.Column="1"
+                             Text="↳ Download via Installer Manager"
+                             Foreground="#FFC107" FontSize="11"
+                             VerticalAlignment="Center"
+                             ToolTip.Tip="Captioning models are downloaded from the Installer Manager: Diffusion Nexus Core → Workloads."
+                             IsVisible="{Binding IsModelMissing}"/>
+                </Grid>
+
+                <!-- Footer hint shared by all model rows. Always visible so
+                     the user has somewhere to look even before they realise
+                     the per-row banner means "go elsewhere". -->
+                <Border Background="#2A2A2A" CornerRadius="4" Padding="8,6">
+                  <TextBlock Text="Captioning models are managed from the Installer Manager → Diffusion Nexus Core → Workloads."
+                             FontSize="11" Foreground="#BBBBBB" TextWrapping="Wrap"/>
+                </Border>
               </StackPanel>
             </StackPanel>
           </Border>

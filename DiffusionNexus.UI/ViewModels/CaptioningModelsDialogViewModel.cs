@@ -45,12 +45,19 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
 
     /// <summary>
     /// VRAM tiers this model supports. Empty for the non-tiered legacy entries
-    /// (LLaVA / Qwen2.5 / Qwen3 vanilla / Abliterated_Q8) so their rows hide
-    /// the Download button entirely.
+    /// (LLaVA / Qwen2.5 / Qwen3 vanilla) — they still appear with a Download
+    /// button, the options dialog just hides its VRAM picker for them.
     /// </summary>
     public int[] SupportedVramTiers { get; }
 
+    /// <summary>True for models with a tier table — implies VRAM picker shown.</summary>
     public bool IsTieredDownloadable => SupportedVramTiers.Length > 0;
+
+    /// <summary>
+    /// True for any model that the manager can download (tiered or single-file).
+    /// Drives whether the row shows a Download button at all.
+    /// </summary>
+    public bool IsDownloadable { get; }
 
     /// <summary>
     /// Derived from Status — true while the manager reports an active fetch
@@ -62,10 +69,9 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
     public bool IsDownloading => Status == CaptioningModelStatus.Downloading;
 
     /// <summary>
-    /// True when the Download button should be enabled. Hidden entirely for
-    /// non-tiered rows (no upstream URL or user-supplied entries).
+    /// True when the Download button should be enabled.
     /// </summary>
-    public bool CanDownload => IsTieredDownloadable && !IsDownloading;
+    public bool CanDownload => IsDownloadable && !IsDownloading;
 
     public string DownloadButtonLabel => Status switch
     {
@@ -112,6 +118,7 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
         Name = CaptioningModelManager.GetDisplayName(modelType);
         Description = CaptioningModelManager.GetDescription(modelType);
         SupportedVramTiers = CaptioningModelManager.GetSupportedVramTiers(modelType);
+        IsDownloadable = CaptioningModelManager.IsDownloadable(modelType);
 
         // Read live status — this means reopening the dialog mid-download
         // sees "Downloading…" and a disabled button, instead of an enabled
@@ -135,8 +142,11 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
 
     private async Task DownloadAsync()
     {
-        if (!IsTieredDownloadable) return;
+        if (!IsDownloadable) return;
 
+        // Same options dialog for both kinds of model — the picker callback
+        // hides the VRAM section when SupportedVramTiers is empty so users
+        // of non-tiered models see only destination + space check.
         var choice = await _optionsPicker(ModelType, SupportedVramTiers);
         if (choice is null) return; // user cancelled
 
@@ -146,14 +156,26 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
         // later will see Downloading too.
         Status = CaptioningModelStatus.Downloading;
 
-        var operationName = $"{Name} ({choice.VramGb} GB tier)";
+        var operationName = IsTieredDownloadable
+            ? $"{Name} ({choice.VramGb} GB tier)"
+            : Name;
 
         try
         {
-            // If a coordinator is wired in, enqueue through it — that owns the
-            // 3-slot concurrency limit and aggregates per-task progress into
-            // the status bar. Otherwise fall back to a direct service call so
-            // unit-test scenarios still work.
+            // The coordinator wraps the actual download so progress aggregates
+            // into the status-bar and the 3-slot concurrency limit is honoured.
+            // The fallback (no coordinator) preserves test-time behaviour.
+            async Task<bool> RunDownload(IProgress<ModelDownloadProgress> fileProgress, CancellationToken ct)
+            {
+                if (IsTieredDownloadable)
+                {
+                    return await _captioningService.DownloadModelAsync(
+                        ModelType, choice.VramGb, choice.DestinationDirectory, fileProgress, ct);
+                }
+                return await _captioningService.DownloadModelAsync(
+                    ModelType, choice.DestinationDirectory, fileProgress, ct);
+            }
+
             if (_downloadCoordinator is not null)
             {
                 await _downloadCoordinator.EnqueueAsync(operationName, async (taskProgress, ct) =>
@@ -165,15 +187,12 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
                             : 0;
                         taskProgress.Report(new DownloadTaskProgress(percent, p.Status));
                     });
-
-                    return await _captioningService.DownloadModelAsync(
-                        ModelType, choice.VramGb, choice.DestinationDirectory, fileProgress, ct);
+                    return await RunDownload(fileProgress, ct);
                 });
             }
             else
             {
-                await _captioningService.DownloadModelAsync(
-                    ModelType, choice.VramGb, choice.DestinationDirectory, progress: null, CancellationToken.None);
+                await RunDownload(new Progress<ModelDownloadProgress>(), CancellationToken.None);
             }
         }
         catch (Exception ex)
