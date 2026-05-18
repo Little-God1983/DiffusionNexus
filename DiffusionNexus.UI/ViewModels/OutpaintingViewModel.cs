@@ -8,6 +8,17 @@ using Serilog;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
+/// Tiers for the outpaint warning panel: nothing, "drag arrows" hint, mild caution, strong warning.
+/// </summary>
+public enum OutpaintWarningLevel
+{
+    Hidden,
+    NeedsExtension,
+    Caution,
+    Strong
+}
+
+/// <summary>
 /// Sub-ViewModel managing the outpainting tool state, aspect ratio presets, and
 /// ComfyUI workflow execution. Mirrors the <see cref="InpaintingViewModel"/> pattern
 /// but supports two modes:
@@ -34,10 +45,12 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
+    private const string ImageScaleNodeId = "17";
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
     private const string DefaultNegativePrompt = "blurry, low quality, artifacts, distorted, deformed, ugly, bad anatomy, watermark, text";
+    private const long HighResolutionPixelThreshold = 2_000_000;
 
     private static readonly string[] FunProgressMessages =
     [
@@ -67,6 +80,11 @@ public partial class OutpaintingViewModel : ObservableObject
 
     private bool _isPanelOpen;
     private string _outpaintResolutionText = string.Empty;
+    private bool _hasExtension;
+    private OutpaintWarningLevel _warningLevel = OutpaintWarningLevel.Hidden;
+    private string? _warningMessage;
+    private bool _isHighResolutionWarning;
+    private string? _highResolutionWarningMessage;
     private string _positivePrompt = string.Empty;
     private string _negativePrompt = DefaultNegativePrompt;
     private bool _isBusy;
@@ -104,10 +122,10 @@ public partial class OutpaintingViewModel : ObservableObject
         SetAspectRatioCommand = new RelayCommand<string>(ExecuteSetAspectRatio, _ => _hasImage() && IsPanelOpen);
         GenerateCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: false),
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
         GenerateVisionCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: true),
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
@@ -152,6 +170,71 @@ public partial class OutpaintingViewModel : ObservableObject
     {
         get => _outpaintResolutionText;
         set => SetProperty(ref _outpaintResolutionText, value);
+    }
+
+    /// <summary>
+    /// True only once the user has actually extended the canvas via the arrow handles
+    /// or an aspect-ratio preset. Generate commands stay disabled until this flips on.
+    /// </summary>
+    public bool HasExtension
+    {
+        get => _hasExtension;
+        private set
+        {
+            if (SetProperty(ref _hasExtension, value))
+                NotifyGenerateCommandsCanExecuteChanged();
+        }
+    }
+
+    /// <summary>
+    /// Current outpaint warning tier — drives which row (if any) is visible in the panel.
+    /// </summary>
+    public OutpaintWarningLevel WarningLevel
+    {
+        get => _warningLevel;
+        private set
+        {
+            if (SetProperty(ref _warningLevel, value))
+            {
+                OnPropertyChanged(nameof(IsNeedsExtensionWarning));
+                OnPropertyChanged(nameof(IsCautionWarning));
+                OnPropertyChanged(nameof(IsStrongWarning));
+            }
+        }
+    }
+
+    /// <summary>Free-text message that pairs with <see cref="WarningLevel"/>.</summary>
+    public string? WarningMessage
+    {
+        get => _warningMessage;
+        private set => SetProperty(ref _warningMessage, value);
+    }
+
+    /// <summary>True when the panel should show the "drag the arrows" hint (no extension yet).</summary>
+    public bool IsNeedsExtensionWarning => _warningLevel == OutpaintWarningLevel.NeedsExtension;
+
+    /// <summary>True when extension is in the +30–60% area band.</summary>
+    public bool IsCautionWarning => _warningLevel == OutpaintWarningLevel.Caution;
+
+    /// <summary>True when extension is past +60% area — quality likely drops noticeably.</summary>
+    public bool IsStrongWarning => _warningLevel == OutpaintWarningLevel.Strong;
+
+    /// <summary>
+    /// True when the resulting canvas exceeds the high-resolution pixel threshold.
+    /// Independent of <see cref="WarningLevel"/> so it can display alongside area-ratio
+    /// warnings — a small extension on a 4K source is still VRAM-heavy.
+    /// </summary>
+    public bool IsHighResolutionWarning
+    {
+        get => _isHighResolutionWarning;
+        private set => SetProperty(ref _isHighResolutionWarning, value);
+    }
+
+    /// <summary>Free-text message that pairs with <see cref="IsHighResolutionWarning"/>.</summary>
+    public string? HighResolutionWarningMessage
+    {
+        get => _highResolutionWarningMessage;
+        private set => SetProperty(ref _highResolutionWarningMessage, value);
     }
 
     /// <summary>User-supplied positive prompt (used by the nonVision workflow).</summary>
@@ -302,10 +385,63 @@ public partial class OutpaintingViewModel : ObservableObject
         }
     }
 
-    /// <summary>Updates the resolution text from the current outpaint dimensions.</summary>
-    public void UpdateResolution(int width, int height)
+    /// <summary>
+    /// Updates the resolution text, extension flag, and warning tier in one shot. Called by the
+    /// view whenever the outpaint tool's region changes.
+    /// </summary>
+    public void UpdateResolution(int newWidth, int newHeight, int originalWidth, int originalHeight, bool hasExtension)
     {
-        OutpaintResolutionText = width > 0 && height > 0 ? $"{width} x {height}" : string.Empty;
+        OutpaintResolutionText = newWidth > 0 && newHeight > 0 ? $"{newWidth} x {newHeight}" : string.Empty;
+        HasExtension = hasExtension;
+
+        if (!hasExtension)
+        {
+            WarningLevel = OutpaintWarningLevel.NeedsExtension;
+            WarningMessage = "Drag the arrows on the canvas\nto extend it before generating.";
+            IsHighResolutionWarning = false;
+            HighResolutionWarningMessage = null;
+            return;
+        }
+
+        var ratio = ComputeAreaRatio(newWidth, newHeight, originalWidth, originalHeight);
+        if (ratio >= 1.60f)
+        {
+            WarningLevel = OutpaintWarningLevel.Strong;
+            WarningMessage = "Extension is much larger than the original — results will likely diverge significantly.";
+        }
+        else if (ratio >= 1.30f)
+        {
+            WarningLevel = OutpaintWarningLevel.Caution;
+            WarningMessage = "Large extension — results may drift from the original.";
+        }
+        else
+        {
+            WarningLevel = OutpaintWarningLevel.Hidden;
+            WarningMessage = null;
+        }
+
+        var totalPixels = (long)Math.Max(0, newWidth) * Math.Max(0, newHeight);
+        if (totalPixels > HighResolutionPixelThreshold)
+        {
+            var mp = totalPixels / 1_000_000.0;
+            IsHighResolutionWarning = true;
+            HighResolutionWarningMessage =
+                $"Result canvas is {newWidth}×{newHeight} (~{mp:0.0} MP). " +
+                "Generation may be slow or run out of VRAM on lower-end GPUs.";
+        }
+        else
+        {
+            IsHighResolutionWarning = false;
+            HighResolutionWarningMessage = null;
+        }
+    }
+
+    private static float ComputeAreaRatio(int newW, int newH, int origW, int origH)
+    {
+        if (origW <= 0 || origH <= 0) return 1f;
+        var orig = (long)origW * origH;
+        if (orig <= 0) return 1f;
+        return (float)((long)newW * newH) / orig;
     }
 
     #endregion
@@ -344,19 +480,22 @@ public partial class OutpaintingViewModel : ObservableObject
 
     private async Task ExecuteGenerateAsync(bool useVision)
     {
+        // Clear any stale error display from a previous attempt before validating,
+        // so the user always gets visual feedback that the click registered.
+        ResetErrorState();
+
         if (!useVision && string.IsNullOrWhiteSpace(_positivePrompt))
         {
-            StatusMessageChanged?.Invoke(this, "Please enter a prompt describing the surroundings, or use 'Generate (Vision)'.");
+            ReportValidationError("Enter a prompt before generating, or use 'Generate (Vision)'.");
             return;
         }
 
         if (_comfyUiService is null)
         {
-            StatusMessageChanged?.Invoke(this, "ComfyUI service not available. Check ComfyUI server settings.");
+            ReportValidationError("ComfyUI service not available. Check ComfyUI server settings.");
             return;
         }
 
-        ResetErrorState();
         IsBusy = true;
         Status = "Preparing image...";
         NotifyGenerateCommandsCanExecuteChanged();
@@ -364,6 +503,14 @@ public partial class OutpaintingViewModel : ObservableObject
         GenerateRequested?.Invoke(this, new OutpaintGenerateEventArgs(useVision));
 
         await Task.CompletedTask;
+    }
+
+    private void ReportValidationError(string message)
+    {
+        HasError = true;
+        OutpaintProgress = 100;
+        ProgressDisplayText = message;
+        StatusMessageChanged?.Invoke(this, message);
     }
 
     /// <summary>
@@ -446,6 +593,15 @@ public partial class OutpaintingViewModel : ObservableObject
                     node["inputs"]!["top"] = extendTop;
                     node["inputs"]!["right"] = extendRight;
                     node["inputs"]!["bottom"] = extendBottom;
+                },
+                // Neutralize ImageScaleToMaxDimension: without this the workflow rescales
+                // the input to 1536 on its largest edge, and the receiver then non-uniformly
+                // stretches the result onto the canvas the UI computed at native resolution.
+                [ImageScaleNodeId] = node =>
+                {
+                    var origW = _getImageWidth();
+                    var origH = _getImageHeight();
+                    node["inputs"]!["largest_size"] = Math.Max(origW, origH);
                 }
             };
 

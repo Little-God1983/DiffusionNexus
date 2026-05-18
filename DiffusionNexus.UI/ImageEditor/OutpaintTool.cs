@@ -15,14 +15,25 @@ public enum OutpaintHandle
 }
 
 /// <summary>
+/// How aggressive the current outpaint extension is, relative to the source image area.
+/// Drives the canvas accent color and the panel warning.
+/// </summary>
+public enum OutpaintSeverity
+{
+    None,
+    Caution,
+    Strong
+}
+
+/// <summary>
 /// Platform-independent outpainting tool that allows extending the canvas beyond the original image.
 /// Renders directional arrow handles on each edge that can be dragged outward only.
 /// Stores extension amounts in pixels relative to the original image dimensions.
 /// </summary>
 public class OutpaintTool
 {
-    private const float ArrowSize = 16f;
-    private const float ArrowHitSize = 24f;
+    private const float ArrowSize = 32f;
+    private const float ArrowHitSize = 40f;
     private const float MinExtensionPixels = 0f;
 
     private SKRect _imageRect;
@@ -94,6 +105,36 @@ public class OutpaintTool
     /// Gets whether any extension has been applied.
     /// </summary>
     public bool HasExtension => _extendTop > 0 || _extendRight > 0 || _extendBottom > 0 || _extendLeft > 0;
+
+    /// <summary>
+    /// Area of the extended canvas divided by the area of the original image. Returns 1.0 when
+    /// no extension is present or the source dimensions are unknown.
+    /// </summary>
+    public float AreaRatio
+    {
+        get
+        {
+            if (ImagePixelWidth <= 0 || ImagePixelHeight <= 0) return 1f;
+            var (newW, newH) = GetNewDimensions();
+            var orig = (long)ImagePixelWidth * ImagePixelHeight;
+            if (orig <= 0) return 1f;
+            return (float)((long)newW * newH) / orig;
+        }
+    }
+
+    /// <summary>
+    /// Severity tier based on <see cref="AreaRatio"/>: ≥1.60 → Strong, ≥1.30 → Caution, otherwise None.
+    /// </summary>
+    public OutpaintSeverity Severity
+    {
+        get
+        {
+            var ratio = AreaRatio;
+            if (ratio >= 1.60f) return OutpaintSeverity.Strong;
+            if (ratio >= 1.30f) return OutpaintSeverity.Caution;
+            return OutpaintSeverity.None;
+        }
+    }
 
     /// <summary>
     /// Gets whether a handle is currently being dragged.
@@ -317,12 +358,25 @@ public class OutpaintTool
             _imageRect.Bottom + _extendBottom * pixelsPerScreenY);
     }
 
+    /// <summary>
+    /// Base accent color (RGB only, alpha is applied at the call site) that reflects the
+    /// current severity tier: green / amber / red‑orange.
+    /// </summary>
+    private SKColor GetAccentBaseColor() => Severity switch
+    {
+        OutpaintSeverity.Strong => new SKColor(255, 87, 34),    // red‑orange
+        OutpaintSeverity.Caution => new SKColor(255, 193, 7),   // amber
+        _ => new SKColor(76, 175, 80),                          // green
+    };
+
     private void DrawExtensionRegion(SKCanvas canvas, SKRect canvasBounds, SKRect extendedRect)
     {
-        // Draw a border around the extended area
+        var accent = GetAccentBaseColor();
+
+        // Draw a border around the extended area (accent color, severity-tinted)
         using var borderPaint = new SKPaint
         {
-            Color = new SKColor(76, 175, 80, 200), // Green border
+            Color = accent.WithAlpha(200),
             Style = SKPaintStyle.Stroke,
             StrokeWidth = 2f,
             IsAntialias = true,
@@ -333,7 +387,7 @@ public class OutpaintTool
         // Fill the extension areas (between extended rect and image rect) with a subtle pattern
         using var fillPaint = new SKPaint
         {
-            Color = new SKColor(76, 175, 80, 40),
+            Color = accent.WithAlpha(40),
             Style = SKPaintStyle.Fill
         };
 
@@ -374,24 +428,30 @@ public class OutpaintTool
 
     private void DrawArrowHandles(SKCanvas canvas)
     {
-        var midX = _imageRect.MidX;
-        var midY = _imageRect.MidY;
+        var (topCenter, rightCenter, bottomCenter, leftCenter) = GetHandleCenters();
 
-        // Top arrow (pointing up)
-        DrawArrow(canvas, new SKPoint(midX, _imageRect.Top - ArrowSize - 4f), Direction.Up,
-                  _activeHandle == OutpaintHandle.Top);
+        DrawArrow(canvas, topCenter, Direction.Up, _activeHandle == OutpaintHandle.Top);
+        DrawArrow(canvas, bottomCenter, Direction.Down, _activeHandle == OutpaintHandle.Bottom);
+        DrawArrow(canvas, leftCenter, Direction.Left, _activeHandle == OutpaintHandle.Left);
+        DrawArrow(canvas, rightCenter, Direction.Right, _activeHandle == OutpaintHandle.Right);
+    }
 
-        // Bottom arrow (pointing down)
-        DrawArrow(canvas, new SKPoint(midX, _imageRect.Bottom + ArrowSize + 4f), Direction.Down,
-                  _activeHandle == OutpaintHandle.Bottom);
+    /// <summary>
+    /// Handle positions are anchored to the extended rect so they ride along with the
+    /// outpaint frame as the user drags. Centered on each edge of the extended rect.
+    /// </summary>
+    private (SKPoint Top, SKPoint Right, SKPoint Bottom, SKPoint Left) GetHandleCenters()
+    {
+        var rect = GetExtendedScreenRect();
+        var midX = rect.MidX;
+        var midY = rect.MidY;
+        const float gap = 4f;
 
-        // Left arrow (pointing left)
-        DrawArrow(canvas, new SKPoint(_imageRect.Left - ArrowSize - 4f, midY), Direction.Left,
-                  _activeHandle == OutpaintHandle.Left);
-
-        // Right arrow (pointing right)
-        DrawArrow(canvas, new SKPoint(_imageRect.Right + ArrowSize + 4f, midY), Direction.Right,
-                  _activeHandle == OutpaintHandle.Right);
+        return (
+            Top: new SKPoint(midX, rect.Top - ArrowSize - gap),
+            Right: new SKPoint(rect.Right + ArrowSize + gap, midY),
+            Bottom: new SKPoint(midX, rect.Bottom + ArrowSize + gap),
+            Left: new SKPoint(rect.Left - ArrowSize - gap, midY));
     }
 
     private static void DrawArrow(SKCanvas canvas, SKPoint center, Direction direction, bool isActive)
@@ -407,7 +467,7 @@ public class OutpaintTool
         {
             Color = isActive ? new SKColor(56, 142, 60) : new SKColor(100, 100, 100),
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1.5f,
+            StrokeWidth = 2f,
             IsAntialias = true
         };
 
@@ -471,7 +531,8 @@ public class OutpaintTool
         font.MeasureText(text, out var textBounds, textPaint);
 
         var labelX = extendedRect.MidX - textBounds.Width / 2f;
-        var labelY = extendedRect.Top - 8f;
+        // Clear the top arrow handle which is anchored to the extended rect.
+        var labelY = extendedRect.Top - ArrowSize * 2f - 8f;
 
         // If the label would go above the canvas, place it inside
         if (labelY - textBounds.Height < 0)
@@ -491,33 +552,30 @@ public class OutpaintTool
             IsAntialias = true
         };
         canvas.DrawRoundRect(bgRect, 4f, 4f, bgPaint);
+
+        if (Severity != OutpaintSeverity.None)
+        {
+            using var labelStrokePaint = new SKPaint
+            {
+                Color = GetAccentBaseColor().WithAlpha(230),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.5f,
+                IsAntialias = true
+            };
+            canvas.DrawRoundRect(bgRect, 4f, 4f, labelStrokePaint);
+        }
+
         canvas.DrawText(text, labelX, labelY, font, textPaint);
     }
 
     private OutpaintHandle HitTestHandle(SKPoint point)
     {
-        var midX = _imageRect.MidX;
-        var midY = _imageRect.MidY;
+        var (top, right, bottom, left) = GetHandleCenters();
 
-        // Top handle
-        var topCenter = new SKPoint(midX, _imageRect.Top - ArrowSize - 4f);
-        if (IsPointNearHandle(point, topCenter))
-            return OutpaintHandle.Top;
-
-        // Bottom handle
-        var bottomCenter = new SKPoint(midX, _imageRect.Bottom + ArrowSize + 4f);
-        if (IsPointNearHandle(point, bottomCenter))
-            return OutpaintHandle.Bottom;
-
-        // Left handle
-        var leftCenter = new SKPoint(_imageRect.Left - ArrowSize - 4f, midY);
-        if (IsPointNearHandle(point, leftCenter))
-            return OutpaintHandle.Left;
-
-        // Right handle
-        var rightCenter = new SKPoint(_imageRect.Right + ArrowSize + 4f, midY);
-        if (IsPointNearHandle(point, rightCenter))
-            return OutpaintHandle.Right;
+        if (IsPointNearHandle(point, top)) return OutpaintHandle.Top;
+        if (IsPointNearHandle(point, bottom)) return OutpaintHandle.Bottom;
+        if (IsPointNearHandle(point, left)) return OutpaintHandle.Left;
+        if (IsPointNearHandle(point, right)) return OutpaintHandle.Right;
 
         return OutpaintHandle.None;
     }
