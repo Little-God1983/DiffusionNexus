@@ -1315,6 +1315,19 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             _captioningCts = null;
             IsProcessing = false;
             RefreshDatasetStats();
+
+            // The just-completed run may have written a fresh caption to
+            // disk. In single-image mode, re-evaluate the "existing caption"
+            // state so the next Generate click sees the new reality: the
+            // compare-mode banner / dialog should appear if a caption now
+            // exists, and the user should never silently overwrite a file
+            // they just produced. Mirrors the auto-enable behaviour from
+            // the SingleImagePath setter.
+            if (IsSingleImageMode && !string.IsNullOrEmpty(SingleImagePath))
+            {
+                OnPropertyChanged(nameof(SingleImageHasExistingCaption));
+                IsCompareMode = HasExistingCaption(SingleImagePath);
+            }
         }
     }
 
