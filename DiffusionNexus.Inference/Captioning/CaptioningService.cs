@@ -254,7 +254,14 @@ public sealed class CaptioningService : ICaptioningService
             // Configure model parameters for maximum GPU utilization
             var modelParams = new ModelParams(modelPath)
             {
-                ContextSize = 4096,
+                // 16k keeps every supported model happy: LLaVA-1.6's tile
+                // encoder can emit ~2880 image tokens for high-res inputs,
+                // and the Qwen3-VL family handles much larger contexts
+                // natively. 4096 used to overflow when LLaVA-1.6 was given
+                // a tall photo — the encoder filled the window before the
+                // prompt even started. KV-cache cost at this size for an
+                // 8–34B model is a few hundred MB — acceptable.
+                ContextSize = 16384,
                 GpuLayerCount = _isGpuAvailable ? -1 : 0, // -1 = all layers on GPU
                 // Seed = 0, // Removing Seed as it causes build error
                 UseMemorymap = true,
@@ -507,13 +514,23 @@ public sealed class CaptioningService : ICaptioningService
                     {
                         Temperature = temperature
                     },
-                    // Generous safety ceiling — the model normally stops on its
-                    // own at the AntiPrompts boundary (<|im_end|> / </s>), and
-                    // length is controlled through the system prompt. The cap
-                    // is intentionally well above any realistic caption so we
-                    // never truncate a sentence mid-word.
-                    MaxTokens = 2048,
-                    AntiPrompts = GetAntiPrompts(_loadedModelType.Value)
+                    // Caption budget. Most captions land between 100–400
+                    // words ≈ 150–600 tokens; 1024 is generous safety while
+                    // leaving the rest of the 16k context for the image
+                    // tokens (LLaVA-1.6 can emit up to ~2880 alone) and the
+                    // prompt template. The model stops naturally at the
+                    // AntiPrompts boundary (<|im_end|> / </s>); this cap
+                    // only catches a runaway generation.
+                    MaxTokens = 1024,
+                    AntiPrompts = GetAntiPrompts(_loadedModelType.Value),
+                    // Safety net: if the prompt+image somehow exceeds the
+                    // window (e.g. a future model emits more image tokens),
+                    // discard the oldest context tokens and continue instead
+                    // of throwing ContextOverflowException. For a single-turn
+                    // captioning request the loss is harmless because the
+                    // tail of the context — where we generate — is the part
+                    // we care about; the head is just the system role tag.
+                    OverflowStrategy = LLama.Common.ContextOverflowStrategy.TruncateAndReprefill
                 };
 
                 var executor = new InteractiveExecutor(_context, _clipModel);
