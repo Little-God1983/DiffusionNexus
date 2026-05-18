@@ -374,24 +374,30 @@ public class OutpaintTool
 
     private void DrawArrowHandles(SKCanvas canvas)
     {
-        var midX = _imageRect.MidX;
-        var midY = _imageRect.MidY;
+        var (topCenter, rightCenter, bottomCenter, leftCenter) = GetHandleCenters();
 
-        // Top arrow (pointing up)
-        DrawArrow(canvas, new SKPoint(midX, _imageRect.Top - ArrowSize - 4f), Direction.Up,
-                  _activeHandle == OutpaintHandle.Top);
+        DrawArrow(canvas, topCenter, Direction.Up, _activeHandle == OutpaintHandle.Top);
+        DrawArrow(canvas, bottomCenter, Direction.Down, _activeHandle == OutpaintHandle.Bottom);
+        DrawArrow(canvas, leftCenter, Direction.Left, _activeHandle == OutpaintHandle.Left);
+        DrawArrow(canvas, rightCenter, Direction.Right, _activeHandle == OutpaintHandle.Right);
+    }
 
-        // Bottom arrow (pointing down)
-        DrawArrow(canvas, new SKPoint(midX, _imageRect.Bottom + ArrowSize + 4f), Direction.Down,
-                  _activeHandle == OutpaintHandle.Bottom);
+    /// <summary>
+    /// Handle positions are anchored to the extended rect so they ride along with the
+    /// outpaint frame as the user drags. Centered on each edge of the extended rect.
+    /// </summary>
+    private (SKPoint Top, SKPoint Right, SKPoint Bottom, SKPoint Left) GetHandleCenters()
+    {
+        var rect = GetExtendedScreenRect();
+        var midX = rect.MidX;
+        var midY = rect.MidY;
+        const float gap = 4f;
 
-        // Left arrow (pointing left)
-        DrawArrow(canvas, new SKPoint(_imageRect.Left - ArrowSize - 4f, midY), Direction.Left,
-                  _activeHandle == OutpaintHandle.Left);
-
-        // Right arrow (pointing right)
-        DrawArrow(canvas, new SKPoint(_imageRect.Right + ArrowSize + 4f, midY), Direction.Right,
-                  _activeHandle == OutpaintHandle.Right);
+        return (
+            Top: new SKPoint(midX, rect.Top - ArrowSize - gap),
+            Right: new SKPoint(rect.Right + ArrowSize + gap, midY),
+            Bottom: new SKPoint(midX, rect.Bottom + ArrowSize + gap),
+            Left: new SKPoint(rect.Left - ArrowSize - gap, midY));
     }
 
     private static void DrawArrow(SKCanvas canvas, SKPoint center, Direction direction, bool isActive)
@@ -471,7 +477,8 @@ public class OutpaintTool
         font.MeasureText(text, out var textBounds, textPaint);
 
         var labelX = extendedRect.MidX - textBounds.Width / 2f;
-        var labelY = extendedRect.Top - 8f;
+        // Clear the top arrow handle which is anchored to the extended rect.
+        var labelY = extendedRect.Top - ArrowSize * 2f - 8f;
 
         // If the label would go above the canvas, place it inside
         if (labelY - textBounds.Height < 0)
@@ -496,28 +503,12 @@ public class OutpaintTool
 
     private OutpaintHandle HitTestHandle(SKPoint point)
     {
-        var midX = _imageRect.MidX;
-        var midY = _imageRect.MidY;
+        var (top, right, bottom, left) = GetHandleCenters();
 
-        // Top handle
-        var topCenter = new SKPoint(midX, _imageRect.Top - ArrowSize - 4f);
-        if (IsPointNearHandle(point, topCenter))
-            return OutpaintHandle.Top;
-
-        // Bottom handle
-        var bottomCenter = new SKPoint(midX, _imageRect.Bottom + ArrowSize + 4f);
-        if (IsPointNearHandle(point, bottomCenter))
-            return OutpaintHandle.Bottom;
-
-        // Left handle
-        var leftCenter = new SKPoint(_imageRect.Left - ArrowSize - 4f, midY);
-        if (IsPointNearHandle(point, leftCenter))
-            return OutpaintHandle.Left;
-
-        // Right handle
-        var rightCenter = new SKPoint(_imageRect.Right + ArrowSize + 4f, midY);
-        if (IsPointNearHandle(point, rightCenter))
-            return OutpaintHandle.Right;
+        if (IsPointNearHandle(point, top)) return OutpaintHandle.Top;
+        if (IsPointNearHandle(point, bottom)) return OutpaintHandle.Bottom;
+        if (IsPointNearHandle(point, left)) return OutpaintHandle.Left;
+        if (IsPointNearHandle(point, right)) return OutpaintHandle.Right;
 
         return OutpaintHandle.None;
     }
