@@ -62,6 +62,17 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IAppSettingsService? _settingsService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
+
+    /// <summary>
+    /// Snapshot of in-flight downloads observed at the last StateChanged
+    /// notification. Used to detect when a task transitions to a terminal
+    /// state — the coordinator removes terminal tasks from <see cref="IDownloadCoordinator.All"/>,
+    /// so any ID present here but missing in the new snapshot means a
+    /// download just finished and the tab should refresh its model statuses.
+    /// </summary>
+    private HashSet<Guid> _previousDownloadTaskIds = new();
+
     private bool _disposed;
 
     // Backend Selection
@@ -130,13 +141,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         ICaptioningService? captioningService = null,
         IReadOnlyList<ICaptioningBackend>? backends = null,
         IAppSettingsService? settingsService = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
         _backends = backends ?? [];
         _settingsService = settingsService;
+        _downloadCoordinator = downloadCoordinator;
 
         Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Captioning);
 
@@ -196,6 +209,42 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshModelStatuses();
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
+
+        // Listen to the global download coordinator so a download that
+        // finishes elsewhere (Installer Manager → Diffusion Nexus Core →
+        // Workloads) is reflected in this tab's per-model status badges
+        // without needing an app restart. We only refresh when a task
+        // disappears from the All snapshot — that's the terminal state
+        // transition; progress ticks alone don't change disk presence.
+        if (_downloadCoordinator is not null)
+        {
+            _previousDownloadTaskIds = _downloadCoordinator.All.Select(t => t.Id).ToHashSet();
+            _downloadCoordinator.StateChanged += OnDownloadCoordinatorStateChanged;
+        }
+    }
+
+    private void OnDownloadCoordinatorStateChanged(object? sender, EventArgs e)
+    {
+        if (_downloadCoordinator is null) return;
+
+        var currentIds = _downloadCoordinator.All.Select(t => t.Id).ToHashSet();
+        var anyDisappeared = _previousDownloadTaskIds.Any(id => !currentIds.Contains(id));
+        _previousDownloadTaskIds = currentIds;
+
+        if (!anyDisappeared) return;
+
+        // A download just reached a terminal state — re-query disk presence
+        // for every captioning model so the dropdown badge ("Ready" / amber
+        // hint) reflects what's actually on disk now. The model manager's
+        // resolve-cache was invalidated by the manager's own download
+        // finally, so this call will see the new file.
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            RefreshModelStatuses();
+            OnPropertyChanged(nameof(IsModelReady));
+            OnPropertyChanged(nameof(IsModelMissing));
+            GenerateCommand.NotifyCanExecuteChanged();
+        });
     }
 
     /// <summary>
@@ -1749,6 +1798,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (disposing)
         {
             _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+            if (_downloadCoordinator is not null)
+            {
+                _downloadCoordinator.StateChanged -= OnDownloadCoordinatorStateChanged;
+            }
             ClearGallerySelection();
             DisposePreviewBitmaps();
         }

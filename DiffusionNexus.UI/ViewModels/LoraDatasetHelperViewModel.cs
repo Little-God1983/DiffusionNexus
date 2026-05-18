@@ -178,7 +178,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
         AnalysisRunStore? analysisRunStore = null,
         DuplicateDetector? duplicateDetector = null,
-        ColorDistributionAnalyzer? colorDistributionAnalyzer = null)
+        ColorDistributionAnalyzer? colorDistributionAnalyzer = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -207,7 +208,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             colorDistributionAnalyzer);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
-        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);
 
         // Subscribe to state changes for property forwarding
@@ -223,7 +224,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 

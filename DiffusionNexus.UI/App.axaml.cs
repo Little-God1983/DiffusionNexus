@@ -960,7 +960,8 @@ public partial class App : Application
             sp.GetServices<IImageQualityCheck>(),
             sp.GetService<AnalysisRunStore>(),
             sp.GetService<DuplicateDetector>(),
-            sp.GetService<ColorDistributionAnalyzer>()));
+            sp.GetService<ColorDistributionAnalyzer>(),
+            sp.GetService<IDownloadCoordinator>()));
     }
 
     /// <summary>
