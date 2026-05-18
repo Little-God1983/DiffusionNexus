@@ -375,7 +375,7 @@ public partial class OutpaintingViewModel : ObservableObject
         if (!hasExtension)
         {
             WarningLevel = OutpaintWarningLevel.NeedsExtension;
-            WarningMessage = "Drag the arrows on the canvas to extend it before generating.";
+            WarningMessage = "Drag the arrows on the canvas\nto extend it before generating.";
             return;
         }
 
