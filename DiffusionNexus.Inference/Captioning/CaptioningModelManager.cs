@@ -282,41 +282,93 @@ public sealed class CaptioningModelManager
     /// </summary>
     private string ResolveFile(string fileName)
     {
+        // Fast path: check the exact paths we ourselves write files into —
+        // the Core default folder, the per-install <models>/Captioning
+        // subfolder, and the top of each search path. This covers every
+        // download we initiate and is O(searchPaths × 3) file existence
+        // checks, no directory enumeration. UI bindings query model status
+        // a lot when the user changes the dropdown, so keeping this path
+        // synchronous-but-cheap removes the multi-second hang.
         foreach (var dir in GetCurrentSearchPaths())
         {
             if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-            {
                 continue;
-            }
 
             var direct = Path.Combine(dir, fileName);
             if (File.Exists(direct))
-            {
                 return direct;
-            }
 
-            // EnumerateFiles with a top-level pattern + AllDirectories is far
-            // cheaper than computing every subfolder. The pattern matches the
-            // exact filename so we get O(matches) work, not O(files).
+            // Sibling we use as the default subfolder for ComfyUI roots.
+            var inCaptioningSub = Path.Combine(dir, CaptioningSubfolderName, fileName);
+            if (File.Exists(inCaptioningSub))
+                return inCaptioningSub;
+        }
+
+        // Slow path: full recursive scan, but only when the fast path missed.
+        // Cached for a short TTL so UI bindings querying the same filename
+        // repeatedly (which they do — IsModelReady fires on every selector
+        // change) don't keep walking the disk.
+        if (TryResolveCached(fileName, out var cachedHit))
+            return cachedHit ?? Path.Combine(_modelsBasePath, fileName);
+
+        string? deepHit = null;
+        foreach (var dir in GetCurrentSearchPaths())
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                continue;
+
             try
             {
                 var match = Directory.EnumerateFiles(dir, fileName, SearchOption.AllDirectories).FirstOrDefault();
                 if (match is not null)
                 {
-                    return match;
+                    deepHit = match;
+                    break;
                 }
             }
-            catch (UnauthorizedAccessException)
-            {
-                // Skip directories we can't read — common for partial ComfyUI layouts.
-            }
-            catch (IOException)
-            {
-                // Same — transient/locked subtrees should not abort discovery.
-            }
+            catch (UnauthorizedAccessException) { /* unreadable subtree — skip */ }
+            catch (IOException)              { /* locked subtree — skip */ }
         }
 
-        return Path.Combine(_modelsBasePath, fileName);
+        CacheResolution(fileName, deepHit);
+        return deepHit ?? Path.Combine(_modelsBasePath, fileName);
+    }
+
+    private readonly object _resolveCacheLock = new();
+    private readonly Dictionary<string, (string? Path, DateTime Expires)> _resolveCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan ResolveCacheTtl = TimeSpan.FromSeconds(10);
+
+    private bool TryResolveCached(string fileName, out string? path)
+    {
+        lock (_resolveCacheLock)
+        {
+            if (_resolveCache.TryGetValue(fileName, out var entry) && entry.Expires > DateTime.UtcNow)
+            {
+                path = entry.Path;
+                return true;
+            }
+        }
+        path = null;
+        return false;
+    }
+
+    private void CacheResolution(string fileName, string? path)
+    {
+        lock (_resolveCacheLock)
+        {
+            _resolveCache[fileName] = (path, DateTime.UtcNow + ResolveCacheTtl);
+        }
+    }
+
+    /// <summary>
+    /// Invalidates the file-resolution cache. Called from the download path
+    /// so the next status check sees freshly-downloaded files immediately
+    /// rather than waiting for the TTL.
+    /// </summary>
+    private void InvalidateResolveCache()
+    {
+        lock (_resolveCacheLock) _resolveCache.Clear();
     }
 
     /// <summary>
@@ -807,6 +859,10 @@ public sealed class CaptioningModelManager
             {
                 _downloadingModels[modelType] = false;
             }
+            // Files on disk may have changed; bust the resolution cache so
+            // the next status check reflects the new state instead of the
+            // 10s-old snapshot.
+            InvalidateResolveCache();
         }
     }
 
@@ -921,6 +977,10 @@ public sealed class CaptioningModelManager
             {
                 _downloadingModels[modelType] = false;
             }
+            // Files on disk may have changed; bust the resolution cache so
+            // the next status check reflects the new state instead of the
+            // 10s-old snapshot.
+            InvalidateResolveCache();
         }
     }
 

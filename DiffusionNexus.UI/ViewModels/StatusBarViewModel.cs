@@ -226,7 +226,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
             var existing = DownloadTasks.FirstOrDefault(t => t.Id == task.Id);
             if (existing is null)
             {
-                DownloadTasks.Insert(i, new DownloadTaskRowViewModel(task));
+                DownloadTasks.Insert(i, new DownloadTaskRowViewModel(task, _downloadCoordinator));
             }
             else
             {

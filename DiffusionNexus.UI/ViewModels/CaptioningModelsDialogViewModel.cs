@@ -195,6 +195,13 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
                 await RunDownload(new Progress<ModelDownloadProgress>(), CancellationToken.None);
             }
         }
+        catch (OperationCanceledException)
+        {
+            // User cancelled via the flyout — not an error. The coordinator
+            // marked the task Cancelled; the row just needs to roll back to
+            // NotDownloaded after the finally re-reads disk state.
+            Serilog.Log.Information("Captioning download for {Model} cancelled by user", operationName);
+        }
         catch (Exception ex)
         {
             // Coordinator swallows download exceptions and marks the task

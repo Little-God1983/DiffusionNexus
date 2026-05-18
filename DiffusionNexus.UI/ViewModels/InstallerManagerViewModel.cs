@@ -557,7 +557,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
             Func<DiffusionNexus.Domain.Enums.CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker =
                 async (modelType, tiers) =>
             {
-                if (tiers is null || tiers.Length == 0) return null;
+                // Non-tiered models pass an empty tier array — the options
+                // dialog hides its VRAM picker and only asks for a destination.
+                // Don't bail out here, that was the bug that made LLaVA /
+                // Qwen 2.5 / Qwen 3 vanilla Download buttons silently do
+                // nothing.
+                tiers ??= Array.Empty<int>();
 
                 var destinations = manager.GetDownloadDestinations();
                 var optionsVm = new CaptioningDownloadOptionsViewModel(manager, modelType, tiers, destinations);

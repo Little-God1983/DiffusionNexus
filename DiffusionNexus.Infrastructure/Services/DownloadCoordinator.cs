@@ -83,22 +83,32 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(downloadAction);
-        var task = new MutableTask(Guid.NewGuid(), name);
+
+        // Linked CTS: external cancellation (e.g. app shutdown) + per-task
+        // cancellation (Cancel button in the flyout) both signal the action.
+        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var task = new MutableTask(Guid.NewGuid(), name) { Cts = linkedCts };
 
         lock (_lock) _tasks.Add(task);
         RaiseStateChanged();
 
-        await _slots.WaitAsync(cancellationToken).ConfigureAwait(false);
-
-        // Promote to active. The state-change notification covers both the
-        // queue→active transition and the activity-log aggregate update.
-        lock (_lock) task.Status = DownloadTaskStatus.Active;
-        UpdateActivityLog();
-        RaiseStateChanged();
-
         var success = false;
+        var slotAcquired = false;
+
         try
         {
+            // Cancelling a queued task wakes us right back up; the resulting
+            // OperationCanceledException is caught below and the status flips
+            // to Cancelled before we ever consume a semaphore slot.
+            await _slots.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+            slotAcquired = true;
+
+            // Promote to active. The state-change notification covers both the
+            // queue→active transition and the activity-log aggregate update.
+            lock (_lock) task.Status = DownloadTaskStatus.Active;
+            UpdateActivityLog();
+            RaiseStateChanged();
+
             var progress = new Progress<DownloadTaskProgress>(p =>
             {
                 lock (_lock)
@@ -110,14 +120,16 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
                 RaiseStateChanged();
             });
 
-            success = await downloadAction(progress, cancellationToken).ConfigureAwait(false);
+            success = await downloadAction(progress, linkedCts.Token).ConfigureAwait(false);
 
             lock (_lock) task.Status = success ? DownloadTaskStatus.Completed : DownloadTaskStatus.Failed;
         }
         catch (OperationCanceledException)
         {
-            lock (_lock) task.Status = DownloadTaskStatus.Failed;
-            throw;
+            // Distinguish user cancellation from a generic failure so the UI
+            // shows the right colour and the activity log message reads
+            // "cancelled" rather than "failed".
+            lock (_lock) task.Status = DownloadTaskStatus.Cancelled;
         }
         catch (Exception ex)
         {
@@ -126,16 +138,30 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
         }
         finally
         {
-            _slots.Release();
+            if (slotAcquired) _slots.Release();
             // Remove from the tracked list so the UI list doesn't grow
             // unbounded. The unified console keeps a permanent log entry
             // via the activity log so users still see the completion event.
             lock (_lock) _tasks.Remove(task);
             UpdateActivityLog();
             RaiseStateChanged();
+            linkedCts.Dispose();
         }
 
         return success;
+    }
+
+    public void Cancel(Guid taskId)
+    {
+        CancellationTokenSource? cts = null;
+        lock (_lock)
+        {
+            var task = _tasks.FirstOrDefault(t => t.Id == taskId);
+            if (task is null) return;
+            cts = task.Cts;
+        }
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* completed in the meantime */ }
     }
 
     /// <summary>
@@ -221,6 +247,7 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
         public DownloadTaskStatus Status { get; set; } = DownloadTaskStatus.Queued;
         public int Percent { get; set; }
         public string? StatusMessage { get; set; }
+        public CancellationTokenSource? Cts { get; set; }
 
         public MutableTask(Guid id, string name)
         {

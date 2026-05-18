@@ -15,7 +15,10 @@ public enum DownloadTaskStatus
     Completed,
 
     /// <summary>Finished with an error or exception.</summary>
-    Failed
+    Failed,
+
+    /// <summary>The user (or shutdown) cancelled the download before it finished.</summary>
+    Cancelled
 }
 
 /// <summary>
@@ -90,4 +93,13 @@ public interface IDownloadCoordinator
     /// summary and the expandable flyout list.
     /// </summary>
     event EventHandler? StateChanged;
+
+    /// <summary>
+    /// Cancels the download identified by <paramref name="taskId"/>. Works
+    /// on queued tasks (they never run) and active tasks (their
+    /// <see cref="CancellationToken"/> is signalled, the download action
+    /// aborts at its next checkpoint, and any partial file is removed by
+    /// the action's own cleanup path). Unknown IDs are a no-op.
+    /// </summary>
+    void Cancel(Guid taskId);
 }
