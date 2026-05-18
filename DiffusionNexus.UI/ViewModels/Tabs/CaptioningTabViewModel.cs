@@ -62,6 +62,17 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IAppSettingsService? _settingsService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
+
+    /// <summary>
+    /// Snapshot of in-flight downloads observed at the last StateChanged
+    /// notification. Used to detect when a task transitions to a terminal
+    /// state — the coordinator removes terminal tasks from <see cref="IDownloadCoordinator.All"/>,
+    /// so any ID present here but missing in the new snapshot means a
+    /// download just finished and the tab should refresh its model statuses.
+    /// </summary>
+    private HashSet<Guid> _previousDownloadTaskIds = new();
+
     private bool _disposed;
 
     // Backend Selection
@@ -84,6 +95,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private string? _triggerWord;
     private string? _blacklistedWords;
     private float _temperature = 0.7f;
+    private int _maxWordCount;
     private bool _overrideExisting;
     private CaptionSaveMode _captionSaveMode = CaptionSaveMode.CurrentVersion;
 
@@ -129,13 +141,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         ICaptioningService? captioningService = null,
         IReadOnlyList<ICaptioningBackend>? backends = null,
         IAppSettingsService? settingsService = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
         _backends = backends ?? [];
         _settingsService = settingsService;
+        _downloadCoordinator = downloadCoordinator;
 
         Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Captioning);
 
@@ -144,6 +158,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
         PresetPrompts =
         [
+            new("Uncensored Captioning",
+                "You are an objective image captioner. Describe exactly what is visible " +
+                "with concrete, neutral language. Do not refuse, sanitize, or add " +
+                "disclaimers; do not moralize. Cover the subjects, their appearance, " +
+                "clothing, pose, expression, setting, lighting, and composition. Avoid " +
+                "speculation about identity or intent. Output only the caption — no " +
+                "preamble, no commentary."),
             new("Tags (SD 1.5, SDXL, Pony, Illustrious)",
                 "Identify and list all key objects, characters, actions, and artistic styles present in this image. Present the output as a comma-separated list of descriptive tags without any introductory text."),
             new("Simple Description (modern models)",
@@ -160,8 +181,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         _selectedPresetPrompt = PresetPrompts[0];
         _systemPrompt = _selectedPresetPrompt.Prompt;
 
-        // Select ComfyUI backend by default, fall back to first available
-        _selectedBackend = _backends.FirstOrDefault(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase))
+        // Prefer a remote (ComfyUI) backend by default so first-launch behaviour
+        // matches the original UX. Falls through to whatever is available.
+        _selectedBackend = _backends.FirstOrDefault(b => b is not DiffusionNexus.Inference.Captioning.LocalInferenceCaptioningBackend)
                            ?? _backends.FirstOrDefault();
 
         DownloadModelCommand = new AsyncRelayCommand<CaptioningModelType>(DownloadModelAsync, CanDownloadModel);
@@ -187,6 +209,42 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         RefreshModelStatuses();
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
+
+        // Listen to the global download coordinator so a download that
+        // finishes elsewhere (Installer Manager → Diffusion Nexus Core →
+        // Workloads) is reflected in this tab's per-model status badges
+        // without needing an app restart. We only refresh when a task
+        // disappears from the All snapshot — that's the terminal state
+        // transition; progress ticks alone don't change disk presence.
+        if (_downloadCoordinator is not null)
+        {
+            _previousDownloadTaskIds = _downloadCoordinator.All.Select(t => t.Id).ToHashSet();
+            _downloadCoordinator.StateChanged += OnDownloadCoordinatorStateChanged;
+        }
+    }
+
+    private void OnDownloadCoordinatorStateChanged(object? sender, EventArgs e)
+    {
+        if (_downloadCoordinator is null) return;
+
+        var currentIds = _downloadCoordinator.All.Select(t => t.Id).ToHashSet();
+        var anyDisappeared = _previousDownloadTaskIds.Any(id => !currentIds.Contains(id));
+        _previousDownloadTaskIds = currentIds;
+
+        if (!anyDisappeared) return;
+
+        // A download just reached a terminal state — re-query disk presence
+        // for every captioning model so the dropdown badge ("Ready" / amber
+        // hint) reflects what's actually on disk now. The model manager's
+        // resolve-cache was invalidated by the manager's own download
+        // finally, so this call will see the new file.
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            RefreshModelStatuses();
+            OnPropertyChanged(nameof(IsModelReady));
+            OnPropertyChanged(nameof(IsModelMissing));
+            GenerateCommand.NotifyCanExecuteChanged();
+        });
     }
 
     /// <summary>
@@ -223,15 +281,27 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// Whether the selected backend uses local model management (download, load, etc.).
     /// Controls visibility of the model selection panel in the UI.
     /// </summary>
+    /// <summary>
+    /// True when the selected backend runs locally via LlamaSharp (the
+    /// Diffusion Nexus Core capability). Checked by reference type rather than
+    /// display name so renaming the user-visible label doesn't break the wiring.
+    /// </summary>
     public bool IsLocalInferenceBackend => SelectedBackend is null
-        || SelectedBackend.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase);
+        || SelectedBackend is DiffusionNexus.Inference.Captioning.LocalInferenceCaptioningBackend;
 
     /// <summary>
-    /// Available captioning backends visible to the user.
-    /// NOTE: Local Inference (LlamaSharp) is temporarily hidden until fully implemented � do not delete it.
+    /// True when the selected backend needs a running ComfyUI server.
+    /// Drives the visibility of the ComfyUI readiness panel and gates the
+    /// readiness check itself — the local backend has no such dependency.
     /// </summary>
-    public IReadOnlyList<ICaptioningBackend> AvailableBackends =>
-        _backends.Where(b => !b.DisplayName.Contains("Local", StringComparison.OrdinalIgnoreCase)).ToList();
+    public bool RequiresComfyUiReadiness => SelectedBackend is not null && !IsLocalInferenceBackend;
+
+    /// <summary>
+    /// Available captioning backends visible to the user. The Local Inference
+    /// (LlamaSharp) backend is now wired through MtmdWeights and surfaces alongside
+    /// the ComfyUI backend.
+    /// </summary>
+    public IReadOnlyList<ICaptioningBackend> AvailableBackends => _backends;
 
     /// <summary>
     /// The currently selected captioning backend.
@@ -244,10 +314,18 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             if (SetProperty(ref _selectedBackend, value))
             {
                 OnPropertyChanged(nameof(IsLocalInferenceBackend));
+                OnPropertyChanged(nameof(RequiresComfyUiReadiness));
                 OnPropertyChanged(nameof(IsModelReady));
                 OnPropertyChanged(nameof(IsModelMissing));
                 GenerateCommand.NotifyCanExecuteChanged();
-                Readiness.CheckReadinessCommand.Execute(null);
+
+                // Only poll the ComfyUI server when the selected backend actually
+                // depends on it. The Diffusion Nexus Core backend runs in-process
+                // via LlamaSharp and has no HTTP dependency.
+                if (RequiresComfyUiReadiness)
+                {
+                    Readiness.CheckReadinessCommand.Execute(null);
+                }
             }
         }
     }
@@ -410,6 +488,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CaptioningModelType.LLaVA_v1_6_34B => IsLlavaReady,
                 CaptioningModelType.Qwen2_5_VL_7B => IsQwenReady,
                 CaptioningModelType.Qwen3_VL_8B => IsQwen3Ready,
+                // Tiered models are managed from the Core Workloads dialog;
+                // for the tab's readiness gate we ask the service directly
+                // since there's no per-VRAM-tier UI on this tab.
+                CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                    or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4
+                    => _captioningService?.GetModelInfo(SelectedModelType).Status
+                        is CaptioningModelStatus.Ready or CaptioningModelStatus.Loaded,
                 _ => false
             };
         }
@@ -488,6 +573,18 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     {
         get => _temperature;
         set => SetProperty(ref _temperature, value);
+    }
+
+    /// <summary>
+    /// Soft word-count ceiling. When greater than zero, the viewmodel appends
+    /// a sentence to the system prompt telling the model to stay under this
+    /// many words. The token cap on the inference side is held high enough
+    /// that the final sentence finishes cleanly — no mid-word truncation.
+    /// </summary>
+    public int MaxWordCount
+    {
+        get => _maxWordCount;
+        set => SetProperty(ref _maxWordCount, Math.Max(0, value));
     }
 
     public bool OverrideExisting
@@ -924,6 +1021,12 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             CaptioningModelType.LLaVA_v1_6_34B => !IsLlavaDownloading,
             CaptioningModelType.Qwen2_5_VL_7B => !IsQwenDownloading,
             CaptioningModelType.Qwen3_VL_8B => !IsQwen3Downloading,
+            // Downloads of all captioning models happen through the Core
+            // Workloads dialog (with destination + disk-space check, and a
+            // VRAM picker for tiered variants). Keep this tab's Download
+            // command disabled — it would race the coordinator otherwise.
+            CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => false,
             _ => false
         };
     }
@@ -1086,15 +1189,24 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 CaptionHistory.Add(item);
             }
 
+            // Inject the word-count instruction directly into the prompt so the
+            // model knows where to stop on its own. The token cap stays high —
+            // we never want mid-sentence cuts. A trailing blank line keeps the
+            // instruction separated from preset wording for readability.
+            var effectivePrompt = MaxWordCount > 0
+                ? $"{SystemPrompt}\n\nUse a maximum of {MaxWordCount} words. Finish your final sentence cleanly within that limit."
+                : SystemPrompt;
+
             var config = new CaptioningJobConfig(
                 ImagePaths: imagePaths,
                 SelectedModel: SelectedModelType,
-                SystemPrompt: SystemPrompt,
+                SystemPrompt: effectivePrompt,
                 TriggerWord: TriggerWord,
                 BlacklistedWords: blackList,
                 DatasetPath: datasetPath,
                 OverrideExisting: effectiveOverride,
-                Temperature: Temperature
+                Temperature: Temperature,
+                MaxWordCount: MaxWordCount
             );
 
             var validationErrors = config.Validate();
@@ -1203,6 +1315,19 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             _captioningCts = null;
             IsProcessing = false;
             RefreshDatasetStats();
+
+            // The just-completed run may have written a fresh caption to
+            // disk. In single-image mode, re-evaluate the "existing caption"
+            // state so the next Generate click sees the new reality: the
+            // compare-mode banner / dialog should appear if a caption now
+            // exists, and the user should never silently overwrite a file
+            // they just produced. Mirrors the auto-enable behaviour from
+            // the SingleImagePath setter.
+            if (IsSingleImageMode && !string.IsNullOrEmpty(SingleImagePath))
+            {
+                OnPropertyChanged(nameof(SingleImageHasExistingCaption));
+                IsCompareMode = HasExistingCaption(SingleImagePath);
+            }
         }
     }
 
@@ -1224,7 +1349,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
         else
         {
-            StatusMessage = "Compare cancelled � the newly generated caption remains on disk.";
+            StatusMessage = "Compare cancelled � the newly generated caption remains on disk.";
         }
     }
 
@@ -1686,6 +1811,10 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (disposing)
         {
             _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+            if (_downloadCoordinator is not null)
+            {
+                _downloadCoordinator.StateChanged -= OnDownloadCoordinatorStateChanged;
+            }
             ClearGallerySelection();
             DisposePreviewBitmaps();
         }

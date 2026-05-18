@@ -14,9 +14,24 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class StatusBarViewModel : ViewModelBase, IDisposable
 {
     private readonly IActivityLogService _logService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly ActivityLogViewModel _logViewModel;
     private readonly UnifiedConsoleViewModel? _unifiedConsole;
     private bool _disposed;
+
+    /// <summary>
+    /// Per-download rows shown in the status-bar flyout. Always present and
+    /// kept in sync with <see cref="IDownloadCoordinator"/>'s All snapshot —
+    /// active and queued items both appear here so users can see what's
+    /// running and what's waiting.
+    /// </summary>
+    public System.Collections.ObjectModel.ObservableCollection<DownloadTaskRowViewModel> DownloadTasks { get; } = new();
+
+    /// <summary>True when more than one download is in flight — drives the "N downloads in progress" summary in the status bar.</summary>
+    public bool HasMultipleDownloads => DownloadTasks.Count(t => t.Status == DownloadTaskStatus.Active) > 1;
+
+    /// <summary>Total in-flight downloads (active + queued) shown next to the chevron in the status bar.</summary>
+    public int InFlightDownloadCount => DownloadTasks.Count;
 
     [ObservableProperty]
     private string _statusMessage = "Ready";
@@ -140,9 +155,14 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string ProgressBarBackground => "#1E7E34"; // Darker green for contrast
 
-    public StatusBarViewModel(IActivityLogService logService, IUnifiedLogger? unifiedLogger = null, ITaskTracker? taskTracker = null)
+    public StatusBarViewModel(
+        IActivityLogService logService,
+        IUnifiedLogger? unifiedLogger = null,
+        ITaskTracker? taskTracker = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _logService = logService;
+        _downloadCoordinator = downloadCoordinator;
         _logViewModel = new ActivityLogViewModel(logService);
 
         // Create the unified console if the new logging services are available
@@ -160,8 +180,67 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.BackupProgressChanged += OnBackupProgressChanged;
         _logService.DownloadProgressChanged += OnDownloadProgressChanged;
 
+        if (_downloadCoordinator is not null)
+        {
+            _downloadCoordinator.StateChanged += OnDownloadCoordinatorStateChanged;
+            // Seed the initial snapshot in case downloads were already in flight
+            // (e.g. on a hot-reload during dev).
+            RefreshDownloadTasks();
+        }
+
         // Initialize counts
         UpdateCounts();
+    }
+
+    /// <summary>
+    /// Pull a fresh snapshot from the coordinator and mirror it into the
+    /// observable <see cref="DownloadTasks"/> collection. Diff-applied so
+    /// ListBox bindings don't tear down rows that didn't change — just the
+    /// row's mutable properties get updated.
+    /// </summary>
+    private void OnDownloadCoordinatorStateChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(RefreshDownloadTasks);
+    }
+
+    private void RefreshDownloadTasks()
+    {
+        if (_downloadCoordinator is null) return;
+
+        var snapshot = _downloadCoordinator.All;
+        var byId = snapshot.ToDictionary(t => t.Id);
+
+        // Remove rows that vanished from the snapshot.
+        for (var i = DownloadTasks.Count - 1; i >= 0; i--)
+        {
+            if (!byId.ContainsKey(DownloadTasks[i].Id))
+            {
+                DownloadTasks.RemoveAt(i);
+            }
+        }
+
+        // Update or append rows from the snapshot in source order.
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            var task = snapshot[i];
+            var existing = DownloadTasks.FirstOrDefault(t => t.Id == task.Id);
+            if (existing is null)
+            {
+                DownloadTasks.Insert(i, new DownloadTaskRowViewModel(task, _downloadCoordinator));
+            }
+            else
+            {
+                existing.Update(task);
+                var currentIndex = DownloadTasks.IndexOf(existing);
+                if (currentIndex != i)
+                {
+                    DownloadTasks.Move(currentIndex, i);
+                }
+            }
+        }
+
+        OnPropertyChanged(nameof(HasMultipleDownloads));
+        OnPropertyChanged(nameof(InFlightDownloadCount));
     }
 
     /// <summary>
@@ -326,6 +405,9 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
         _logService.LogCleared -= OnLogCleared;
         _logService.BackupProgressChanged -= OnBackupProgressChanged;
         _logService.DownloadProgressChanged -= OnDownloadProgressChanged;
+
+        if (_downloadCoordinator is not null)
+            _downloadCoordinator.StateChanged -= OnDownloadCoordinatorStateChanged;
 
         if (_unifiedConsole is not null)
             _unifiedConsole.PanelOpenRequested -= OnConsolePanelOpenRequested;

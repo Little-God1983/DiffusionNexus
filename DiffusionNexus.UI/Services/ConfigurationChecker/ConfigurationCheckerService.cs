@@ -71,7 +71,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// Portable: root contains <c>ComfyUI/main.py</c>.
     /// Manual: root itself contains <c>main.py</c>.
     /// </summary>
-    internal static ComfyUIInstallationType DetectInstallationType(string rootPath)
+    public static ComfyUIInstallationType DetectInstallationType(string rootPath)
     {
         var portableMainPy = Path.Combine(rootPath, "ComfyUI", "main.py");
         if (File.Exists(portableMainPy))
@@ -85,7 +85,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// <summary>
     /// Returns the actual ComfyUI repository root (where <c>models/</c> and <c>custom_nodes/</c> live).
     /// </summary>
-    internal static string GetRepositoryPath(string rootPath, ComfyUIInstallationType installationType)
+    public static string GetRepositoryPath(string rootPath, ComfyUIInstallationType installationType)
     {
         return installationType == ComfyUIInstallationType.Portable
             ? Path.Combine(rootPath, "ComfyUI")
@@ -189,7 +189,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// all <c>base_path</c> values plus paths listed under model type keys.
     /// Uses simple line-by-line parsing to avoid adding a YAML library dependency.
     /// </summary>
-    internal static List<string> ParseExtraModelPathsYaml(string repositoryPath)
+    public static List<string> ParseExtraModelPathsYaml(string repositoryPath)
     {
         var results = new List<string>();
 

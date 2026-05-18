@@ -1,7 +1,7 @@
 using DiffusionNexus.Domain.Services;
 using Serilog;
 
-namespace DiffusionNexus.Captioning;
+namespace DiffusionNexus.Inference.Captioning;
 
 /// <summary>
 /// Captioning backend adapter that delegates to the local LlamaSharp-based <see cref="ICaptioningService"/>.
@@ -23,7 +23,7 @@ public sealed class LocalInferenceCaptioningBackend : ICaptioningBackend
     }
 
     /// <inheritdoc />
-    public string DisplayName => "Local Inference (LlamaSharp)";
+    public string DisplayName => "Diffusion Nexus Core";
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements => [];

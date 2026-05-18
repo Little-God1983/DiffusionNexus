@@ -207,57 +207,143 @@
                                Margin="8,0,0,0"/>
                 </Grid>
 
-                <!-- Download Progress Bar (shown when download in progress and no backup running) -->
-                <Grid Grid.Column="0"
-                      Margin="8,0">
-                    <Grid.IsVisible>
+                <!-- Download Progress Bar (shown when download in progress and no backup running).
+                     Wrapped in a Button with a Flyout so users can click to see the full per-download
+                     list — active + queued — instead of just the aggregate summary line. -->
+                <Button Grid.Column="0"
+                        Margin="8,0"
+                        Padding="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Cursor="Hand">
+                    <Button.IsVisible>
                         <MultiBinding Converter="{x:Static BoolConverters.And}">
                             <Binding Path="ShowDownloadProgress"/>
                             <Binding Path="!ShowBackupProgress"/>
                         </MultiBinding>
-                    </Grid.IsVisible>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                    </Button.IsVisible>
+                    <Button.Flyout>
+                        <Flyout Placement="Top">
+                            <Border Background="#252525"
+                                    BorderBrush="#3D3D3D"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="12"
+                                    MinWidth="360"
+                                    MaxWidth="540">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Downloads"
+                                               FontWeight="Bold" FontSize="13"
+                                               Foreground="White"/>
+                                    <ItemsControl ItemsSource="{Binding DownloadTasks}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:DownloadTaskRowViewModel">
+                                                <Grid Margin="0,4"
+                                                      ColumnDefinitions="*,Auto,Auto"
+                                                      RowDefinitions="Auto,Auto,Auto">
+                                                    <TextBlock Grid.Row="0" Grid.Column="0"
+                                                               Text="{Binding Name}"
+                                                               FontSize="12" FontWeight="SemiBold"
+                                                               Foreground="White"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Row="0" Grid.Column="1"
+                                                               Text="{Binding StatusLabel}"
+                                                               Foreground="{Binding StatusColor}"
+                                                               FontSize="11" FontWeight="SemiBold"
+                                                               Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"/>
+                                                    <!-- Cancel button. Only shown while the task is queued
+                                                         or active; hidden once terminal so the flyout doesn't
+                                                         offer to cancel something that's already finished. -->
+                                                    <Button Grid.Row="0" Grid.Column="2"
+                                                            Content="✖"
+                                                            FontSize="12"
+                                                            Padding="6,2"
+                                                            Margin="6,0,0,0"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Foreground="#BBBBBB"
+                                                            Cursor="Hand"
+                                                            ToolTip.Tip="Cancel this download"
+                                                            Command="{Binding CancelCommand}"
+                                                            IsVisible="{Binding CanCancel}"/>
+                                                    <ProgressBar Grid.Row="1" Grid.ColumnSpan="3"
+                                                                 Value="{Binding Percent}"
+                                                                 Minimum="0" Maximum="100"
+                                                                 Height="4" Margin="0,2,0,2"
+                                                                 IsVisible="{Binding IsActive}"
+                                                                 Foreground="#0088CC"/>
+                                                    <TextBlock Grid.Row="2" Grid.ColumnSpan="3"
+                                                               Text="{Binding StatusMessage}"
+                                                               FontSize="11" Foreground="#999999"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </Flyout>
+                    </Button.Flyout>
 
-                    <!-- Download arrow icon -->
-                    <TextBlock Grid.Column="0"
-                               Text="⬇"
-                               FontSize="14"
-                               VerticalAlignment="Center"
-                               Foreground="{Binding StatusForeground}"
-                               Margin="0,0,8,0"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <!-- Download operation name -->
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding DownloadOperationName, FallbackValue='Downloading...'}"
-                               Foreground="{Binding StatusForeground}"
-                               FontSize="12"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"
-                               Margin="0,0,12,0"/>
+                        <!-- Download arrow icon -->
+                        <TextBlock Grid.Column="0"
+                                   Text="⬇"
+                                   FontSize="14"
+                                   VerticalAlignment="Center"
+                                   Foreground="{Binding StatusForeground}"
+                                   Margin="0,0,8,0"/>
 
-                    <!-- Progress bar -->
-                    <ProgressBar Grid.Column="2"
-                                 Value="{Binding DownloadProgressPercent}"
-                                 Minimum="0"
-                                 Maximum="100"
-                                 Height="8"
-                                 VerticalAlignment="Center"
-                                 Classes="backup-progress"/>
+                        <!-- Download operation name (single download → its name; multiple → "N Downloads in progress" via DownloadOperationName) -->
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding DownloadOperationName, FallbackValue='Downloading...'}"
+                                   Foreground="{Binding StatusForeground}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,12,0"/>
 
-                    <!-- Percentage text -->
-                    <TextBlock Grid.Column="3"
-                               Text="{Binding DownloadProgressPercent, StringFormat='{}{0}%'}"
-                               Foreground="{Binding StatusForeground}"
-                               FontSize="12"
-                               FontWeight="Bold"
-                               VerticalAlignment="Center"
-                               Margin="8,0,0,0"/>
-                </Grid>
+                        <!-- Progress bar (aggregate average when >1 active) -->
+                        <ProgressBar Grid.Column="2"
+                                     Value="{Binding DownloadProgressPercent}"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Height="8"
+                                     VerticalAlignment="Center"
+                                     Classes="backup-progress"/>
+
+                        <!-- Percentage text -->
+                        <TextBlock Grid.Column="3"
+                                   Text="{Binding DownloadProgressPercent, StringFormat='{}{0}%'}"
+                                   Foreground="{Binding StatusForeground}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0,0,0"/>
+
+                        <!-- Chevron hinting that the flyout is expandable. Always shown
+                             while the parent button is visible (i.e. a download is active). -->
+                        <TextBlock Grid.Column="4"
+                                   Text="▾"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{Binding StatusForeground}"
+                                   Margin="6,0,0,0"/>
+                    </Grid>
+                </Button>
                 
                 <!-- Active Operation Progress (when not backup) -->
                 <StackPanel Grid.Column="1"

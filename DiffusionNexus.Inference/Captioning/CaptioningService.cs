@@ -1,11 +1,13 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using LLama;
 using LLama.Common;
 using LLama.Native;
+using LLama.Sampling;
 using Serilog;
 
-namespace DiffusionNexus.Captioning;
+namespace DiffusionNexus.Inference.Captioning;
 
 /// <summary>
 /// Service for generating image captions using local vision-language models.
@@ -13,12 +15,16 @@ namespace DiffusionNexus.Captioning;
 /// </summary>
 public sealed class CaptioningService : ICaptioningService
 {
+    private const string LogSource = "CaptioningService";
+
     private readonly CaptioningModelManager _modelManager;
+    private readonly IUnifiedLogger? _unifiedLogger;
     private readonly SemaphoreSlim _inferencelock = new(1, 1);
-    
+
     private LLamaWeights? _modelWeights;
     private LLamaContext? _context;
-    private LLavaWeights? _clipWeights;
+    private MtmdWeights? _clipModel;
+    private string _mediaMarker = "<media>";
     private CaptioningModelType? _loadedModelType;
     private bool _isProcessing;
     private bool _isGpuAvailable;
@@ -29,22 +35,62 @@ public sealed class CaptioningService : ICaptioningService
     /// <summary>
     /// Creates a new CaptioningService.
     /// </summary>
-    public CaptioningService() : this(new CaptioningModelManager()) { }
+    public CaptioningService() : this(new CaptioningModelManager(), null) { }
 
     /// <summary>
     /// Creates a new CaptioningService with a custom model manager.
     /// </summary>
     public CaptioningService(CaptioningModelManager modelManager)
+        : this(modelManager, null) { }
+
+    /// <summary>
+    /// Creates a new CaptioningService with a custom model manager and the
+    /// unified logger sink. When the unified logger is supplied, every
+    /// significant captioning event (model load, per-image preprocessing,
+    /// inference start/end, empty captions, errors) is routed there so it
+    /// shows up in the in-app console with category <see cref="LogCategory.Captioning"/>.
+    /// </summary>
+    public CaptioningService(CaptioningModelManager modelManager, IUnifiedLogger? unifiedLogger)
     {
         _modelManager = modelManager ?? throw new ArgumentNullException(nameof(modelManager));
+        _unifiedLogger = unifiedLogger;
         InitializeNativeLibrary();
+    }
+
+    /// <summary>
+    /// Mirrors a message into both Serilog (file/console sinks) and the
+    /// in-app unified logger so any captioning event is visible in the UI
+    /// regardless of which sink the user is looking at.
+    /// </summary>
+    private void LogInfo(string message, string? detail = null)
+    {
+        Log.Information("[Captioning] {Message} {Detail}", message, detail ?? string.Empty);
+        _unifiedLogger?.Info(LogCategory.Captioning, LogSource, message, detail);
+    }
+
+    private void LogWarn(string message, string? detail = null)
+    {
+        Log.Warning("[Captioning] {Message} {Detail}", message, detail ?? string.Empty);
+        _unifiedLogger?.Warn(LogCategory.Captioning, LogSource, message, detail);
+    }
+
+    private void LogError(string message, Exception? ex = null)
+    {
+        Log.Error(ex, "[Captioning] {Message}", message);
+        _unifiedLogger?.Error(LogCategory.Captioning, LogSource, message, ex);
+    }
+
+    private void LogDebug(string message, string? detail = null)
+    {
+        Log.Debug("[Captioning] {Message} {Detail}", message, detail ?? string.Empty);
+        _unifiedLogger?.Debug(LogCategory.Captioning, LogSource, message, detail);
     }
 
     /// <inheritdoc />
     public bool IsProcessing => _isProcessing;
 
     /// <inheritdoc />
-    public bool IsModelLoaded => _modelWeights is not null && _context is not null;
+    public bool IsModelLoaded => _modelWeights is not null && _context is not null && _clipModel is not null;
 
     /// <inheritdoc />
     public CaptioningModelType? LoadedModelType => _loadedModelType;
@@ -130,7 +176,42 @@ public sealed class CaptioningService : ICaptioningService
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        LogInfo($"Download requested: {modelType}");
         return _modelManager.DownloadModelAsync(modelType, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        LogInfo($"Download requested: {modelType}", $"target={destinationDirectory}");
+        return _modelManager.DownloadModelAsync(modelType, destinationDirectory, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        LogInfo($"Download requested: {modelType} ({vramGb} GB tier)");
+        return _modelManager.DownloadModelAsync(modelType, vramGb, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        LogInfo($"Download requested: {modelType} ({vramGb} GB tier)", $"target={destinationDirectory}");
+        return _modelManager.DownloadModelAsync(modelType, vramGb, destinationDirectory, progress, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -173,7 +254,14 @@ public sealed class CaptioningService : ICaptioningService
             // Configure model parameters for maximum GPU utilization
             var modelParams = new ModelParams(modelPath)
             {
-                ContextSize = 4096,
+                // 16k keeps every supported model happy: LLaVA-1.6's tile
+                // encoder can emit ~2880 image tokens for high-res inputs,
+                // and the Qwen3-VL family handles much larger contexts
+                // natively. 4096 used to overflow when LLaVA-1.6 was given
+                // a tall photo — the encoder filled the window before the
+                // prompt even started. KV-cache cost at this size for an
+                // 8–34B model is a few hundred MB — acceptable.
+                ContextSize = 16384,
                 GpuLayerCount = _isGpuAvailable ? -1 : 0, // -1 = all layers on GPU
                 // Seed = 0, // Removing Seed as it causes build error
                 UseMemorymap = true,
@@ -181,23 +269,38 @@ public sealed class CaptioningService : ICaptioningService
             };
 
             // Load model weights
-            _modelWeights = await Task.Run(() => LLamaWeights.LoadFromFile(modelParams), cancellationToken);
+            _modelWeights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
 
             // Create context
             _context = _modelWeights.CreateContext(modelParams);
 
-            // Load CLIP weights for vision
-            Log.Information("Loading CLIP projector from {Path}", clipPath);
-            _clipWeights = await Task.Run(() => LLavaWeights.LoadFromFile(clipPath), cancellationToken);
+            // Load multimodal projector (mmproj) and bind to the text model. The
+            // native side maps the legacy "llava_shared" DllImport name to the
+            // mtmd.dll shipped with the LLamaSharp.Backend.* package, so MtmdWeights
+            // is the supported path for Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA, etc.
+            LogInfo($"Loading multimodal projector for {modelType}", clipPath);
+            var mtmdParameters = MtmdContextParams.Default();
+            mtmdParameters.UseGpu = _isGpuAvailable;
+            _clipModel = await MtmdWeights.LoadFromFileAsync(clipPath, _modelWeights, mtmdParameters, cancellationToken);
+            _mediaMarker = mtmdParameters.MediaMarker ?? NativeApi.MtmdDefaultMarker() ?? "<media>";
+
+            if (!_clipModel.SupportsVision)
+            {
+                throw new InvalidOperationException(
+                    $"Multimodal projector at {clipPath} does not advertise vision support. " +
+                    "This model is unusable for image captioning.");
+            }
 
             _loadedModelType = modelType;
-            
-            Log.Information("Successfully loaded {ModelType} model", modelType);
+
+            LogInfo($"Loaded {modelType}",
+                $"vision={_clipModel.SupportsVision}, audio={_clipModel.SupportsAudio}, " +
+                $"media-marker={_mediaMarker}, gpu={_isGpuAvailable}");
             return true;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to load model {ModelType}", modelType);
+            LogError($"Failed to load model {modelType}", ex);
             UnloadModelInternal();
             throw;
         }
@@ -225,11 +328,11 @@ public sealed class CaptioningService : ICaptioningService
     {
         if (_loadedModelType.HasValue)
         {
-            Log.Information("Unloading model {ModelType}", _loadedModelType);
+            LogInfo($"Unloading model {_loadedModelType}");
         }
 
-        _clipWeights?.Dispose();
-        _clipWeights = null;
+        _clipModel?.Dispose();
+        _clipModel = null;
 
         _context?.Dispose();
         _context = null;
@@ -276,6 +379,10 @@ public sealed class CaptioningService : ICaptioningService
         {
             var imagePaths = config.ImagePaths.ToList();
             var totalCount = imagePaths.Count;
+
+            LogInfo($"Starting batch of {totalCount} image(s) with {config.SelectedModel}",
+                $"temperature={config.Temperature}, maxWords={config.MaxWordCount}, " +
+                $"overrideExisting={config.OverrideExisting}, datasetPath={config.DatasetPath ?? "<image folder>"}");
 
             for (var i = 0; i < totalCount; i++)
             {
@@ -354,65 +461,112 @@ public sealed class CaptioningService : ICaptioningService
         string? captionFilePath,
         CancellationToken cancellationToken)
     {
+        var fileLabel = Path.GetFileName(imagePath);
         try
         {
+            var sourceFileSize = 0L;
+            try { sourceFileSize = new FileInfo(imagePath).Length; } catch { /* report 0 below */ }
+
+            LogInfo($"Captioning {fileLabel}",
+                $"source size={sourceFileSize:N0} bytes, dataset={(captionFilePath is null ? "<single>" : Path.GetDirectoryName(captionFilePath))}");
+
             // Validate and preprocess image
-            var preprocessResult = ImagePreprocessor.ProcessImage(imagePath);
+            var preprocessResult = ImagePreprocessor.ProcessImage(imagePath, ImagePreprocessor.MaxImageDimension, _unifiedLogger);
             if (!preprocessResult.Success)
             {
+                LogWarn($"Preprocess failed for {fileLabel}", preprocessResult.ErrorMessage);
                 return CaptioningResult.Failed(imagePath, preprocessResult.ErrorMessage ?? "Failed to preprocess image.");
             }
 
+            LogDebug($"Preprocessed {fileLabel}",
+                $"final={preprocessResult.Width}x{preprocessResult.Height}, " +
+                $"encoded={preprocessResult.ImageData?.Length ?? 0:N0} bytes, " +
+                $"wasResized={preprocessResult.WasResized}");
+
             await _inferencelock.WaitAsync(cancellationToken);
+            SafeMtmdEmbed? mediaEmbed = null;
             try
             {
-                if (_context is null || _clipWeights is null || _modelWeights is null)
+                if (_context is null || _clipModel is null || _modelWeights is null)
                 {
+                    LogWarn($"Captioning aborted for {fileLabel}", "model is not loaded");
                     return CaptioningResult.Failed(imagePath, "Model is not loaded.");
                 }
 
-                // Build prompt based on model type
-                var prompt = BuildPrompt(_loadedModelType!.Value, systemPrompt);
+                // Each caption is an independent single-turn conversation. Reset the
+                // context's KV cache and any prior media so state from the previous
+                // image does not bleed into this one.
+                _context.NativeHandle.MemoryClear();
+                _clipModel.ClearMedia();
 
-                // Create image embedding
-                var imageEmbedding = _clipWeights.CreateImageEmbeddings(_context, preprocessResult.ImageData!);
+                // Load the (preprocessed) image bytes as an mtmd embed. Using the
+                // preprocessed buffer ensures we honour MaxImageDimension.
+                mediaEmbed = _clipModel.LoadMedia(preprocessResult.ImageData.AsSpan());
 
-                // Create inference parameters
+                // Build the chat-templated prompt with the media marker substituted
+                // for the literal "<image>" placeholder used by BuildPrompt.
+                var rawPrompt = BuildPrompt(_loadedModelType!.Value, systemPrompt);
+                var fullPrompt = rawPrompt.Replace("<image>", _mediaMarker, StringComparison.Ordinal);
+
                 var inferenceParams = new InferenceParams
                 {
-                    // Temperature = temperature,
-                    MaxTokens = 512,
-                    AntiPrompts = GetAntiPrompts(_loadedModelType.Value)
+                    SamplingPipeline = new DefaultSamplingPipeline
+                    {
+                        Temperature = temperature
+                    },
+                    // Caption budget. Most captions land between 100–400
+                    // words ≈ 150–600 tokens; 1024 is generous safety while
+                    // leaving the rest of the 16k context for the image
+                    // tokens (LLaVA-1.6 can emit up to ~2880 alone) and the
+                    // prompt template. The model stops naturally at the
+                    // AntiPrompts boundary (<|im_end|> / </s>); this cap
+                    // only catches a runaway generation.
+                    MaxTokens = 1024,
+                    AntiPrompts = GetAntiPrompts(_loadedModelType.Value),
+                    // Safety net: if the prompt+image somehow exceeds the
+                    // window (e.g. a future model emits more image tokens),
+                    // discard the oldest context tokens and continue instead
+                    // of throwing ContextOverflowException. For a single-turn
+                    // captioning request the loss is harmless because the
+                    // tail of the context — where we generate — is the part
+                    // we care about; the head is just the system role tag.
+                    OverflowStrategy = LLama.Common.ContextOverflowStrategy.TruncateAndReprefill
                 };
 
-                // Create executor
-                var executor = new InteractiveExecutor(_context);
+                var executor = new InteractiveExecutor(_context, _clipModel);
+                executor.Embeds.Add(mediaEmbed);
 
-                // Process the image with the prompt
-                // var imageWithPrompt = _clipWeights.CreateImagePlaceholderForPrompt();
-                // var fullPrompt = prompt.Replace("<image>", imageWithPrompt);
-                // For now, assume prompt with <image> is processed by the evaluator if it supports it, 
-                // BUT InteractiveExecutor is text-only. 
-                // We might need to use a specific LLaVA executor or inject embeddings differently.
-                // Disabling LLaVA specific logic to allow compilation for UI task.
-                
-                var fullPrompt = prompt; 
-
-                // Run inference
                 var caption = new System.Text.StringBuilder();
-                
                 await foreach (var token in executor.InferAsync(fullPrompt, inferenceParams, cancellationToken))
                 {
                     caption.Append(token);
                 }
 
-                // Post-process caption
+                var rawTokenCount = caption.Length;
                 var finalCaption = PostProcessCaption(
                     caption.ToString(),
                     triggerWord,
                     blacklistedWords);
 
-                // Save caption to file if path provided
+                // Empty caption is almost always an image-decode problem on the
+                // mtmd side: the bitmap reached the model but came through as
+                // zeros, so the model has nothing visual to talk about and
+                // emits the stop token immediately. Log enough context to tell
+                // that apart from a preprocessing failure (which would have
+                // returned Failed before we got here).
+                if (string.IsNullOrWhiteSpace(finalCaption))
+                {
+                    LogWarn($"Caption empty for {fileLabel}",
+                        $"raw chars from model: {rawTokenCount}, " +
+                        $"preprocessed: {preprocessResult.Width}x{preprocessResult.Height} ({preprocessResult.ImageData?.Length ?? 0:N0} bytes). " +
+                        $"Usually means mtmd rejected the pixels — check the Captioning preprocessor entry above this one.");
+                }
+                else
+                {
+                    LogInfo($"Caption produced for {fileLabel}",
+                        $"chars={finalCaption.Length}, words≈{finalCaption.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length}");
+                }
+
                 if (!string.IsNullOrEmpty(captionFilePath))
                 {
                     var directory = Path.GetDirectoryName(captionFilePath);
@@ -427,6 +581,7 @@ public sealed class CaptioningService : ICaptioningService
             }
             finally
             {
+                mediaEmbed?.Dispose();
                 _inferencelock.Release();
             }
         }
@@ -436,7 +591,7 @@ public sealed class CaptioningService : ICaptioningService
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Error generating caption for {ImagePath}", imagePath);
+            LogError($"Error generating caption for {fileLabel}", ex);
             return CaptioningResult.Failed(imagePath, $"Error generating caption: {ex.Message}");
         }
     }
@@ -466,8 +621,15 @@ public sealed class CaptioningService : ICaptioningService
                 <|im_start|>assistant
                 """,
 
-            // Qwen 3 VL uses ChatML format (same as 2.5)
-            CaptioningModelType.Qwen3_VL_8B => $"""
+            // Qwen 3 VL uses ChatML format (same as 2.5). Every Qwen3-VL-8B
+            // derivative we ship — the vanilla upstream weights, the
+            // abliterated Q8, the Caption-it fine-tune, and the NSFW-Caption
+            // V4 fine-tune — shares the same architecture and prompt template;
+            // only the trained weights differ. Keep them coalesced so adding
+            // another sibling variant later is one enum value, no new branch.
+            CaptioningModelType.Qwen3_VL_8B
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4 => $"""
                 <|im_start|>system
                 You are a helpful assistant.<|im_end|>
                 <|im_start|>user
@@ -476,7 +638,8 @@ public sealed class CaptioningService : ICaptioningService
                 <|im_start|>assistant
                 """,
 
-            _ => throw new ArgumentOutOfRangeException(nameof(modelType))
+            _ => throw new ArgumentOutOfRangeException(nameof(modelType),
+                $"BuildPrompt has no template defined for {modelType}.")
         };
     }
 
@@ -489,7 +652,10 @@ public sealed class CaptioningService : ICaptioningService
         {
             CaptioningModelType.LLaVA_v1_6_34B => ["USER:", "</s>"],
             CaptioningModelType.Qwen2_5_VL_7B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
-            CaptioningModelType.Qwen3_VL_8B => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
+            CaptioningModelType.Qwen3_VL_8B
+                or CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption
+                or CaptioningModelType.Qwen3_VL_8B_NSFW_Caption_V4
+                => ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             _ => []
         };
     }

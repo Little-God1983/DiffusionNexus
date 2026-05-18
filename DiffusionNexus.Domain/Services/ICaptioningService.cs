@@ -157,7 +157,7 @@ public interface ICaptioningService : IDisposable
     IReadOnlyList<CaptioningModelInfo> GetAllModels();
 
     /// <summary>
-    /// Downloads a model from HuggingFace.
+    /// Downloads a model from HuggingFace into the default Core models folder.
     /// </summary>
     /// <param name="modelType">The model to download.</param>
     /// <param name="progress">Optional progress callback.</param>
@@ -165,6 +165,45 @@ public interface ICaptioningService : IDisposable
     /// <returns>True if download succeeded.</returns>
     Task<bool> DownloadModelAsync(
         CaptioningModelType modelType,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads a non-tiered captioning model into a specific destination
+    /// directory (e.g. a ComfyUI install's Captioning subfolder).
+    /// </summary>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        string destinationDirectory,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads a VRAM-tiered captioning model. The implementation selects
+    /// the largest quantization that fits the given VRAM budget (8/12/16/24/32 GB
+    /// are the canonical tiers) and fetches both the GGUF and matching mmproj.
+    /// For non-tiered models this falls through to the regular overload.
+    /// </summary>
+    /// <param name="modelType">The model to download.</param>
+    /// <param name="vramGb">User-selected VRAM budget in GB.</param>
+    /// <param name="progress">Optional progress callback.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if download succeeded.</returns>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads a VRAM-tiered captioning model into a specific destination
+    /// directory chosen by the user (e.g. a ComfyUI install's models folder).
+    /// Same tier-selection logic as the no-destination overload.
+    /// </summary>
+    Task<bool> DownloadModelAsync(
+        CaptioningModelType modelType,
+        int vramGb,
+        string destinationDirectory,
         IProgress<ModelDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default);
 

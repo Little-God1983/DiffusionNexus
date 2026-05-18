@@ -18,19 +18,45 @@ public partial class DiffusionNexusMainWindow : Window
             return;
         }
 
-        // Check if backup is in progress
-        if (!viewModel.IsBackupInProgress)
+        // Compose a single confirmation that covers both backup and download
+        // in-flight cases. We could fire two separate dialogs but stacking them
+        // is poor UX — one consolidated message lists everything at risk and
+        // asks once.
+        var hasBackup = viewModel.IsBackupInProgress;
+        var hasDownload = viewModel.IsDownloadInProgress;
+        if (!hasBackup && !hasDownload)
         {
             return;
         }
 
-        // Cancel the close and ask user
         e.Cancel = true;
+
+        var lines = new List<string>();
+        if (hasBackup)
+        {
+            lines.Add("• A backup is currently in progress and will be aborted.");
+        }
+        if (hasDownload)
+        {
+            var name = string.IsNullOrWhiteSpace(viewModel.ActiveDownloadName)
+                ? "A model download"
+                : $"'{viewModel.ActiveDownloadName}'";
+            lines.Add($"• {name} is currently downloading — the partial file will be discarded.");
+        }
+        lines.Add(string.Empty);
+        lines.Add("Are you sure you want to close?");
+
+        var title = (hasBackup, hasDownload) switch
+        {
+            (true, true) => "Backup and Download In Progress",
+            (true, false) => "Backup In Progress",
+            _ => "Download In Progress"
+        };
 
         var result = await MessageBox.Show(
             this,
-            "A backup is currently in progress. If you close now, the backup will be aborted.\n\nAre you sure you want to close?",
-            "Backup In Progress",
+            string.Join("\n", lines),
+            title,
             MessageBox.MessageBoxButtons.YesNo,
             MessageBox.MessageBoxIcon.Warning);
 
