@@ -356,6 +356,11 @@ public partial class ImageEditView : UserControl
         EventHandler onOutpaintActivated = (_, _) =>
         {
             _imageEditorCanvas!.IsOutpaintToolActive = true;
+            // Push initial state into the VM so the "Drag the arrows" hint shows immediately
+            // without waiting for a RegionChanged event.
+            var tool = _imageEditorCanvas.EditorCore.OutpaintTool;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.Outpainting.UpdateResolution(w, h, tool.ImagePixelWidth, tool.ImagePixelHeight, tool.HasExtension);
         };
         imageEditor.Outpainting.OutpaintToolActivated += onOutpaintActivated;
         _eventCleanup.Add(() => imageEditor.Outpainting.OutpaintToolActivated -= onOutpaintActivated);
@@ -387,8 +392,9 @@ public partial class ImageEditView : UserControl
 
         EventHandler onOutpaintRegionChanged = (_, _) =>
         {
-            var (w, h) = _imageEditorCanvas!.EditorCore.OutpaintTool.GetNewDimensions();
-            imageEditor.Outpainting.UpdateResolution(w, h);
+            var tool = _imageEditorCanvas!.EditorCore.OutpaintTool;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.Outpainting.UpdateResolution(w, h, tool.ImagePixelWidth, tool.ImagePixelHeight, tool.HasExtension);
         };
         _imageEditorCanvas!.OutpaintRegionChanged += onOutpaintRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.OutpaintRegionChanged -= onOutpaintRegionChanged);
@@ -417,13 +423,6 @@ public partial class ImageEditView : UserControl
                 pendingExtendTop = extTop;
                 pendingExtendRight = extRight;
                 pendingExtendBottom = extBottom;
-
-                if (extLeft + extTop + extRight + extBottom <= 0)
-                {
-                    imageEditor.StatusMessage = "Drag the outpaint arrows to extend the canvas before generating.";
-                    imageEditor.Outpainting.RefreshCommandStates();
-                    return;
-                }
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
 
