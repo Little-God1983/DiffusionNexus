@@ -15,6 +15,17 @@ public enum OutpaintHandle
 }
 
 /// <summary>
+/// How aggressive the current outpaint extension is, relative to the source image area.
+/// Drives the canvas accent color and the panel warning.
+/// </summary>
+public enum OutpaintSeverity
+{
+    None,
+    Caution,
+    Strong
+}
+
+/// <summary>
 /// Platform-independent outpainting tool that allows extending the canvas beyond the original image.
 /// Renders directional arrow handles on each edge that can be dragged outward only.
 /// Stores extension amounts in pixels relative to the original image dimensions.
@@ -94,6 +105,36 @@ public class OutpaintTool
     /// Gets whether any extension has been applied.
     /// </summary>
     public bool HasExtension => _extendTop > 0 || _extendRight > 0 || _extendBottom > 0 || _extendLeft > 0;
+
+    /// <summary>
+    /// Area of the extended canvas divided by the area of the original image. Returns 1.0 when
+    /// no extension is present or the source dimensions are unknown.
+    /// </summary>
+    public float AreaRatio
+    {
+        get
+        {
+            if (ImagePixelWidth <= 0 || ImagePixelHeight <= 0) return 1f;
+            var (newW, newH) = GetNewDimensions();
+            var orig = (long)ImagePixelWidth * ImagePixelHeight;
+            if (orig <= 0) return 1f;
+            return (float)((long)newW * newH) / orig;
+        }
+    }
+
+    /// <summary>
+    /// Severity tier based on <see cref="AreaRatio"/>: ≥1.60 → Strong, ≥1.30 → Caution, otherwise None.
+    /// </summary>
+    public OutpaintSeverity Severity
+    {
+        get
+        {
+            var ratio = AreaRatio;
+            if (ratio >= 1.60f) return OutpaintSeverity.Strong;
+            if (ratio >= 1.30f) return OutpaintSeverity.Caution;
+            return OutpaintSeverity.None;
+        }
+    }
 
     /// <summary>
     /// Gets whether a handle is currently being dragged.
@@ -317,12 +358,25 @@ public class OutpaintTool
             _imageRect.Bottom + _extendBottom * pixelsPerScreenY);
     }
 
+    /// <summary>
+    /// Base accent color (RGB only, alpha is applied at the call site) that reflects the
+    /// current severity tier: green / amber / red‑orange.
+    /// </summary>
+    private SKColor GetAccentBaseColor() => Severity switch
+    {
+        OutpaintSeverity.Strong => new SKColor(255, 87, 34),    // red‑orange
+        OutpaintSeverity.Caution => new SKColor(255, 193, 7),   // amber
+        _ => new SKColor(76, 175, 80),                          // green
+    };
+
     private void DrawExtensionRegion(SKCanvas canvas, SKRect canvasBounds, SKRect extendedRect)
     {
-        // Draw a border around the extended area
+        var accent = GetAccentBaseColor();
+
+        // Draw a border around the extended area (accent color, severity-tinted)
         using var borderPaint = new SKPaint
         {
-            Color = new SKColor(76, 175, 80, 200), // Green border
+            Color = accent.WithAlpha(200),
             Style = SKPaintStyle.Stroke,
             StrokeWidth = 2f,
             IsAntialias = true,
@@ -333,7 +387,7 @@ public class OutpaintTool
         // Fill the extension areas (between extended rect and image rect) with a subtle pattern
         using var fillPaint = new SKPaint
         {
-            Color = new SKColor(76, 175, 80, 40),
+            Color = accent.WithAlpha(40),
             Style = SKPaintStyle.Fill
         };
 
@@ -498,6 +552,19 @@ public class OutpaintTool
             IsAntialias = true
         };
         canvas.DrawRoundRect(bgRect, 4f, 4f, bgPaint);
+
+        if (Severity != OutpaintSeverity.None)
+        {
+            using var labelStrokePaint = new SKPaint
+            {
+                Color = GetAccentBaseColor().WithAlpha(230),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.5f,
+                IsAntialias = true
+            };
+            canvas.DrawRoundRect(bgRect, 4f, 4f, labelStrokePaint);
+        }
+
         canvas.DrawText(text, labelX, labelY, font, textPaint);
     }
 
