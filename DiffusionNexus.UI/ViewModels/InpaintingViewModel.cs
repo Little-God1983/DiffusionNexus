@@ -94,13 +94,54 @@ public partial class InpaintingViewModel : ObservableObject
             () => _hasImage() && IsPanelOpen);
         GenerateCommand = new AsyncRelayCommand(
             ExecuteGenerateAsync,
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && IsReadinessClickable(Readiness));
         GenerateAndCompareCommand = new AsyncRelayCommand(
             ExecuteGenerateAndCompareAsync,
-            () => _hasImage() && IsPanelOpen && !IsBusy);
+            () => _hasImage() && IsPanelOpen && !IsBusy && IsReadinessClickable(Readiness));
         UseCurrentAsBaseCommand = new RelayCommand(
             () => SetBaseRequested?.Invoke(this, EventArgs.Empty),
             () => _hasImage() && IsPanelOpen);
+
+        // Re-evaluate Generate CanExecute when readiness flips, so the buttons grey out
+        // automatically once the workload reports as not fully installed (matching what
+        // the Installer Manager workload dialog would show).
+        Readiness.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
+                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                GenerateCommand.NotifyCanExecuteChanged();
+                GenerateAndCompareCommand.NotifyCanExecuteChanged();
+            }
+        };
+    }
+
+    /// <summary>
+    /// A feature is clickable once readiness either reports ready, or readiness has never
+    /// been checked yet (initial state — the button shouldn't be disabled before we know).
+    /// As soon as the first check completes with <c>IsReady=false</c>, the button greys out.
+    /// </summary>
+    private static bool IsReadinessClickable(ComfyUIReadinessViewModel readiness) =>
+        !readiness.HasChecked || readiness.IsReady;
+
+    /// <summary>
+    /// Runs the inpainting readiness check. Fired automatically when the panel opens so the
+    /// Generate buttons reflect installation state without the user having to press "Check".
+    /// </summary>
+    private async Task RunReadinessCheckAsync()
+    {
+        try
+        {
+            await Readiness.CheckReadinessAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation during panel close — nothing to do.
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Inpaint readiness check failed");
+        }
     }
 
     /// <summary>Unified readiness check for the Inpainting feature (server, nodes, models).</summary>
@@ -120,6 +161,7 @@ public partial class InpaintingViewModel : ObservableObject
                 {
                     _deactivateOtherTools(ImageEditor.Services.ToolIds.Inpainting);
                     StatusMessageChanged?.Invoke(this, "Inpaint: Paint over areas to mark them for AI regeneration.");
+                    _ = RunReadinessCheckAsync();
 
                     if (!HasBase)
                         SetBaseRequested?.Invoke(this, EventArgs.Empty);
@@ -520,6 +562,8 @@ public partial class InpaintingViewModel : ObservableObject
 
     private async Task ExecuteGenerateAsync()
     {
+        if (!CheckReadinessOrReport()) return;
+
         if (string.IsNullOrWhiteSpace(_positivePrompt))
         {
             StatusMessageChanged?.Invoke(this, "Please enter a prompt describing what to generate.");
@@ -545,6 +589,8 @@ public partial class InpaintingViewModel : ObservableObject
 
     private async Task ExecuteGenerateAndCompareAsync()
     {
+        if (!CheckReadinessOrReport()) return;
+
         if (string.IsNullOrWhiteSpace(_positivePrompt))
         {
             StatusMessageChanged?.Invoke(this, "Please enter a prompt describing what to generate.");
@@ -566,6 +612,25 @@ public partial class InpaintingViewModel : ObservableObject
         GenerateRequested?.Invoke(this, EventArgs.Empty);
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Surfaces a clear status message and returns <c>false</c> when readiness has already
+    /// reported the workload as not fully installed, so the click is short-circuited before
+    /// any image-export or upload work happens.
+    /// </summary>
+    private bool CheckReadinessOrReport()
+    {
+        if (Readiness.HasChecked && !Readiness.IsReady)
+        {
+            var detail = Readiness.MissingRequirements.Count > 0
+                ? Readiness.MissingRequirements[0]
+                : "Required nodes or models are missing.";
+            StatusMessageChanged?.Invoke(this, detail);
+            return false;
+        }
+
+        return true;
     }
 
     private void OnFinished()

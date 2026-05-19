@@ -122,10 +122,62 @@ public partial class OutpaintingViewModel : ObservableObject
         SetAspectRatioCommand = new RelayCommand<string>(ExecuteSetAspectRatio, _ => _hasImage() && IsPanelOpen);
         GenerateCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: false),
-            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension && IsReadinessClickable(Readiness));
         GenerateVisionCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: true),
-            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension && IsReadinessClickable(VisionReadiness));
+
+        // Re-evaluate Generate / Generate (Vision) CanExecute whenever the matching readiness
+        // view-model finishes a check — otherwise the buttons stay enabled after the workload
+        // status flips from Full → Partial (or vice versa) without a user-driven property change.
+        Readiness.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
+                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                GenerateCommand.NotifyCanExecuteChanged();
+            }
+        };
+        VisionReadiness.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
+                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                GenerateVisionCommand.NotifyCanExecuteChanged();
+            }
+        };
+    }
+
+    /// <summary>
+    /// A feature is clickable once readiness either reports ready, or readiness has never
+    /// been checked yet (initial state — the button shouldn't be disabled before we know).
+    /// As soon as the first check completes with <c>IsReady=false</c>, the button greys out.
+    /// </summary>
+    private static bool IsReadinessClickable(ComfyUIReadinessViewModel readiness) =>
+        !readiness.HasChecked || readiness.IsReady;
+
+    /// <summary>
+    /// Runs both readiness checks in parallel. Fired automatically when the panel opens
+    /// so the Generate / Generate (Vision) buttons reflect installation state without the
+    /// user having to press the "Check" button. Outpaint and OutpaintVision share an SDK
+    /// workload, so both checks resolve against the same disk state.
+    /// </summary>
+    private async Task RunReadinessChecksAsync()
+    {
+        try
+        {
+            await Task.WhenAll(
+                Readiness.CheckReadinessAsync(),
+                VisionReadiness.CheckReadinessAsync());
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation during panel close — nothing to do.
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Outpaint readiness checks failed");
+        }
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
@@ -149,6 +201,7 @@ public partial class OutpaintingViewModel : ObservableObject
                     _deactivateOtherTools(ToolIds.Outpainting);
                     OutpaintToolActivated?.Invoke(this, EventArgs.Empty);
                     StatusMessageChanged?.Invoke(this, "Outpaint: Drag arrows to extend the canvas. Use aspect ratio presets on the right.");
+                    _ = RunReadinessChecksAsync();
                 }
                 else
                 {
@@ -483,6 +536,19 @@ public partial class OutpaintingViewModel : ObservableObject
         // Clear any stale error display from a previous attempt before validating,
         // so the user always gets visual feedback that the click registered.
         ResetErrorState();
+
+        // Short-circuit before any IO when the backing workload isn't fully installed.
+        // Same source of truth as the Installer Manager — if the workload would show as
+        // Partial/None there, no Generate attempt should reach the upload step.
+        var readiness = useVision ? VisionReadiness : Readiness;
+        if (readiness.HasChecked && !readiness.IsReady)
+        {
+            var detail = readiness.MissingRequirements.Count > 0
+                ? readiness.MissingRequirements[0]
+                : "Required nodes or models are missing.";
+            ReportValidationError(detail);
+            return;
+        }
 
         if (!useVision && string.IsNullOrWhiteSpace(_positivePrompt))
         {

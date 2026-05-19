@@ -787,6 +787,11 @@ public partial class App : Application
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
 
+        // Workload installation checker — bridges feature readiness to the same disk-walking
+        // logic the Installer Manager workload dialog uses. Singleton; resolves scoped
+        // dependencies per call via IServiceProvider.
+        services.AddSingleton<Domain.Services.IWorkloadInstallationChecker, WorkloadInstallationCheckerAdapter>();
+
         // Workload installer (singleton - clones custom nodes + downloads models)
         services.AddSingleton<IWorkloadInstallService>(sp =>
             new WorkloadInstallService(
@@ -817,11 +822,14 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
-        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature)
+        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature).
+        // The workload checker bridges to the same disk-walking logic the Installer Manager uses,
+        // so a feature reports "Ready" iff its backing workload would show as "Full" in the dialog.
         services.AddSingleton<IComfyUIReadinessService>(sp =>
             new ComfyUIReadinessService(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>()));
+                sp.GetRequiredService<IAppSettingsService>(),
+                sp.GetService<Domain.Services.IWorkloadInstallationChecker>()));
 
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();

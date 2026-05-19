@@ -740,6 +740,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
+        // Defensive short-circuit: if readiness has flipped to "not ready" between the
+        // CanExecute check and the click, surface the same message the readiness panel
+        // shows so the user isn't left wondering why nothing happens.
+        var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+        if (requiredReadiness.HasChecked && !requiredReadiness.IsReady)
+        {
+            CurrentProcessingStatus = requiredReadiness.MissingRequirements.Count > 0
+                ? requiredReadiness.MissingRequirements[0]
+                : "Required nodes or models are missing.";
+            return;
+        }
+
         // --- Single Image Mode ---
         if (IsSingleImageMode)
         {
