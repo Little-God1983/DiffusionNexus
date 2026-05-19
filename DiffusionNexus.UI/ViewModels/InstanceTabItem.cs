@@ -1,7 +1,7 @@
 using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -115,17 +115,6 @@ public partial class InstanceTabItem : ObservableObject
             _ => "avares://DiffusionNexus.UI/Assets/Installer.png"
         };
 
-        try
-        {
-            using var assetStream = AssetLoader.Open(new Uri(assetPath));
-            var ms = new MemoryStream();
-            assetStream.CopyTo(ms);
-            ms.Position = 0;
-            return new Bitmap(ms);
-        }
-        catch
-        {
-            return null;
-        }
+        return SafeAssetBitmap.Load(assetPath);
     }
 }

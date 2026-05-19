@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views;
@@ -8,6 +9,7 @@ public partial class DiffusionNexusMainWindow : Window
     public DiffusionNexusMainWindow()
     {
         InitializeComponent();
+        Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
         Closing += OnWindowClosing;
     }
 

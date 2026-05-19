@@ -46,28 +46,7 @@ public partial class ModuleItem : ObservableObject
         _name = name;
         _view = view;
         _isVisible = isVisible;
-        
-        if (string.IsNullOrEmpty(iconPath))
-            return;
-
-        try
-        {
-            using var stream = AssetLoader.Open(new Uri(iconPath));
-            if (stream is null)
-            {
-                Serilog.Log.Warning("Asset not found: {IconPath}", iconPath);
-                return;
-            }
-
-            _icon = new Bitmap(stream);
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex,
-                "Module icon decode failed for {IconPath}. Skia cannot decode .ico; use PNG/JPEG/WebP.",
-                iconPath);
-            _icon = null;
-        }
+        _icon = SafeAssetBitmap.Load(iconPath);
     }
 }
 
