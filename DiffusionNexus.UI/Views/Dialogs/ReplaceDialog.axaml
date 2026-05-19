@@ -8,8 +8,7 @@
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="#252526"
-        Title="Replace Image"
-        Icon="avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png">
+        Title="Replace Image">
   
   <Grid RowDefinitions="Auto,*,Auto">
       <StackPanel>

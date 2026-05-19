@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.ImageEditor.Services;
 using Serilog;
 
@@ -94,13 +95,17 @@ public partial class OutpaintingViewModel : ObservableObject
     private string? _progressDisplayText;
     private int _lastDisplayTextIndex = -1;
 
+    private readonly IUnifiedLogger? _unifiedLogger;
+    private const string LogSource = "Outpaint";
+
     public OutpaintingViewModel(
         Func<bool> hasImage,
         Func<int> getImageWidth,
         Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(getImageWidth);
@@ -112,6 +117,7 @@ public partial class OutpaintingViewModel : ObservableObject
         _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
         _comfyUiService = comfyUiService;
+        _unifiedLogger = unifiedLogger;
 
         Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Outpaint);
         VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.OutpaintVision);
@@ -122,10 +128,104 @@ public partial class OutpaintingViewModel : ObservableObject
         SetAspectRatioCommand = new RelayCommand<string>(ExecuteSetAspectRatio, _ => _hasImage() && IsPanelOpen);
         GenerateCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: false),
-            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension && IsReadinessClickable(Readiness));
         GenerateVisionCommand = new AsyncRelayCommand(
             () => ExecuteGenerateAsync(useVision: true),
-            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension);
+            () => _hasImage() && IsPanelOpen && !IsBusy && HasExtension && IsReadinessClickable(VisionReadiness));
+
+        // Re-evaluate Generate / Generate (Vision) CanExecute whenever the matching readiness
+        // view-model finishes a check — otherwise the buttons stay enabled after the workload
+        // status flips from Full → Partial (or vice versa) without a user-driven property change.
+        Readiness.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
+                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                GenerateCommand.NotifyCanExecuteChanged();
+                LogCanExecuteState($"after Readiness.{args.PropertyName}");
+            }
+
+            // The reusable readiness panel's "Check" button only triggers Readiness — not
+            // VisionReadiness. Both back the same SDK workload, so when Readiness finishes a
+            // check we also re-run Vision so its state doesn't go stale (e.g. left as
+            // ServerOffline from a prior run before ComfyUI was started).
+            if (args.PropertyName == nameof(ComfyUIReadinessViewModel.IsChecking)
+                && !Readiness.IsChecking
+                && !VisionReadiness.IsChecking)
+            {
+                _ = VisionReadiness.CheckReadinessAsync();
+            }
+        };
+        VisionReadiness.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
+                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            {
+                GenerateVisionCommand.NotifyCanExecuteChanged();
+                LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
+            }
+        };
+    }
+
+    /// <summary>
+    /// A feature is clickable once readiness either reports ready, or readiness has never
+    /// been checked yet (initial state — the button shouldn't be disabled before we know).
+    /// As soon as the first check completes with <c>IsReady=false</c>, the button greys out.
+    /// </summary>
+    private static bool IsReadinessClickable(ComfyUIReadinessViewModel readiness) =>
+        !readiness.HasChecked || readiness.IsReady;
+
+    /// <summary>
+    /// Runs both readiness checks in parallel. Fired automatically when the panel opens
+    /// so the Generate / Generate (Vision) buttons reflect installation state without the
+    /// user having to press the "Check" button. Outpaint and OutpaintVision share an SDK
+    /// workload, so both checks resolve against the same disk state.
+    /// </summary>
+    private async Task RunReadinessChecksAsync()
+    {
+        try
+        {
+            EmitInfo("starting readiness checks (Outpaint + OutpaintVision)");
+            await Task.WhenAll(
+                Readiness.CheckReadinessAsync(),
+                VisionReadiness.CheckReadinessAsync());
+            LogCanExecuteState("after readiness check");
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation during panel close — nothing to do.
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Outpaint readiness checks failed");
+            _unifiedLogger?.Warn(LogCategory.Configuration, LogSource,
+                $"Readiness checks failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Logs the value of every CanExecute gate for Generate and Generate (Vision), so when
+    /// a user reports "the button is disabled" the log clearly says which gate is blocking.
+    /// Cheap (just bool reads + one log line) and only fires on readiness completion and on
+    /// generate-button clicks, not on every WPF CanExecute poll.
+    /// </summary>
+    private void LogCanExecuteState(string context)
+    {
+        var message =
+            $"CanExecute ({context}): hasImage={_hasImage()}, panelOpen={IsPanelOpen}, " +
+            $"isBusy={IsBusy}, hasExtension={HasExtension}, " +
+            $"outpaintReady={Readiness.IsReady} (checked={Readiness.HasChecked}), " +
+            $"visionReady={VisionReadiness.IsReady} (checked={VisionReadiness.HasChecked}) " +
+            $"→ Generate={GenerateCommand.CanExecute(null)}, " +
+            $"GenerateVision={GenerateVisionCommand.CanExecute(null)}";
+        EmitInfo(message);
+    }
+
+    /// <summary>Emits to both Serilog (file) and the in-app unified console when available.</summary>
+    private void EmitInfo(string message)
+    {
+        Logger.Information("Outpaint: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
@@ -149,6 +249,7 @@ public partial class OutpaintingViewModel : ObservableObject
                     _deactivateOtherTools(ToolIds.Outpainting);
                     OutpaintToolActivated?.Invoke(this, EventArgs.Empty);
                     StatusMessageChanged?.Invoke(this, "Outpaint: Drag arrows to extend the canvas. Use aspect ratio presets on the right.");
+                    _ = RunReadinessChecksAsync();
                 }
                 else
                 {
@@ -182,7 +283,10 @@ public partial class OutpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _hasExtension, value))
+            {
+                EmitInfo($"HasExtension → {value}");
                 NotifyGenerateCommandsCanExecuteChanged();
+            }
         }
     }
 
@@ -480,9 +584,24 @@ public partial class OutpaintingViewModel : ObservableObject
 
     private async Task ExecuteGenerateAsync(bool useVision)
     {
+        LogCanExecuteState(useVision ? "click Generate (Vision)" : "click Generate");
+
         // Clear any stale error display from a previous attempt before validating,
         // so the user always gets visual feedback that the click registered.
         ResetErrorState();
+
+        // Short-circuit before any IO when the backing workload isn't fully installed.
+        // Same source of truth as the Installer Manager — if the workload would show as
+        // Partial/None there, no Generate attempt should reach the upload step.
+        var readiness = useVision ? VisionReadiness : Readiness;
+        if (readiness.HasChecked && !readiness.IsReady)
+        {
+            var detail = readiness.MissingRequirements.Count > 0
+                ? readiness.MissingRequirements[0]
+                : "Required nodes or models are missing.";
+            ReportValidationError(detail);
+            return;
+        }
 
         if (!useVision && string.IsNullOrWhiteSpace(_positivePrompt))
         {

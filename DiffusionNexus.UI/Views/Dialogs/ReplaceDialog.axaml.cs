@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
@@ -12,7 +13,8 @@ public partial class ReplaceDialog : Window, IDialogCloseable
     public ReplaceDialog()
     {
         InitializeComponent();
-        
+        Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
+
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);

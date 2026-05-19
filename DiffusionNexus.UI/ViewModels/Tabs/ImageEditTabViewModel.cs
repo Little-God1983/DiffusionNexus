@@ -266,7 +266,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -276,7 +277,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _readinessService = readinessService;
 
         // Create the image editor with background removal service
-        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService);
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger);
 
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;
