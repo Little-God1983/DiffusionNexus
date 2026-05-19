@@ -5,6 +5,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:m="using:DiffusionNexus.UI.Markup"
              mc:Ignorable="d"
              d:DesignWidth="1200"
              d:DesignHeight="900"
@@ -214,7 +215,7 @@
                 Opacity="0.9"
                 IsHitTestVisible="False">
           <StackPanel Orientation="Vertical" Spacing="4">
-            <Image Source="avares://DiffusionNexus.UI/Assets/mouse.png"
+            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/mouse.png}"
                    Width="280"
                    Stretch="Uniform"
                    HorizontalAlignment="Center"/>

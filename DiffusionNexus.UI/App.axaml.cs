@@ -788,6 +788,16 @@ public partial class App : Application
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
 
+        // Workload installation checker — bridges feature readiness to the same disk-walking
+        // logic the Installer Manager workload dialog uses. Singleton; resolves scoped
+        // dependencies per call via IServiceProvider. Also gets the unified logger so the
+        // per-install check results land in the in-app console.
+        services.AddSingleton<Domain.Services.IWorkloadInstallationChecker>(sp =>
+            new WorkloadInstallationCheckerAdapter(
+                sp,
+                sp.GetRequiredService<IConfigurationCheckerService>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         // Workload installer (singleton - clones custom nodes + downloads models)
         services.AddSingleton<IWorkloadInstallService>(sp =>
             new WorkloadInstallService(
@@ -818,11 +828,16 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
-        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature)
+        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature).
+        // The workload checker bridges to the same disk-walking logic the Installer Manager uses,
+        // so a feature reports "Ready" iff its backing workload would show as "Full" in the dialog.
+        // The unified logger plumb-through makes readiness decisions visible in the in-app console.
         services.AddSingleton<IComfyUIReadinessService>(sp =>
             new ComfyUIReadinessService(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>()));
+                sp.GetRequiredService<IAppSettingsService>(),
+                sp.GetService<Domain.Services.IWorkloadInstallationChecker>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
@@ -961,7 +976,8 @@ public partial class App : Application
             sp.GetService<AnalysisRunStore>(),
             sp.GetService<DuplicateDetector>(),
             sp.GetService<ColorDistributionAnalyzer>(),
-            sp.GetService<IDownloadCoordinator>()));
+            sp.GetService<IDownloadCoordinator>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
     }
 
     /// <summary>

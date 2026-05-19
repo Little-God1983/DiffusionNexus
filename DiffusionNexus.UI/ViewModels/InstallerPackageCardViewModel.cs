@@ -255,19 +255,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             _ => "avares://DiffusionNexus.UI/Assets/Installer.png"
         };
 
-        try
-        {
-            using var assetStream = AssetLoader.Open(new Uri(assetPath));
-            var ms = new MemoryStream();
-            assetStream.CopyTo(ms);
-            ms.Position = 0;
-            return new Bitmap(ms);
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Failed to load installer logo from {AssetPath}", assetPath);
-            return null;
-        }
+        return SafeAssetBitmap.Load(assetPath);
     }
 
     /// <summary>
