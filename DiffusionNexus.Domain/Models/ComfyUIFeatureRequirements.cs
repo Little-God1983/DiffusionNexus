@@ -15,12 +15,20 @@ namespace DiffusionNexus.Domain.Models;
 /// Models the feature needs. Each entry pairs a node type + input name (used to query
 /// <c>/object_info</c>) with the expected model substring.
 /// An empty list means no model verification is needed (or the model auto-downloads).
+/// Only consulted when <see cref="WorkloadConfigurationId"/> is <c>null</c>.
+/// </param>
+/// <param name="WorkloadConfigurationId">
+/// Optional SDK <c>InstallationConfiguration.Id</c> backing this feature. When set, the
+/// readiness service consults the disk-based workload checker (matching what the
+/// Installer Manager workload dialog reports) instead of the legacy <c>/object_info</c>
+/// model query. The legacy <see cref="RequiredModels"/> entries are ignored in that case.
 /// </param>
 public sealed record ComfyUIFeatureRequirements(
     Enums.ComfyUIFeature Feature,
     string DisplayName,
     IReadOnlyList<string> RequiredNodeTypes,
-    IReadOnlyList<ModelRequirement> RequiredModels);
+    IReadOnlyList<ModelRequirement> RequiredModels,
+    Guid? WorkloadConfigurationId = null);
 
 /// <summary>
 /// Describes a single model that must be present on the ComfyUI server for a feature to work.

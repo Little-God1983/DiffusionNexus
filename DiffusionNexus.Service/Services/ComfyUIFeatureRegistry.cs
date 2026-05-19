@@ -19,6 +19,18 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public static class ComfyUIFeatureRegistry
 {
+    // SDK workload ids backing each feature. The readiness service uses these to delegate to
+    // IWorkloadInstallationChecker (same source the Installer Manager workload dialog uses)
+    // instead of the legacy /object_info-based model probe.
+    //
+    // IMPORTANT: these must be declared BEFORE the Registry field below — static field
+    // initializers run in textual order, and Registry's BuildRegistry() call references
+    // these values. If they're declared afterwards they read as Guid.Empty.
+    private static readonly Guid CaptioningWorkloadId      = new("701DA214-2B25-44B4-A904-E4B036621564"); // Captioning-Qwen-3-VL
+    private static readonly Guid InpaintingWorkloadId      = new("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A"); // Inpainting-Qwen 2512
+    private static readonly Guid OutpaintWorkloadId        = new("137929E4-5C05-4304-80D4-5D785D45FD3F"); // Outpainting-Qwen 2512 (covers Vision variant — same workload installs Qwen3-VL nodes)
+    private static readonly Guid BatchUpscaleWorkloadId    = new("B853EB7C-0A0E-48A6-985E-E32B2F8848F5"); // Upscaling-Z-Image-Turbo (covers Vision variant)
+
     private static readonly Dictionary<ComfyUIFeature, ComfyUIFeatureRequirements> Registry = BuildRegistry();
 
     /// <summary>
@@ -52,7 +64,8 @@ public static class ComfyUIFeatureRegistry
                     DisplayName: "Qwen3-VL-4B-Instruct-FP8",
                     ApproximateSizeDescription: "~8 GB",
                     AutoDownloads: true)
-            ]);
+            ],
+            WorkloadConfigurationId: CaptioningWorkloadId);
 
         // ── Inpainting (Inpaint-Qwen-2512.json) ────────────────────────────
         // Custom nodes: UnetLoaderGGUF, ControlNetInpaintingAliMamaApply
@@ -71,7 +84,8 @@ public static class ComfyUIFeatureRegistry
                     DisplayName: "Qwen-Image-2512 GGUF",
                     ApproximateSizeDescription: "~8 GB",
                     AutoDownloads: true)
-            ]);
+            ],
+            WorkloadConfigurationId: InpaintingWorkloadId);
 
         // ── Batch Upscale (Z-Image-Turbo-Upscale.json) ─────────────────────
         // Custom nodes: UltimateSDUpscale, Power Lora Loader (rgthree)
@@ -81,7 +95,8 @@ public static class ComfyUIFeatureRegistry
             ComfyUIFeature.BatchUpscale,
             "Batch Upscale",
             RequiredNodeTypes: ["UltimateSDUpscale", "Power Lora Loader (rgthree)"],
-            RequiredModels: []);
+            RequiredModels: [],
+            WorkloadConfigurationId: BatchUpscaleWorkloadId);
 
         // ── Batch Upscale + Vision (Vision-Z-Image-Turbo-Upscale.json) ──────
         // Same as BatchUpscale plus Qwen3_VQA and SomethingToString for auto-prompt.
@@ -98,7 +113,8 @@ public static class ComfyUIFeatureRegistry
                     DisplayName: "Qwen3-VL-4B-Instruct-FP8",
                     ApproximateSizeDescription: "~8 GB",
                     AutoDownloads: true)
-            ]);
+            ],
+            WorkloadConfigurationId: BatchUpscaleWorkloadId);
 
         // ── Outpaint (Qwen-Image-2512-outpaint-nonVision.json) ──────────────
         // Custom nodes: UnetLoaderGGUF, ControlNetInpaintingAliMamaApply,
@@ -125,10 +141,14 @@ public static class ComfyUIFeatureRegistry
                     DisplayName: "Qwen-Image-InstantX-ControlNet-Inpainting",
                     ApproximateSizeDescription: "~2 GB",
                     AutoDownloads: true)
-            ]);
+            ],
+            WorkloadConfigurationId: OutpaintWorkloadId);
 
         // ── Outpaint Vision (Qwen-Image-2512-outpaint-Vision.json) ──────────
         // Same as Outpaint plus Qwen3_VQA + SomethingToString for auto-prompt.
+        // The Outpainting-Qwen 2512 SDK workload already includes the Qwen3-VL Instruct
+        // custom node + the Qwen 3 VL placeholder model, so both Vision and nonVision
+        // map to the same workload id.
         registry[ComfyUIFeature.OutpaintVision] = new ComfyUIFeatureRequirements(
             ComfyUIFeature.OutpaintVision,
             "Outpaint (Vision Auto-Prompt)",
@@ -156,7 +176,8 @@ public static class ComfyUIFeatureRegistry
                     DisplayName: "Qwen3-VL-4B-Instruct-FP8",
                     ApproximateSizeDescription: "~8 GB",
                     AutoDownloads: true)
-            ]);
+            ],
+            WorkloadConfigurationId: OutpaintWorkloadId);
 
         return registry;
     }
