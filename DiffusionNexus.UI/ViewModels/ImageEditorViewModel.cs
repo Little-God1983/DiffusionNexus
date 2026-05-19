@@ -176,7 +176,7 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Formatted image dimensions for display.</summary>
-    public string ImageDimensions => HasImage ? $"{ImageWidth} × {ImageHeight}" : string.Empty;
+    public string ImageDimensions => HasImage ? $"{ImageWidth} ï¿½ {ImageHeight}" : string.Empty;
 
     /// <summary>Whether the crop tool is currently active.</summary>
     public bool IsCropToolActive
@@ -273,7 +273,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Combined image info for display.</summary>
     public string ImageInfo => HasImage
-        ? $"Size: {ImageWidth} × {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
+        ? $"Size: {ImageWidth} ï¿½ {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
     #endregion
@@ -345,7 +345,8 @@ public partial class ImageEditorViewModel : ObservableObject
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
         EditorServices? services = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator;
         _services = services ?? EditorServiceFactory.Create();
@@ -358,7 +359,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
-        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService);
+        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();

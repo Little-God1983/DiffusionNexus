@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.ImageEditor.Services;
 using Serilog;
 
@@ -94,13 +95,17 @@ public partial class OutpaintingViewModel : ObservableObject
     private string? _progressDisplayText;
     private int _lastDisplayTextIndex = -1;
 
+    private readonly IUnifiedLogger? _unifiedLogger;
+    private const string LogSource = "Outpaint";
+
     public OutpaintingViewModel(
         Func<bool> hasImage,
         Func<int> getImageWidth,
         Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService = null,
-        IComfyUIReadinessService? readinessService = null)
+        IComfyUIReadinessService? readinessService = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(getImageWidth);
@@ -112,6 +117,7 @@ public partial class OutpaintingViewModel : ObservableObject
         _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
         _comfyUiService = comfyUiService;
+        _unifiedLogger = unifiedLogger;
 
         Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Outpaint);
         VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.OutpaintVision);
@@ -136,6 +142,18 @@ public partial class OutpaintingViewModel : ObservableObject
                                   or nameof(ComfyUIReadinessViewModel.HasChecked))
             {
                 GenerateCommand.NotifyCanExecuteChanged();
+                LogCanExecuteState($"after Readiness.{args.PropertyName}");
+            }
+
+            // The reusable readiness panel's "Check" button only triggers Readiness — not
+            // VisionReadiness. Both back the same SDK workload, so when Readiness finishes a
+            // check we also re-run Vision so its state doesn't go stale (e.g. left as
+            // ServerOffline from a prior run before ComfyUI was started).
+            if (args.PropertyName == nameof(ComfyUIReadinessViewModel.IsChecking)
+                && !Readiness.IsChecking
+                && !VisionReadiness.IsChecking)
+            {
+                _ = VisionReadiness.CheckReadinessAsync();
             }
         };
         VisionReadiness.PropertyChanged += (_, args) =>
@@ -144,6 +162,7 @@ public partial class OutpaintingViewModel : ObservableObject
                                   or nameof(ComfyUIReadinessViewModel.HasChecked))
             {
                 GenerateVisionCommand.NotifyCanExecuteChanged();
+                LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
             }
         };
     }
@@ -166,9 +185,11 @@ public partial class OutpaintingViewModel : ObservableObject
     {
         try
         {
+            EmitInfo("starting readiness checks (Outpaint + OutpaintVision)");
             await Task.WhenAll(
                 Readiness.CheckReadinessAsync(),
                 VisionReadiness.CheckReadinessAsync());
+            LogCanExecuteState("after readiness check");
         }
         catch (OperationCanceledException)
         {
@@ -177,7 +198,34 @@ public partial class OutpaintingViewModel : ObservableObject
         catch (Exception ex)
         {
             Logger.Warning(ex, "Outpaint readiness checks failed");
+            _unifiedLogger?.Warn(LogCategory.Configuration, LogSource,
+                $"Readiness checks failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Logs the value of every CanExecute gate for Generate and Generate (Vision), so when
+    /// a user reports "the button is disabled" the log clearly says which gate is blocking.
+    /// Cheap (just bool reads + one log line) and only fires on readiness completion and on
+    /// generate-button clicks, not on every WPF CanExecute poll.
+    /// </summary>
+    private void LogCanExecuteState(string context)
+    {
+        var message =
+            $"CanExecute ({context}): hasImage={_hasImage()}, panelOpen={IsPanelOpen}, " +
+            $"isBusy={IsBusy}, hasExtension={HasExtension}, " +
+            $"outpaintReady={Readiness.IsReady} (checked={Readiness.HasChecked}), " +
+            $"visionReady={VisionReadiness.IsReady} (checked={VisionReadiness.HasChecked}) " +
+            $"→ Generate={GenerateCommand.CanExecute(null)}, " +
+            $"GenerateVision={GenerateVisionCommand.CanExecute(null)}";
+        EmitInfo(message);
+    }
+
+    /// <summary>Emits to both Serilog (file) and the in-app unified console when available.</summary>
+    private void EmitInfo(string message)
+    {
+        Logger.Information("Outpaint: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
@@ -235,7 +283,10 @@ public partial class OutpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _hasExtension, value))
+            {
+                EmitInfo($"HasExtension → {value}");
                 NotifyGenerateCommandsCanExecuteChanged();
+            }
         }
     }
 
@@ -533,6 +584,8 @@ public partial class OutpaintingViewModel : ObservableObject
 
     private async Task ExecuteGenerateAsync(bool useVision)
     {
+        LogCanExecuteState(useVision ? "click Generate (Vision)" : "click Generate");
+
         // Clear any stale error display from a previous attempt before validating,
         // so the user always gets visual feedback that the click registered.
         ResetErrorState();

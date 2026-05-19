@@ -294,7 +294,22 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     partial void OnShowInfoChanged(bool value) => ApplyFilters();
     partial void OnShowWarningChanged(bool value) => ApplyFilters();
     partial void OnShowErrorChanged(bool value) => ApplyFilters();
-    partial void OnCategoryFilterChanged(LogCategory? value) => ApplyFilters();
+    partial void OnCategoryFilterChanged(LogCategory? value)
+    {
+        // When the user explicitly switches the category away from InstanceManagement
+        // (e.g. picks "All Categories"), also drop the instance-tab selection so
+        // app-level entries — which carry their own source contexts, not the instance
+        // name/id — become visible again. Without this the user picks "All Categories"
+        // but ShouldInclude still demands a matching SelectedInstance source.
+        if (value != LogCategory.InstanceManagement && SelectedInstance is not null)
+        {
+            foreach (var t in InstanceTabs) t.IsSelected = false;
+            SelectedInstance = null; // ApplyFilters will run via OnSelectedInstanceChanged
+            return;
+        }
+
+        ApplyFilters();
+    }
     partial void OnTaskIdFilterChanged(string? value) => ApplyFilters();
     partial void OnSearchTextChanged(string? value) => ApplyFilters();
     partial void OnSelectedInstanceChanged(InstanceTabItem? value) => ApplyFilters();

@@ -1,7 +1,9 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Serilog;
+using SerilogILogger = Serilog.ILogger;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -22,11 +24,13 @@ namespace DiffusionNexus.Service.Services;
 /// </summary>
 public sealed class ComfyUIReadinessService : IComfyUIReadinessService
 {
-    private static readonly ILogger Logger = Log.ForContext<ComfyUIReadinessService>();
+    private const string LogSource = "Readiness";
+    private static readonly SerilogILogger SerilogLogger = Log.ForContext<ComfyUIReadinessService>();
 
     private readonly IComfyUIWrapperService _comfyUi;
     private readonly IAppSettingsService _settingsService;
     private readonly IWorkloadInstallationChecker? _workloadChecker;
+    private readonly IUnifiedLogger? _unifiedLogger;
 
     /// <summary>
     /// Creates a new instance.
@@ -39,16 +43,42 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
     /// authoritative source for node/model presence. When <c>null</c>, every feature falls back
     /// to the legacy <c>/object_info</c> probe (tests / standalone consumers).
     /// </param>
+    /// <param name="unifiedLogger">
+    /// Optional unified logger. When supplied, the readiness decision is also routed to the
+    /// in-app console so the user can see which gate is failing without exporting the
+    /// on-disk log file.
+    /// </param>
     public ComfyUIReadinessService(
         IComfyUIWrapperService comfyUi,
         IAppSettingsService settingsService,
-        IWorkloadInstallationChecker? workloadChecker = null)
+        IWorkloadInstallationChecker? workloadChecker = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(comfyUi);
         ArgumentNullException.ThrowIfNull(settingsService);
         _comfyUi = comfyUi;
         _settingsService = settingsService;
         _workloadChecker = workloadChecker;
+        _unifiedLogger = unifiedLogger;
+    }
+
+    /// <summary>Emits to both Serilog (file) and the in-app unified console when available.</summary>
+    private void LogInfo(string message)
+    {
+        SerilogLogger.Information(message);
+        _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
+    }
+
+    private void LogDebug(string message)
+    {
+        SerilogLogger.Debug(message);
+        _unifiedLogger?.Debug(LogCategory.Configuration, LogSource, message);
+    }
+
+    private void LogWarn(string message)
+    {
+        SerilogLogger.Warning(message);
+        _unifiedLogger?.Warn(LogCategory.Configuration, LogSource, message);
     }
 
     /// <inheritdoc />
@@ -76,9 +106,11 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
     {
         var requirements = ComfyUIFeatureRegistry.GetRequirements(feature);
 
+        LogInfo($"CheckFeatureAsync({feature}) — start");
+
         if (requirements is null)
         {
-            Logger.Warning("No requirements registered for feature {Feature}", feature);
+            LogWarn($"No requirements registered for feature {feature}");
             return new FeatureReadinessResult
             {
                 Feature = feature,
@@ -97,7 +129,8 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
         }
         catch (Exception ex)
         {
-            Logger.Debug(ex, "Failed to resolve ComfyUI server URL for feature {Feature}", feature);
+            SerilogLogger.Debug(ex, "Failed to resolve ComfyUI server URL for feature {Feature}", feature);
+            LogWarn($"{feature}: failed to resolve ComfyUI server URL — {ex.Message}");
             return FeatureReadinessResult.ServerOffline(feature, "(unknown)");
         }
 
@@ -116,7 +149,7 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
 
         if (!isOnline)
         {
-            Logger.Debug("ComfyUI server offline at {Url} for feature {Feature}", serverUrl, feature);
+            LogWarn($"{feature}: ComfyUI server offline at {serverUrl}");
             return FeatureReadinessResult.ServerOffline(feature, serverUrl);
         }
 
@@ -173,9 +206,9 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
             ServerUrl = serverUrl
         };
 
-        Logger.Information(
-            "Readiness check for {Feature} (workload {WorkloadId} @ {Path}): Ready={IsReady}, MissingCount={MissingCount}",
-            feature, workloadId, summary.CheckedAgainstPath ?? "(unresolved)", result.IsReady, missingReqs.Count);
+        LogInfo(
+            $"Readiness check for {feature} (workload {workloadId} @ {summary.CheckedAgainstPath ?? "(unresolved)"}): " +
+            $"Ready={result.IsReady}, MissingCount={missingReqs.Count}");
 
         return result;
     }
@@ -207,9 +240,7 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
 
                 missingReqs.Add("Install via ComfyUI Manager or place into the custom_nodes folder, then restart ComfyUI.");
 
-                Logger.Warning(
-                    "Feature {Feature}: missing custom nodes: {MissingNodes}",
-                    feature, string.Join(", ", missingNodes));
+                LogWarn($"{feature}: missing custom nodes: {string.Join(", ", missingNodes)}");
             }
         }
 
@@ -225,10 +256,9 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
                 var availableOptions = await _comfyUi.GetNodeInputOptionsAsync(
                     model.NodeType, model.InputName, ct);
 
-                Logger.Debug(
-                    "Feature {Feature}: {NodeType}.{Input} has {Count} option(s): {Options}",
-                    feature, model.NodeType, model.InputName,
-                    availableOptions.Count, string.Join(", ", availableOptions));
+                LogDebug(
+                    $"{feature}: {model.NodeType}.{model.InputName} has {availableOptions.Count} option(s): " +
+                    $"{string.Join(", ", availableOptions)}");
 
                 var isPresent = availableOptions.Any(
                     o => o.Contains(model.ExpectedModelSubstring, StringComparison.OrdinalIgnoreCase));
@@ -254,9 +284,10 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
             }
             catch (Exception ex)
             {
-                Logger.Warning(ex,
+                SerilogLogger.Warning(ex,
                     "Feature {Feature}: failed to query model info for {NodeType}.{Input}",
                     feature, model.NodeType, model.InputName);
+                LogWarn($"{feature}: failed to query model info for {model.NodeType}.{model.InputName} — {ex.Message}");
 
                 if (model.AutoDownloads)
                 {
@@ -281,9 +312,9 @@ public sealed class ComfyUIReadinessService : IComfyUIReadinessService
             ServerUrl = serverUrl
         };
 
-        Logger.Information(
-            "Readiness check for {Feature}: Ready={IsReady}, MissingReqs={MissingCount}, Warnings={WarnCount}",
-            feature, result.IsReady, missingReqs.Count, warnings.Count);
+        LogInfo(
+            $"Readiness check for {feature} (legacy /object_info path): " +
+            $"Ready={result.IsReady}, MissingReqs={missingReqs.Count}, Warnings={warnings.Count}");
 
         return result;
     }
