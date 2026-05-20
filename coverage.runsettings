@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Solution-wide coverage configuration for `dotnet test`.
+  Usage:
+      dotnet test --settings coverage.runsettings --collect:"XPlat Code Coverage"
+
+  Output: TestResults/<run-guid>/coverage.cobertura.xml
+  Render an HTML report with:
+      dotnet tool install -g dotnet-reportgenerator-globaltool
+      reportgenerator -reports:**/coverage.cobertura.xml -targetdir:Doc/CoverageReport -reporttypes:Html
+
+  Tweak the Exclude block when adding new generated / vendored projects so
+  noise (migrations, designer files, native interop) doesn't depress the score.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <ExcludeByFile>
+            <!-- EF Core generated migration scaffolding -->
+            **/Migrations/**/*Designer.cs,
+            **/Migrations/**/*ModelSnapshot.cs,
+            <!-- Avalonia-generated XAML codebehind -->
+            **/*.g.cs,
+            **/obj/**/*.cs
+          </ExcludeByFile>
+          <Exclude>
+            <!-- Tests themselves should never count toward the gate. -->
+            [DiffusionNexus.Tests]*,
+            [DiffusionNexus.IntegrationTests]*,
+            <!-- Auto-generated assemblies (SDK + Avalonia source generators). -->
+            [Microsoft.*]*,
+            [System.*]*
+          </Exclude>
+          <ExcludeByAttribute>
+            Obsolete,
+            GeneratedCodeAttribute,
+            CompilerGeneratedAttribute
+          </ExcludeByAttribute>
+          <UseSourceLink>true</UseSourceLink>
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+          <SingleHit>false</SingleHit>
+          <DeterministicReport>true</DeterministicReport>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
