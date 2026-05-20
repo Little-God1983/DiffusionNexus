@@ -149,10 +149,9 @@
           <Button Content="Download Metadata"
                   Command="{Binding DownloadMissingMetadataCommand}"/>
 
-          <!-- Scan Duplicates (hidden for now) -->
-          <Button Content="Scan Duplicates"
+          <Button Content="Find Duplicates"
                   Command="{Binding ScanDuplicatesCommand}"
-                  IsVisible="False"/>
+                  ToolTip.Tip="Scan all configured LoRA folders for byte-identical files."/>
 
         </StackPanel>
         

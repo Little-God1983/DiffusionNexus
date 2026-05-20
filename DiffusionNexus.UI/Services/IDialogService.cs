@@ -6,6 +6,7 @@ using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services;
 
 using DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -344,6 +345,15 @@ public interface IDialogService
     /// <param name="clusters">Duplicate clusters to resolve.</param>
     /// <returns>Number of images deleted during the session.</returns>
     Task<int> ShowDuplicateFixerAsync(IEnumerable<DuplicateClusterItemViewModel> clusters);
+
+    /// <summary>
+    /// Shows the LoRA duplicate fixer window for resolving groups of byte-identical
+    /// <c>.safetensors</c> files. Users pick which copy to keep; the others are
+    /// permanently deleted along with their sidecar metadata and DB rows.
+    /// </summary>
+    /// <param name="groups">Duplicate groups to resolve.</param>
+    /// <returns>Number of files deleted during the session.</returns>
+    Task<int> ShowLoraDuplicateFixerAsync(IEnumerable<LoraDuplicateGroup> groups);
 
     /// <summary>
     /// Shows the color fixer window for resolving color distribution issues.
