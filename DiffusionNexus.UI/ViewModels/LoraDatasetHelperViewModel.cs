@@ -174,7 +174,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         AnalysisPipeline? analysisPipeline = null,
         BucketAnalyzer? bucketAnalyzer = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
         AnalysisRunStore? analysisRunStore = null,
         DuplicateDetector? duplicateDetector = null,

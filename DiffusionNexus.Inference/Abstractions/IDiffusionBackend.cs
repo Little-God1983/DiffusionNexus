@@ -26,8 +26,29 @@ public interface IModelCatalog
 /// </summary>
 public interface IDiffusionBackend
 {
+    /// <summary>Human-readable name of this backend (e.g. <c>"Diffusion Nexus Core"</c>).</summary>
+    string DisplayName { get; }
+
     /// <summary>The catalog of models this backend can run.</summary>
     IModelCatalog Catalog { get; }
+
+    /// <summary>
+    /// Human-readable descriptions of requirements that are not currently satisfied.
+    /// Populated after <see cref="IsAvailableAsync"/> returns <c>false</c>. Backends with no
+    /// additional requirements may always return an empty list.
+    /// </summary>
+    IReadOnlyList<string> MissingRequirements { get; }
+
+    /// <summary>
+    /// Non-blocking warnings discovered during <see cref="IsAvailableAsync"/>.
+    /// </summary>
+    IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>
+    /// Checks whether this diffusion backend is currently available and ready to generate.
+    /// Implementations should populate <see cref="MissingRequirements"/> on a <c>false</c> result.
+    /// </summary>
+    Task<bool> IsAvailableAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Runs a single generation, streaming progress and yielding the final <see cref="DiffusionResult"/>

@@ -78,7 +78,7 @@ public partial class InpaintingViewModel : ObservableObject
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService,
         IDatasetEventAggregator? eventAggregator,
-        IComfyUIReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
@@ -87,7 +87,7 @@ public partial class InpaintingViewModel : ObservableObject
         _comfyUiService = comfyUiService;
         _eventAggregator = eventAggregator;
 
-        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Inpainting);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting);
 
         ClearMaskCommand = new RelayCommand(
             () => ClearMaskRequested?.Invoke(this, EventArgs.Empty),
@@ -107,8 +107,8 @@ public partial class InpaintingViewModel : ObservableObject
         // the Installer Manager workload dialog would show).
         Readiness.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
-                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            if (args.PropertyName is nameof(FeatureReadinessViewModel.IsReady)
+                                  or nameof(FeatureReadinessViewModel.HasChecked))
             {
                 GenerateCommand.NotifyCanExecuteChanged();
                 GenerateAndCompareCommand.NotifyCanExecuteChanged();
@@ -121,7 +121,7 @@ public partial class InpaintingViewModel : ObservableObject
     /// been checked yet (initial state — the button shouldn't be disabled before we know).
     /// As soon as the first check completes with <c>IsReady=false</c>, the button greys out.
     /// </summary>
-    private static bool IsReadinessClickable(ComfyUIReadinessViewModel readiness) =>
+    private static bool IsReadinessClickable(FeatureReadinessViewModel readiness) =>
         !readiness.HasChecked || readiness.IsReady;
 
     /// <summary>
@@ -145,7 +145,7 @@ public partial class InpaintingViewModel : ObservableObject
     }
 
     /// <summary>Unified readiness check for the Inpainting feature (server, nodes, models).</summary>
-    public ComfyUIReadinessViewModel Readiness { get; }
+    public FeatureReadinessViewModel Readiness { get; }
 
     #region Properties
 

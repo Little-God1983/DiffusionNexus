@@ -45,7 +45,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
-    private readonly IComfyUIReadinessService? _readinessService;
+    private readonly IFeatureReadinessService? _readinessService;
     private bool _disposed;
 
     private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
@@ -266,7 +266,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));

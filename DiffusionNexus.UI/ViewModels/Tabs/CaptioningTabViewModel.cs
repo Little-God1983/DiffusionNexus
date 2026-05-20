@@ -141,7 +141,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         ICaptioningService? captioningService = null,
         IReadOnlyList<ICaptioningBackend>? backends = null,
         IAppSettingsService? settingsService = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
@@ -151,7 +151,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         _settingsService = settingsService;
         _downloadCoordinator = downloadCoordinator;
 
-        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Captioning);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Captioning);
 
         AvailableDatasetVersions = [];
         AvailableModels = Enum.GetValues<CaptioningModelType>();
@@ -198,7 +198,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         // Propagate readiness changes to model/generate status
         Readiness.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady) or nameof(ComfyUIReadinessViewModel.HasChecked))
+            if (e.PropertyName is nameof(FeatureReadinessViewModel.IsReady) or nameof(FeatureReadinessViewModel.HasChecked))
             {
                 OnPropertyChanged(nameof(IsModelReady));
                 OnPropertyChanged(nameof(IsModelMissing));
@@ -264,7 +264,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     /// <summary>
     /// Unified readiness check for the Captioning feature (server, nodes, models).
     /// </summary>
-    public ComfyUIReadinessViewModel Readiness { get; }
+    public FeatureReadinessViewModel Readiness { get; }
 
     /// <summary>
     /// Whether any captioning backend is available (local inference or ComfyUI).

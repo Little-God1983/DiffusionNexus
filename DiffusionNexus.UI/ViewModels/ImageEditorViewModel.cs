@@ -345,7 +345,7 @@ public partial class ImageEditorViewModel : ObservableObject
         IBackgroundRemovalService? backgroundRemovalService = null,
         IComfyUIWrapperService? comfyUiService = null,
         EditorServices? services = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator;

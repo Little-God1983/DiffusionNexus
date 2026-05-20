@@ -1,0 +1,26 @@
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
+
+namespace DiffusionNexus.Domain.Services;
+
+/// <summary>
+/// One concrete execution engine (ComfyUI, local inference, …) that knows how to report
+/// readiness for the features it serves. <see cref="IFeatureBackendRouter"/> picks the
+/// right backend per feature; the chosen backend then answers
+/// <see cref="CheckFeatureAsync"/> on its own terms.
+/// </summary>
+public interface IFeatureBackend
+{
+    /// <summary>The engine this backend represents.</summary>
+    BackendKind Kind { get; }
+
+    /// <summary>Human-readable name shown to users (e.g. <c>"ComfyUI"</c>).</summary>
+    string DisplayName { get; }
+
+    /// <summary>
+    /// Checks whether the given feature is ready to execute on this backend.
+    /// </summary>
+    /// <param name="feature">The feature to check.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<FeatureReadinessResult> CheckFeatureAsync(Feature feature, CancellationToken ct = default);
+}
