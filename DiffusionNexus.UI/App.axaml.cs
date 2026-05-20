@@ -828,16 +828,40 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
-        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature).
-        // The workload checker bridges to the same disk-walking logic the Installer Manager uses,
-        // so a feature reports "Ready" iff its backing workload would show as "Full" in the dialog.
-        // The unified logger plumb-through makes readiness decisions visible in the in-app console.
-        services.AddSingleton<IComfyUIReadinessService>(sp =>
-            new ComfyUIReadinessService(
+        // Backend-agnostic feature readiness pipeline.
+        //
+        //   IFeatureReadinessService                 (what view-models depend on)
+        //     -> IFeatureBackendRouter               (picks the backend per feature)
+        //       -> ComfyUIFeatureBackend             (ComfyUI server + workload checker)
+        //       -> LocalInferenceFeatureBackend      (LlamaSharp captioning, sd.cpp generation)
+        //
+        // A feature reports "Ready" iff its backing workload would show as "Full" in the
+        // Installer Manager dialog. The unified logger plumb-through makes readiness
+        // decisions visible in the in-app console.
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new ComfyUIFeatureBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
                 sp.GetRequiredService<IAppSettingsService>(),
-                sp.GetService<Domain.Services.IWorkloadInstallationChecker>(),
+                sp.GetRequiredService<Domain.Services.IWorkloadInstallationChecker>(),
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // Resolves the concrete LocalInferenceCaptioningBackend rather than the
+        // ICaptioningBackend collection — going through the collection would force the
+        // ComfyUICaptioningBackend to materialize too, and *it* depends on
+        // IFeatureReadinessService → router → IEnumerable<IFeatureBackend> → here. That
+        // cycle hangs DI on startup.
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new Inference.LocalInferenceFeatureBackend(
+                sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
+                diffusion: null));
+
+        services.AddSingleton<IFeatureBackendRouter>(sp =>
+            new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
+
+        services.AddSingleton<IFeatureReadinessService>(sp =>
+            new FeatureReadinessService(
+                sp.GetRequiredService<IFeatureBackendRouter>(),
+                FeatureRegistry.GetRequirements));
 
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
@@ -851,7 +875,7 @@ public partial class App : Application
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetService<IComfyUIReadinessService>()));
+                sp.GetService<IFeatureReadinessService>()));
 
         // Local LlamaSharp + MTMD captioning (vision-language inference in-process).
         // Lives in DiffusionNexus.Inference alongside the stable-diffusion.cpp image
@@ -874,9 +898,14 @@ public partial class App : Application
             new Inference.Captioning.CaptioningService(
                 sp.GetRequiredService<Inference.Captioning.CaptioningModelManager>(),
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
-        services.AddSingleton<ICaptioningBackend>(sp =>
+        // Registered as a concrete type first so LocalInferenceFeatureBackend can resolve it
+        // without going through the ICaptioningBackend collection (which would drag the
+        // ComfyUI captioning backend into the readiness pipeline and create a DI cycle).
+        services.AddSingleton<Inference.Captioning.LocalInferenceCaptioningBackend>(sp =>
             new Inference.Captioning.LocalInferenceCaptioningBackend(
                 sp.GetRequiredService<ICaptioningService>()));
+        services.AddSingleton<ICaptioningBackend>(sp =>
+            sp.GetRequiredService<Inference.Captioning.LocalInferenceCaptioningBackend>());
 
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
@@ -971,7 +1000,7 @@ public partial class App : Application
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
-            sp.GetService<IComfyUIReadinessService>(),
+            sp.GetService<IFeatureReadinessService>(),
             sp.GetServices<IImageQualityCheck>(),
             sp.GetService<AnalysisRunStore>(),
             sp.GetService<DuplicateDetector>(),

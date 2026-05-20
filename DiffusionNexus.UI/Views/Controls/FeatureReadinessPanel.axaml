@@ -4,8 +4,8 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              mc:Ignorable="d"
-             x:Class="DiffusionNexus.UI.Views.Controls.ComfyUIReadinessPanel"
-             x:DataType="vm:ComfyUIReadinessViewModel">
+             x:Class="DiffusionNexus.UI.Views.Controls.FeatureReadinessPanel"
+             x:DataType="vm:FeatureReadinessViewModel">
 
   <StackPanel Spacing="8">
     <!-- Status row: indicator dot + text + Check button -->
@@ -94,7 +94,7 @@
       <!-- Check button -->
       <Button Grid.Column="2" Content="Check" Padding="12,4"
               Command="{Binding CheckReadinessCommand}"
-              ToolTip.Tip="Check if ComfyUI server is ready with all required nodes and models"/>
+              ToolTip.Tip="Re-check whether this feature has everything it needs to run"/>
     </Grid>
 
     <!-- Missing requirements detail (hidden while checking) -->
