@@ -407,57 +407,74 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Ensures the SDK database (diffusion_nexus.db) is deployed and up-to-date.
-    /// On first launch the pre-populated file shipped inside the
-    /// <c>DiffusionNexus.Installer.SDK.Database</c> NuGet package is copied from the
-    /// build output to <c>%LocalAppData%\diffusion_nexus.db</c>. Subsequent launches
-    /// only apply pending EF Core migrations.
+    /// Ensures the SDK database (diffusion_nexus.db) is deployed and up-to-date by
+    /// delegating to <see cref="SdkDatabaseDeployer"/>, then applies any pending EF Core
+    /// migrations. Reports the resulting status (version, up-to-date, replaced) to the
+    /// unified activity log.
     /// </summary>
     private static void InitializeSdkDatabase()
     {
         const string databaseFileName = "diffusion_nexus.db";
+        const string logSource = "Installer SDK";
+
+        var activityLog = Services!.GetService<IActivityLogService>();
 
         try
         {
-            // The NuGet contentFiles mechanism copies the seed DB next to the executable
+            // The NuGet contentFiles mechanism copies the seed DB next to the executable.
             var shippedDb = Path.Combine(AppContext.BaseDirectory, databaseFileName);
 
-            // Runtime location: directly in %LocalAppData% (no subfolder)
-            // TODO: Linux Implementation � use XDG_DATA_HOME or ~/.local/share
+            // Runtime location: directly in %LocalAppData% (no subfolder).
+            // TODO: Linux implementation — use XDG_DATA_HOME or ~/.local/share.
             var runtimeDb = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 databaseFileName);
 
-            if (!File.Exists(runtimeDb))
+            var result = SdkDatabaseDeployer.EnsureUpToDate(shippedDb, runtimeDb);
+
+            // a) DB version (always)
+            activityLog?.LogInfo(
+                logSource,
+                $"SDK database version: {result.ShippedVersion}",
+                $"Path: {runtimeDb}");
+
+            // b) up-to-date / c) replaced
+            switch (result.Outcome)
             {
-                if (File.Exists(shippedDb))
-                {
-                    File.Copy(shippedDb, runtimeDb);
-                    Serilog.Log.Information(
-                        "InitializeSdkDatabase: Deployed seed DB from {Source} to {Target}",
-                        shippedDb, runtimeDb);
-                }
-                else
-                {
-                    Serilog.Log.Warning(
-                        "InitializeSdkDatabase: No seed DB found at {Path} � " +
-                        "database will be created empty from migrations only", shippedDb);
-                }
+                case SdkDatabaseDeployOutcome.UpToDate:
+                case SdkDatabaseDeployOutcome.SamePath:
+                    activityLog?.LogInfo(logSource, "SDK database is up to date.");
+                    break;
+                case SdkDatabaseDeployOutcome.FirstTimeDeploy:
+                    activityLog?.LogSuccess(
+                        logSource,
+                        $"SDK database deployed for the first time (v{result.ShippedVersion}).");
+                    break;
+                case SdkDatabaseDeployOutcome.Upgraded:
+                    activityLog?.LogSuccess(
+                        logSource,
+                        $"SDK database upgraded from v{result.RuntimeVersionBefore ?? "unknown"} to v{result.ShippedVersion}.",
+                        $"Backup saved to: {result.BackupPath}");
+                    break;
+                case SdkDatabaseDeployOutcome.NoShippedDatabase:
+                    activityLog?.LogWarning(
+                        logSource,
+                        "No shipped SDK database found; using existing runtime DB.");
+                    break;
             }
 
-            // Apply any pending schema migrations on top of the (seed) data
+            // Apply any pending schema migrations on top of the (seed) data.
             var sdkContext = Services!.GetRequiredService<SdkContext>();
             Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
             sdkContext.Database.Migrate();
             Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
 
-            // Log the resolved SDK database path to the unified activity log
-            var activityLog = Services!.GetService<IActivityLogService>();
-            activityLog?.LogInfo("Installer SDK", $"Database loaded from: {runtimeDb}");
+            activityLog?.LogInfo(logSource, $"Database loaded from: {runtimeDb}");
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to initialize SDK database");
+            activityLog?.LogError(logSource, "Failed to initialize SDK database", ex);
         }
     }
 
