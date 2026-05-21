@@ -569,6 +569,19 @@ public class DialogService : IDialogService
         return viewModel.DeletedCount;
     }
 
+    public async Task<int> ShowLoraDuplicateFixerAsync(IEnumerable<Service.Services.LoraDuplicateGroup> groups)
+    {
+        var viewModel = new ViewModels.Dialogs.LoraDuplicateFixerViewModel
+        {
+            Logger = App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()
+        };
+        viewModel.LoadGroups(groups);
+
+        var dialog = new LoraDuplicateFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.DeletedCount;
+    }
+
     public async Task<int> ShowColorFixerAsync(IEnumerable<ViewModels.Tabs.ColorDistributionItemViewModel> images)
     {
         var viewModel = new ViewModels.Dialogs.ColorFixerViewModel();

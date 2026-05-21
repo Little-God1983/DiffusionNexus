@@ -119,9 +119,14 @@
                     VerticalAlignment="Center"/>
 
           <!-- Reset Filters -->
-          <Button Content="Reset"
-                  Command="{Binding ResetFiltersCommand}"
-                  VerticalAlignment="Center"/>
+          <Button Command="{Binding ResetFiltersCommand}"
+                  VerticalAlignment="Center"
+                  ToolTip.Tip="Reset all filters">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x21BA;" FontSize="14" VerticalAlignment="Center"/>
+              <TextBlock Text="Reset" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
 
         </StackPanel>
 
@@ -140,19 +145,37 @@
         <!-- Right: Actions -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
 
-          <Button Content="Download LoRA"
-                  Command="{Binding DownloadLoraCommand}"/>
+          <Button Command="{Binding DownloadLoraCommand}"
+                  ToolTip.Tip="Download a LoRA from Civitai">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x2B07;" FontSize="14" VerticalAlignment="Center"/>
+              <TextBlock Text="Download LoRA" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
 
-          <Button Content="Refresh"
-                  Command="{Binding RefreshCommand}"/>
+          <Button Command="{Binding RefreshCommand}"
+                  ToolTip.Tip="Rescan source folders and reload the model list">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
+              <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
 
-          <Button Content="Download Metadata"
-                  Command="{Binding DownloadMissingMetadataCommand}"/>
+          <Button Command="{Binding DownloadMissingMetadataCommand}"
+                  ToolTip.Tip="Fetch missing metadata from Civitai for already-imported LoRAs">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x21E9;" FontSize="14" VerticalAlignment="Center"/>
+              <TextBlock Text="Download Metadata" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
 
-          <!-- Scan Duplicates (hidden for now) -->
-          <Button Content="Scan Duplicates"
-                  Command="{Binding ScanDuplicatesCommand}"
-                  IsVisible="False"/>
+          <Button Command="{Binding ScanDuplicatesCommand}"
+                  ToolTip.Tip="Scan all configured LoRA folders for byte-identical files">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x29C9;" FontSize="14" VerticalAlignment="Center"/>
+              <TextBlock Text="Find Duplicates" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
 
         </StackPanel>
         

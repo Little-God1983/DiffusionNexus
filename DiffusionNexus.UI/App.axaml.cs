@@ -738,6 +738,7 @@ public partial class App : Application
         // Application services - Transient so each consumer gets its own UoW/DbContext
         services.AddTransient<IAppSettingsService, AppSettingsService>();
         services.AddTransient<IModelSyncService, ModelFileSyncService>();
+        services.AddTransient<ILoraDuplicateFinder, LoraDuplicateFinder>();
 
         // DatasetBackupService - use factory to inject activity log service
         services.AddTransient<IDatasetBackupService>(sp => new DatasetBackupService(

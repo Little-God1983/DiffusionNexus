@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
@@ -1852,16 +1853,73 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Scan for duplicate files.
+    /// Scan all configured LoRA source folders for byte-identical files and open
+    /// the duplicate fixer window so the user can pick which copy to keep.
     /// </summary>
     [RelayCommand]
     private async Task ScanDuplicatesAsync()
     {
-        await RunBusyAsync(async () =>
+        var services = App.Services;
+        if (services is null)
         {
-            // TODO: Implement duplicate scanning
-            await Task.Delay(1000); // Simulate work
-        }, "Scanning for duplicates...");
+            SyncStatus = "Services not initialised.";
+            return;
+        }
+
+        var dialogService = services.GetService<IDialogService>();
+        var finder = services.GetService<ILoraDuplicateFinder>();
+        if (dialogService is null || finder is null)
+        {
+            SyncStatus = "Duplicate scanner is unavailable.";
+            return;
+        }
+
+        IReadOnlyList<LoraDuplicateGroup> groups = Array.Empty<LoraDuplicateGroup>();
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                var progress = new Progress<LoraDuplicateProgress>(p =>
+                {
+                    BusyMessage = p.Total > 0
+                        ? $"{p.Phase}: {p.Processed}/{p.Total}"
+                        : p.Phase;
+                });
+
+                groups = await finder.FindAsync(progress).ConfigureAwait(false);
+            }, "Scanning for duplicates...");
+        }
+        catch (OperationCanceledException)
+        {
+            SyncStatus = "Duplicate scan cancelled.";
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "DuplicateScan", $"Duplicate scan failed: {ex.Message}", ex);
+            await dialogService.ShowMessageAsync("Scan failed",
+                $"Could not scan for duplicates:\n{ex.Message}");
+            return;
+        }
+
+        if (groups.Count == 0)
+        {
+            SyncStatus = "No duplicate LoRAs found.";
+            await dialogService.ShowMessageAsync("No duplicates",
+                "No duplicate LoRA files were found in your configured source folders.");
+            return;
+        }
+
+        var deleted = await dialogService.ShowLoraDuplicateFixerAsync(groups);
+        if (deleted > 0)
+        {
+            SyncStatus = $"Removed {deleted} duplicate file(s).";
+            await RebuildTilesFromDatabaseAsync();
+        }
+        else
+        {
+            SyncStatus = $"Found {groups.Count} duplicate group(s); none deleted.";
+        }
     }
 
     /// <summary>
