@@ -1,0 +1,95 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:enums="using:DiffusionNexus.Domain.Enums"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.CreateTrainingRunDialog"
+        x:DataType="vm:CreateTrainingRunDialogViewModel"
+        Title="New Training Run"
+        Width="460"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+
+    <TextBlock Grid.Row="0"
+               Text="New Training Run"
+               FontSize="18"
+               FontWeight="SemiBold"
+               Foreground="#D4A574"
+               Margin="0,0,0,20"/>
+
+    <!-- Name -->
+    <StackPanel Grid.Row="1" Margin="0,0,0,16">
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+        <TextBlock Text="Name" FontWeight="SemiBold"/>
+        <TextBlock Text=" *" Foreground="#F44336"/>
+      </StackPanel>
+      <TextBox x:Name="NameTextBox"
+               Text="{Binding Name, Mode=TwoWay}"
+               Watermark="SDXL_MyLoRA"
+               Classes.error="{Binding NameError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      <TextBlock Text="{Binding NameError}"
+                 Foreground="#F44336"
+                 FontSize="12"
+                 Margin="0,4,0,0"
+                 IsVisible="{Binding NameError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    </StackPanel>
+
+    <!-- Base Model -->
+    <StackPanel Grid.Row="2" Margin="0,0,0,16">
+      <TextBlock Text="Base Model"
+                 FontWeight="SemiBold"
+                 Margin="0,0,0,8"/>
+      <ComboBox ItemsSource="{Binding AvailableBaseModels}"
+                SelectedItem="{Binding SelectedBaseModel, Mode=TwoWay}"
+                PlaceholderText="Select a base model..."
+                HorizontalAlignment="Stretch"/>
+    </StackPanel>
+
+    <!-- Category -->
+    <StackPanel Grid.Row="3" Margin="0,0,0,20">
+      <TextBlock Text="Category"
+                 FontWeight="SemiBold"
+                 Margin="0,0,0,8"/>
+      <ComboBox ItemsSource="{Binding AvailableCategories}"
+                SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
+                PlaceholderText="Select a category..."
+                HorizontalAlignment="Stretch">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="enums:CivitaiCategory">
+            <TextBlock Text="{Binding}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+    </StackPanel>
+
+    <Border Grid.Row="4"
+            Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="12"
+            Margin="0,0,0,20">
+      <TextBlock Text="The name is used as the folder under TrainingRuns/. Base model and category can be changed later from the run's detail view."
+                 Opacity="0.7"
+                 FontSize="12"
+                 TextWrapping="Wrap"/>
+    </Border>
+
+    <StackPanel Grid.Row="5"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8">
+      <Button Content="Cancel"
+              Width="100"
+              Click="OnCancelClick"/>
+      <Button Content="Create"
+              Width="100"
+              Background="#2D7D46"
+              IsEnabled="{Binding IsValid}"
+              IsDefault="True"
+              Click="OnCreateClick"/>
+    </StackPanel>
+
+  </Grid>
+</Window>

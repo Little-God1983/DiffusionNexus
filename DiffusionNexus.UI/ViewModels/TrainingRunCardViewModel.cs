@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -21,6 +22,7 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class TrainingRunCardViewModel : ObservableObject, IDialogServiceAware
 {
     private readonly IDatasetEventAggregator _eventAggregator;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private string _runFolderPath = string.Empty;
     private TrainingRunSubTab _selectedSubTab = TrainingRunSubTab.Epochs;
     private bool _isViewingDetail;
@@ -28,6 +30,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
     private string? _newTagText;
+    private bool _suppressBaseModelSave;
 
     /// <summary>
     /// The training run metadata.
@@ -67,33 +70,14 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     // ── Civitai Upload Profile Properties ────────────────────────
 
     /// <summary>
-    /// Available base model options for the dropdown, built from Civitai's known base models.
+    /// Selectable base model labels (e.g. "SDXL 1.0", "Pony", "Flux.1 D"). The list
+    /// is sourced from <see cref="ICivitaiBaseModelCatalog"/> at construction time
+    /// and matches Civitai's own base-model filter dropdown (same source used by
+    /// the LoRA Viewer's model detail panel). The currently persisted value is
+    /// always present in the collection, even when the catalog hasn't heard of it
+    /// yet, so the ComboBox can round-trip arbitrary legacy strings.
     /// </summary>
-    public static IReadOnlyList<string> AvailableBaseModels { get; } =
-    [
-        CivitaiBaseModel.SD15,
-        CivitaiBaseModel.SD15LCM,
-        CivitaiBaseModel.SD20,
-        CivitaiBaseModel.SD21,
-        CivitaiBaseModel.SDXL10,
-        CivitaiBaseModel.SDXLTurbo,
-        CivitaiBaseModel.SDXLLightning,
-        CivitaiBaseModel.SDXLDistilled,
-        CivitaiBaseModel.SD3,
-        CivitaiBaseModel.SD35,
-        CivitaiBaseModel.SD35Large,
-        CivitaiBaseModel.SD35Medium,
-        CivitaiBaseModel.Flux1D,
-        CivitaiBaseModel.Flux1S,
-        CivitaiBaseModel.Pony,
-        CivitaiBaseModel.Illustrious,
-        CivitaiBaseModel.NoobAI,
-        CivitaiBaseModel.Hunyuan,
-        CivitaiBaseModel.HunyuanVideo,
-        CivitaiBaseModel.WanVideo21,
-        CivitaiBaseModel.WanVideo22,
-        CivitaiBaseModel.Other
-    ];
+    public ObservableCollection<string> AvailableBaseModels { get; } = [];
 
     /// <summary>
     /// Available Civitai categories for the dropdown.
@@ -154,7 +138,10 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(BaseModel));
                 OnPropertyChanged(nameof(HasBaseModel));
-                OnMetadataChanged?.Invoke();
+                if (!_suppressBaseModelSave)
+                {
+                    OnMetadataChanged?.Invoke();
+                }
             }
         }
     }
@@ -437,13 +424,20 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     /// </summary>
     public PresentationTabViewModel PresentationTab { get; }
 
-    public TrainingRunCardViewModel(TrainingRunInfo runInfo, string runFolderPath, IDatasetEventAggregator eventAggregator)
+    public TrainingRunCardViewModel(
+        TrainingRunInfo runInfo,
+        string runFolderPath,
+        IDatasetEventAggregator eventAggregator,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         RunInfo = runInfo ?? throw new ArgumentNullException(nameof(runInfo));
         ArgumentNullException.ThrowIfNull(runFolderPath);
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
+        _baseModelCatalog = baseModelCatalog;
 
         _runFolderPath = runFolderPath;
+
+        SeedAvailableBaseModelsFromPersistedValue();
 
         // Migrate legacy single TriggerWord → TriggerWords list
 #pragma warning disable CS0618 // Obsolete member access for migration
@@ -476,6 +470,80 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
 
         // Load counts
         RefreshCounts();
+
+        // Populate the base-model dropdown from the Civitai catalog (same source
+        // the LoRA Viewer uses). Fire-and-forget — a slow first fetch must not
+        // block the card from rendering and the seed value above already covers
+        // the initial display.
+        _ = LoadBaseModelCatalogAsync();
+    }
+
+    /// <summary>
+    /// Ensures the currently persisted base model is always selectable in the
+    /// dropdown, even before the Civitai catalog finishes loading.
+    /// </summary>
+    private void SeedAvailableBaseModelsFromPersistedValue()
+    {
+        var current = RunInfo.BaseModel;
+        if (!string.IsNullOrWhiteSpace(current) && !AvailableBaseModels.Contains(current, StringComparer.OrdinalIgnoreCase))
+        {
+            AvailableBaseModels.Add(current);
+        }
+    }
+
+    /// <summary>
+    /// Refreshes <see cref="AvailableBaseModels"/> from the Civitai catalog.
+    /// The persisted <see cref="SelectedBaseModel"/> is preserved (and re-inserted
+    /// at the top if the catalog doesn't list it) so legacy / custom labels
+    /// round-trip cleanly. Safe to call multiple times.
+    /// </summary>
+    public async Task LoadBaseModelCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        if (_baseModelCatalog is null) return;
+
+        IReadOnlyList<string> labels;
+        try
+        {
+            labels = await _baseModelCatalog.GetBaseModelsAsync(cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The catalog is documented to never throw, but defend against it
+            // anyway — falling back to the seeded list is safe.
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var current = RunInfo.BaseModel;
+
+            _suppressBaseModelSave = true;
+            try
+            {
+                AvailableBaseModels.Clear();
+                foreach (var label in labels)
+                {
+                    AvailableBaseModels.Add(label);
+                }
+
+                // Keep arbitrary persisted values selectable (e.g. legacy strings
+                // not in Civitai's catalog) by surfacing them at the top.
+                if (!string.IsNullOrWhiteSpace(current)
+                    && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+                {
+                    AvailableBaseModels.Insert(0, current);
+                }
+
+                // Re-raise so the ComboBox re-binds to the (possibly new) instance
+                // sitting in AvailableBaseModels.
+                OnPropertyChanged(nameof(SelectedBaseModel));
+            }
+            finally
+            {
+                _suppressBaseModelSave = false;
+            }
+        });
     }
 
     /// <summary>

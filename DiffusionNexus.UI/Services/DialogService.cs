@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
@@ -222,6 +224,18 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateDatasetResult.Cancelled();
+    }
+
+    public async Task<CreateTrainingRunResult> ShowCreateTrainingRunDialogAsync(
+        ICivitaiBaseModelCatalog? baseModelCatalog,
+        CivitaiCategory defaultCategory,
+        IEnumerable<string>? existingRunNames = null)
+    {
+        var dialog = new CreateTrainingRunDialog()
+            .WithContext(baseModelCatalog, defaultCategory, existingRunNames);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? CreateTrainingRunResult.Cancelled();
     }
 
     public async Task ShowImageViewerDialogAsync(

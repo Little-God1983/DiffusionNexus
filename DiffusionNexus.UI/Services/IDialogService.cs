@@ -4,7 +4,9 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using System.Collections.ObjectModel;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
 
@@ -144,6 +146,19 @@ public interface IDialogService
     /// <param name="availableCategories">Categories to show in the dropdown.</param>
     /// <returns>Create result with name, category, and type, or cancelled result.</returns>
     Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories);
+
+    /// <summary>
+    /// Shows the create training run dialog with name, base model, and Civitai
+    /// category inputs.
+    /// </summary>
+    /// <param name="baseModelCatalog">Catalog used to populate the base-model dropdown.</param>
+    /// <param name="defaultCategory">Category to pre-select (typically derived from the parent dataset's category).</param>
+    /// <param name="existingRunNames">Names of existing runs in the same dataset version, used for duplicate validation.</param>
+    /// <returns>Create result with name, base model, and category, or cancelled result.</returns>
+    Task<CreateTrainingRunResult> ShowCreateTrainingRunDialogAsync(
+        ICivitaiBaseModelCatalog? baseModelCatalog,
+        CivitaiCategory defaultCategory,
+        IEnumerable<string>? existingRunNames = null);
 
     /// <summary>
     /// Shows the full-screen image viewer dialog for browsing dataset images.
