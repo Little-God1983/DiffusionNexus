@@ -161,13 +161,27 @@
                  Watermark="Search Civitai (debounced)..."
                  Margin="0,0,12,0"/>
 
-        <TextBlock Grid.Column="1"
-                   VerticalAlignment="Center"
-                   Margin="0,0,12,0"
-                   Opacity="0.7">
-          <Run Text="Selected: "/>
-          <Run Text="{Binding SelectedCount}"/>
-        </TextBlock>
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    VerticalAlignment="Center"
+                    Margin="0,0,12,0">
+          <TextBlock Opacity="0.7"
+                     ToolTip.Tip="Total models the REST API returned for this query. May differ from civitai.com's web search — the web uses a different index that fuzzy-matches tags + descriptions, not just names.">
+            <Run Text="Results: "/>
+            <Run Text="{Binding Results.Count}"/>
+          </TextBlock>
+          <TextBlock Opacity="0.7">
+            <Run Text="Selected: "/>
+            <Run Text="{Binding SelectedCount}"/>
+          </TextBlock>
+          <TextBlock Opacity="0.7"
+                     IsVisible="{Binding HasHiddenResults}"
+                     ToolTip.Tip="Results hidden by 'Hide Installed' or 'Hide Early Access' toggles. Disable those filters to see them.">
+            <Run Text="Hidden: "/>
+            <Run Text="{Binding HiddenByFilters}" Foreground="#F59E0B"/>
+          </TextBlock>
+        </StackPanel>
 
         <Button Grid.Column="2"
                 Content="Clear selection"

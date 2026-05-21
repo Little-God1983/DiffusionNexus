@@ -77,6 +77,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         if (Jobs.Any(j => j.VersionId == pick.Version.Id))
         {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Duplicate enqueue skipped: {result.Name} ({pick.Name}) — version {pick.Version.Id} already in queue");
             return null;
         }
 
@@ -97,6 +99,9 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         Jobs.Add(job);
         Persist();
         RaiseCountsChanged();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Enqueued: {result.Name} — {pick.Name} ({pick.BaseModel}, {pick.SizeDisplay})",
+            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}");
         return job;
     }
 
@@ -121,10 +126,16 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     public void ClearAll()
     {
+        var removed = Jobs.Count;
         _runCts?.Cancel();
         Jobs.Clear();
         Persist();
         RaiseCountsChanged();
+        if (removed > 0)
+        {
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Queue cleared: {removed} job(s) removed (active downloads cancelled).");
+        }
     }
 
     /// <summary>
@@ -135,6 +146,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         if (_downloadService is null)
         {
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                "StartAll aborted: LoraDownloadService unavailable. Marking queued jobs as failed.");
             foreach (var job in Jobs.Where(j => j.Status == JobStatus.Queued))
             {
                 job.Status = JobStatus.Failed;
@@ -148,10 +161,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var ct = _runCts.Token;
 
         var pending = Jobs.Where(j => j.Status == JobStatus.Queued).ToList();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Starting {pending.Count} download(s) (max concurrency: {_maxConcurrency})");
         var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
         await Task.WhenAll(tasks);
         RaiseCountsChanged();
         Persist();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Batch complete — {CompletedCount} done, {ErrorCount} failed, {ActiveCount} still active.");
     }
 
     private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken ct)

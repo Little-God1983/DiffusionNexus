@@ -103,7 +103,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _hideInstalledModels;
 
     [ObservableProperty]
-    private bool _hideEarlyAccessModels = true;
+    private bool _hideEarlyAccessModels;
 
     [ObservableProperty]
     private bool _showNsfwContent;
@@ -151,6 +151,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     public bool HasSelection => SelectedCount > 0;
 
+    public int VisibleCount => Results.Count(r => !r.IsHidden);
+
+    public int HiddenByFilters => Results.Count(r => r.IsHidden);
+
+    public bool HasHiddenResults => HiddenByFilters > 0;
+
     #endregion
 
     #region Commands
@@ -168,11 +174,28 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         await LoadNextAsync(ct);
     }
 
+    /// <summary>
+    /// Fetches the next page. If client-side filters (Hide installed / Hide early-access)
+    /// hide every newly-loaded card, automatically follow the cursor up to <c>maxChained</c>
+    /// times so the user doesn't have to click through fully-filtered pages.
+    /// </summary>
     [RelayCommand]
     private async Task LoadMoreAsync()
     {
         if (!HasMore || IsBusy) return;
-        await LoadNextAsync(_searchCts?.Token ?? CancellationToken.None);
+
+        const int maxChained = 3;
+        var ct = _searchCts?.Token ?? CancellationToken.None;
+
+        for (var i = 0; i < maxChained; i++)
+        {
+            var visibleBefore = VisibleCount;
+            await LoadNextAsync(ct);
+            if (ct.IsCancellationRequested) return;
+
+            // Got new visible cards, or no more pages → stop chaining.
+            if (VisibleCount > visibleBefore || !HasMore) return;
+        }
     }
 
     [RelayCommand]
@@ -257,19 +280,32 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         if (_civitaiClient is null)
         {
             StatusMessage = "Civitai client is not available.";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Search skipped — ICivitaiClient is null in this DI scope.");
             return;
         }
 
         try
         {
             IsBusy = true;
-            StatusMessage = !string.IsNullOrEmpty(_nextCursor) ? "Loading more..." : "Searching Civitai...";
+            var isFirstPage = string.IsNullOrEmpty(_nextCursor);
+            StatusMessage = isFirstPage ? "Searching Civitai..." : "Loading more...";
 
             var query = BuildQuery(_nextCursor);
             var apiKey = await GetApiKeyAsync();
+
+            var requestUrl = "https://civitai.com/api/v1/models?" + DescribeQuery(query);
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                isFirstPage ? "Starting search" : "Fetching next page",
+                $"GET {requestUrl}\nApiKey set: {!string.IsNullOrEmpty(apiKey)}");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var response = await _civitaiClient.GetModelsAsync(query, apiKey, ct);
+            sw.Stop();
 
             if (ct.IsCancellationRequested) return;
+
+            var apiCount = response.Items.Count;
+            var preFilterCount = Results.Count;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -285,10 +321,19 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 }
             });
 
+            var addedCount = Results.Count - preFilterCount;
             _nextCursor = response.Metadata?.NextCursor;
             OnPropertyChanged(nameof(HasMore));
 
             ApplyClientSideFilters();
+
+            var hiddenCount = HiddenByFilters;
+            var visibleCount = VisibleCount;
+
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                $"Response: {apiCount} items from API, {addedCount} added, {visibleCount} visible, {hiddenCount} hidden ({sw.ElapsedMilliseconds} ms)",
+                $"Total results so far: {Results.Count}\nNext cursor: {_nextCursor ?? "(none)"}\nMetadata.totalItems: {response.Metadata?.TotalItems}\nMetadata.totalPages: {response.Metadata?.TotalPages}\nMetadata.currentPage: {response.Metadata?.CurrentPage}\nMetadata.nextPage: {response.Metadata?.NextPage ?? "(none)"}");
+
             StatusMessage = Results.Count == 0 ? "No results." : null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -298,17 +343,38 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         catch (HttpRequestException ex)
         {
             StatusMessage = $"Civitai request failed: {ex.StatusCode} {ex.Message}";
-            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Search failed: {ex.Message}");
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"HTTP {ex.StatusCode} — {ex.Message}");
         }
         catch (Exception ex)
         {
             StatusMessage = $"Search failed: {ex.Message}";
-            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Search failed: {ex.Message}");
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser",
+                $"Search failed: {ex.Message}",
+                ex.ToString());
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Produces a human-readable query string for logging without forcing all callers
+    /// to depend on the internal ToQueryString helper.
+    /// </summary>
+    private static string DescribeQuery(CivitaiModelsQuery q)
+    {
+        var parts = new List<string>();
+        if (q.Limit.HasValue) parts.Add($"limit={q.Limit}");
+        if (!string.IsNullOrWhiteSpace(q.Cursor)) parts.Add($"cursor={q.Cursor}");
+        if (!string.IsNullOrWhiteSpace(q.Query)) parts.Add($"query={q.Query}");
+        if (!string.IsNullOrWhiteSpace(q.Tag)) parts.Add($"tag={q.Tag}");
+        if (q.Types is { Count: > 0 }) parts.Add($"types={string.Join("+", q.Types)}");
+        if (!string.IsNullOrWhiteSpace(q.Sort)) parts.Add($"sort={q.Sort}");
+        if (q.Period.HasValue) parts.Add($"period={q.Period}");
+        if (q.Nsfw.HasValue) parts.Add($"nsfw={q.Nsfw.Value.ToString().ToLowerInvariant()}");
+        if (q.BaseModels is { Count: > 0 }) parts.Add($"baseModels={string.Join("+", q.BaseModels)}");
+        return string.Join("&", parts);
     }
 
     private CivitaiModelsQuery BuildQuery(string? cursor)
@@ -397,6 +463,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                        || (HideInstalledModels && result.IsInstalled);
             result.IsHidden = hide;
         }
+        OnPropertyChanged(nameof(VisibleCount));
+        OnPropertyChanged(nameof(HiddenByFilters));
+        OnPropertyChanged(nameof(HasHiddenResults));
     }
 
     private void OnResultSelectionChanged(object? sender, EventArgs e) => OnSelectionChanged();

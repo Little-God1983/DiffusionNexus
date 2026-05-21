@@ -23,7 +23,9 @@ public partial class CivitaiResultViewModel : ObservableObject
         var first = model.ModelVersions.FirstOrDefault();
         BaseModel = first?.BaseModel ?? "";
         VersionCount = model.ModelVersions.Count;
-        IsEarlyAccess = model.ModelVersions.Any(v => v.EarlyAccessTimeFrame > 0);
+        // Only flag the model as EA when the *latest* version is in early access;
+        // older non-EA versions are still freely available even if newer ones aren't.
+        IsEarlyAccess = first?.EarlyAccessTimeFrame > 0;
 
         foreach (var v in model.ModelVersions)
         {
