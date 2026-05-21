@@ -146,8 +146,9 @@
                   Margin="0,0,12,0"/>
 
         <CheckBox Grid.Column="8"
-                  Content="Show NSFW"
+                  Content="Show NSFW Content"
                   IsChecked="{Binding ShowNsfwContent, Mode=TwoWay}"
+                  ToolTip.Tip="Browser-only NSFW filter. Independent from the Installed tab's NSFW toggle."
                   VerticalAlignment="Center"/>
 
       </Grid>

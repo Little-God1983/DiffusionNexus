@@ -106,7 +106,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _hideEarlyAccessModels;
 
     [ObservableProperty]
-    private bool _showNsfwContent;
+    private bool _showNsfwContent = true;
 
     [ObservableProperty]
     private double _cardWidth = 240;
@@ -306,12 +306,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
             var apiCount = response.Items.Count;
             var preFilterCount = Results.Count;
+            var existingIds = new HashSet<int>(Results.Where(r => r.Model is not null).Select(r => r.Model!.Id));
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var model in response.Items)
                 {
                     if (model.ModelVersions.Count == 0) continue;
+                    if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model)
                     {
                         IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id))
@@ -324,6 +326,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             var addedCount = Results.Count - preFilterCount;
             _nextCursor = response.Metadata?.NextCursor;
             OnPropertyChanged(nameof(HasMore));
+
+            // Tag-fallback: Civitai's REST query= is a name-only substring match. The web
+            // search index also matches tags and descriptions, which is where most of the
+            // "missing" results live. When a fresh name-search returned <10 items, fire a
+            // tag= query with the same text and merge unique model ids in.
+            if (isFirstPage
+                && !string.IsNullOrWhiteSpace(SearchText)
+                && response.Items.Count < 10)
+            {
+                await RunTagFallbackAsync(query, apiKey, existingIds, ct);
+            }
 
             ApplyClientSideFilters();
 
@@ -355,6 +368,70 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Fires a second <c>tag=</c> query using the user's search text and merges any
+    /// new model ids into the result list. Civitai indexes a separate set of tags per
+    /// model, and a "latex" search misses anything tagged "latex" but not named so.
+    /// </summary>
+    private async Task RunTagFallbackAsync(
+        CivitaiModelsQuery primaryQuery,
+        string? apiKey,
+        HashSet<int> existingIds,
+        CancellationToken ct)
+    {
+        try
+        {
+            var tagQuery = new CivitaiModelsQuery
+            {
+                Tag = SearchText,           // tag= instead of query=
+                Types = primaryQuery.Types,
+                Sort = primaryQuery.Sort,
+                Period = primaryQuery.Period,
+                Nsfw = primaryQuery.Nsfw,
+                BaseModels = primaryQuery.BaseModels,
+                Limit = 20,
+            };
+
+            var requestUrl = "https://civitai.com/api/v1/models?" + DescribeQuery(tagQuery);
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                $"Name search returned <10; running tag-fallback for \"{SearchText}\"",
+                $"GET {requestUrl}");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var tagResponse = await _civitaiClient!.GetModelsAsync(tagQuery, apiKey, ct);
+            sw.Stop();
+
+            if (ct.IsCancellationRequested) return;
+
+            var preCount = Results.Count;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var model in tagResponse.Items)
+                {
+                    if (model.ModelVersions.Count == 0) continue;
+                    if (!existingIds.Add(model.Id)) continue;
+                    var vm = new CivitaiResultViewModel(model)
+                    {
+                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id))
+                    };
+                    vm.SelectionChanged += OnResultSelectionChanged;
+                    Results.Add(vm);
+                }
+            });
+
+            var addedFromTag = Results.Count - preCount;
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                $"Tag-fallback: {tagResponse.Items.Count} items from API, {addedFromTag} new unique merged ({sw.ElapsedMilliseconds} ms)");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            // Non-fatal — primary results are already populated.
+            _logger?.Debug(LogCategory.Network, "CivitaiBrowser",
+                $"Tag-fallback failed (non-fatal): {ex.Message}");
         }
     }
 
