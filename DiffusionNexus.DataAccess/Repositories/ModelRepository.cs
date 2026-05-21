@@ -258,6 +258,19 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
+    public async Task<HashSet<int>> GetInstalledCivitaiVersionIdsAsync(CancellationToken cancellationToken = default)
+    {
+        var ids = await Context.ModelVersions
+            .Where(v => v.CivitaiId != null
+                        && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""))
+            .Select(v => v.CivitaiId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new HashSet<int>(ids);
+    }
+
+    /// <inheritdoc />
     public async Task<Creator?> FindCreatorByUsernameAsync(string username, CancellationToken cancellationToken = default)
     {
         return await Context.Creators

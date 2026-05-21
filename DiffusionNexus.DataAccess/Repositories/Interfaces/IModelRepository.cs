@@ -65,6 +65,13 @@ public interface IModelRepository : IRepository<Model>
     Task<bool> IsVersionCivitaiIdTakenAsync(int civitaiVersionId, int excludeVersionId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns the set of Civitai version IDs that are already installed locally
+    /// (have a non-null <see cref="ModelVersion.CivitaiId"/> and at least one file with a local path).
+    /// Used by the Civitai browser's "Hide installed" filter.
+    /// </summary>
+    Task<HashSet<int>> GetInstalledCivitaiVersionIdsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds an existing <see cref="Creator"/> by username (case-insensitive) so it can be reused
     /// instead of creating a duplicate row.
     /// </summary>

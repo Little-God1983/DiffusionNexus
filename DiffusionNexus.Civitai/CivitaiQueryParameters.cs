@@ -37,8 +37,15 @@ public sealed record CivitaiModelsQuery
     /// <summary>Only include primary file.</summary>
     public bool? PrimaryFileOnly { get; init; }
 
-    /// <summary>Filter by base model.</summary>
+    /// <summary>Filter by base model (single value, legacy).</summary>
     public string? BaseModel { get; init; }
+
+    /// <summary>Filter by multiple base models. Each value is sent as <c>baseModels=...</c>.</summary>
+    public IReadOnlyList<string>? BaseModels { get; init; }
+
+    /// <summary>Cursor for cursor-based pagination (preferred over Page for deep result sets).
+    /// Opaque string — pass back exactly what <c>CivitaiPaginationMetadata.NextCursor</c> returned.</summary>
+    public string? Cursor { get; init; }
 
     /// <summary>Builds the query string.</summary>
     internal string ToQueryString()
@@ -47,6 +54,7 @@ public sealed record CivitaiModelsQuery
 
         if (Limit.HasValue) parts.Add($"limit={Limit.Value}");
         if (Page.HasValue) parts.Add($"page={Page.Value}");
+        if (!string.IsNullOrWhiteSpace(Cursor)) parts.Add($"cursor={Uri.EscapeDataString(Cursor)}");
         if (!string.IsNullOrWhiteSpace(Query)) parts.Add($"query={Uri.EscapeDataString(Query)}");
         if (!string.IsNullOrWhiteSpace(Tag)) parts.Add($"tag={Uri.EscapeDataString(Tag)}");
         if (!string.IsNullOrWhiteSpace(Username)) parts.Add($"username={Uri.EscapeDataString(Username)}");
@@ -62,6 +70,13 @@ public sealed record CivitaiModelsQuery
         if (Nsfw.HasValue) parts.Add($"nsfw={Nsfw.Value.ToString().ToLowerInvariant()}");
         if (PrimaryFileOnly.HasValue) parts.Add($"primaryFileOnly={PrimaryFileOnly.Value.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(BaseModel)) parts.Add($"baseModel={Uri.EscapeDataString(BaseModel)}");
+        if (BaseModels is { Count: > 0 })
+        {
+            foreach (var bm in BaseModels)
+            {
+                if (!string.IsNullOrWhiteSpace(bm)) parts.Add($"baseModels={Uri.EscapeDataString(bm)}");
+            }
+        }
 
         return parts.Count > 0 ? string.Join("&", parts) : string.Empty;
     }

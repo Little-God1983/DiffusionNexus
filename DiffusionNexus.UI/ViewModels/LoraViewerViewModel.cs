@@ -14,6 +14,8 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 
@@ -118,6 +120,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; } = [];
 
+    /// <summary>
+    /// Cached catalog labels (full Civitai base-model list). When non-empty, drives
+    /// <see cref="RebuildAvailableBaseModels"/> instead of the distinct-from-installed
+    /// fallback. Populated by <see cref="LoadBaseModelCatalogAsync"/>.
+    /// </summary>
+    private IReadOnlyList<string>? _catalogBaseModels;
+
     #endregion
 
     #region Constructors
@@ -134,6 +143,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = null;
         _baseModelCatalog = null;
         _updateChecker = null;
+        BrowserViewModel = new CivitaiBrowserViewModel();
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -157,7 +167,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
+
+        // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
+        // The base-model filter list is mirrored from AvailableBaseModels which is itself
+        // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
+        var downloadService = App.Services?.GetService<LoraDownloadService>();
+        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient);
+        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
+
+        _ = LoadBaseModelCatalogAsync();
     }
+
+    /// <summary>
+    /// View model for the "Browse Civitai" sub-tab.
+    /// </summary>
+    public CivitaiBrowserViewModel BrowserViewModel { get; }
 
     #endregion
 
@@ -2080,20 +2104,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Rebuilds <see cref="AvailableBaseModels"/> from the distinct <c>BaseModelRaw</c>
-    /// values across all tile versions. Preserves existing selections where the value still exists.
+    /// Rebuilds <see cref="AvailableBaseModels"/>. Primary source is the full Civitai
+    /// catalog (<see cref="ICivitaiBaseModelCatalog"/>) so users can filter for any
+    /// base model Civitai supports, not just ones installed locally. Falls back to
+    /// distinct <c>BaseModelRaw</c> values across installed tiles when the catalog
+    /// is unavailable (design-time, missing DI, or before initial load completes).
+    /// Preserves existing selections where the value still exists.
     /// </summary>
     private void RebuildAvailableBaseModels()
     {
-        // Collect distinct BaseModelRaw values from all versions across all tiles
-        var distinctBaseModels = AllTiles
-            .SelectMany(t => t.Versions)
-            .Select(v => v.BaseModelRaw)
-            .Where(raw => !string.IsNullOrWhiteSpace(raw))
-            .Select(raw => raw!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        IReadOnlyList<string> source;
+        if (_catalogBaseModels is { Count: > 0 } catalog)
+        {
+            // Catalog is the canonical source. Preserve catalog order (Civitai's natural
+            // ordering — alphabetizing would split related entries like "SDXL 1.0" / "SDXL Turbo").
+            source = catalog;
+        }
+        else
+        {
+            // Fallback: distinct values from installed tiles, alphabetical.
+            source = AllTiles
+                .SelectMany(t => t.Versions)
+                .Select(v => v.BaseModelRaw)
+                .Where(raw => !string.IsNullOrWhiteSpace(raw))
+                .Select(raw => raw!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
 
         // Snapshot currently selected values so we can restore them
         var previouslySelected = AvailableBaseModels
@@ -2109,7 +2147,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         AvailableBaseModels.Clear();
 
-        foreach (var raw in distinctBaseModels)
+        foreach (var raw in source)
         {
             var item = new BaseModelFilterItem(raw)
             {
@@ -2117,6 +2155,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Fetches the Civitai base-model catalog once at startup and rebuilds the filter
+    /// list. The catalog itself has built-in fallbacks (disk cache → live fetch → bundled
+    /// snapshot), so this almost always yields a list; the only no-op path is when
+    /// <see cref="_baseModelCatalog"/> is null (design-time).
+    /// </summary>
+    private async Task LoadBaseModelCatalogAsync()
+    {
+        if (_baseModelCatalog is null) return;
+
+        try
+        {
+            var labels = await _baseModelCatalog.GetBaseModelsAsync().ConfigureAwait(false);
+            if (labels is null || labels.Count == 0) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _catalogBaseModels = labels;
+                RebuildAvailableBaseModels();
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, "LoraViewer",
+                $"Civitai base-model catalog load failed; falling back to distinct-from-installed: {ex.Message}");
         }
     }
 
