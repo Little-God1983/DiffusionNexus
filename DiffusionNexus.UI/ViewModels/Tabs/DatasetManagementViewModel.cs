@@ -3223,28 +3223,17 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     {
         if (DialogService is null || ActiveDataset is null) return;
 
-        var runName = await DialogService.ShowInputAsync(
-            "New Training Run",
-            "Enter a name for the training run (used as folder name):",
-            "SDXL_MyLoRA");
+        var defaultCategory = CreateTrainingRunDialogViewModel.MapDatasetCategoryName(ActiveDataset.CategoryName);
+        var existingNames = TrainingRuns.Select(r => r.Name).ToArray();
 
-        if (string.IsNullOrWhiteSpace(runName)) return;
+        var result = await DialogService.ShowCreateTrainingRunDialogAsync(
+            _baseModelCatalog,
+            defaultCategory,
+            existingNames);
 
-        runName = runName.Trim();
+        if (!result.Confirmed || string.IsNullOrWhiteSpace(result.Name)) return;
 
-        // Validate the name (filesystem-safe)
-        if (runName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        {
-            await DialogService.ShowMessageAsync("Invalid Name", "The run name contains characters that are not allowed in folder names.");
-            return;
-        }
-
-        // Check for duplicates
-        if (TrainingRuns.Any(r => string.Equals(r.Name, runName, StringComparison.OrdinalIgnoreCase)))
-        {
-            await DialogService.ShowMessageAsync("Duplicate Name", $"A training run named '{runName}' already exists.");
-            return;
-        }
+        var runName = result.Name;
 
         try
         {
@@ -3254,7 +3243,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             var runInfo = new TrainingRunInfo
             {
                 Name = runName,
-                CreatedAt = DateTimeOffset.Now
+                CreatedAt = DateTimeOffset.Now,
+                BaseModel = result.BaseModel,
+                Category = result.Category
             };
 
             // Save to metadata
