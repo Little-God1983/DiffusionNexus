@@ -186,7 +186,9 @@
     <!-- Results grid + queue side panel -->
     <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
 
-      <ScrollViewer Grid.Column="0" Padding="12">
+      <Grid Grid.Column="0" RowDefinitions="*,Auto">
+
+      <ScrollViewer Grid.Row="0" Padding="12">
         <StackPanel>
           <ItemsControl ItemsSource="{Binding Results}">
             <ItemsControl.ItemsPanel>
@@ -338,12 +340,39 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <Button Content="Load more"
-                  Command="{Binding LoadMoreCommand}"
-                  HorizontalAlignment="Center"
-                  Margin="0,12,0,32"/>
         </StackPanel>
       </ScrollViewer>
+
+      <!-- Sticky Load-more footer (always visible). -->
+      <Border Grid.Row="1"
+              Background="#161616"
+              BorderBrush="#2A2A2A"
+              BorderThickness="0,1,0,0"
+              Padding="16,10"
+              IsVisible="{Binding HasMore}">
+        <Button Content="Load more results"
+                Command="{Binding LoadMoreCommand}"
+                HorizontalAlignment="Stretch"
+                Height="44"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="White"
+                Background="#2563EB"
+                BorderBrush="#1D4ED8"
+                BorderThickness="1"
+                CornerRadius="6">
+          <Button.Styles>
+            <Style Selector="Button:pointerover /template/ ContentPresenter">
+              <Setter Property="Background" Value="#3B82F6"/>
+            </Style>
+            <Style Selector="Button:pressed /template/ ContentPresenter">
+              <Setter Property="Background" Value="#1D4ED8"/>
+            </Style>
+          </Button.Styles>
+        </Button>
+      </Border>
+
+      </Grid>
 
       <!-- Queue panel -->
       <Border Grid.Column="1"

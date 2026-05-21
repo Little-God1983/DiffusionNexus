@@ -30,6 +30,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private CancellationTokenSource? _debounceCts;
     private string? _nextCursor;
     private bool _isLoading;
+    private bool _initialized;
     private HashSet<int> _installedVersionIds = [];
 
     public CivitaiBrowserViewModel()
@@ -75,7 +76,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             _baseModelSource.CollectionChanged += OnBaseModelSourceChanged;
         }
 
+        // Enable search-on-filter-change now that the initial property cascade is done,
+        // then kick off exactly one initial search.
+        _initialized = true;
         _ = RefreshInstalledSetAsync();
+        _ = SearchAsync();
     }
 
     private readonly ObservableCollection<BaseModelFilterItem>? _baseModelSource;
@@ -234,11 +239,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     #region Property change hooks
 
-    partial void OnSearchTextChanged(string value) => _ = DebouncedSearchAsync();
-    partial void OnSelectedSortChanged(string? value) => _ = SearchAsync();
-    partial void OnSelectedPeriodChanged(CivitaiPeriod value) => _ = SearchAsync();
-    partial void OnSelectedModelTypeChanged(string? value) => _ = SearchAsync();
-    partial void OnShowNsfwContentChanged(bool value) => _ = SearchAsync();
+    partial void OnSearchTextChanged(string value) { if (_initialized) _ = DebouncedSearchAsync(); }
+    partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = SearchAsync(); }
+    partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = SearchAsync(); }
+    partial void OnSelectedModelTypeChanged(string? value) { if (_initialized) _ = SearchAsync(); }
+    partial void OnShowNsfwContentChanged(bool value) { if (_initialized) _ = SearchAsync(); }
     partial void OnHideEarlyAccessModelsChanged(bool value) => ApplyClientSideFilters();
     partial void OnHideInstalledModelsChanged(bool value) => ApplyClientSideFilters();
 
@@ -378,7 +383,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
-        _ = SearchAsync();
+        if (_initialized) _ = SearchAsync();
     }
 
     private void ApplyClientSideFilters()
