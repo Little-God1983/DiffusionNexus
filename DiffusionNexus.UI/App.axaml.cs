@@ -1007,7 +1007,8 @@ public partial class App : Application
             sp.GetService<DuplicateDetector>(),
             sp.GetService<ColorDistributionAnalyzer>(),
             sp.GetService<IDownloadCoordinator>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
     }
 
     /// <summary>

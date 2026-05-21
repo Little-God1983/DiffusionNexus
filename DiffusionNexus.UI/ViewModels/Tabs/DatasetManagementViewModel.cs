@@ -4,6 +4,7 @@ using System.Text;
 using System.Timers;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -60,6 +61,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private readonly IDatasetState _state;
     private readonly IActivityLogService? _activityLog;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
+    private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private bool _disposed;
 
     private DatasetCategoryViewModel? _selectedCategory;
@@ -664,7 +666,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
         AnalysisRunStore? analysisRunStore = null,
         DuplicateDetector? duplicateDetector = null,
-        ColorDistributionAnalyzer? colorDistributionAnalyzer = null)
+        ColorDistributionAnalyzer? colorDistributionAnalyzer = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _datasetStorageService = datasetStorageService ?? throw new ArgumentNullException(nameof(datasetStorageService));
@@ -675,6 +678,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _backupService = backupService;
         _activityLog = activityLog;
         _thumbnailOrchestrator = thumbnailOrchestrator;
+        _baseModelCatalog = baseModelCatalog;
 
         // Initialize sub-tab ViewModels
         EpochsTab = new EpochsTabViewModel(_eventAggregator);
@@ -770,7 +774,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null)
+    public DatasetManagementViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -3200,7 +3204,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         foreach (var runInfo in runs)
         {
             var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runInfo.Name);
-            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator, _baseModelCatalog)
             {
                 DialogService = DialogService,
                 OnMetadataChanged = () => dataset.SaveMetadata()
@@ -3263,7 +3267,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
             // Add to UI
             var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, runName);
-            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator)
+            var card = new TrainingRunCardViewModel(runInfo, runPath, _eventAggregator, _baseModelCatalog)
             {
                 DialogService = DialogService,
                 OnMetadataChanged = () => ActiveDataset?.SaveMetadata()
