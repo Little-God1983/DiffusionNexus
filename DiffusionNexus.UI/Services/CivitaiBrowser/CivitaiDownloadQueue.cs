@@ -116,6 +116,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
+    /// Drops every job regardless of status without downloading. Active runs are
+    /// cancelled via the shared run-CTS so workers exit promptly.
+    /// </summary>
+    public void ClearAll()
+    {
+        _runCts?.Cancel();
+        Jobs.Clear();
+        Persist();
+        RaiseCountsChanged();
+    }
+
+    /// <summary>
     /// Runs all queued jobs through the worker pool. Subsequent calls coalesce — already-
     /// running jobs aren't restarted; only Queued ones are picked up.
     /// </summary>

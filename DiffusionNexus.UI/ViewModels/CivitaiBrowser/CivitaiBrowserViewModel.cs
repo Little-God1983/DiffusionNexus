@@ -211,6 +211,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private void ClearCompleted() => _queue.ClearCompleted();
 
     [RelayCommand]
+    private void ClearQueue() => _queue.ClearAll();
+
+    [RelayCommand]
     private void RemoveJob(CivitaiDownloadJob? job)
     {
         if (job is not null) _queue.Remove(job);

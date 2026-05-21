@@ -343,33 +343,17 @@
         </StackPanel>
       </ScrollViewer>
 
-      <!-- Sticky Load-more footer (always visible). -->
+      <!-- Sticky Load-more footer — centered pill, not a full-width action bar. -->
       <Border Grid.Row="1"
-              Background="#161616"
-              BorderBrush="#2A2A2A"
-              BorderThickness="0,1,0,0"
-              Padding="16,10"
+              Background="Transparent"
+              Padding="12,8"
               IsVisible="{Binding HasMore}">
-        <Button Content="Load more results"
+        <Button Content="Load more"
                 Command="{Binding LoadMoreCommand}"
-                HorizontalAlignment="Stretch"
-                Height="44"
-                FontSize="14"
-                FontWeight="SemiBold"
-                Foreground="White"
-                Background="#2563EB"
-                BorderBrush="#1D4ED8"
-                BorderThickness="1"
-                CornerRadius="6">
-          <Button.Styles>
-            <Style Selector="Button:pointerover /template/ ContentPresenter">
-              <Setter Property="Background" Value="#3B82F6"/>
-            </Style>
-            <Style Selector="Button:pressed /template/ ContentPresenter">
-              <Setter Property="Background" Value="#1D4ED8"/>
-            </Style>
-          </Button.Styles>
-        </Button>
+                HorizontalAlignment="Center"
+                Padding="20,6"
+                FontSize="12"
+                Classes="accent"/>
       </Border>
 
       </Grid>
@@ -387,8 +371,19 @@
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold" VerticalAlignment="Center"/>
               <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                <Button Content="Start" Command="{Binding StartQueueCommand}" Padding="8,4"/>
-                <Button Content="Clear done" Command="{Binding ClearCompletedCommand}" Padding="8,4"/>
+                <Button Content="Start"
+                        Command="{Binding StartQueueCommand}"
+                        Padding="8,4"
+                        Classes="accent"/>
+                <Button Content="Clear done"
+                        Command="{Binding ClearCompletedCommand}"
+                        Padding="8,4"
+                        ToolTip.Tip="Remove completed jobs from the list"/>
+                <Button Content="Clear all"
+                        Command="{Binding ClearQueueCommand}"
+                        Padding="8,4"
+                        Foreground="#F87171"
+                        ToolTip.Tip="Remove every job (in-progress downloads are cancelled)"/>
               </StackPanel>
             </Grid>
           </Border>
