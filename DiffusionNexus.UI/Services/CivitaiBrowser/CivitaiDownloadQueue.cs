@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -48,8 +50,132 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // Suppress the preview path inside the picker — each queued job may resolve
         // to a different folder, so the per-job expected path is rendered on the tile.
         Destination.ShowPreviewPath = false;
-        Destination.PropertyChanged += (_, _) => RefreshExpectedTargets();
+        Destination.PropertyChanged += (_, _) =>
+        {
+            RefreshExpectedTargets();
+            RecomputeSpaceWarning();
+        };
+        Jobs.CollectionChanged += OnJobsChanged;
         TryRestore();
+        foreach (var j in Jobs) HookJob(j);
+        RecomputeSpaceWarning();
+    }
+
+    private void OnJobsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.NewItems is not null)
+            foreach (CivitaiDownloadJob j in e.NewItems) HookJob(j);
+        if (e.OldItems is not null)
+            foreach (CivitaiDownloadJob j in e.OldItems) UnhookJob(j);
+        RecomputeSpaceWarning();
+        OnPropertyChanged(nameof(TotalQueuedBytes));
+        OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
+    }
+
+    private void HookJob(CivitaiDownloadJob j) => j.PropertyChanged += OnJobPropertyChanged;
+    private void UnhookJob(CivitaiDownloadJob j) => j.PropertyChanged -= OnJobPropertyChanged;
+
+    private void OnJobPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // Recompute when anything that affects per-drive totals changes.
+        if (e.PropertyName is nameof(CivitaiDownloadJob.Status)
+                          or nameof(CivitaiDownloadJob.ExpectedTargetDir)
+                          or nameof(CivitaiDownloadJob.CustomTargetDirectory))
+        {
+            RecomputeSpaceWarning();
+            OnPropertyChanged(nameof(TotalQueuedBytes));
+            OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
+        }
+    }
+
+    /// <summary>Sum of bytes for jobs still queued (excludes downloading/done/failed).</summary>
+    public long TotalQueuedBytes => Jobs.Where(j => j.Status == JobStatus.Queued).Sum(j => j.SizeBytes);
+
+    public string TotalQueuedBytesDisplay => FormatBytes(TotalQueuedBytes);
+
+    private string? _spaceWarning;
+    public string? SpaceWarning
+    {
+        get => _spaceWarning;
+        private set
+        {
+            if (SetProperty(ref _spaceWarning, value))
+            {
+                OnPropertyChanged(nameof(HasSpaceWarning));
+            }
+        }
+    }
+
+    public bool HasSpaceWarning => !string.IsNullOrEmpty(SpaceWarning);
+
+    /// <summary>
+    /// Groups queued jobs by the drive root of their resolved target directory and
+    /// flags any drive where the required bytes exceed the live <c>AvailableFreeSpace</c>.
+    /// Per-drive reporting handles the case where a per-job override sends some
+    /// downloads to a different drive than the global destination.
+    /// </summary>
+    private void RecomputeSpaceWarning()
+    {
+        try
+        {
+            var queued = Jobs
+                .Where(j => j.Status == JobStatus.Queued && j.SizeBytes > 0)
+                .ToList();
+            if (queued.Count == 0)
+            {
+                SpaceWarning = null;
+                return;
+            }
+
+            var groups = queued
+                .Select(j => new
+                {
+                    Job = j,
+                    Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
+                })
+                .Where(x => !string.IsNullOrEmpty(x.Root))
+                .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase);
+
+            var lines = new List<string>();
+            foreach (var g in groups)
+            {
+                var needed = g.Sum(x => x.Job.SizeBytes);
+                long? available = null;
+                try
+                {
+                    var drive = new DriveInfo(g.Key);
+                    if (drive.IsReady) available = drive.AvailableFreeSpace;
+                }
+                catch { /* not a real drive */ }
+
+                if (available is long avail && needed > avail)
+                {
+                    lines.Add($"Need {FormatBytes(needed)} on {g.Key} — only {FormatBytes(avail)} free");
+                }
+            }
+
+            SpaceWarning = lines.Count > 0 ? string.Join("\n", lines) : null;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue", $"Disk-space check failed: {ex.Message}");
+            SpaceWarning = null;
+        }
+    }
+
+    private static string? SafeGetPathRoot(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try { return Path.GetPathRoot(path); }
+        catch { return null; }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1L << 30) return $"{bytes / (double)(1L << 30):F2} GB";
+        if (bytes >= 1L << 20) return $"{bytes / (double)(1L << 20):F1} MB";
+        if (bytes >= 1L << 10) return $"{bytes / (double)(1L << 10):F0} KB";
+        return $"{bytes} B";
     }
 
     /// <summary>
@@ -122,6 +248,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             FileName = fileName,
             DownloadUrl = url,
             SizeDisplay = pick.SizeDisplay,
+            SizeBytes = pick.SizeBytes,
             ExpectedSha256 = primary?.Hashes?.SHA256,
             PreviewImageUrl = pick.Version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
             CivitaiVersion = pick.Version
@@ -372,6 +499,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 FileName = j.FileName,
                 DownloadUrl = j.DownloadUrl,
                 SizeDisplay = j.SizeDisplay,
+                SizeBytes = j.SizeBytes,
                 ExpectedSha256 = j.ExpectedSha256,
                 ActualSha256 = j.ActualSha256,
                 PreviewImageUrl = j.PreviewImageUrl,
@@ -410,6 +538,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     FileName = p.FileName,
                     DownloadUrl = p.DownloadUrl,
                     SizeDisplay = p.SizeDisplay,
+                    SizeBytes = p.SizeBytes,
                     ExpectedSha256 = p.ExpectedSha256,
                     ActualSha256 = p.ActualSha256,
                     PreviewImageUrl = p.PreviewImageUrl,
@@ -437,6 +566,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         public string FileName { get; set; } = string.Empty;
         public string DownloadUrl { get; set; } = string.Empty;
         public string SizeDisplay { get; set; } = string.Empty;
+        public long SizeBytes { get; set; }
         public string? ExpectedSha256 { get; set; }
         public string? ActualSha256 { get; set; }
         public string? PreviewImageUrl { get; set; }
@@ -476,6 +606,7 @@ public partial class CivitaiDownloadJob : ObservableObject
     public string FileName { get; init; } = string.Empty;
     public string DownloadUrl { get; init; } = string.Empty;
     public string SizeDisplay { get; init; } = string.Empty;
+    public long SizeBytes { get; init; }
     public string? ExpectedSha256 { get; init; }
     public string? PreviewImageUrl { get; init; }
     public string? ActualSha256 { get; set; }

@@ -426,10 +426,19 @@
 
           <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
             <StackPanel Spacing="8">
-              <TextBlock Text="Download Queue" FontWeight="SemiBold"/>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold"/>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding Queue.TotalQueuedBytesDisplay}"
+                           Opacity="0.6"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           ToolTip.Tip="Total bytes pending in the queue"/>
+              </Grid>
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <Button Content="Start"
                         Command="{Binding StartQueueCommand}"
+                        IsEnabled="{Binding !Queue.HasSpaceWarning}"
                         Padding="8,4"
                         Classes="accent"/>
                 <Button Content="Clear done"
@@ -442,6 +451,26 @@
                         Foreground="#F87171"
                         ToolTip.Tip="Remove every job (in-progress downloads are cancelled)"/>
               </StackPanel>
+
+              <!-- Disk-space warning. Disables Start until the user clears jobs or
+                   points the destination at a drive with enough free space. -->
+              <Border IsVisible="{Binding Queue.HasSpaceWarning}"
+                      Background="#4A1818"
+                      BorderBrush="#F87171"
+                      BorderThickness="1"
+                      CornerRadius="4"
+                      Padding="8,6">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="&#x26A0;"
+                             Foreground="#F87171"
+                             FontSize="14"
+                             VerticalAlignment="Top"/>
+                  <TextBlock Text="{Binding Queue.SpaceWarning}"
+                             Foreground="#FCA5A5"
+                             FontSize="11"
+                             TextWrapping="Wrap"/>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
 
