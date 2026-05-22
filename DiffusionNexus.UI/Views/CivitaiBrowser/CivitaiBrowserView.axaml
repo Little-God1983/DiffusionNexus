@@ -158,7 +158,7 @@
 
     <!-- Search + actions bar -->
     <Border Grid.Row="1" Background="#1A1A1A" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
         <TextBox Grid.Column="0"
                  Text="{Binding SearchText, Mode=TwoWay}"
                  Watermark="Search Civitai (debounced)..."
@@ -193,6 +193,12 @@
                 Margin="0,0,8,0"/>
 
         <Button Grid.Column="3"
+                Content="Select all"
+                Command="{Binding SelectAllCommand}"
+                ToolTip.Tip="Select every currently-loaded result (hidden cards are skipped)"
+                Margin="0,0,8,0"/>
+
+        <Button Grid.Column="4"
                 Content="Add selection to queue"
                 Classes="accent"
                 Command="{Binding AddSelectionToQueueCommand}"

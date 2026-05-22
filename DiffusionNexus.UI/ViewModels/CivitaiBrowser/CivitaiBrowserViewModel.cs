@@ -206,6 +206,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Selects every currently-loaded result that isn't hidden by client-side filters.
+    /// </summary>
+    [RelayCommand]
+    private void SelectAll()
+    {
+        foreach (var r in Results)
+        {
+            if (r.IsHidden) continue;
+            r.IsSelected = true;
+        }
+        OnSelectionChanged();
+    }
+
+    /// <summary>
     /// Pointer-driven multi-select dispatcher invoked from the view's code-behind on
     /// every card click. Mirrors the Generation Gallery / Dataset Management pattern:
     /// Shift = range from last click, Ctrl = toggle, plain click = clear-and-select-this.
