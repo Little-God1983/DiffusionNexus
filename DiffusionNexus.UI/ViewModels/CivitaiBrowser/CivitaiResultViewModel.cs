@@ -97,6 +97,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     private void SelectAllVersions()
     {
         foreach (var v in Versions) v.IsSelected = true;
+        IsSelected = true;   // also tick the card so AddSelectionToQueue picks it up
         NotifyVersionSummaryChanged();
     }
 
@@ -108,8 +109,19 @@ public partial class CivitaiResultViewModel : ObservableObject
         {
             Versions[i].IsSelected = i == 0;
         }
+        IsSelected = true;
         NotifyVersionSummaryChanged();
     }
+
+    /// <summary>
+    /// Direct one-click enqueue of every version on this card. Wired by the browser VM
+    /// when the result is added to the grid so the result VM stays decoupled from the
+    /// queue service.
+    /// </summary>
+    public Action<CivitaiResultViewModel>? EnqueueAllVersionsHandler { get; set; }
+
+    [RelayCommand]
+    private void EnqueueAllVersions() => EnqueueAllVersionsHandler?.Invoke(this);
 
     public string VersionCountLabel => VersionCount > 1 ? $"{VersionCount} versions" : "1 version";
 

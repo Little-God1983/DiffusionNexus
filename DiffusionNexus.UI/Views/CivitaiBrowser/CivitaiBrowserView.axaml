@@ -309,6 +309,12 @@
                                           Padding="6,2"
                                           FontSize="11"
                                           Command="{Binding LatestVersionOnlyCommand}"/>
+                                  <Button Content="Add all to queue"
+                                          Padding="6,2"
+                                          FontSize="11"
+                                          Classes="accent"
+                                          Command="{Binding EnqueueAllVersionsCommand}"
+                                          ToolTip.Tip="Enqueue every version of this model immediately"/>
                                 </StackPanel>
                                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                                   <ItemsControl ItemsSource="{Binding Versions}">

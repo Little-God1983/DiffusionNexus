@@ -318,7 +318,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model)
                     {
-                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id))
+                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                     };
                     vm.SelectionChanged += OnResultSelectionChanged;
                     Results.Add(vm);
@@ -417,7 +418,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model)
                     {
-                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id))
+                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                     };
                     vm.SelectionChanged += OnResultSelectionChanged;
                     Results.Add(vm);
@@ -559,6 +561,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     private void OnResultSelectionChanged(object? sender, EventArgs e) => OnSelectionChanged();
+
+    private void EnqueueAllVersionsForCard(CivitaiResultViewModel card)
+    {
+        foreach (var pick in card.Versions)
+        {
+            _queue.Enqueue(card, pick);
+        }
+    }
 
     private void OnSelectionChanged()
     {
