@@ -31,8 +31,10 @@ public sealed record CivitaiModelsQuery
     /// <summary>Time period for sorting.</summary>
     public CivitaiPeriod? Period { get; init; }
 
-    /// <summary>Filter NSFW content.</summary>
-    public bool? Nsfw { get; init; }
+    /// <summary>NSFW filter. Civitai's API expects a STRING here, not a bool — typically
+    /// the literal "true" to include NSFW results. StabilityMatrix always sends "true" and
+    /// filters NSFW client-side instead of relying on the API to filter.</summary>
+    public string? Nsfw { get; init; }
 
     /// <summary>Only include primary file.</summary>
     public bool? PrimaryFileOnly { get; init; }
@@ -58,18 +60,22 @@ public sealed record CivitaiModelsQuery
         if (!string.IsNullOrWhiteSpace(Query)) parts.Add($"query={Uri.EscapeDataString(Query)}");
         if (!string.IsNullOrWhiteSpace(Tag)) parts.Add($"tag={Uri.EscapeDataString(Tag)}");
         if (!string.IsNullOrWhiteSpace(Username)) parts.Add($"username={Uri.EscapeDataString(Username)}");
+        // Civitai expects types as a single comma-separated param (matches StabilityMatrix
+        // and civitai.com's own filter URLs). Repeated `types=A&types=B` returns reduced
+        // results.
         if (Types is { Count: > 0 })
         {
-            foreach (var type in Types)
-            {
-                parts.Add($"types={type}");
-            }
+            parts.Add($"types={Uri.EscapeDataString(string.Join(",", Types))}");
         }
         if (!string.IsNullOrWhiteSpace(Sort)) parts.Add($"sort={Uri.EscapeDataString(Sort)}");
         if (Period.HasValue) parts.Add($"period={Period.Value}");
-        if (Nsfw.HasValue) parts.Add($"nsfw={Nsfw.Value.ToString().ToLowerInvariant()}");
+        if (!string.IsNullOrWhiteSpace(Nsfw)) parts.Add($"nsfw={Uri.EscapeDataString(Nsfw)}");
         if (PrimaryFileOnly.HasValue) parts.Add($"primaryFileOnly={PrimaryFileOnly.Value.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(BaseModel)) parts.Add($"baseModel={Uri.EscapeDataString(BaseModel)}");
+        // Multi-value base model filter. The REST API accepts repeated `baseModels=`
+        // params (note the trailing s). The civitai.com web URL uses singular `baseModel=`
+        // because that route goes through Algolia, not the public REST endpoint —
+        // copying the singular form here breaks the filter.
         if (BaseModels is { Count: > 0 })
         {
             foreach (var bm in BaseModels)

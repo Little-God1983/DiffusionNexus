@@ -63,8 +63,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         PeriodOptions = new ObservableCollection<CivitaiPeriod>(Enum.GetValues<CivitaiPeriod>());
         SelectedPeriod = CivitaiPeriod.AllTime;
 
-        ModelTypeOptions = new ObservableCollection<string> { "All", "LORA", "LoCon", "DoRA" };
-        SelectedModelType = "All";
+        ModelTypeOptions = new ObservableCollection<string> { "LORA", "LoCon", "DoRA", "All LoRA types", "All models" };
+        SelectedModelType = "LORA";
 
         // Base model filter mirrors the Installed-tab list (same names) but holds its
         // own selection state — toggling here doesn't disturb the installed filter.
@@ -269,7 +269,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = SearchAsync(); }
     partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = SearchAsync(); }
     partial void OnSelectedModelTypeChanged(string? value) { if (_initialized) _ = SearchAsync(); }
-    partial void OnShowNsfwContentChanged(bool value) { if (_initialized) _ = SearchAsync(); }
+    // ShowNsfwContent is a client-side filter (the API call always requests NSFW). No
+    // re-search needed when toggled — just reapply local filters.
+    partial void OnShowNsfwContentChanged(bool value) => ApplyClientSideFilters();
     partial void OnHideEarlyAccessModelsChanged(bool value) => ApplyClientSideFilters();
     partial void OnHideInstalledModelsChanged(bool value) => ApplyClientSideFilters();
 
@@ -449,26 +451,33 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         if (q.Types is { Count: > 0 }) parts.Add($"types={string.Join("+", q.Types)}");
         if (!string.IsNullOrWhiteSpace(q.Sort)) parts.Add($"sort={q.Sort}");
         if (q.Period.HasValue) parts.Add($"period={q.Period}");
-        if (q.Nsfw.HasValue) parts.Add($"nsfw={q.Nsfw.Value.ToString().ToLowerInvariant()}");
+        if (!string.IsNullOrWhiteSpace(q.Nsfw)) parts.Add($"nsfw={q.Nsfw}");
         if (q.BaseModels is { Count: > 0 }) parts.Add($"baseModels={string.Join("+", q.BaseModels)}");
         return string.Join("&", parts);
     }
 
     private CivitaiModelsQuery BuildQuery(string? cursor)
     {
-        IReadOnlyList<CivitaiModelType> types = SelectedModelType switch
+        IReadOnlyList<CivitaiModelType>? types = SelectedModelType switch
         {
             "LORA" => [CivitaiModelType.LORA],
             "LoCon" => [CivitaiModelType.LoCon],
             "DoRA" => [CivitaiModelType.DoRA],
-            _ => [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA]
+            "All LoRA types" => [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA],
+            "All models" => null, // no types filter → API returns Checkpoints, embeddings, etc. too
+            _ => [CivitaiModelType.LORA]
         };
 
         var selectedBaseModels = AvailableBaseModels
             .Where(b => b.IsSelected)
             .Select(b => b.BaseModelRaw)
             .ToList();
-        IReadOnlyList<string>? baseModels = selectedBaseModels.Count > 0 ? selectedBaseModels : null;
+        // Match StabilityMatrix: only filter by base model when the selection is a
+        // strict subset. "Nothing selected" and "all selected" both mean "don't filter".
+        IReadOnlyList<string>? baseModels = selectedBaseModels.Count > 0
+                                            && selectedBaseModels.Count < AvailableBaseModels.Count
+                                            ? selectedBaseModels
+                                            : null;
 
         return new CivitaiModelsQuery
         {
@@ -476,9 +485,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             Types = types,
             Sort = SelectedSort,
             Period = SelectedPeriod,
-            Nsfw = ShowNsfwContent ? null : false,
+            // StabilityMatrix-equivalent: always request NSFW from the API so we get the
+            // full result set, then filter client-side via ShowNsfwContent. Sending
+            // nsfw=false here strips them at the server and they can't come back.
+            Nsfw = "true",
             BaseModels = baseModels,
-            Limit = 20,
+            Limit = 50,
             Cursor = cursor
         };
     }
@@ -537,7 +549,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         foreach (var result in Results)
         {
             var hide = (HideEarlyAccessModels && result.IsEarlyAccess)
-                       || (HideInstalledModels && result.IsInstalled);
+                       || (HideInstalledModels && result.IsInstalled)
+                       || (!ShowNsfwContent && result.IsNsfw);
             result.IsHidden = hide;
         }
         OnPropertyChanged(nameof(VisibleCount));

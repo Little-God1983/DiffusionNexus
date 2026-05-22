@@ -19,6 +19,7 @@ public partial class CivitaiResultViewModel : ObservableObject
         Creator = model.Creator?.Username ?? "Unknown";
         DownloadCount = model.Stats?.DownloadCount ?? 0;
         ThumbsUp = model.Stats?.ThumbsUpCount ?? 0;
+        IsNsfw = model.Nsfw;
 
         var first = model.ModelVersions.FirstOrDefault();
         BaseModel = first?.BaseModel ?? "";
@@ -63,6 +64,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     public int DownloadCount { get; private init; }
     public int ThumbsUp { get; private init; }
     public bool IsEarlyAccess { get; private init; }
+    public bool IsNsfw { get; private init; }
     public string? PreviewUrl { get; private init; }
 
     public ObservableCollection<CivitaiVersionPickItemViewModel> Versions { get; } = [];
