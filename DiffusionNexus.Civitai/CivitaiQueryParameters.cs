@@ -60,12 +60,15 @@ public sealed record CivitaiModelsQuery
         if (!string.IsNullOrWhiteSpace(Query)) parts.Add($"query={Uri.EscapeDataString(Query)}");
         if (!string.IsNullOrWhiteSpace(Tag)) parts.Add($"tag={Uri.EscapeDataString(Tag)}");
         if (!string.IsNullOrWhiteSpace(Username)) parts.Add($"username={Uri.EscapeDataString(Username)}");
-        // Civitai expects types as a single comma-separated param (matches StabilityMatrix
-        // and civitai.com's own filter URLs). Repeated `types=A&types=B` returns reduced
-        // results.
+        // Civitai's Zod schema for `types` requires an actual array — repeated params
+        // (`types=LORA&types=LoCon`), not a single comma-separated string. Sending
+        // `types=LORA,LoCon` fails with HTTP 400 "expected array, received string".
         if (Types is { Count: > 0 })
         {
-            parts.Add($"types={Uri.EscapeDataString(string.Join(",", Types))}");
+            foreach (var type in Types)
+            {
+                parts.Add($"types={type}");
+            }
         }
         if (!string.IsNullOrWhiteSpace(Sort)) parts.Add($"sort={Uri.EscapeDataString(Sort)}");
         if (Period.HasValue) parts.Add($"period={Period.Value}");
