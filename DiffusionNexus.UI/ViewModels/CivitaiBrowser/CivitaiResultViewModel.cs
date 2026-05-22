@@ -163,6 +163,32 @@ public partial class CivitaiResultViewModel : ObservableObject
     [RelayCommand]
     private void EnqueueAllVersions() => EnqueueAllVersionsHandler?.Invoke(this);
 
+    /// <summary>
+    /// Opens the model's Civitai page in the default web browser. The browser always
+    /// has the Civitai model id (it came back in the search response), so there's no
+    /// "first download metadata" fallback needed like the Installed tile has.
+    /// </summary>
+    [RelayCommand]
+    private void OpenOnCivitai()
+    {
+        if (Model?.Id is not int modelId || modelId <= 0) return;
+        var url = $"https://civitai.com/models/{modelId}";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            App.Services?.GetService<global::DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>()
+                ?.Warn(global::DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.General,
+                    "OpenOnCivitai",
+                    $"Failed to launch browser for {url}: {ex.Message}");
+        }
+    }
+
     public string VersionCountLabel => VersionCount > 1 ? $"{VersionCount} versions" : "1 version";
 
     public string SelectedVersionSummary

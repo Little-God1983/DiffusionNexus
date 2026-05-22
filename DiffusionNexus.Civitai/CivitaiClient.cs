@@ -17,7 +17,13 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        // Tolerant enum deserialization: Civitai periodically adds new values
+        // (e.g. fp8 / nf4 / e4m3 on CivitaiFloatingPoint) and the default enum
+        // converter throws on unknown strings, killing the entire response.
+        // With this factory unknown values fall back to default(T) so the rest
+        // of the page still deserializes.
+        Converters = { new Models.TolerantEnumConverterFactory() }
     };
 
     private readonly HttpClient _httpClient;

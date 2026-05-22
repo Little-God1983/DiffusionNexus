@@ -1466,6 +1466,14 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             // Version changed while downloading — discard silently
         }
+        catch (HttpRequestException ex)
+        {
+            // Civitai rotates/removes media; a 404 on a cached URL is a routine condition,
+            // not a bug. Log a single Warn line — no stack trace, no Error spam.
+            var statusText = ex.StatusCode.HasValue ? $"HTTP {(int)ex.StatusCode.Value}" : "HTTP error";
+            logger?.Warn(LogCategory.Network, "ThumbnailDownload",
+                $"{statusText} fetching {previewType} thumbnail for '{displayName}' — the source URL is no longer available on Civitai.");
+        }
         catch (Exception ex)
         {
             logger?.Error(LogCategory.Network, "ThumbnailDownload",

@@ -317,9 +317,12 @@
                       </StackPanel>
                     </Grid>
 
-                    <!-- Versions popup trigger -->
-                    <Border Grid.Row="3" Padding="10,4,10,10">
-                      <Button HorizontalAlignment="Stretch"
+                    <!-- Versions popup + Open-on-Civitai -->
+                    <Grid Grid.Row="3"
+                          ColumnDefinitions="*,Auto"
+                          Margin="10,4,10,10">
+                      <Button Grid.Column="0"
+                              HorizontalAlignment="Stretch"
                               HorizontalContentAlignment="Left"
                               Padding="8,6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -389,7 +392,16 @@
                           </Flyout>
                         </Button.Flyout>
                       </Button>
-                    </Border>
+
+                      <Button Grid.Column="1"
+                              Content="&#x1F310;"
+                              Margin="6,0,0,0"
+                              Padding="8,6"
+                              FontSize="14"
+                              ToolTip.Tip="Open on Civitai"
+                              Command="{Binding OpenOnCivitaiCommand}"/>
+
+                    </Grid>
 
                   </Grid>
                 </Border>
