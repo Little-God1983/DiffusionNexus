@@ -453,20 +453,25 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private void OpenOnCivitai()
     {
+        // civitai.com strips NSFW content for unauthenticated visitors; the mirror at
+        // civitai.red serves the full page. Route NSFW models there so the user
+        // doesn't land on a half-blanked-out page.
+        var host = ModelEntity?.IsNsfw == true ? "civitai.red" : "civitai.com";
+
         string? url = null;
 
         if (ModelEntity?.CivitaiId is { } modelCivitaiId)
         {
-            url = $"https://civitai.com/models/{modelCivitaiId}";
+            url = $"https://{host}/models/{modelCivitaiId}";
         }
         else if (ModelEntity?.CivitaiModelPageId is { } pageId)
         {
-            url = $"https://civitai.com/models/{pageId}";
+            url = $"https://{host}/models/{pageId}";
         }
         else if (SelectedVersion?.CivitaiId is { } versionCivitaiId)
         {
             // Version-level ID — link to the version page directly
-            url = $"https://civitai.com/api/v1/model-versions/{versionCivitaiId}";
+            url = $"https://{host}/api/v1/model-versions/{versionCivitaiId}";
         }
 
         if (url is null)

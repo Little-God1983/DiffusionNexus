@@ -172,7 +172,10 @@ public partial class CivitaiResultViewModel : ObservableObject
     private void OpenOnCivitai()
     {
         if (Model?.Id is not int modelId || modelId <= 0) return;
-        var url = $"https://civitai.com/models/{modelId}";
+        // civitai.com hides NSFW content for unauthenticated visitors; civitai.red
+        // serves the full page. Route NSFW models to the mirror.
+        var host = IsNsfw ? "civitai.red" : "civitai.com";
+        var url = $"https://{host}/models/{modelId}";
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
