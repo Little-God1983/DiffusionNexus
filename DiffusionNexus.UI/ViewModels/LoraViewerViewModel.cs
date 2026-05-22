@@ -172,10 +172,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
         var downloadService = App.Services?.GetService<LoraDownloadService>();
-        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient);
+        var dialogService = App.Services?.GetService<IDialogService>();
+        var destination = new DownloadDestinationViewModel(dialogService);
+        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
 
         _ = LoadBaseModelCatalogAsync();
+        _ = LoadDestinationFoldersAsync(destination);
     }
 
     /// <summary>
@@ -2155,6 +2158,25 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Populates the shared destination picker with the user's configured LoRA source
+    /// folders so the browser's queue panel can pick one immediately.
+    /// </summary>
+    private async Task LoadDestinationFoldersAsync(DownloadDestinationViewModel destination)
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var folders = await _settingsService.GetEnabledLoraSourcesAsync();
+            await destination.InitializeAsync(folders);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, "LoraViewer",
+                $"Failed to load LoRA source folders for download destination: {ex.Message}");
         }
     }
 

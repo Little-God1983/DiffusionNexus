@@ -20,6 +20,7 @@ public partial class CivitaiResultViewModel : ObservableObject
         DownloadCount = model.Stats?.DownloadCount ?? 0;
         ThumbsUp = model.Stats?.ThumbsUpCount ?? 0;
         IsNsfw = model.Nsfw;
+        Category = InferCategoryFromTags(model.Tags) ?? string.Empty;
 
         var first = model.ModelVersions.FirstOrDefault();
         BaseModel = first?.BaseModel ?? "";
@@ -65,6 +66,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     public int ThumbsUp { get; private init; }
     public bool IsEarlyAccess { get; private init; }
     public bool IsNsfw { get; private init; }
+    public string Category { get; private init; } = string.Empty;
     public string? PreviewUrl { get; private init; }
 
     public ObservableCollection<CivitaiVersionPickItemViewModel> Versions { get; } = [];
@@ -134,6 +136,25 @@ public partial class CivitaiResultViewModel : ObservableObject
             if (sel.Count == 1) return sel[0].Name;
             return $"{sel.Count} versions selected";
         }
+    }
+
+    private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
+    {
+        foreach (var tagName in tags)
+        {
+            if (string.IsNullOrWhiteSpace(tagName)) continue;
+            var normalized = tagName.Replace(" ", "_").Trim();
+            if (Enum.TryParse<global::DiffusionNexus.Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
+                && category != global::DiffusionNexus.Domain.Enums.CivitaiCategory.Unknown)
+            {
+                return category switch
+                {
+                    global::DiffusionNexus.Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
+                    _ => category.ToString()
+                };
+            }
+        }
+        return null;
     }
 
     private async Task LoadPreviewAsync()

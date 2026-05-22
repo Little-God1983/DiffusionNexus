@@ -8,6 +8,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -30,20 +31,28 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private CancellationTokenSource? _runCts;
 
     public CivitaiDownloadQueue(LoraDownloadService? downloadService)
-        : this(downloadService, null, null)
+        : this(downloadService, null, null, null)
     {
     }
 
     public CivitaiDownloadQueue(
         LoraDownloadService? downloadService,
         IUnifiedLogger? logger,
-        ICivitaiClient? civitaiClient)
+        ICivitaiClient? civitaiClient,
+        DownloadDestinationViewModel? destination)
     {
         _downloadService = downloadService;
         _logger = logger;
         _civitaiClient = civitaiClient;
+        Destination = destination ?? new DownloadDestinationViewModel();
         TryRestore();
     }
+
+    /// <summary>
+    /// Shared destination picker that drives where each job lands. Bound to the
+    /// queue side panel via <c>Queue.Destination</c>.
+    /// </summary>
+    public DownloadDestinationViewModel Destination { get; }
 
     public ObservableCollection<CivitaiDownloadJob> Jobs { get; } = [];
 
@@ -89,6 +98,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             ModelName = result.Name,
             VersionName = pick.Name,
             BaseModel = pick.BaseModel,
+            Category = result.Category,
             FileName = fileName,
             DownloadUrl = url,
             SizeDisplay = pick.SizeDisplay,
@@ -188,25 +198,28 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     private async Task RunJobAsync(CivitaiDownloadJob job, CancellationToken ct)
     {
-        var settings = App.Services?.GetService<IAppSettingsService>();
-        var folders = settings is null ? new List<string>() : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
-        if (folders.Count == 0)
+        // Destination resolution order:
+        //   1. Per-job override (CustomTargetDirectory) — set via per-row override UI
+        //   2. Shared Destination picker (BaseModel + Category sub-folders honored)
+        //   3. Hard fallback: first configured source folder
+        string? targetDir = job.CustomTargetDirectory;
+        if (string.IsNullOrWhiteSpace(targetDir))
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = "No LoRA source folder configured. Set one in Settings.";
-            return;
+            targetDir = Destination.BuildTargetDirectory(job.BaseModel, job.Category);
         }
-
-        // Per-item destination override; otherwise default to first source / baseModel folder.
-        string targetDir;
-        if (!string.IsNullOrWhiteSpace(job.CustomTargetDirectory))
+        if (string.IsNullOrWhiteSpace(targetDir))
         {
-            targetDir = job.CustomTargetDirectory!;
-        }
-        else
-        {
-            var root = folders[0];
-            targetDir = Path.Combine(root, string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
+            var settings = App.Services?.GetService<IAppSettingsService>();
+            var folders = settings is null
+                ? new List<string>()
+                : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
+            if (folders.Count == 0)
+            {
+                job.Status = JobStatus.Failed;
+                job.StatusMessage = "No download destination set. Configure one in the Destination panel.";
+                return;
+            }
+            targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
         }
         Directory.CreateDirectory(targetDir);
         var target = Path.Combine(targetDir, job.FileName);
@@ -389,6 +402,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 ModelName = j.ModelName,
                 VersionName = j.VersionName,
                 BaseModel = j.BaseModel,
+                Category = j.Category,
                 FileName = j.FileName,
                 DownloadUrl = j.DownloadUrl,
                 SizeDisplay = j.SizeDisplay,
@@ -426,6 +440,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     ModelName = p.ModelName,
                     VersionName = p.VersionName,
                     BaseModel = p.BaseModel,
+                    Category = p.Category,
                     FileName = p.FileName,
                     DownloadUrl = p.DownloadUrl,
                     SizeDisplay = p.SizeDisplay,
@@ -452,6 +467,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         public string ModelName { get; set; } = string.Empty;
         public string VersionName { get; set; } = string.Empty;
         public string BaseModel { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
         public string FileName { get; set; } = string.Empty;
         public string DownloadUrl { get; set; } = string.Empty;
         public string SizeDisplay { get; set; } = string.Empty;
@@ -490,6 +506,7 @@ public partial class CivitaiDownloadJob : ObservableObject
     public string ModelName { get; init; } = string.Empty;
     public string VersionName { get; init; } = string.Empty;
     public string BaseModel { get; init; } = string.Empty;
+    public string Category { get; init; } = string.Empty;
     public string FileName { get; init; } = string.Empty;
     public string DownloadUrl { get; init; } = string.Empty;
     public string SizeDisplay { get; init; } = string.Empty;

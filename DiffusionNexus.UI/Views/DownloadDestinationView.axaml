@@ -1,0 +1,107 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.DownloadDestinationView"
+             x:DataType="vm:DownloadDestinationViewModel">
+
+  <Design.DataContext>
+    <vm:DownloadDestinationViewModel/>
+  </Design.DataContext>
+
+  <StackPanel Spacing="8">
+
+    <TextBlock Text="Download destination" FontWeight="SemiBold"/>
+
+    <!-- Option 1: existing source folder -->
+    <Border Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16,12"
+            BorderThickness="2"
+            BorderBrush="{Binding IsDownloadToExisting, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+      <Grid ColumnDefinitions="Auto,*">
+        <RadioButton Grid.Column="0"
+                     GroupName="DownloadDestinationOption"
+                     IsChecked="{Binding IsDownloadToExisting, Mode=TwoWay}"
+                     VerticalAlignment="Top"
+                     Margin="0,2,12,0"/>
+        <StackPanel Grid.Column="1" Spacing="8">
+          <TextBlock Text="Download to existing source folder" FontWeight="SemiBold" FontSize="14"/>
+          <TextBlock Text="Save to one of your configured LoRA source folders" Opacity="0.6" FontSize="12"/>
+          <ComboBox ItemsSource="{Binding SourceFolders}"
+                    SelectedItem="{Binding SelectedSourceFolder}"
+                    IsEnabled="{Binding IsDownloadToExisting}"
+                    HorizontalAlignment="Stretch"
+                    Margin="0,4,0,0"/>
+          <StackPanel Spacing="4"
+                      Margin="0,4,0,0"
+                      IsVisible="{Binding IsDownloadToExisting}">
+            <CheckBox IsChecked="{Binding CreateBaseModelFolder, Mode=TwoWay}"
+                      Content="Create Base Model Folder"
+                      FontSize="13"/>
+            <CheckBox IsChecked="{Binding CreateCategoryFolder, Mode=TwoWay}"
+                      Content="Create Category Folder"
+                      FontSize="13"/>
+          </StackPanel>
+          <Border Background="#111"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,4,0,0"
+                  IsVisible="{Binding HasDestinationPreview}">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Preview Path" Foreground="#888" FontSize="11" FontWeight="SemiBold"/>
+              <TextBlock Text="{Binding PreviewPath}" Foreground="#FFCC00" FontSize="12" TextWrapping="Wrap"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Option 2: custom folder -->
+    <Border Background="#1A1A1A"
+            CornerRadius="8"
+            Padding="16,12"
+            BorderThickness="2"
+            BorderBrush="{Binding IsDownloadToFolder, Converter={x:Static converters:BoolConverters.ToAccentBorder}}">
+      <Grid ColumnDefinitions="Auto,*">
+        <RadioButton Grid.Column="0"
+                     GroupName="DownloadDestinationOption"
+                     IsChecked="{Binding IsDownloadToFolder, Mode=TwoWay}"
+                     VerticalAlignment="Top"
+                     Margin="0,2,12,0"/>
+        <StackPanel Grid.Column="1" Spacing="8">
+          <TextBlock Text="Download to folder" FontWeight="SemiBold" FontSize="14"/>
+          <TextBlock Text="Choose any folder on your system" Opacity="0.6" FontSize="12"/>
+          <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+            <TextBox Grid.Column="0"
+                     Text="{Binding CustomFolderPath, Mode=TwoWay}"
+                     Watermark="Select a folder..."
+                     IsEnabled="{Binding IsDownloadToFolder}"
+                     IsReadOnly="True"/>
+            <Button Grid.Column="1"
+                    Content="Browse..."
+                    Command="{Binding BrowseFolderCommand}"
+                    IsEnabled="{Binding IsDownloadToFolder}"
+                    Margin="8,0,0,0"
+                    Padding="12,6"/>
+          </Grid>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Background="#7D5D2D"
+            CornerRadius="8"
+            Padding="12"
+            IsVisible="{Binding HasNoSourceFolders}">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="!" Foreground="#FFCC00" FontSize="16" FontWeight="Bold"/>
+        <TextBlock Text="No LoRA source folders configured. Add source folders in Settings or use the folder option."
+                   Opacity="0.9"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+
+  </StackPanel>
+</UserControl>

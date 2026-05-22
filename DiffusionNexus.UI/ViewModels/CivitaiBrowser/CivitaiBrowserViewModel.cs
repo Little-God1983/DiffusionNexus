@@ -584,7 +584,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasHiddenResults));
     }
 
-    private void OnResultSelectionChanged(object? sender, EventArgs e) => OnSelectionChanged();
+    private void OnResultSelectionChanged(object? sender, EventArgs e)
+    {
+        OnSelectionChanged();
+
+        // Drive the destination preview from the most-recently-selected card so the
+        // user sees an accurate target folder before clicking Start.
+        if (sender is CivitaiResultViewModel { IsSelected: true } card && _queue.Destination is { } dest)
+        {
+            dest.PreviewBaseModel = card.BaseModel;
+            dest.PreviewCategory = card.Category;
+        }
+    }
 
     private void EnqueueAllVersionsForCard(CivitaiResultViewModel card)
     {

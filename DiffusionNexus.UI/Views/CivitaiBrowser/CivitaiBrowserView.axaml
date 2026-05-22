@@ -3,6 +3,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.CivitaiBrowser"
              xmlns:vmRoot="using:DiffusionNexus.UI.ViewModels"
              xmlns:svc="using:DiffusionNexus.UI.Services.CivitaiBrowser"
+             xmlns:views="using:DiffusionNexus.UI.Views"
              x:Class="DiffusionNexus.UI.Views.CivitaiBrowser.CivitaiBrowserView"
              x:DataType="vm:CivitaiBrowserViewModel">
 
@@ -386,7 +387,7 @@
               Background="#161616"
               BorderBrush="#2A2A2A"
               BorderThickness="1,0,0,0">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
 
           <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="*,Auto">
@@ -409,7 +410,15 @@
             </Grid>
           </Border>
 
-          <ScrollViewer Grid.Row="1" Padding="8">
+          <!-- Shared destination picker. Drives where every queued job lands. -->
+          <Expander Grid.Row="1"
+                    Header="Destination"
+                    IsExpanded="True"
+                    Padding="8,4">
+            <views:DownloadDestinationView DataContext="{Binding Queue.Destination}"/>
+          </Expander>
+
+          <ScrollViewer Grid.Row="2" Padding="8">
             <ItemsControl ItemsSource="{Binding Queue.Jobs}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="svc:CivitaiDownloadJob">
@@ -443,7 +452,7 @@
             </ItemsControl>
           </ScrollViewer>
 
-          <Border Grid.Row="2" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
+          <Border Grid.Row="3" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
             <TextBlock Opacity="0.7" FontSize="11">
               <Run Text="Queued: "/><Run Text="{Binding Queue.ActiveCount}"/>
               <Run Text=" · Done: "/><Run Text="{Binding Queue.CompletedCount}"/>
