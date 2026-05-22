@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -70,8 +71,15 @@ public partial class CivitaiResultViewModel : ObservableObject
             ? preferred?.Url
             : RewriteToResizedImageUrl(preferred?.Url);
 
+        // Cache key (videos only) — Civitai's image id when available, URL hash otherwise.
+        _previewCacheKey = IsVideoPreview
+            ? CivitaiPreviewCache.ComputeKey(preferred?.Id, preferred?.Url)
+            : null;
+
         _ = LoadPreviewAsync();
     }
+
+    private readonly string? _previewCacheKey;
 
     private CivitaiResultViewModel() { }
 
@@ -316,6 +324,35 @@ public partial class CivitaiResultViewModel : ObservableObject
     private async Task LoadVideoFrameAsync(IUnifiedLogger? logger, CancellationToken ct)
     {
         var url = PreviewUrl!;
+
+        // Try the on-disk cache first. A hit skips the entire download + FFmpeg dance.
+        if (_previewCacheKey is not null)
+        {
+            try
+            {
+                var cached = await CivitaiPreviewCache.TryGetAsync(_previewCacheKey, ct).ConfigureAwait(false);
+                if (cached is { Length: > 0 })
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (ct.IsCancellationRequested) return;
+                        try
+                        {
+                            using var ms = new MemoryStream(cached);
+                            PreviewImage = new Bitmap(ms);
+                        }
+                        catch (Exception decodeEx)
+                        {
+                            logger?.Debug(LogCategory.Network, "CivitaiPreview",
+                                $"Cached frame decode failed for {Name}: {decodeEx.Message}");
+                        }
+                    });
+                    return;
+                }
+            }
+            catch (OperationCanceledException) { return; }
+        }
+
         var thumbnailService = App.Services?.GetService<IVideoThumbnailService>();
         if (thumbnailService is null)
         {
@@ -401,6 +438,13 @@ public partial class CivitaiResultViewModel : ObservableObject
                         $"Extracted-frame decode failed for {Name}: {decodeEx.Message}");
                 }
             });
+
+            // Persist for next time. Use CancellationToken.None so a card that's
+            // cancelled right after the bitmap is shown still gets cached.
+            if (_previewCacheKey is not null)
+            {
+                _ = CivitaiPreviewCache.PutAsync(_previewCacheKey, thumbnailBytes, CancellationToken.None);
+            }
         }
         catch (OperationCanceledException) { /* card was dropped during fetch/extract */ }
         catch (Exception ex)
