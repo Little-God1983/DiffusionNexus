@@ -319,7 +319,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         var baseName = Path.Combine(Path.GetDirectoryName(filePath)!, Path.GetFileNameWithoutExtension(filePath));
 
-        // <file>.civitai.json — A1111/StabilityMatrix-style sidecar carrying the full version DTO.
+        // <file>.civitai.json — A1111-style sidecar carrying the full version DTO.
         var jsonPath = baseName + ".civitai.json";
         var payload = new
         {

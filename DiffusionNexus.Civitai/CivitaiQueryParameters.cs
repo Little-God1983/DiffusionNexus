@@ -32,8 +32,9 @@ public sealed record CivitaiModelsQuery
     public CivitaiPeriod? Period { get; init; }
 
     /// <summary>NSFW filter. Civitai's API expects a STRING here, not a bool — typically
-    /// the literal "true" to include NSFW results. StabilityMatrix always sends "true" and
-    /// filters NSFW client-side instead of relying on the API to filter.</summary>
+    /// the literal "true" to include NSFW results. We always send "true" and filter
+    /// NSFW client-side instead of relying on the API to filter, so the toggle can
+    /// be flipped without a re-fetch.</summary>
     public string? Nsfw { get; init; }
 
     /// <summary>Only include primary file.</summary>

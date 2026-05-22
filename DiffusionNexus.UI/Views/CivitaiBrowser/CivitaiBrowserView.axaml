@@ -12,7 +12,7 @@
 
   <Grid RowDefinitions="Auto,Auto,*,Auto">
 
-    <!-- Filter bar (matches StabilityMatrix layout) -->
+    <!-- Filter bar -->
     <Border Grid.Row="0"
             Background="#161616"
             Padding="12,8"

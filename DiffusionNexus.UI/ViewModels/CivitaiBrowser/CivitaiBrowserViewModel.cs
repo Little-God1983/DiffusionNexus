@@ -175,27 +175,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Fetches the next page. If client-side filters (Hide installed / Hide early-access)
-    /// hide every newly-loaded card, automatically follow the cursor up to <c>maxChained</c>
-    /// times so the user doesn't have to click through fully-filtered pages.
+    /// Fetches the next batch. <see cref="LoadNextAsync"/> auto-paginates internally
+    /// up to <see cref="MaxAutoPaginateIterations"/> times to collect a full batch, so
+    /// one click delivers ~50 more visible items.
     /// </summary>
     [RelayCommand]
     private async Task LoadMoreAsync()
     {
         if (!HasMore || IsBusy) return;
-
-        const int maxChained = 3;
-        var ct = _searchCts?.Token ?? CancellationToken.None;
-
-        for (var i = 0; i < maxChained; i++)
-        {
-            var visibleBefore = VisibleCount;
-            await LoadNextAsync(ct);
-            if (ct.IsCancellationRequested) return;
-
-            // Got new visible cards, or no more pages → stop chaining.
-            if (VisibleCount > visibleBefore || !HasMore) return;
-        }
+        await LoadNextAsync(_searchCts?.Token ?? CancellationToken.None);
     }
 
     [RelayCommand]
@@ -277,6 +265,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     #endregion
 
+    private const int TargetVisibleCount = 50;
+    private const int MaxAutoPaginateIterations = 10;
+
+    /// <summary>
+    /// Fetches paginated results until <see cref="TargetVisibleCount"/> visible items
+    /// have been collected, the cursor runs out, or <see cref="MaxAutoPaginateIterations"/>
+    /// safety iterations are hit. Without this loop a filter that excludes most items
+    /// would surface an incomplete set on the first search and force a Load more click.
+    /// </summary>
     private async Task LoadNextAsync(CancellationToken ct)
     {
         if (_civitaiClient is null)
@@ -289,66 +286,93 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         try
         {
             IsBusy = true;
-            var isFirstPage = string.IsNullOrEmpty(_nextCursor);
-            StatusMessage = isFirstPage ? "Searching Civitai..." : "Loading more...";
+            var isFirstBatch = string.IsNullOrEmpty(_nextCursor);
+            StatusMessage = isFirstBatch ? "Searching Civitai..." : "Loading more...";
 
-            var query = BuildQuery(_nextCursor);
             var apiKey = await GetApiKeyAsync();
-
-            var requestUrl = "https://civitai.com/api/v1/models?" + DescribeQuery(query);
-            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
-                isFirstPage ? "Starting search" : "Fetching next page",
-                $"GET {requestUrl}\nApiKey set: {!string.IsNullOrEmpty(apiKey)}");
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var response = await _civitaiClient.GetModelsAsync(query, apiKey, ct);
-            sw.Stop();
-
-            if (ct.IsCancellationRequested) return;
-
-            var apiCount = response.Items.Count;
-            var preFilterCount = Results.Count;
             var existingIds = new HashSet<int>(Results.Where(r => r.Model is not null).Select(r => r.Model!.Id));
+            var preBatchCount = Results.Count;
+            var batchStart = System.Diagnostics.Stopwatch.StartNew();
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            string? cursor = _nextCursor;
+            CivitaiModelsQuery? lastQuery = null;
+            CivitaiPagedResponse<CivitaiModel>? lastResponse = null;
+            var iterations = 0;
+            var totalApiItems = 0;
+
+            while (true)
             {
-                foreach (var model in response.Items)
+                iterations++;
+                var query = BuildQuery(cursor);
+                lastQuery = query;
+
+                var requestUrl = "https://civitai.com/api/v1/models?" + DescribeQuery(query);
+                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                    iterations == 1 && isFirstBatch ? "Starting search"
+                    : iterations == 1 ? "Fetching next batch"
+                    : $"Auto-paginating (iteration {iterations})",
+                    $"GET {requestUrl}\nApiKey set: {!string.IsNullOrEmpty(apiKey)}\nVisible so far: {VisibleCount}/{TargetVisibleCount}");
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var response = await _civitaiClient.GetModelsAsync(query, apiKey, ct);
+                sw.Stop();
+                if (ct.IsCancellationRequested) return;
+
+                lastResponse = response;
+                totalApiItems += response.Items.Count;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    if (model.ModelVersions.Count == 0) continue;
-                    if (!existingIds.Add(model.Id)) continue;
-                    var vm = new CivitaiResultViewModel(model)
+                    foreach (var model in response.Items)
                     {
-                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
-                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
-                    };
-                    vm.SelectionChanged += OnResultSelectionChanged;
-                    Results.Add(vm);
+                        if (model.ModelVersions.Count == 0) continue;
+                        if (model.Mode is not null) continue; // skip archived/taken-down
+                        if (!existingIds.Add(model.Id)) continue;
+                        var vm = new CivitaiResultViewModel(model)
+                        {
+                            IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                            EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
+                        };
+                        vm.SelectionChanged += OnResultSelectionChanged;
+                        Results.Add(vm);
+                    }
+                });
+
+                ApplyClientSideFilters();
+
+                _logger?.Debug(LogCategory.Network, "CivitaiBrowser",
+                    $"Iter {iterations}: {response.Items.Count} from API → {VisibleCount} visible total ({sw.ElapsedMilliseconds} ms)");
+
+                cursor = response.Metadata?.NextCursor;
+
+                // Stop if: enough visible items, no more cursor, or safety cap hit.
+                if (VisibleCount >= TargetVisibleCount
+                    || string.IsNullOrEmpty(cursor)
+                    || iterations >= MaxAutoPaginateIterations)
+                {
+                    break;
                 }
-            });
-
-            var addedCount = Results.Count - preFilterCount;
-            _nextCursor = response.Metadata?.NextCursor;
-            OnPropertyChanged(nameof(HasMore));
-
-            // Tag-fallback: Civitai's REST query= is a name-only substring match. The web
-            // search index also matches tags and descriptions, which is where most of the
-            // "missing" results live. When a fresh name-search returned <10 items, fire a
-            // tag= query with the same text and merge unique model ids in.
-            if (isFirstPage
-                && !string.IsNullOrWhiteSpace(SearchText)
-                && response.Items.Count < 10)
-            {
-                await RunTagFallbackAsync(query, apiKey, existingIds, ct);
             }
 
-            ApplyClientSideFilters();
+            batchStart.Stop();
+            _nextCursor = cursor;
+            OnPropertyChanged(nameof(HasMore));
 
-            var hiddenCount = HiddenByFilters;
-            var visibleCount = VisibleCount;
+            // Tag-fallback: REST query= is a name-only substring match; civitai.com's web
+            // index also matches tags/descriptions. When a fresh name-search yielded thin
+            // results, fire a tag= query with the same text and merge unique ids in.
+            if (isFirstBatch
+                && !string.IsNullOrWhiteSpace(SearchText)
+                && VisibleCount < TargetVisibleCount
+                && lastQuery is not null)
+            {
+                await RunTagFallbackAsync(lastQuery, apiKey, existingIds, ct);
+            }
 
+            var addedThisBatch = Results.Count - preBatchCount;
             _logger?.Info(LogCategory.Network, "CivitaiBrowser",
-                $"Response: {apiCount} items from API, {addedCount} added, {visibleCount} visible, {hiddenCount} hidden ({sw.ElapsedMilliseconds} ms)",
-                $"Total results so far: {Results.Count}\nNext cursor: {_nextCursor ?? "(none)"}\nMetadata.totalItems: {response.Metadata?.TotalItems}\nMetadata.totalPages: {response.Metadata?.TotalPages}\nMetadata.currentPage: {response.Metadata?.CurrentPage}\nMetadata.nextPage: {response.Metadata?.NextPage ?? "(none)"}");
+                $"Batch complete: {iterations} request(s), {totalApiItems} items from API, {addedThisBatch} new unique, {VisibleCount} visible total ({batchStart.ElapsedMilliseconds} ms)",
+                $"Next cursor: {_nextCursor ?? "(none)"}\nLast response metadata.totalItems: {lastResponse?.Metadata?.TotalItems}");
 
             StatusMessage = Results.Count == 0 ? "No results." : null;
         }
@@ -474,8 +498,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             .Where(b => b.IsSelected)
             .Select(b => b.BaseModelRaw)
             .ToList();
-        // Match StabilityMatrix: only filter by base model when the selection is a
-        // strict subset. "Nothing selected" and "all selected" both mean "don't filter".
+        // Only filter by base model when the selection is a strict subset.
+        // "Nothing selected" and "all selected" both mean "don't filter".
         IReadOnlyList<string>? baseModels = selectedBaseModels.Count > 0
                                             && selectedBaseModels.Count < AvailableBaseModels.Count
                                             ? selectedBaseModels
@@ -487,8 +511,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             Types = types,
             Sort = SelectedSort,
             Period = SelectedPeriod,
-            // StabilityMatrix-equivalent: always request NSFW from the API so we get the
-            // full result set, then filter client-side via ShowNsfwContent. Sending
+            // Always request NSFW from the API so we get the full result set, then
+            // filter client-side via ShowNsfwContent. Sending
             // nsfw=false here strips them at the server and they can't come back.
             Nsfw = "true",
             BaseModels = baseModels,
