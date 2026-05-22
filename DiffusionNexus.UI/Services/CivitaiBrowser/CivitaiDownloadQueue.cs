@@ -295,15 +295,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 }
             }
 
-            // Sidecar files: <file>.civitai.json + <file>.preview.png
-            try
-            {
-                await WriteSidecarsAsync(target, civVersion, job, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Sidecar write failed: {ex.Message}");
-            }
+            // No sidecar files. All Civitai metadata is persisted to the database by
+            // LoraDownloadService.PersistDownloadedModelAsync, and thumbnails are
+            // stored in ModelImage.ThumbnailData. Writing .civitai.json / .preview.png
+            // would be redundant and nothing in the app reads them back.
 
             job.Status = JobStatus.Completed;
             job.StatusMessage = "Done";
@@ -326,56 +321,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         using var sha = SHA256.Create();
         var bytes = await sha.ComputeHashAsync(stream, ct);
         return Convert.ToHexString(bytes);
-    }
-
-    private static async Task WriteSidecarsAsync(string filePath, CivitaiModelVersion version, CivitaiDownloadJob job, CancellationToken ct)
-    {
-        var baseName = Path.Combine(Path.GetDirectoryName(filePath)!, Path.GetFileNameWithoutExtension(filePath));
-
-        // <file>.civitai.json — A1111-style sidecar carrying the full version DTO.
-        var jsonPath = baseName + ".civitai.json";
-        var payload = new
-        {
-            modelId = job.ModelId,
-            modelName = job.ModelName,
-            id = version.Id,
-            name = version.Name,
-            baseModel = version.BaseModel,
-            trainedWords = version.TrainedWords,
-            description = version.Description,
-            downloadUrl = version.DownloadUrl,
-            files = version.Files.Select(f => new
-            {
-                name = f.Name,
-                sizeKB = f.SizeKB,
-                hashes = new
-                {
-                    AutoV2 = f.Hashes?.AutoV2,
-                    SHA256 = f.Hashes?.SHA256,
-                    CRC32 = f.Hashes?.CRC32,
-                    BLAKE3 = f.Hashes?.BLAKE3
-                }
-            }),
-            images = version.Images.Select(i => new { url = i.Url, width = i.Width, height = i.Height, nsfw = i.Nsfw })
-        };
-        await File.WriteAllTextAsync(jsonPath,
-            JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }),
-            ct);
-
-        // <file>.preview.png — first example image.
-        if (!string.IsNullOrWhiteSpace(job.PreviewImageUrl))
-        {
-            var pngPath = baseName + ".preview.png";
-            if (!File.Exists(pngPath))
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                var data = await http.GetByteArrayAsync(job.PreviewImageUrl, ct);
-                if (data.Length > 0)
-                {
-                    await File.WriteAllBytesAsync(pngPath, data, ct);
-                }
-            }
-        }
     }
 
     #region Persistence
