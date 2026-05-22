@@ -41,13 +41,21 @@ public sealed class LoraDownloadService
         Action<double, string>? reportProgress = null,
         Action? completed = null,
         Action? failed = null,
-        int? existingModelId = null)
+        int? existingModelId = null,
+        CancellationToken externalCancellationToken = default)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
         var activityLog = App.Services?.GetService<IActivityLogService>();
         using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
 
         activityLog?.StartDownloadProgress(taskName);
+
+        // Link the caller's cancellation token (per-job cancel from the Civitai
+        // browser queue) with the task tracker's token (queue-wide cancel via
+        // ITaskTracker). Either one firing aborts the download.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            externalCancellationToken,
+            taskHandle?.CancellationToken ?? CancellationToken.None);
 
         try
         {
@@ -66,7 +74,7 @@ public sealed class LoraDownloadService
             httpClient.Timeout = TimeSpan.FromHours(2);
             httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
 
-            var ct = taskHandle?.CancellationToken ?? CancellationToken.None;
+            var ct = linkedCts.Token;
             var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
 
             if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)

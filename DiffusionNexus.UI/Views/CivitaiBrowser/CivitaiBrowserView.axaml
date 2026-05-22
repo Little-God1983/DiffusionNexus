@@ -441,6 +441,11 @@
                         IsEnabled="{Binding !Queue.HasSpaceWarning}"
                         Padding="8,4"
                         Classes="accent"/>
+                <Button Content="Abort"
+                        Command="{Binding AbortQueueCommand}"
+                        Padding="8,4"
+                        Foreground="#FBBF24"
+                        ToolTip.Tip="Stop all active downloads but keep the queue. Hit Start to resume."/>
                 <Button Content="Clear done"
                         Command="{Binding ClearCompletedCommand}"
                         Padding="8,4"
@@ -491,13 +496,36 @@
                       <TextBlock Grid.Row="0" Grid.Column="0"
                                  Text="{Binding ModelName}"
                                  FontWeight="SemiBold"
-                                 TextTrimming="CharacterEllipsis"/>
-                      <Button Grid.Row="0" Grid.Column="1"
-                              Content="&#x2715;"
-                              Padding="6,0"
-                              FontSize="10"
-                              Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RemoveJobCommand}"
-                              CommandParameter="{Binding}"/>
+                                 TextTrimming="CharacterEllipsis"
+                                 VerticalAlignment="Center"/>
+                      <!-- Per-job action buttons. Cancel only while downloading, Retry
+                           only after a failure/cancel, X removes the tile (and aborts
+                           any in-flight download). -->
+                      <StackPanel Grid.Row="0" Grid.Column="1"
+                                  Orientation="Horizontal"
+                                  Spacing="2"
+                                  VerticalAlignment="Center">
+                        <Button Content="&#x23F9;"
+                                FontSize="11"
+                                Padding="6,2"
+                                ToolTip.Tip="Cancel this download"
+                                IsVisible="{Binding CanCancel}"
+                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).CancelJobCommand}"
+                                CommandParameter="{Binding}"/>
+                        <Button Content="&#x21BB;"
+                                FontSize="11"
+                                Padding="6,2"
+                                ToolTip.Tip="Retry this download"
+                                IsVisible="{Binding CanRetry}"
+                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RetryJobCommand}"
+                                CommandParameter="{Binding}"/>
+                        <Button Content="&#x2715;"
+                                FontSize="10"
+                                Padding="6,2"
+                                ToolTip.Tip="Remove from queue"
+                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RemoveJobCommand}"
+                                CommandParameter="{Binding}"/>
+                      </StackPanel>
                       <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
                         <TextBlock Text="{Binding VersionName}" Opacity="0.6" FontSize="11"/>
                         <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
@@ -515,10 +543,20 @@
                                  TextTrimming="CharacterEllipsis"
                                  Margin="0,4,0,0"
                                  ToolTip.Tip="{Binding DisplayPath}"/>
-                      <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                        <ProgressBar Grid.Column="0" Value="{Binding ProgressPercent}" Maximum="100" Height="6"/>
-                        <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" FontSize="10" Opacity="0.7" Margin="8,0,0,0"/>
-                      </Grid>
+                      <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Spacing="2" Margin="0,4,0,0">
+                        <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="6"/>
+                        <!-- Margin.Right keeps the text clear of the scroll viewer's
+                             overlay scrollbar, which would otherwise eat the last char
+                             of right-aligned status text ("Don" instead of "Done"). -->
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   Foreground="{Binding StatusForeground}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="NoWrap"
+                                   HorizontalAlignment="Right"
+                                   Margin="0,0,16,0"
+                                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                      </StackPanel>
                     </Grid>
                   </Border>
                 </DataTemplate>

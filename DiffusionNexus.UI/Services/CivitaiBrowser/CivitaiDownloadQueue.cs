@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Civitai;
@@ -265,9 +266,48 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public void Remove(CivitaiDownloadJob job)
     {
+        // If the tile is removed mid-download, cancel the in-flight transfer first
+        // so we don't keep streaming bytes for a job no one is watching.
+        if (job.Status == JobStatus.Downloading)
+        {
+            job.CancelByUser();
+        }
         Jobs.Remove(job);
         Persist();
         RaiseCountsChanged();
+    }
+
+    /// <summary>
+    /// Cancels a single in-flight download. The job's HTTP read aborts within one
+    /// buffer fill and its <see cref="CivitaiDownloadJob.Status"/> moves to <c>Cancelled</c>.
+    /// </summary>
+    public void CancelJob(CivitaiDownloadJob job)
+    {
+        if (job.Status != JobStatus.Downloading) return;
+        job.CancelByUser();
+    }
+
+    /// <summary>
+    /// Re-queues a single failed/cancelled job and runs it through the worker pool.
+    /// Doesn't disturb other queued jobs the user hasn't started yet.
+    /// </summary>
+    public async Task RetryJobAsync(CivitaiDownloadJob job)
+    {
+        if (job.Status is JobStatus.Downloading or JobStatus.Completed) return;
+        if (_downloadService is null) return;
+
+        job.ResetForRetry();
+        Persist();
+        RaiseCountsChanged();
+
+        _runCts ??= new CancellationTokenSource();
+        var ct = _runCts.Token;
+
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Retrying: {job.ModelName} — {job.VersionName}");
+        await RunGatedAsync(job, ct);
+        RaiseCountsChanged();
+        Persist();
     }
 
     public void ClearCompleted()
@@ -294,6 +334,39 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             _logger?.Info(LogCategory.Download, "CivitaiQueue",
                 $"Queue cleared: {removed} job(s) removed (active downloads cancelled).");
         }
+    }
+
+    /// <summary>
+    /// Aborts every currently-downloading job without removing anything from the
+    /// queue. In-flight HTTP transfers abort within one buffer fill; the jobs land
+    /// at <c>Cancelled</c> status and can be re-run via the per-tile Retry button
+    /// or by hitting Start again.
+    /// </summary>
+    public void AbortAllActive()
+    {
+        var stoppedCount = 0;
+
+        // Mark downloading jobs so the worker's catch block knows this was a
+        // user cancel (status -> Cancelled, not Failed).
+        foreach (var job in Jobs.Where(j => j.Status == JobStatus.Downloading))
+        {
+            job.CancelByUser();
+            stoppedCount++;
+        }
+
+        // Cancel the run-wide CTS too so any queued jobs still waiting on a
+        // semaphore slot exit cleanly. They keep their Queued status (the worker
+        // never started touching them) and can be resumed via Start.
+        _runCts?.Cancel();
+        _runCts = null;
+
+        if (stoppedCount > 0)
+        {
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Abort: stopped {stoppedCount} active download(s); queue preserved.");
+        }
+        Persist();
+        RaiseCountsChanged();
     }
 
     /// <summary>
@@ -329,9 +402,28 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             $"Batch complete — {CompletedCount} done, {ErrorCount} failed, {ActiveCount} still active.");
     }
 
-    private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken ct)
+    private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken runCt)
     {
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        // Link the run-wide cancel (queue Start cycle / Clear all) with the per-job
+        // cancel (user clicked Cancel on this tile). Either firing aborts only this job.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(runCt, job.CancellationToken);
+        var ct = linkedCts.Token;
+
+        try
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled while waiting for a slot. Don't release the gate (we never took it).
+            if (job.WasCancelledByUser)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.StatusMessage = "Cancelled";
+            }
+            return;
+        }
+
         try
         {
             await RunJobAsync(job, ct).ConfigureAwait(false);
@@ -412,11 +504,22 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 }),
                 failed: () => Dispatcher.UIThread.Post(() =>
                 {
-                    job.Status = JobStatus.Failed;
-                    if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
-                        job.StatusMessage = "Failed";
+                    // If the user clicked Cancel, surface that distinctly; otherwise it's
+                    // a real failure (HTTP error, disk error, etc.).
+                    if (job.WasCancelledByUser)
+                    {
+                        job.Status = JobStatus.Cancelled;
+                        job.StatusMessage = "Cancelled";
+                    }
+                    else
+                    {
+                        job.Status = JobStatus.Failed;
+                        if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
+                            job.StatusMessage = "Failed";
+                    }
                     tcs.TrySetResult(false);
-                }));
+                }),
+                externalCancellationToken: ct);
 
             var ok = await tcs.Task.ConfigureAwait(false);
             if (!ok) return;
@@ -453,8 +556,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = "Cancelled";
+            job.Status = job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed;
+            job.StatusMessage = job.WasCancelledByUser ? "Cancelled" : "Stopped";
         }
         catch (Exception ex)
         {
@@ -592,11 +695,44 @@ public enum JobStatus
     Queued,
     Downloading,
     Completed,
-    Failed
+    Failed,
+    Cancelled
 }
 
 public partial class CivitaiDownloadJob : ObservableObject
 {
+    /// <summary>
+    /// Per-job cancellation source. The queue links this with its run-wide CTS so
+    /// either source firing aborts the download. Recreated on Retry so a fresh
+    /// run starts with an un-cancelled token.
+    /// </summary>
+    private CancellationTokenSource _jobCts = new();
+
+    public CancellationToken CancellationToken => _jobCts.Token;
+
+    /// <summary>True when the user clicked Cancel on this specific job (vs. the queue
+    /// being cleared or app shutting down). Lets the worker distinguish "user-cancelled"
+    /// from "stopped for some other reason" when picking the final <see cref="Status"/>.</summary>
+    public bool WasCancelledByUser { get; private set; }
+
+    public void CancelByUser()
+    {
+        WasCancelledByUser = true;
+        try { _jobCts.Cancel(); } catch { /* already disposed */ }
+        StatusMessage = "Cancelling...";
+    }
+
+    /// <summary>Throws away the cancelled token and prepares for a fresh run.</summary>
+    public void ResetForRetry()
+    {
+        try { _jobCts.Dispose(); } catch { /* best-effort */ }
+        _jobCts = new CancellationTokenSource();
+        WasCancelledByUser = false;
+        ProgressPercent = 0;
+        StatusMessage = null;
+        Status = JobStatus.Queued;
+    }
+
     public int ModelId { get; init; }
     public int VersionId { get; init; }
     public string ModelName { get; init; } = string.Empty;
@@ -642,6 +778,37 @@ public partial class CivitaiDownloadJob : ObservableObject
     /// </summary>
     public string? DisplayPath => TargetPath ?? ExpectedTargetDir;
 
+    // Status-colored brushes for the tile's status text. Static so we allocate once
+    // and reuse across every job. The default brush mimics the existing 70%-opacity
+    // foreground used elsewhere in the queue tile.
+    private static readonly IBrush DoneBrush = new SolidColorBrush(Color.Parse("#22C55E"));
+    private static readonly IBrush FailedBrush = new SolidColorBrush(Color.Parse("#F87171"));
+    private static readonly IBrush DefaultStatusBrush = new SolidColorBrush(Color.Parse("#B3B3B3"));
+
+    /// <summary>
+    /// Foreground brush for the tile's status text. Green for Completed, red for
+    /// Failed/Cancelled, neutral for Queued / Downloading.
+    /// </summary>
+    public IBrush StatusForeground => Status switch
+    {
+        JobStatus.Completed => DoneBrush,
+        JobStatus.Failed => FailedBrush,
+        JobStatus.Cancelled => FailedBrush,
+        _ => DefaultStatusBrush
+    };
+
+    /// <summary>True while the worker is actively running — Cancel is available.</summary>
+    public bool CanCancel => Status == JobStatus.Downloading;
+
+    /// <summary>True after a terminal failure or user cancel — Retry is available.</summary>
+    public bool CanRetry => Status is JobStatus.Failed or JobStatus.Cancelled;
+
     partial void OnTargetPathChanged(string? value) => OnPropertyChanged(nameof(DisplayPath));
     partial void OnExpectedTargetDirChanged(string? value) => OnPropertyChanged(nameof(DisplayPath));
+    partial void OnStatusChanged(JobStatus value)
+    {
+        OnPropertyChanged(nameof(StatusForeground));
+        OnPropertyChanged(nameof(CanCancel));
+        OnPropertyChanged(nameof(CanRetry));
+    }
 }

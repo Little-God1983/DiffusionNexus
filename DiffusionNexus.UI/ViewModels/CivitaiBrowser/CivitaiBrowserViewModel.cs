@@ -296,11 +296,27 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private void ClearQueue() => _queue.ClearAll();
 
+    /// <summary>
+    /// Stops every active download but keeps the queue intact. Hit Start to resume.
+    /// </summary>
+    [RelayCommand]
+    private void AbortQueue() => _queue.AbortAllActive();
+
     [RelayCommand]
     private void RemoveJob(CivitaiDownloadJob? job)
     {
         if (job is not null) _queue.Remove(job);
     }
+
+    [RelayCommand]
+    private void CancelJob(CivitaiDownloadJob? job)
+    {
+        if (job is not null) _queue.CancelJob(job);
+    }
+
+    [RelayCommand]
+    private Task RetryJobAsync(CivitaiDownloadJob? job)
+        => job is null ? Task.CompletedTask : _queue.RetryJobAsync(job);
 
     [RelayCommand]
     private async Task RefreshInstalledAsync() => await RefreshInstalledSetAsync();
