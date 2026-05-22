@@ -32,6 +32,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _isLoading;
     private bool _initialized;
     private HashSet<int> _installedVersionIds = [];
+    private CivitaiResultViewModel? _lastClickedItem;
 
     public CivitaiBrowserViewModel()
         : this(null, null, null, new CivitaiDownloadQueue(null), null)
@@ -169,6 +170,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         var ct = _searchCts.Token;
 
         Results.Clear();
+        _lastClickedItem = null;   // anchor invalidated by clear
         OnSelectionChanged();
         _nextCursor = null;
         await LoadNextAsync(ct);
@@ -189,11 +191,57 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private void ClearSelection()
     {
-        foreach (var r in Results)
-        {
-            r.IsSelected = false;
-        }
+        ClearSelectionSilent();
         OnSelectionChanged();
+    }
+
+    /// <summary>
+    /// Pointer-driven multi-select dispatcher invoked from the view's code-behind on
+    /// every card click. Mirrors the Generation Gallery / Dataset Management pattern:
+    /// Shift = range from last click, Ctrl = toggle, plain click = clear-and-select-this.
+    /// </summary>
+    public void SelectWithModifiers(CivitaiResultViewModel? item, bool isShiftPressed, bool isCtrlPressed)
+    {
+        if (item is null) return;
+
+        if (isShiftPressed && _lastClickedItem is not null)
+        {
+            SelectRange(_lastClickedItem, item);
+        }
+        else if (isCtrlPressed)
+        {
+            item.IsSelected = !item.IsSelected;
+        }
+        else
+        {
+            ClearSelectionSilent();
+            item.IsSelected = true;
+        }
+
+        _lastClickedItem = item;
+        OnSelectionChanged();
+    }
+
+    private void SelectRange(CivitaiResultViewModel from, CivitaiResultViewModel to)
+    {
+        var fromIndex = Results.IndexOf(from);
+        var toIndex = Results.IndexOf(to);
+        if (fromIndex == -1 || toIndex == -1) return;
+
+        var start = Math.Min(fromIndex, toIndex);
+        var end = Math.Max(fromIndex, toIndex);
+        for (var i = start; i <= end; i++)
+        {
+            // Skip cards filtered out by client-side filters so range-select doesn't
+            // silently re-include them and surprise the user.
+            if (Results[i].IsHidden) continue;
+            Results[i].IsSelected = true;
+        }
+    }
+
+    private void ClearSelectionSilent()
+    {
+        foreach (var r in Results) r.IsSelected = false;
     }
 
     [RelayCommand]

@@ -4,6 +4,7 @@
              xmlns:vmRoot="using:DiffusionNexus.UI.ViewModels"
              xmlns:svc="using:DiffusionNexus.UI.Services.CivitaiBrowser"
              xmlns:views="using:DiffusionNexus.UI.Views"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.CivitaiBrowser.CivitaiBrowserView"
              x:DataType="vm:CivitaiBrowserViewModel">
 
@@ -218,10 +219,11 @@
                         Width="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).CardWidth}"
                         IsVisible="{Binding !IsHidden}"
                         Background="#1E1E1E"
-                        BorderBrush="#333"
-                        BorderThickness="1"
+                        BorderBrush="{Binding IsSelected, Converter={x:Static converters:BoolConverters.ToAccentBorder}}"
+                        BorderThickness="2"
                         CornerRadius="6"
-                        Padding="0">
+                        Padding="0"
+                        PointerPressed="OnResultCardPointerPressed">
                   <Grid RowDefinitions="Auto,Auto,Auto,Auto">
 
                     <!-- Preview image -->
