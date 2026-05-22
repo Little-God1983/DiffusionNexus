@@ -357,6 +357,13 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private const int MaxAutoPaginateIterations = 10;
 
     /// <summary>
+    /// When client-side filters drop the visible count below this floor, the VM
+    /// quietly kicks off a Load-more so the user doesn't see a half-empty grid
+    /// after toggling Hide Installed / Hide Early Access / Show NSFW.
+    /// </summary>
+    private const int AutoLoadMoreThreshold = 30;
+
+    /// <summary>
     /// Fetches paginated results until <see cref="TargetVisibleCount"/> visible items
     /// have been collected, the cursor runs out, or <see cref="MaxAutoPaginateIterations"/>
     /// safety iterations are hit. Without this loop a filter that excludes most items
@@ -670,6 +677,25 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(VisibleCount));
         OnPropertyChanged(nameof(HiddenByFilters));
         OnPropertyChanged(nameof(HasHiddenResults));
+
+        MaybeTopUpVisibleResults();
+    }
+
+    /// <summary>
+    /// Fires off a quiet Load-more when client-side filters have left the visible
+    /// count below <see cref="AutoLoadMoreThreshold"/> and more pages exist. The
+    /// <see cref="IsBusy"/> guard prevents re-entry while a fetch is already in
+    /// flight — including the recursive call from within
+    /// <see cref="LoadNextAsync"/>'s own end-of-iteration <see cref="ApplyClientSideFilters"/>.
+    /// </summary>
+    private void MaybeTopUpVisibleResults()
+    {
+        if (!_initialized) return;       // skip the constructor-time cascade
+        if (IsBusy) return;              // a fetch is in flight; let it finish first
+        if (!HasMore) return;            // nothing left to load
+        if (VisibleCount >= AutoLoadMoreThreshold) return;
+
+        _ = LoadNextAsync(_searchCts?.Token ?? CancellationToken.None);
     }
 
     private void OnResultSelectionChanged(object? sender, EventArgs e)
