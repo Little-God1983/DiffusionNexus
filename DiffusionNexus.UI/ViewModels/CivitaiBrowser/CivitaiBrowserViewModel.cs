@@ -169,11 +169,21 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
 
+        // Stop every in-flight preview download on the old result set before we drop
+        // the VMs. Otherwise rapid searches stack 50+ zombie video downloads behind
+        // the global extraction gate.
+        CancelAllPreviews();
+
         Results.Clear();
         _lastClickedItem = null;   // anchor invalidated by clear
         OnSelectionChanged();
         _nextCursor = null;
         await LoadNextAsync(ct);
+    }
+
+    private void CancelAllPreviews()
+    {
+        foreach (var r in Results) r.Cancel();
     }
 
     /// <summary>

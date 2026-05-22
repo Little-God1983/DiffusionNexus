@@ -229,6 +229,23 @@
                     <!-- Preview image -->
                     <Border Grid.Row="0" Height="240" ClipToBounds="True" CornerRadius="6,6,0,0">
                       <Grid>
+                        <!-- Video-only models: Civitai's CDN can't extract a still, so
+                             show a styled placeholder instead of an empty box. -->
+                        <Border IsVisible="{Binding IsVideoPreview}"
+                                Background="#0A0A0A">
+                          <StackPanel HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Spacing="6">
+                            <TextBlock Text="&#x25B6;"
+                                       FontSize="48"
+                                       Opacity="0.4"
+                                       HorizontalAlignment="Center"/>
+                            <TextBlock Text="Video preview"
+                                       FontSize="11"
+                                       Opacity="0.5"
+                                       HorizontalAlignment="Center"/>
+                          </StackPanel>
+                        </Border>
                         <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"/>
                         <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                   Margin="8"
@@ -260,6 +277,16 @@
                                 VerticalAlignment="Bottom"
                                 Margin="8">
                           <TextBlock Text="{Binding BaseModel}" FontSize="11" Foreground="White"/>
+                        </Border>
+                        <Border IsVisible="{Binding IsVideoPreview}"
+                                Background="#AA0EA5E9"
+                                CornerRadius="4"
+                                Padding="6,2"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Bottom"
+                                Margin="8"
+                                ToolTip.Tip="Animated source — showing a still frame">
+                          <TextBlock Text="VIDEO" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
                         </Border>
                       </Grid>
                     </Border>
