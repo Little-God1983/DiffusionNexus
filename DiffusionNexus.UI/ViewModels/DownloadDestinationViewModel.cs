@@ -54,8 +54,17 @@ public partial class DownloadDestinationViewModel : ObservableObject
     [ObservableProperty]
     private string? _previewCategory;
 
+    /// <summary>
+    /// When false, the preview-path block is suppressed in the view. The Civitai
+    /// browser's queue panel sets this off because each queued item can land in a
+    /// different folder (different base model / category); the per-job resolved
+    /// path is shown on each queue tile instead.
+    /// </summary>
+    [ObservableProperty]
+    private bool _showPreviewPath = true;
+
     public bool HasDestinationPreview
-        => IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder);
+        => ShowPreviewPath && IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder);
 
     public string PreviewPath
     {
@@ -133,6 +142,7 @@ public partial class DownloadDestinationViewModel : ObservableObject
     partial void OnCreateCategoryFolderChanged(bool value) => OnDownloadStateChanged();
     partial void OnPreviewBaseModelChanged(string? value) => OnPropertyChanged(nameof(PreviewPath));
     partial void OnPreviewCategoryChanged(string? value) => OnPropertyChanged(nameof(PreviewPath));
+    partial void OnShowPreviewPathChanged(bool value) => OnPropertyChanged(nameof(HasDestinationPreview));
 
     private void OnDownloadStateChanged()
     {

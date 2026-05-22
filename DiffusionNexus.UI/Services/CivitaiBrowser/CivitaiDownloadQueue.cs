@@ -45,7 +45,27 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         _logger = logger;
         _civitaiClient = civitaiClient;
         Destination = destination ?? new DownloadDestinationViewModel();
+        // Suppress the preview path inside the picker — each queued job may resolve
+        // to a different folder, so the per-job expected path is rendered on the tile.
+        Destination.ShowPreviewPath = false;
+        Destination.PropertyChanged += (_, _) => RefreshExpectedTargets();
         TryRestore();
+    }
+
+    /// <summary>
+    /// Recomputes each queued job's expected target directory whenever the destination
+    /// settings change (e.g. the user picked a different source folder).
+    /// </summary>
+    private void RefreshExpectedTargets()
+    {
+        foreach (var job in Jobs)
+        {
+            // Don't overwrite jobs that have already started or completed — their
+            // TargetPath is the actual on-disk location.
+            if (job.Status is JobStatus.Downloading or JobStatus.Completed) continue;
+            job.ExpectedTargetDir = job.CustomTargetDirectory
+                ?? Destination.BuildTargetDirectory(job.BaseModel, job.Category);
+        }
     }
 
     /// <summary>
@@ -106,6 +126,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             PreviewImageUrl = pick.Version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
             CivitaiVersion = pick.Version
         };
+        job.ExpectedTargetDir = Destination.BuildTargetDirectory(job.BaseModel, job.Category);
         Jobs.Add(job);
         Persist();
         RaiseCountsChanged();
@@ -459,10 +480,12 @@ public partial class CivitaiDownloadJob : ObservableObject
     public string? PreviewImageUrl { get; init; }
     public string? ActualSha256 { get; set; }
     public string? CustomTargetDirectory { get; set; }
-    public string? TargetPath { get; set; }
 
     [JsonIgnore]
     public CivitaiModelVersion? CivitaiVersion { get; set; }
+
+    [ObservableProperty]
+    private string? _targetPath;
 
     [ObservableProperty]
     private JobStatus _status = JobStatus.Queued;
@@ -472,4 +495,22 @@ public partial class CivitaiDownloadJob : ObservableObject
 
     [ObservableProperty]
     private string? _statusMessage;
+
+    /// <summary>
+    /// Where the job is expected to land on disk, resolved from the shared destination
+    /// at enqueue time (and recomputed when destination settings change). Once the job
+    /// actually starts, <see cref="TargetPath"/> takes over as the authoritative path.
+    /// </summary>
+    [ObservableProperty]
+    private string? _expectedTargetDir;
+
+    /// <summary>
+    /// Final-or-planned path to show on the queue tile. Prefers the on-disk
+    /// <see cref="TargetPath"/> once downloading has started, falling back to
+    /// <see cref="ExpectedTargetDir"/>.
+    /// </summary>
+    public string? DisplayPath => TargetPath ?? ExpectedTargetDir;
+
+    partial void OnTargetPathChanged(string? value) => OnPropertyChanged(nameof(DisplayPath));
+    partial void OnExpectedTargetDirChanged(string? value) => OnPropertyChanged(nameof(DisplayPath));
 }
