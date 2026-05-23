@@ -38,6 +38,14 @@ public partial class ModelTileViewModel : ViewModelBase
     private const int MaxThumbnailWidth = 640;
 
     /// <summary>
+    /// Whether the tile's container is currently attached to the visual tree.
+    /// Drives lazy thumbnail decoding so off-screen tiles don't keep decoded
+    /// <see cref="Bitmap"/> instances in memory — critical at scale (4K+ LoRAs).
+    /// Set by <see cref="Activate"/> / <see cref="Deactivate"/>.
+    /// </summary>
+    private bool _isActive;
+
+    /// <summary>
     /// Shared HttpClient for thumbnail downloads. Reusing a single instance avoids
     /// socket exhaustion (TIME_WAIT accumulation) that caused OOM after ~100 downloads.
     /// </summary>
@@ -909,7 +917,55 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(DownloadCountDisplay));
-        LoadThumbnailFromVersion();
+        // Only decode when the tile is on screen. The view's AttachedToVisualTree
+        // handler calls Activate() which triggers a load if needed.
+        if (_isActive) LoadThumbnailFromVersion();
+    }
+
+    /// <summary>
+    /// Called by <see cref="Views.Controls.ModelTileControl"/> when the tile's container
+    /// is attached to the visual tree. Triggers a thumbnail load if one isn't already
+    /// materialized. Idempotent — safe to call repeatedly.
+    /// </summary>
+    public void Activate()
+    {
+        if (_isActive) return;
+        _isActive = true;
+        // Re-decode from the in-memory ThumbnailData when available (fast path),
+        // or hit the DB / URL fallback when not.
+        if (ThumbnailImage is null)
+        {
+            LoadThumbnailFromVersion();
+        }
+    }
+
+    /// <summary>
+    /// Called when the tile scrolls out of the visual tree. Drops both the decoded
+    /// <see cref="Bitmap"/> (the multi-MB allocation) and the encoded bytes on the
+    /// underlying <see cref="ModelImage"/>, then re-flags the image as deferred so
+    /// the next <see cref="Activate"/> goes through the DB lazy-load path. Cancels
+    /// any in-flight thumbnail download so we don't keep streaming for off-screen tiles.
+    /// </summary>
+    public void Deactivate()
+    {
+        if (!_isActive) return;
+        _isActive = false;
+
+        try { _thumbnailCts?.Cancel(); } catch { /* already disposed */ }
+
+        ThumbnailImage = null;
+
+        // Drop the encoded bytes too — they're persisted on disk in the DB and can be
+        // re-fetched on demand. Without this, scrolling through 4K tiles leaves their
+        // ThumbnailData in memory (up to 1 MB each). Setting it back to the deferred
+        // sentinel makes the next Activate() take the lazy-load-from-DB path.
+        var primaryImage = SelectedVersion?.PrimaryImage;
+        if (primaryImage is not null
+            && primaryImage.ThumbnailData is { Length: > 0 }
+            && !primaryImage.IsThumbnailDeferred)
+        {
+            primaryImage.ThumbnailData = ModelImage.ThumbnailNotLoadedSentinel;
+        }
     }
 
     partial void OnThumbnailImageChanged(Bitmap? value)

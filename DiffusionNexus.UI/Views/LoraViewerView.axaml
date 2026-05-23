@@ -183,7 +183,16 @@
 
           <Grid>
 
-            <ScrollViewer Padding="16"
+            <!-- Tile grid. FilteredTiles is a *window* into the full filtered set
+                 (~200 items at a time). The view's code-behind subscribes to the
+                 ScrollViewer below and asks the VM to slide the window when the user
+                 nears the top or bottom — items leaving the window get their
+                 containers detached, which calls Deactivate() on the bound VM and
+                 releases its decoded thumbnail bitmap. The complete filtered set
+                 still lives on the VM (`AllFilteredTiles`) so the count / search
+                 index are unaffected. -->
+            <ScrollViewer Name="TileScrollViewer"
+                          Padding="16"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
 
