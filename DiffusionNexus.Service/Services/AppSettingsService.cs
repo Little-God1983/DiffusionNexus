@@ -363,6 +363,29 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<string?> GetFavoriteLoraSourceAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return settings?.FavoriteLoraSourcePath;
+    }
+
+    /// <inheritdoc />
+    public async Task SetFavoriteLoraSourceAsync(string? folderPath, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (settings is null) return;
+
+        // Normalize empty string to null so "no favorite" is unambiguous.
+        settings.FavoriteLoraSourcePath = string.IsNullOrWhiteSpace(folderPath) ? null : folderPath;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default)
     {
         var settings = await _unitOfWork.AppSettings

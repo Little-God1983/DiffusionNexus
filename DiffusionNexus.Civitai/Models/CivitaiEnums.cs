@@ -5,7 +5,7 @@ namespace DiffusionNexus.Civitai.Models;
 /// <summary>
 /// Model types supported by Civitai.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiModelType
 {
     Unknown = 0,
@@ -29,7 +29,7 @@ public enum CivitaiModelType
 /// <summary>
 /// Model mode indicating availability.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiModelMode
 {
     None = 0,
@@ -71,7 +71,7 @@ public static class CivitaiBaseModel
 /// <summary>
 /// File scan result status.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiScanResult
 {
     Pending,
@@ -83,7 +83,7 @@ public enum CivitaiScanResult
 /// <summary>
 /// File floating point precision.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiFloatingPoint
 {
     fp16,
@@ -94,7 +94,7 @@ public enum CivitaiFloatingPoint
 /// <summary>
 /// File size type.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiFileSize
 {
     full,
@@ -104,7 +104,7 @@ public enum CivitaiFileSize
 /// <summary>
 /// File format type.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiFileFormat
 {
     SafeTensor,
@@ -118,7 +118,7 @@ public enum CivitaiFileFormat
 /// <summary>
 /// NSFW level classification.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiNsfwLevel
 {
     None,
@@ -130,7 +130,7 @@ public enum CivitaiNsfwLevel
 /// <summary>
 /// Commercial use permissions.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiCommercialUse
 {
     None,
@@ -152,7 +152,7 @@ public static class CivitaiModelSort
 /// <summary>
 /// Time period for sorting.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(TolerantEnumConverterFactory))]
 public enum CivitaiPeriod
 {
     AllTime,

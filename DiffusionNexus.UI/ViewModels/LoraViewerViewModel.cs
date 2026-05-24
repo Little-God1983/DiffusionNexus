@@ -14,6 +14,8 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 
@@ -118,6 +120,42 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; } = [];
 
+    /// <summary>
+    /// Cached catalog labels (full Civitai base-model list). When non-empty, drives
+    /// <see cref="RebuildAvailableBaseModels"/> instead of the distinct-from-installed
+    /// fallback. Populated by <see cref="LoadBaseModelCatalogAsync"/>.
+    /// </summary>
+    private IReadOnlyList<string>? _catalogBaseModels;
+
+    /// <summary>
+    /// Full filtered set of tiles. <see cref="FilteredTiles"/> is a window into this
+    /// list (max <see cref="WindowSize"/> items) — the count / status bar / search
+    /// index all work against this full list, only rendering is windowed.
+    /// </summary>
+    private readonly List<ModelTileViewModel> _allFiltered = [];
+
+    /// <summary>First index of the current window into <see cref="_allFiltered"/>.</summary>
+    private int _windowStart;
+
+    private const int WindowSize = 200;
+    private const int SlideStep = 50;
+
+    /// <summary>True when the window can be slid forward (more items off the end).</summary>
+    public bool HasMoreForward => _windowStart + FilteredTiles.Count < _allFiltered.Count;
+
+    /// <summary>True when the window can be slid backward (more items before the start).</summary>
+    public bool HasMoreBackward => _windowStart > 0;
+
+    /// <summary>
+    /// The size of the most recent forward slide. The view reads this after
+    /// <see cref="SlideForward"/> so it can compensate the scroll offset and keep
+    /// the same tiles visible. Reset to 0 between slides.
+    /// </summary>
+    public int LastSlideForwardCount { get; private set; }
+
+    /// <summary>Same purpose as <see cref="LastSlideForwardCount"/> but for backward slides.</summary>
+    public int LastSlideBackwardCount { get; private set; }
+
     #endregion
 
     #region Constructors
@@ -134,6 +172,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = null;
         _baseModelCatalog = null;
         _updateChecker = null;
+        BrowserViewModel = new CivitaiBrowserViewModel();
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -157,7 +196,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
+
+        // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
+        // The base-model filter list is mirrored from AvailableBaseModels which is itself
+        // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
+        var downloadService = App.Services?.GetService<LoraDownloadService>();
+        var dialogService = App.Services?.GetService<IDialogService>();
+        var destination = new DownloadDestinationViewModel(dialogService);
+        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
+        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
+
+        _ = LoadBaseModelCatalogAsync();
+        _ = LoadDestinationFoldersAsync(destination);
     }
+
+    /// <summary>
+    /// View model for the "Browse Civitai" sub-tab.
+    /// </summary>
+    public CivitaiBrowserViewModel BrowserViewModel { get; }
 
     #endregion
 
@@ -458,20 +514,49 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                               ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
 
         SyncStatus = $"Downloading {fileName}...";
+        // Route through IDownloadCoordinator so this download aggregates with any
+        // concurrent Civitai-browser-queue downloads in the status bar (otherwise
+        // they fight over the single-slot activity-log progress field).
+        var coordinator = App.Services?.GetService<IDownloadCoordinator>();
+        var taskName = $"Downloading {fileName}";
+
         _ = Task.Run(async () =>
         {
-            await downloadService.DownloadFileAsync(
-                result.DownloadUrl,
-                targetPath,
-                result.Version,
-                $"Downloading {fileName}",
-                (_, message) => Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}"),
-                () => Dispatcher.UIThread.Post(async () =>
-                {
-                    SyncStatus = $"Downloaded {fileName}";
-                    await RebuildTilesFromDatabaseAsync();
-                }),
-                () => Dispatcher.UIThread.Post(() => SyncStatus = $"Download failed: {fileName}"));
+            var tcs = new TaskCompletionSource<bool>();
+
+            async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
+            {
+                await downloadService.DownloadFileAsync(
+                    result.DownloadUrl,
+                    targetPath,
+                    result.Version,
+                    taskName,
+                    reportProgress: (pct, message) =>
+                    {
+                        Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}");
+                        progress?.Report(new DownloadTaskProgress((int)(pct * 100), message));
+                    },
+                    completed: () => Dispatcher.UIThread.Post(async () =>
+                    {
+                        SyncStatus = $"Downloaded {fileName}";
+                        await RebuildTilesFromDatabaseAsync();
+                        tcs.TrySetResult(true);
+                    }),
+                    failed: () => Dispatcher.UIThread.Post(() =>
+                    {
+                        SyncStatus = $"Download failed: {fileName}";
+                        tcs.TrySetResult(false);
+                    }),
+                    externalCancellationToken: ct,
+                    reportToActivityLog: coordinator is null);
+
+                return await tcs.Task.ConfigureAwait(false);
+            }
+
+            if (coordinator is not null)
+                await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
+            else
+                await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
         });
     }
 
@@ -2063,9 +2148,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             AllTiles.Remove(tile);
+            // Keep the windowing backing store in sync. The tile may or may not be
+            // in the visible FilteredTiles window depending on scroll position.
+            _allFiltered.Remove(tile);
             FilteredTiles.Remove(tile);
+            // _windowStart may now point past the end if the user was at the bottom
+            // and the removed tile happened to be at the end of the window.
+            if (_windowStart > _allFiltered.Count)
+            {
+                _windowStart = Math.Max(0, _allFiltered.Count - WindowSize);
+            }
             TotalModelCount = AllTiles.Count;
-            FilteredModelCount = FilteredTiles.Count;
+            FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
+            OnPropertyChanged(nameof(HasMoreForward));
+            OnPropertyChanged(nameof(HasMoreBackward));
             RebuildAvailableBaseModels();
         });
     }
@@ -2080,20 +2176,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Rebuilds <see cref="AvailableBaseModels"/> from the distinct <c>BaseModelRaw</c>
-    /// values across all tile versions. Preserves existing selections where the value still exists.
+    /// Rebuilds <see cref="AvailableBaseModels"/>. Primary source is the full Civitai
+    /// catalog (<see cref="ICivitaiBaseModelCatalog"/>) so users can filter for any
+    /// base model Civitai supports, not just ones installed locally. Falls back to
+    /// distinct <c>BaseModelRaw</c> values across installed tiles when the catalog
+    /// is unavailable (design-time, missing DI, or before initial load completes).
+    /// Preserves existing selections where the value still exists.
     /// </summary>
     private void RebuildAvailableBaseModels()
     {
-        // Collect distinct BaseModelRaw values from all versions across all tiles
-        var distinctBaseModels = AllTiles
-            .SelectMany(t => t.Versions)
-            .Select(v => v.BaseModelRaw)
-            .Where(raw => !string.IsNullOrWhiteSpace(raw))
-            .Select(raw => raw!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        IReadOnlyList<string> source;
+        if (_catalogBaseModels is { Count: > 0 } catalog)
+        {
+            // Catalog is the canonical source. Preserve catalog order (Civitai's natural
+            // ordering — alphabetizing would split related entries like "SDXL 1.0" / "SDXL Turbo").
+            source = catalog;
+        }
+        else
+        {
+            // Fallback: distinct values from installed tiles, alphabetical.
+            source = AllTiles
+                .SelectMany(t => t.Versions)
+                .Select(v => v.BaseModelRaw)
+                .Where(raw => !string.IsNullOrWhiteSpace(raw))
+                .Select(raw => raw!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
 
         // Snapshot currently selected values so we can restore them
         var previouslySelected = AvailableBaseModels
@@ -2109,7 +2219,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         AvailableBaseModels.Clear();
 
-        foreach (var raw in distinctBaseModels)
+        foreach (var raw in source)
         {
             var item = new BaseModelFilterItem(raw)
             {
@@ -2117,6 +2227,54 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Populates the shared destination picker with the user's configured LoRA source
+    /// folders so the browser's queue panel can pick one immediately.
+    /// </summary>
+    private async Task LoadDestinationFoldersAsync(DownloadDestinationViewModel destination)
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var folders = await _settingsService.GetEnabledLoraSourcesAsync();
+            var favorite = await _settingsService.GetFavoriteLoraSourceAsync();
+            await destination.InitializeAsync(folders, favorite);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, "LoraViewer",
+                $"Failed to load LoRA source folders for download destination: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Fetches the Civitai base-model catalog once at startup and rebuilds the filter
+    /// list. The catalog itself has built-in fallbacks (disk cache → live fetch → bundled
+    /// snapshot), so this almost always yields a list; the only no-op path is when
+    /// <see cref="_baseModelCatalog"/> is null (design-time).
+    /// </summary>
+    private async Task LoadBaseModelCatalogAsync()
+    {
+        if (_baseModelCatalog is null) return;
+
+        try
+        {
+            var labels = await _baseModelCatalog.GetBaseModelsAsync().ConfigureAwait(false);
+            if (labels is null || labels.Count == 0) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _catalogBaseModels = labels;
+                RebuildAvailableBaseModels();
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, "LoraViewer",
+                $"Civitai base-model catalog load failed; falling back to distinct-from-installed: {ex.Message}");
         }
     }
 
@@ -2132,11 +2290,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     private void ApplyFilters()
     {
-        FilteredTiles.Clear();
+        // 1. Build the FULL filtered set in _allFiltered (used for count + windowing).
+        //    Search / NSFW / base-model filters all run against AllTiles, not against
+        //    the window — so 4K LoRAs stay searchable.
+        _allFiltered.Clear();
 
         var query = AllTiles.AsEnumerable();
 
-        // Filter by search text (name, filename, creator, or tags)
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             var search = SearchText.Trim();
@@ -2147,13 +2307,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 t.TagNames.Any(tag => tag.Contains(search, StringComparison.OrdinalIgnoreCase)));
         }
 
-        // Filter by NSFW
         if (!ShowNsfw)
         {
             query = query.Where(t => !t.IsNsfw);
         }
 
-        // Filter by selected base models (multi-select, OR logic)
         var activeBaseModels = AvailableBaseModels
             .Where(f => f.IsSelected)
             .Select(f => f.BaseModelRaw)
@@ -2167,16 +2325,96 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     activeBaseModels.Contains(v.BaseModelRaw)));
         }
 
-        foreach (var tile in query)
+        _allFiltered.AddRange(query);
+
+        // 2. Reset the window to the head and rebuild FilteredTiles.
+        _windowStart = 0;
+        RebuildFilteredTilesWindow();
+
+        // 3. Status / count reflects the FULL filtered set, not just the window.
+        FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
+        OnPropertyChanged(nameof(HasMoreForward));
+        OnPropertyChanged(nameof(HasMoreBackward));
+
+        TriggerVisibleUpdateCheck();
+    }
+
+    /// <summary>
+    /// Recreates the items in <see cref="FilteredTiles"/> from the current window
+    /// position. Used after a filter change.
+    /// </summary>
+    private void RebuildFilteredTilesWindow()
+    {
+        FilteredTiles.Clear();
+        var end = Math.Min(_windowStart + WindowSize, _allFiltered.Count);
+        for (var i = _windowStart; i < end; i++)
         {
-            FilteredTiles.Add(tile);
+            FilteredTiles.Add(_allFiltered[i]);
+        }
+    }
+
+    /// <summary>
+    /// Slides the visible window forward by <see cref="SlideStep"/> items: removes
+    /// the first N from <see cref="FilteredTiles"/> and appends the next N from
+    /// <see cref="_allFiltered"/>. The removed tiles' containers detach from the
+    /// visual tree, which calls <see cref="ModelTileViewModel.Deactivate"/> and
+    /// releases their decoded thumbnail bitmaps.
+    /// </summary>
+    public void SlideForward()
+    {
+        LastSlideForwardCount = 0;
+        if (!HasMoreForward) return;
+
+        // How many items can we actually add to the end?
+        var available = _allFiltered.Count - (_windowStart + FilteredTiles.Count);
+        var step = Math.Min(SlideStep, available);
+        if (step <= 0) return;
+
+        // Add to the END first, *then* remove from the start. The reverse order
+        // briefly shrinks the ItemsControl below the user's current scroll offset
+        // and the ScrollViewer clamps it — the subsequent offset compensation
+        // fights that clamp and the user gets "stuck" partway through the window.
+        var addStart = _windowStart + FilteredTiles.Count;
+        var addEnd = Math.Min(addStart + step, _allFiltered.Count);
+        for (var i = addStart; i < addEnd; i++)
+        {
+            FilteredTiles.Add(_allFiltered[i]);
+        }
+        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
+        {
+            FilteredTiles.RemoveAt(0);
+        }
+        _windowStart += step;
+
+        LastSlideForwardCount = step;
+        OnPropertyChanged(nameof(HasMoreForward));
+        OnPropertyChanged(nameof(HasMoreBackward));
+    }
+
+    /// <summary>Mirror of <see cref="SlideForward"/> but in the opposite direction.</summary>
+    public void SlideBackward()
+    {
+        LastSlideBackwardCount = 0;
+        if (!HasMoreBackward) return;
+
+        var step = Math.Min(SlideStep, _windowStart);
+        if (step <= 0) return;
+
+        // Same anti-clamp reasoning as SlideForward: prepend first, then drop the
+        // bottom. Total item count never dips below WindowSize during the slide.
+        for (var i = step - 1; i >= 0; i--)
+        {
+            FilteredTiles.Insert(0, _allFiltered[_windowStart - step + i]);
+        }
+        _windowStart -= step;
+        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
+        {
+            FilteredTiles.RemoveAt(FilteredTiles.Count - 1);
         }
 
-        FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
-
-        // Trigger a silent background update check for the new visible set
-        // (filter/search/page change). Stale tiles are re-checked against Civitai.
-        TriggerVisibleUpdateCheck();
+        LastSlideBackwardCount = step;
+        OnPropertyChanged(nameof(HasMoreForward));
+        OnPropertyChanged(nameof(HasMoreBackward));
     }
 
     /// <summary>

@@ -39,9 +39,72 @@ public class ModelFileSyncService : IModelSyncService
         // Use the lightweight query that excludes ThumbnailData BLOBs from SQLite.
         // With 11K+ models this prevents SQLite OOM (Error 7). Thumbnails are
         // lazy-loaded per-tile on demand.
-        return await _unitOfWork.Models
+        var all = await _unitOfWork.Models
             .GetModelsWithLocalFilesLightAsync(cancellationToken)
             .ConfigureAwait(false);
+
+        // Honor the IsEnabled toggle on LoRA sources: hide models whose only files
+        // live under disabled (or removed) source folders. Without this, unchecking
+        // a source in Settings + reloading still showed its LoRAs in the Installed
+        // tab. If the user has no enabled sources at all, returns nothing — the
+        // tab is empty, which matches "nothing scannable is configured".
+        var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var normalizedRoots = enabledRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
+
+        if (normalizedRoots.Count == 0)
+        {
+            return [];
+        }
+
+        var filtered = new List<Model>(all.Count);
+        foreach (var model in all)
+        {
+            foreach (var version in model.Versions)
+            {
+                var anyMatch = false;
+                foreach (var file in version.Files)
+                {
+                    if (string.IsNullOrEmpty(file.LocalPath)) continue;
+                    if (PathIsUnderAnyRoot(file.LocalPath, normalizedRoots))
+                    {
+                        anyMatch = true;
+                        break;
+                    }
+                }
+                if (anyMatch)
+                {
+                    filtered.Add(model);
+                    break;
+                }
+            }
+        }
+        return filtered;
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="filePath"/> is exactly one of, or sits
+    /// inside any of, the given normalized roots (case-insensitive, separator-aware
+    /// so <c>C:\Foo\Bar</c> isn't accidentally matched by root <c>C:\Foo</c>).
+    /// </summary>
+    private static bool PathIsUnderAnyRoot(string filePath, IReadOnlyList<string> normalizedRoots)
+    {
+        foreach (var root in normalizedRoots)
+        {
+            if (filePath.Equals(root, StringComparison.OrdinalIgnoreCase)) return true;
+            if (filePath.Length > root.Length
+                && filePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                && (filePath[root.Length] == Path.DirectorySeparatorChar
+                    || filePath[root.Length] == Path.AltDirectorySeparatorChar))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <inheritdoc />

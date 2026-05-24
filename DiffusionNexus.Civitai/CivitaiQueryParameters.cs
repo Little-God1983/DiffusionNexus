@@ -31,14 +31,24 @@ public sealed record CivitaiModelsQuery
     /// <summary>Time period for sorting.</summary>
     public CivitaiPeriod? Period { get; init; }
 
-    /// <summary>Filter NSFW content.</summary>
-    public bool? Nsfw { get; init; }
+    /// <summary>NSFW filter. Civitai's API expects a STRING here, not a bool — typically
+    /// the literal "true" to include NSFW results. We always send "true" and filter
+    /// NSFW client-side instead of relying on the API to filter, so the toggle can
+    /// be flipped without a re-fetch.</summary>
+    public string? Nsfw { get; init; }
 
     /// <summary>Only include primary file.</summary>
     public bool? PrimaryFileOnly { get; init; }
 
-    /// <summary>Filter by base model.</summary>
+    /// <summary>Filter by base model (single value, legacy).</summary>
     public string? BaseModel { get; init; }
+
+    /// <summary>Filter by multiple base models. Each value is sent as <c>baseModels=...</c>.</summary>
+    public IReadOnlyList<string>? BaseModels { get; init; }
+
+    /// <summary>Cursor for cursor-based pagination (preferred over Page for deep result sets).
+    /// Opaque string — pass back exactly what <c>CivitaiPaginationMetadata.NextCursor</c> returned.</summary>
+    public string? Cursor { get; init; }
 
     /// <summary>Builds the query string.</summary>
     internal string ToQueryString()
@@ -47,9 +57,13 @@ public sealed record CivitaiModelsQuery
 
         if (Limit.HasValue) parts.Add($"limit={Limit.Value}");
         if (Page.HasValue) parts.Add($"page={Page.Value}");
+        if (!string.IsNullOrWhiteSpace(Cursor)) parts.Add($"cursor={Uri.EscapeDataString(Cursor)}");
         if (!string.IsNullOrWhiteSpace(Query)) parts.Add($"query={Uri.EscapeDataString(Query)}");
         if (!string.IsNullOrWhiteSpace(Tag)) parts.Add($"tag={Uri.EscapeDataString(Tag)}");
         if (!string.IsNullOrWhiteSpace(Username)) parts.Add($"username={Uri.EscapeDataString(Username)}");
+        // Civitai's Zod schema for `types` requires an actual array — repeated params
+        // (`types=LORA&types=LoCon`), not a single comma-separated string. Sending
+        // `types=LORA,LoCon` fails with HTTP 400 "expected array, received string".
         if (Types is { Count: > 0 })
         {
             foreach (var type in Types)
@@ -59,9 +73,20 @@ public sealed record CivitaiModelsQuery
         }
         if (!string.IsNullOrWhiteSpace(Sort)) parts.Add($"sort={Uri.EscapeDataString(Sort)}");
         if (Period.HasValue) parts.Add($"period={Period.Value}");
-        if (Nsfw.HasValue) parts.Add($"nsfw={Nsfw.Value.ToString().ToLowerInvariant()}");
+        if (!string.IsNullOrWhiteSpace(Nsfw)) parts.Add($"nsfw={Uri.EscapeDataString(Nsfw)}");
         if (PrimaryFileOnly.HasValue) parts.Add($"primaryFileOnly={PrimaryFileOnly.Value.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(BaseModel)) parts.Add($"baseModel={Uri.EscapeDataString(BaseModel)}");
+        // Multi-value base model filter. The REST API accepts repeated `baseModels=`
+        // params (note the trailing s). The civitai.com web URL uses singular `baseModel=`
+        // because that route goes through Algolia, not the public REST endpoint —
+        // copying the singular form here breaks the filter.
+        if (BaseModels is { Count: > 0 })
+        {
+            foreach (var bm in BaseModels)
+            {
+                if (!string.IsNullOrWhiteSpace(bm)) parts.Add($"baseModels={Uri.EscapeDataString(bm)}");
+            }
+        }
 
         return parts.Count > 0 ? string.Join("&", parts) : string.Empty;
     }

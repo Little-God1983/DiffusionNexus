@@ -173,7 +173,8 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
         string modelName,
         CivitaiModelVersion civitaiVersion,
         IReadOnlyList<string> sourceFolders,
-        string? category = null)
+        string? category = null,
+        string? favoriteFolder = null)
     {
         ModelName = modelName;
         VersionName = civitaiVersion.Name;
@@ -193,7 +194,15 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
 
         if (SourceFolders.Count > 0)
         {
-            SelectedSourceFolder = SourceFolders[0];
+            // Prefer the user-favorited folder when it's in the list; fall back
+            // to first source otherwise.
+            string? preferred = null;
+            if (!string.IsNullOrWhiteSpace(favoriteFolder))
+            {
+                preferred = SourceFolders.FirstOrDefault(
+                    f => string.Equals(f, favoriteFolder, StringComparison.OrdinalIgnoreCase));
+            }
+            SelectedSourceFolder = preferred ?? SourceFolders[0];
         }
     }
 

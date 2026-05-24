@@ -551,8 +551,13 @@ public class DialogService : IDialogService
         IReadOnlyList<string> sourceFolders,
         string? category = null)
     {
+        // Pull the favorite path so the per-version dialog (detail-panel "Download")
+        // pre-selects the same source the user picked in Settings.
+        var settings = App.Services?.GetService<IAppSettingsService>();
+        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
+
         var dialog = new DownloadLoraVersionDialog()
-            .WithVersionInfo(modelName, civitaiVersion, sourceFolders, category);
+            .WithVersionInfo(modelName, civitaiVersion, sourceFolders, category, favorite);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
@@ -560,12 +565,14 @@ public class DialogService : IDialogService
 
     public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
     {
+        var settings = App.Services?.GetService<IAppSettingsService>();
+        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
         var viewModel = new DownloadLoraDialogViewModel(
             App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
-            App.Services?.GetService<IAppSettingsService>(),
+            settings,
             this,
             App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
-        await viewModel.InitializeAsync(sourceFolders);
+        await viewModel.InitializeAsync(sourceFolders, favorite);
 
         var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
 

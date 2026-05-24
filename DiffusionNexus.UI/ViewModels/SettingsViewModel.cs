@@ -305,18 +305,23 @@ public partial class SettingsViewModel : BusyViewModelBase
             foreach (var existing in LoraSources)
             {
                 existing.SourceChanged -= OnLoraSourceChanged;
+                existing.FavoriteSelected -= OnLoraSourceFavoriteSelected;
             }
             LoraSources.Clear();
-            
+
+            var favoritePath = settings.FavoriteLoraSourcePath;
             foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
             {
                 var sourceVm = new LoraSourceViewModel
                 {
                     Id = source.Id,
                     FolderPath = source.FolderPath,
-                    IsEnabled = source.IsEnabled
+                    IsEnabled = source.IsEnabled,
+                    IsFavorite = !string.IsNullOrWhiteSpace(favoritePath)
+                                 && string.Equals(favoritePath, source.FolderPath, StringComparison.OrdinalIgnoreCase)
                 };
                 sourceVm.SourceChanged += OnLoraSourceChanged;
+                sourceVm.FavoriteSelected += OnLoraSourceFavoriteSelected;
                 LoraSources.Add(sourceVm);
             }
 
@@ -374,22 +379,30 @@ public partial class SettingsViewModel : BusyViewModelBase
     {
         var settings = await _settingsService.GetSettingsAsync();
 
-        // Reload LoRA sources
+        // Reload LoRA sources — also unhook FavoriteSelected so we don't leak
+        // subscriptions on every reload.
         foreach (var existing in LoraSources)
         {
             existing.SourceChanged -= OnLoraSourceChanged;
+            existing.FavoriteSelected -= OnLoraSourceFavoriteSelected;
         }
         LoraSources.Clear();
 
+        // Read favorite path so we can flag the matching row. Without this the
+        // star disappears immediately after Save (visible only after restart).
+        var favoritePath = settings.FavoriteLoraSourcePath;
         foreach (var source in settings.LoraSources.OrderBy(s => s.Order))
         {
             var sourceVm = new LoraSourceViewModel
             {
                 Id = source.Id,
                 FolderPath = source.FolderPath,
-                IsEnabled = source.IsEnabled
+                IsEnabled = source.IsEnabled,
+                IsFavorite = !string.IsNullOrWhiteSpace(favoritePath)
+                             && string.Equals(favoritePath, source.FolderPath, StringComparison.OrdinalIgnoreCase)
             };
             sourceVm.SourceChanged += OnLoraSourceChanged;
+            sourceVm.FavoriteSelected += OnLoraSourceFavoriteSelected;
             LoraSources.Add(sourceVm);
         }
 
@@ -1154,6 +1167,38 @@ public partial class SettingsViewModel : BusyViewModelBase
         HasChanges = true;
     }
 
+    /// <summary>
+    /// Enforces "only one favorite at a time" — when the user stars a source,
+    /// clear the star on every other source and persist the new favorite path
+    /// immediately so the download dialogs see it on their next open without
+    /// requiring a Save click.
+    /// </summary>
+    private async void OnLoraSourceFavoriteSelected(object? sender, EventArgs e)
+    {
+        if (sender is not LoraSourceViewModel selected) return;
+
+        // Clear the flag on the others. The set-back-to-false fires SourceChanged
+        // but not FavoriteSelected, so no recursion.
+        foreach (var s in LoraSources)
+        {
+            if (!ReferenceEquals(s, selected) && s.IsFavorite)
+            {
+                s.IsFavorite = false;
+            }
+        }
+
+        // Persist right away — the download dialogs pull the favorite on open.
+        try
+        {
+            await _settingsService.SetFavoriteLoraSourceAsync(selected.FolderPath);
+        }
+        catch
+        {
+            // Best-effort persist; Save still runs through OnLoraSourceChanged.
+        }
+        HasChanges = true;
+    }
+
     private void OnCategoryChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
@@ -1465,12 +1510,32 @@ public partial class LoraSourceViewModel : ObservableObject
     private bool _isEnabled = true;
 
     /// <summary>
+    /// Whether this source is the user's favorite — the default destination
+    /// pre-selected by download dialogs and the Civitai browser queue. Only
+    /// one source can be the favorite at a time; the parent VM enforces
+    /// exclusivity via <see cref="FavoriteSelected"/>.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isFavorite;
+
+    /// <summary>
     /// Event raised when any property changes (for parent to detect changes).
     /// </summary>
     public event EventHandler? SourceChanged;
 
+    /// <summary>
+    /// Raised when <see cref="IsFavorite"/> flips to true so the parent VM can
+    /// clear the flag on every other source and persist the new favorite.
+    /// </summary>
+    public event EventHandler? FavoriteSelected;
+
     partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
     partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsFavoriteChanged(bool value)
+    {
+        if (value) FavoriteSelected?.Invoke(this, EventArgs.Empty);
+        SourceChanged?.Invoke(this, EventArgs.Empty);
+    }
 }
 public partial class ImageGalleryViewModel : ObservableObject
 {

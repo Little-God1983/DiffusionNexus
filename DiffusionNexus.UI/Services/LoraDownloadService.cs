@@ -41,13 +41,27 @@ public sealed class LoraDownloadService
         Action<double, string>? reportProgress = null,
         Action? completed = null,
         Action? failed = null,
-        int? existingModelId = null)
+        int? existingModelId = null,
+        CancellationToken externalCancellationToken = default,
+        bool reportToActivityLog = true)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
-        var activityLog = App.Services?.GetService<IActivityLogService>();
+        // When the caller is the Civitai download queue, the IDownloadCoordinator
+        // already aggregates per-task progress into the status bar. Letting this
+        // service ALSO push to the activity log makes concurrent downloads fight
+        // for the single global progress slot ("jumping around"). Suppress when
+        // told to.
+        var activityLog = reportToActivityLog ? App.Services?.GetService<IActivityLogService>() : null;
         using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
 
         activityLog?.StartDownloadProgress(taskName);
+
+        // Link the caller's cancellation token (per-job cancel from the Civitai
+        // browser queue) with the task tracker's token (queue-wide cancel via
+        // ITaskTracker). Either one firing aborts the download.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            externalCancellationToken,
+            taskHandle?.CancellationToken ?? CancellationToken.None);
 
         try
         {
@@ -66,19 +80,74 @@ public sealed class LoraDownloadService
             httpClient.Timeout = TimeSpan.FromHours(2);
             httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
 
-            var ct = taskHandle?.CancellationToken ?? CancellationToken.None;
+            var ct = linkedCts.Token;
+            _logger?.Trace(LogCategory.Download, "LoraDownload",
+                $"GET (no auth) {downloadUrl}");
             var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            _logger?.Debug(LogCategory.Download, "LoraDownload",
+                $"First attempt HTTP {(int)response.StatusCode} for '{taskName}'");
 
             if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
             {
+                // Capture the body once so we can include Civitai's own error message in
+                // the diagnostic log (their JSON error often says "Model requires
+                // membership" / "Buzz balance" / "NSFW disabled").
+                string? firstBody = null;
+                try { firstBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false); } catch { }
                 response.Dispose();
+
+                _logger?.Debug(LogCategory.Download, "LoraDownload",
+                    $"Auth required for '{taskName}' — looking up Civitai API key…",
+                    string.IsNullOrEmpty(firstBody) ? null : $"First response body: {Truncate(firstBody, 500)}");
+
                 var apiKey = await GetApiKeyAsync();
-                if (!string.IsNullOrEmpty(apiKey))
+                if (string.IsNullOrEmpty(apiKey))
+                {
+                    _logger?.Warn(LogCategory.Download, "LoraDownload",
+                        $"Cannot retry '{taskName}': no Civitai API key configured. Add one in Settings.",
+                        $"Initial response: HTTP 401/403\nUrl: {downloadUrl}");
+                    response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                }
+                else
                 {
                     taskHandle?.ReportIndeterminate("Retrying with API key...");
                     var separator = downloadUrl.Contains('?') ? "&" : "?";
                     var authedUrl = $"{downloadUrl}{separator}token={apiKey}";
+                    _logger?.Trace(LogCategory.Download, "LoraDownload",
+                        $"GET (with token) {downloadUrl}{separator}token=…(redacted, len={apiKey.Length})");
                     response = await httpClient.GetAsync(authedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                    _logger?.Debug(LogCategory.Download, "LoraDownload",
+                        $"Retry HTTP {(int)response.StatusCode} for '{taskName}'");
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        // Read the body so the user sees Civitai's own diagnosis.
+                        string? retryBody = null;
+                        try { retryBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false); } catch { }
+
+                        // If the version is flagged Early Access on Civitai, that's
+                        // almost certainly *the* cause — surface it first instead of
+                        // making the user guess between several possibilities.
+                        var isEa = civitaiVersion.EarlyAccessTimeFrame > 0
+                            || string.Equals(civitaiVersion.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
+                        var hint = (response.StatusCode, isEa) switch
+                        {
+                            (System.Net.HttpStatusCode.Unauthorized, true) or
+                            (System.Net.HttpStatusCode.Forbidden, true) =>
+                                $"This version is Early Access on Civitai (EarlyAccessTimeFrame={civitaiVersion.EarlyAccessTimeFrame}, availability={civitaiVersion.Availability ?? "(null)"}). EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use. Either wait for EA to expire, or use a key from an account that has the entitlement.",
+                            (System.Net.HttpStatusCode.Unauthorized, false) =>
+                                "Civitai rejected the API key. Likely causes: (a) the key is invalid or expired — regenerate it on civitai.com under Account Settings → API Keys; (b) the account doesn't have NSFW enabled but the model is NSFW-tagged.",
+                            (System.Net.HttpStatusCode.Forbidden, false) =>
+                                "Civitai accepted the key but the account lacks permission for this model — usually a membership-locked resource.",
+                            (System.Net.HttpStatusCode.NotFound, _) =>
+                                "Model or version no longer exists on Civitai (404).",
+                            _ => $"HTTP {(int)response.StatusCode}."
+                        };
+                        _logger?.Warn(LogCategory.Download, "LoraDownload",
+                            $"Authenticated download still failed for '{taskName}': {hint}",
+                            $"Url: {downloadUrl}\nResponse: HTTP {(int)response.StatusCode}\nEarly Access: {isEa}\nBody: {Truncate(retryBody, 800)}");
+                    }
                 }
             }
 
@@ -148,6 +217,19 @@ public sealed class LoraDownloadService
         {
             taskHandle?.Fail(ex, $"Download cancelled: {Path.GetFileName(targetPath)}");
             activityLog?.CompleteDownloadProgress(false, $"Download cancelled: {Path.GetFileName(targetPath)}");
+            CleanupTempFile(targetPath);
+            failed?.Invoke();
+        }
+        catch (HttpRequestException httpEx)
+        {
+            // HTTP errors (401 / 403 / 404 / 5xx) are already explained by the
+            // dedicated warn log emitted in the auth-retry block, so this just
+            // needs to flip the task status without piling another stack trace
+            // into the console.
+            taskHandle?.Fail(httpEx,
+                $"Download failed ({(int?)httpEx.StatusCode}): {Path.GetFileName(targetPath)}");
+            activityLog?.CompleteDownloadProgress(false,
+                $"Download failed: {Path.GetFileName(targetPath)} (HTTP {(int?)httpEx.StatusCode})");
             CleanupTempFile(targetPath);
             failed?.Invoke();
         }
@@ -438,6 +520,18 @@ public sealed class LoraDownloadService
         return _settingsService is not null
             ? await _settingsService.GetCivitaiApiKeyAsync()
             : null;
+    }
+
+    /// <summary>
+    /// Trims a string for log inclusion. Civitai's auth error bodies are sometimes
+    /// multi-KB HTML pages; we want enough to read the relevant JSON message
+    /// without dumping the whole page into the unified console.
+    /// </summary>
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        if (value.Length <= maxLength) return value;
+        return value[..maxLength] + $"… (+{value.Length - maxLength} chars truncated)";
     }
 
     private static void CleanupTempFile(string targetPath)

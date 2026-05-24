@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dlg="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.EarlyAccessConfirmDialog"
+        x:DataType="dlg:EarlyAccessConfirmDialog"
+        Title="Early Access models in selection"
+        Width="540"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="20" Spacing="14">
+
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <TextBlock Text="&#x26A0;" FontSize="22" Foreground="#FBBF24" VerticalAlignment="Center"/>
+      <TextBlock Text="Early Access detected" FontSize="18" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+    </StackPanel>
+
+    <TextBlock Foreground="#CCCCCC" FontSize="13" TextWrapping="Wrap">
+      <Run Text="The following "/><Run Text="{Binding EarlyAccessCount}" FontWeight="SemiBold"/><Run Text=" version(s) in your selection are flagged "/>
+      <Run Text="Early Access" Foreground="#C084FC" FontWeight="SemiBold"/><Run Text=" on Civitai. "/>
+      <Run Text="EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use — without it Civitai will reject the download with HTTP 401."/>
+    </TextBlock>
+
+    <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" MaxHeight="220">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl ItemsSource="{Binding EarlyAccessTitles}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                <Border Background="#669333EA" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                  <TextBlock Text="EA" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                </Border>
+                <TextBlock Text="{Binding}" Foreground="#DDDDDD" FontSize="12" TextWrapping="Wrap"/>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <Border Background="#1A2A1A" CornerRadius="6" Padding="10,8" BorderBrush="#22C55E" BorderThickness="1">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="&#x1F4A1;" FontSize="14" VerticalAlignment="Top"/>
+        <TextBlock Foreground="#A7F3D0" FontSize="12" TextWrapping="Wrap">
+          Tip: enable the
+          <Run FontWeight="SemiBold" Text="Hide Early Access"/>
+          toggle in the browser filter bar to skip EA results automatically next time.
+        </TextBlock>
+      </StackPanel>
+    </Border>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel"
+              Width="100"
+              Click="OnCancelClick"/>
+      <Button Content="Skip EA, add the rest"
+              MinWidth="160"
+              Click="OnSkipClick"
+              Background="#0066CC"
+              Foreground="White"
+              FontWeight="SemiBold"/>
+      <Button Content="Add anyway"
+              MinWidth="120"
+              Click="OnAddAnywayClick"
+              Background="#9333EA"
+              Foreground="White"
+              FontWeight="SemiBold"/>
+    </StackPanel>
+
+  </StackPanel>
+</Window>
