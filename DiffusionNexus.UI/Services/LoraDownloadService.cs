@@ -119,19 +119,28 @@ public sealed class LoraDownloadService
                         // Read the body so the user sees Civitai's own diagnosis.
                         string? retryBody = null;
                         try { retryBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false); } catch { }
-                        var hint = response.StatusCode switch
+
+                        // If the version is flagged Early Access on Civitai, that's
+                        // almost certainly *the* cause — surface it first instead of
+                        // making the user guess between several possibilities.
+                        var isEa = civitaiVersion.EarlyAccessTimeFrame > 0
+                            || string.Equals(civitaiVersion.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
+                        var hint = (response.StatusCode, isEa) switch
                         {
-                            System.Net.HttpStatusCode.Unauthorized =>
-                                "Civitai rejected the API key. Common causes: (a) key is invalid/expired, (b) account doesn't have NSFW enabled but the model is NSFW-tagged, (c) the model is Early Access and requires a paid subscription.",
-                            System.Net.HttpStatusCode.Forbidden =>
-                                "Civitai accepted the key but the account lacks permission for this model. Often Early Access or membership-locked content.",
-                            System.Net.HttpStatusCode.NotFound =>
+                            (System.Net.HttpStatusCode.Unauthorized, true) or
+                            (System.Net.HttpStatusCode.Forbidden, true) =>
+                                $"This version is Early Access on Civitai (EarlyAccessTimeFrame={civitaiVersion.EarlyAccessTimeFrame}, availability={civitaiVersion.Availability ?? "(null)"}). EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use. Either wait for EA to expire, or use a key from an account that has the entitlement.",
+                            (System.Net.HttpStatusCode.Unauthorized, false) =>
+                                "Civitai rejected the API key. Likely causes: (a) the key is invalid or expired — regenerate it on civitai.com under Account Settings → API Keys; (b) the account doesn't have NSFW enabled but the model is NSFW-tagged.",
+                            (System.Net.HttpStatusCode.Forbidden, false) =>
+                                "Civitai accepted the key but the account lacks permission for this model — usually a membership-locked resource.",
+                            (System.Net.HttpStatusCode.NotFound, _) =>
                                 "Model or version no longer exists on Civitai (404).",
                             _ => $"HTTP {(int)response.StatusCode}."
                         };
                         _logger?.Warn(LogCategory.Download, "LoraDownload",
                             $"Authenticated download still failed for '{taskName}': {hint}",
-                            $"Url: {downloadUrl}\nResponse: HTTP {(int)response.StatusCode}\nBody: {Truncate(retryBody, 800)}");
+                            $"Url: {downloadUrl}\nResponse: HTTP {(int)response.StatusCode}\nEarly Access: {isEa}\nBody: {Truncate(retryBody, 800)}");
                     }
                 }
             }

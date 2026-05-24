@@ -269,8 +269,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void AddSelectionToQueue()
+    private Task AddSelectionToQueueAsync()
     {
+        // Materialize the (result, pick) pairs first so the EA-prompt path and the
+        // direct-enqueue path operate on the same data.
+        var pairs = new List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)>();
         foreach (var result in Results.Where(r => r.IsSelected))
         {
             var picks = result.Versions.Where(v => v.IsSelected).ToList();
@@ -279,12 +282,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 picks.Add(result.Versions[0]);
                 result.Versions[0].IsSelected = true;
             }
-
             foreach (var pick in picks)
             {
-                _queue.Enqueue(result, pick);
+                pairs.Add((result, pick));
             }
         }
+        return EnqueueWithEarlyAccessPromptAsync(pairs);
     }
 
     [RelayCommand]
@@ -713,9 +716,65 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     private void EnqueueAllVersionsForCard(CivitaiResultViewModel card)
     {
-        foreach (var pick in card.Versions)
+        var pairs = card.Versions.Select(v => (card, v)).ToList();
+        _ = EnqueueWithEarlyAccessPromptAsync(pairs);
+    }
+
+    /// <summary>
+    /// Filters out any (result, pick) pairs flagged Early Access and shows a
+    /// confirmation dialog when any are present, letting the user choose to add
+    /// them anyway, drop them and download the rest, or cancel.
+    /// </summary>
+    private async Task EnqueueWithEarlyAccessPromptAsync(
+        List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs)
+    {
+        if (pairs.Count == 0) return;
+
+        var eaPairs = pairs.Where(p => p.Pick.IsEarlyAccess).ToList();
+        if (eaPairs.Count == 0)
         {
-            _queue.Enqueue(card, pick);
+            // No EA items — straight through.
+            foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
+            return;
+        }
+
+        // Show the prompt with the EA list. The dialog needs a Window owner.
+        var owner = (Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (owner is null)
+        {
+            // No UI host available (design-time / headless) — fall back to "add all".
+            foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
+            return;
+        }
+
+        var titles = eaPairs
+            .Select(p => $"{p.Result.Name} — {p.Pick.Name}")
+            .Distinct()
+            .ToList();
+
+        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(titles);
+        await dialog.ShowDialog(owner);
+
+        switch (dialog.Result)
+        {
+            case Views.Dialogs.EarlyAccessConfirmResult.Cancel:
+                _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                    $"Enqueue cancelled by user — {pairs.Count} version(s) NOT added ({eaPairs.Count} were EA).");
+                return;
+
+            case Views.Dialogs.EarlyAccessConfirmResult.SkipEarlyAccess:
+                var nonEa = pairs.Where(p => !p.Pick.IsEarlyAccess).ToList();
+                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+                _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                    $"Skipped {eaPairs.Count} Early Access version(s); enqueued {nonEa.Count} non-EA.");
+                return;
+
+            case Views.Dialogs.EarlyAccessConfirmResult.AddAnyway:
+                foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
+                _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                    $"User confirmed Early Access enqueue; {pairs.Count} version(s) added ({eaPairs.Count} are EA and will likely 401).");
+                return;
         }
     }
 

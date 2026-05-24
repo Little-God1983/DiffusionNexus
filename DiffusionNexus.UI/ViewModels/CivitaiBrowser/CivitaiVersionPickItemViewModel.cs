@@ -17,7 +17,11 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
         var primaryFile = version.Files.FirstOrDefault(f => f.Primary == true) ?? version.Files.FirstOrDefault();
         SizeBytes = (long)((primaryFile?.SizeKB ?? 0) * 1024);
         SizeDisplay = FormatSize(SizeBytes);
-        IsEarlyAccess = version.EarlyAccessTimeFrame > 0;
+        // EA is signaled either by the legacy day-counter or the newer availability
+        // enum. Civitai has been migrating to the latter; checking both keeps the
+        // badge accurate across mixed responses.
+        IsEarlyAccess = version.EarlyAccessTimeFrame > 0
+            || string.Equals(version.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
     }
 
     public CivitaiModelVersion Version { get; }

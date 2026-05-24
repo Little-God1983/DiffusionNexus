@@ -250,6 +250,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             DownloadUrl = url,
             SizeDisplay = pick.SizeDisplay,
             SizeBytes = pick.SizeBytes,
+            IsEarlyAccess = pick.IsEarlyAccess,
             ExpectedSha256 = primary?.Hashes?.SHA256,
             PreviewImageUrl = pick.Version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
             CivitaiVersion = pick.Version
@@ -259,8 +260,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         Persist();
         RaiseCountsChanged();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
-            $"Enqueued: {result.Name} — {pick.Name} ({pick.BaseModel}, {pick.SizeDisplay})",
-            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}");
+            $"Enqueued: {result.Name} — {pick.Name} ({pick.BaseModel}, {pick.SizeDisplay}){(pick.IsEarlyAccess ? " [EA]" : "")}",
+            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}\nEarly Access: {pick.IsEarlyAccess} (EarlyAccessTimeFrame={pick.Version.EarlyAccessTimeFrame}, availability={pick.Version.Availability ?? "(null)"})");
         return job;
     }
 
@@ -603,6 +604,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 DownloadUrl = j.DownloadUrl,
                 SizeDisplay = j.SizeDisplay,
                 SizeBytes = j.SizeBytes,
+                IsEarlyAccess = j.IsEarlyAccess,
                 ExpectedSha256 = j.ExpectedSha256,
                 ActualSha256 = j.ActualSha256,
                 PreviewImageUrl = j.PreviewImageUrl,
@@ -642,6 +644,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     DownloadUrl = p.DownloadUrl,
                     SizeDisplay = p.SizeDisplay,
                     SizeBytes = p.SizeBytes,
+                    IsEarlyAccess = p.IsEarlyAccess,
                     ExpectedSha256 = p.ExpectedSha256,
                     ActualSha256 = p.ActualSha256,
                     PreviewImageUrl = p.PreviewImageUrl,
@@ -670,6 +673,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         public string DownloadUrl { get; set; } = string.Empty;
         public string SizeDisplay { get; set; } = string.Empty;
         public long SizeBytes { get; set; }
+        public bool IsEarlyAccess { get; set; }
         public string? ExpectedSha256 { get; set; }
         public string? ActualSha256 { get; set; }
         public string? PreviewImageUrl { get; set; }
@@ -743,6 +747,13 @@ public partial class CivitaiDownloadJob : ObservableObject
     public string DownloadUrl { get; init; } = string.Empty;
     public string SizeDisplay { get; init; } = string.Empty;
     public long SizeBytes { get; init; }
+
+    /// <summary>
+    /// True when the picked version is in Civitai Early Access (EarlyAccessTimeFrame &gt; 0
+    /// at enqueue time). Drives the EA badge on the tile and lets the download service
+    /// surface a precise cause when a 401 lands on this job.
+    /// </summary>
+    public bool IsEarlyAccess { get; init; }
     public string? ExpectedSha256 { get; init; }
     public string? PreviewImageUrl { get; init; }
     public string? ActualSha256 { get; set; }

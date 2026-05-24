@@ -544,6 +544,16 @@
                         <TextBlock Text="{Binding BaseModel}" Opacity="0.6" FontSize="11"/>
                         <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
                         <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
+                        <!-- Early Access badge — flags that this version is paywalled
+                             on Civitai and the download will 401 without a token from
+                             an account that has access. -->
+                        <Border IsVisible="{Binding IsEarlyAccess}"
+                                Background="#669333EA"
+                                CornerRadius="3"
+                                Padding="4,1"
+                                ToolTip.Tip="Early Access — requires a Civitai membership or special access; downloads will fail without it.">
+                          <TextBlock Text="EA" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                        </Border>
                       </StackPanel>
                       <TextBlock Grid.Row="2"
                                  Grid.Column="0"
