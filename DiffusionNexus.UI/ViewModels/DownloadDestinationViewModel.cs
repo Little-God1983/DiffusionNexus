@@ -83,11 +83,22 @@ public partial class DownloadDestinationViewModel : ObservableObject
         => (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder))
            || (IsDownloadToFolder && !string.IsNullOrWhiteSpace(CustomFolderPath));
 
-    public async Task InitializeAsync(IReadOnlyList<string> sourceFolders)
+    public async Task InitializeAsync(IReadOnlyList<string> sourceFolders, string? favoriteFolder = null)
     {
         SourceFolders.Clear();
         foreach (var f in sourceFolders) SourceFolders.Add(f);
-        SelectedSourceFolder = SourceFolders.FirstOrDefault();
+
+        // Prefer the user's favorite when present in the list — otherwise fall
+        // back to the first source. When no sources exist at all, the picker
+        // shows the "no source configured" warning instead.
+        string? preferred = null;
+        if (!string.IsNullOrWhiteSpace(favoriteFolder))
+        {
+            preferred = SourceFolders.FirstOrDefault(
+                f => string.Equals(f, favoriteFolder, StringComparison.OrdinalIgnoreCase));
+        }
+        SelectedSourceFolder = preferred ?? SourceFolders.FirstOrDefault();
+
         OnPropertyChanged(nameof(HasNoSourceFolders));
         OnDownloadStateChanged();
         await Task.CompletedTask;

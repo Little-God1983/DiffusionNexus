@@ -72,4 +72,16 @@ public interface IAppSettingsService
     /// <param name="source">The source to update.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task UpdateLoraSourceAsync(LoraSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the user's favorited LoRA source folder path, or null if none is set.
+    /// Used to pre-select the default destination in download dialogs.
+    /// </summary>
+    Task<string?> GetFavoriteLoraSourceAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets (or clears, when <paramref name="folderPath"/> is null) the user's
+    /// favorited LoRA source folder.
+    /// </summary>
+    Task SetFavoriteLoraSourceAsync(string? folderPath, CancellationToken cancellationToken = default);
 }

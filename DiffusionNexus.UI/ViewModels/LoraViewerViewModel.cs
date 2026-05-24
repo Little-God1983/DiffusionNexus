@@ -2240,7 +2240,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         try
         {
             var folders = await _settingsService.GetEnabledLoraSourcesAsync();
-            await destination.InitializeAsync(folders);
+            var favorite = await _settingsService.GetFavoriteLoraSourceAsync();
+            await destination.InitializeAsync(folders, favorite);
         }
         catch (Exception ex)
         {

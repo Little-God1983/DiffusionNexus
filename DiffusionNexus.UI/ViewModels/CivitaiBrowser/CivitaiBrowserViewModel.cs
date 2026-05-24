@@ -730,6 +730,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         if (pairs.Count == 0) return;
 
+        // Guard: a download with no configured LoRA source has nowhere to land.
+        // Without this check the job would fail at run time with "No download
+        // destination set" — surface that as a clear up-front warning instead.
+        if (_queue.Destination.HasNoSourceFolders
+            && string.IsNullOrWhiteSpace(_queue.Destination.CustomFolderPath))
+        {
+            StatusMessage = "No LoRA source folder configured. Open Settings → LoRA Sources and add (and favorite) one before downloading.";
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"Enqueue blocked: no LoRA source folders configured. {pairs.Count} item(s) NOT added.");
+            return;
+        }
+
         var eaPairs = pairs.Where(p => p.Pick.IsEarlyAccess).ToList();
         if (eaPairs.Count == 0)
         {

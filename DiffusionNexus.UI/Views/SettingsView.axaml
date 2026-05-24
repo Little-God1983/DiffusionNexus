@@ -109,21 +109,38 @@
                               CornerRadius="4"
                               Padding="12"
                               Margin="0,4">
-                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
                           <CheckBox Grid.Column="0"
                                     IsChecked="{Binding IsEnabled, Mode=TwoWay}"
                                     VerticalAlignment="Center"
                                     ToolTip.Tip="Enable/disable this source"/>
-                          <TextBox Grid.Column="1"
+                          <!-- Favorite star — clicking sets this source as the default
+                               destination for new downloads (Installed tab dialog and
+                               Civitai browser queue). Only one source can be the favorite. -->
+                          <ToggleButton Grid.Column="1"
+                                        IsChecked="{Binding IsFavorite, Mode=TwoWay}"
+                                        VerticalAlignment="Center"
+                                        Margin="6,0"
+                                        Padding="6,4"
+                                        ToolTip.Tip="Set as favorite — pre-selected in download dialogs">
+                            <Panel>
+                              <!-- Yellow filled star when checked, faded outline when not. -->
+                              <TextBlock Text="&#x2605;" FontSize="14" Foreground="#FBBF24"
+                                         IsVisible="{Binding IsFavorite}"/>
+                              <TextBlock Text="&#x2606;" FontSize="14" Foreground="#888888"
+                                         IsVisible="{Binding !IsFavorite}"/>
+                            </Panel>
+                          </ToggleButton>
+                          <TextBox Grid.Column="2"
                                    Text="{Binding FolderPath, Mode=TwoWay}"
                                    Watermark="Enter folder path..."
                                    Margin="8,0"/>
-                          <Button Grid.Column="2"
+                          <Button Grid.Column="3"
                                   Content="Browse..."
                                   Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).BrowseLoraSourceCommand}"
                                   CommandParameter="{Binding}"
                                   Margin="0,0,8,0"/>
-                          <Button Grid.Column="3"
+                          <Button Grid.Column="4"
                                   Content="X"
                                   FontWeight="Bold"
                                   Foreground="#FF6B6B"

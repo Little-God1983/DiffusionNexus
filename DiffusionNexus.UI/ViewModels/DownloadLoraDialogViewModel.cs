@@ -139,7 +139,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         _logger = logger;
     }
 
-    public async Task InitializeAsync(IReadOnlyList<string> sourceFolders)
+    public async Task InitializeAsync(IReadOnlyList<string> sourceFolders, string? favoriteFolder = null)
     {
         SourceFolders.Clear();
         foreach (var folder in sourceFolders)
@@ -149,7 +149,15 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
 
         if (SourceFolders.Count > 0)
         {
-            SelectedSourceFolder = SourceFolders[0];
+            // Prefer the user-favorited folder if it's in the configured list,
+            // otherwise default to the first source.
+            string? preferred = null;
+            if (!string.IsNullOrWhiteSpace(favoriteFolder))
+            {
+                preferred = SourceFolders.FirstOrDefault(
+                    f => string.Equals(f, favoriteFolder, StringComparison.OrdinalIgnoreCase));
+            }
+            SelectedSourceFolder = preferred ?? SourceFolders[0];
         }
 
         await Task.CompletedTask;

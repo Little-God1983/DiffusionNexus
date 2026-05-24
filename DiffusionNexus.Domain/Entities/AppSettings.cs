@@ -76,6 +76,14 @@ public class AppSettings
     public string? LoraSortSourcePath { get; set; }
 
     /// <summary>
+    /// User-favorited LoRA source folder. When set, this folder is pre-selected
+    /// in download destination pickers (Installed-tab "Download LoRA" dialog and
+    /// the Civitai browser's queue destination panel). Null = no favorite, fall
+    /// back to the first enabled source.
+    /// </summary>
+    public string? FavoriteLoraSourcePath { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }
