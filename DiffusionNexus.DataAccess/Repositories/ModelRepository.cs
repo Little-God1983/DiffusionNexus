@@ -258,16 +258,77 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
-    public async Task<HashSet<int>> GetInstalledCivitaiVersionIdsAsync(CancellationToken cancellationToken = default)
+    public async Task<HashSet<int>> GetInstalledCivitaiVersionIdsAsync(
+        IReadOnlyList<string>? allowedRootPaths = null,
+        CancellationToken cancellationToken = default)
     {
-        var ids = await Context.ModelVersions
+        // No root filter → fast SQL distinct path-only.
+        if (allowedRootPaths is null || allowedRootPaths.Count == 0)
+        {
+            var ids = await Context.ModelVersions
+                .Where(v => v.CivitaiId != null
+                            && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""))
+                .Select(v => v.CivitaiId!.Value)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return new HashSet<int>(ids);
+        }
+
+        // Root filter: pull (civitaiId, file paths) pairs and check StartsWith in C#.
+        // EF Core can't translate a runtime OR-of-StartsWith list cleanly, and the
+        // result-set is small (one row per installed version).
+        var rows = await Context.ModelVersions
             .Where(v => v.CivitaiId != null
                         && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""))
-            .Select(v => v.CivitaiId!.Value)
-            .Distinct()
+            .Select(v => new
+            {
+                CivitaiId = v.CivitaiId!.Value,
+                Paths = v.Files.Where(f => f.LocalPath != null).Select(f => f.LocalPath!).ToList()
+            })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return new HashSet<int>(ids);
+
+        var normalizedRoots = allowedRootPaths
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
+
+        var result = new HashSet<int>();
+        foreach (var row in rows)
+        {
+            foreach (var path in row.Paths)
+            {
+                if (PathIsUnderAnyRoot(path, normalizedRoots))
+                {
+                    result.Add(row.CivitaiId);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="filePath"/> is exactly one of, or sits
+    /// inside any of, the given normalized roots. Case-insensitive; ensures that
+    /// <c>C:\Foo\Bar</c> doesn't match the root <c>C:\Foo</c> only because the
+    /// strings share a prefix (we require a separator boundary).
+    /// </summary>
+    private static bool PathIsUnderAnyRoot(string filePath, IReadOnlyList<string> normalizedRoots)
+    {
+        foreach (var root in normalizedRoots)
+        {
+            if (filePath.Equals(root, StringComparison.OrdinalIgnoreCase)) return true;
+            if (filePath.Length > root.Length
+                && filePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                && (filePath[root.Length] == Path.DirectorySeparatorChar
+                    || filePath[root.Length] == Path.AltDirectorySeparatorChar))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <inheritdoc />

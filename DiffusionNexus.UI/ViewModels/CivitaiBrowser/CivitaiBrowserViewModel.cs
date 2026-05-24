@@ -805,7 +805,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             var uow = scope.ServiceProvider.GetService<IUnitOfWork>();
             if (uow is null) return;
 
-            var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync();
+            // Honor the IsEnabled toggle on LoRA sources: a LoRA stored under a
+            // disabled source no longer counts as "installed" for the Hide Installed
+            // filter / badge. Mirrors the Installed tab's filtering rule.
+            var settings = scope.ServiceProvider.GetService<IAppSettingsService>();
+            IReadOnlyList<string>? enabledRoots = null;
+            if (settings is not null)
+            {
+                enabledRoots = await settings.GetEnabledLoraSourcesAsync();
+            }
+
+            var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
             _installedVersionIds = set;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
