@@ -59,13 +59,23 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             CivitaiModelSort.MostDownloaded,
             CivitaiModelSort.Newest
         };
-        SelectedSort = CivitaiModelSort.HighestRated;
+        SelectedSort = CivitaiModelSort.Newest;
 
         PeriodOptions = new ObservableCollection<CivitaiPeriod>(Enum.GetValues<CivitaiPeriod>());
         SelectedPeriod = CivitaiPeriod.AllTime;
 
-        ModelTypeOptions = new ObservableCollection<string> { "LORA", "LoCon", "DoRA", "All LoRA types", "All models" };
-        SelectedModelType = "LORA";
+        // Each option carries its own display label AND the concrete types-array
+        // sent to Civitai. No string-switch in BuildQuery — change the label and the
+        // wire format stays correct because both live on the same record.
+        ModelTypeOptions = new ObservableCollection<ModelTypeOption>
+        {
+            new("LORA",            [CivitaiModelType.LORA]),
+            new("LoCon",           [CivitaiModelType.LoCon]),
+            new("DoRA",            [CivitaiModelType.DoRA]),
+            new("All LoRA types",  [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA]),
+            new("All models",      null) // null = no types filter (Checkpoints, embeddings, etc. too)
+        };
+        SelectedModelType = ModelTypeOptions.Single(o => o.Label == "All LoRA types");
 
         // Base model filter mirrors the Installed-tab list (same names) but holds its
         // own selection state — toggling here doesn't disturb the installed filter.
@@ -98,7 +108,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private CivitaiPeriod _selectedPeriod;
 
     [ObservableProperty]
-    private string? _selectedModelType;
+    private ModelTypeOption? _selectedModelType;
 
     [ObservableProperty]
     private bool _hideInstalledModels;
@@ -128,7 +138,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     public ObservableCollection<string> SortOptions { get; }
     public ObservableCollection<CivitaiPeriod> PeriodOptions { get; }
-    public ObservableCollection<string> ModelTypeOptions { get; }
+    public ObservableCollection<ModelTypeOption> ModelTypeOptions { get; }
 
     /// <summary>
     /// Base-model filter items mirrored from the Installed tab's <c>AvailableBaseModels</c>.
@@ -347,7 +357,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     partial void OnSearchTextChanged(string value) { if (_initialized) _ = DebouncedSearchAsync(); }
     partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = SearchAsync(); }
     partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = SearchAsync(); }
-    partial void OnSelectedModelTypeChanged(string? value) { if (_initialized) _ = SearchAsync(); }
+    partial void OnSelectedModelTypeChanged(ModelTypeOption? value) { if (_initialized) _ = SearchAsync(); }
     // ShowNsfwContent is a client-side filter (the API call always requests NSFW). No
     // re-search needed when toggled — just reapply local filters.
     partial void OnShowNsfwContentChanged(bool value) => ApplyClientSideFilters();
@@ -582,15 +592,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     private CivitaiModelsQuery BuildQuery(string? cursor)
     {
-        IReadOnlyList<CivitaiModelType>? types = SelectedModelType switch
-        {
-            "LORA" => [CivitaiModelType.LORA],
-            "LoCon" => [CivitaiModelType.LoCon],
-            "DoRA" => [CivitaiModelType.DoRA],
-            "All LoRA types" => [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA],
-            "All models" => null, // no types filter → API returns Checkpoints, embeddings, etc. too
-            _ => [CivitaiModelType.LORA]
-        };
+        // The selected option carries its own Types directly — no fragile
+        // string-to-enum switch. A null Types list means "no types filter".
+        IReadOnlyList<CivitaiModelType>? types = SelectedModelType?.Types;
 
         var selectedBaseModels = AvailableBaseModels
             .Where(b => b.IsSelected)
@@ -848,4 +852,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             ? await _settingsService.GetCivitaiApiKeyAsync()
             : null;
     }
+}
+
+/// <summary>
+/// Pairing of a UI dropdown label with the concrete <see cref="CivitaiModelType"/>
+/// array sent to Civitai. <see cref="Types"/> = <c>null</c> means "send no types
+/// filter at all" (the API returns Checkpoints, embeddings, etc. alongside LoRAs).
+/// <para>
+/// <see cref="ToString"/> returns the label so the default <c>ComboBox</c>
+/// rendering picks it up without needing a <c>DisplayMemberPath</c>.
+/// </para>
+/// </summary>
+public sealed record ModelTypeOption(string Label, IReadOnlyList<CivitaiModelType>? Types)
+{
+    public override string ToString() => Label;
 }
