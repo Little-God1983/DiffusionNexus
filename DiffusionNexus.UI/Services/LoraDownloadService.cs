@@ -42,10 +42,16 @@ public sealed class LoraDownloadService
         Action? completed = null,
         Action? failed = null,
         int? existingModelId = null,
-        CancellationToken externalCancellationToken = default)
+        CancellationToken externalCancellationToken = default,
+        bool reportToActivityLog = true)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
-        var activityLog = App.Services?.GetService<IActivityLogService>();
+        // When the caller is the Civitai download queue, the IDownloadCoordinator
+        // already aggregates per-task progress into the status bar. Letting this
+        // service ALSO push to the activity log makes concurrent downloads fight
+        // for the single global progress slot ("jumping around"). Suppress when
+        // told to.
+        var activityLog = reportToActivityLog ? App.Services?.GetService<IActivityLogService>() : null;
         using var taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
 
         activityLog?.StartDownloadProgress(taskName);

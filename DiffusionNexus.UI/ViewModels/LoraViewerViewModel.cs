@@ -514,20 +514,49 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                               ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
 
         SyncStatus = $"Downloading {fileName}...";
+        // Route through IDownloadCoordinator so this download aggregates with any
+        // concurrent Civitai-browser-queue downloads in the status bar (otherwise
+        // they fight over the single-slot activity-log progress field).
+        var coordinator = App.Services?.GetService<IDownloadCoordinator>();
+        var taskName = $"Downloading {fileName}";
+
         _ = Task.Run(async () =>
         {
-            await downloadService.DownloadFileAsync(
-                result.DownloadUrl,
-                targetPath,
-                result.Version,
-                $"Downloading {fileName}",
-                (_, message) => Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}"),
-                () => Dispatcher.UIThread.Post(async () =>
-                {
-                    SyncStatus = $"Downloaded {fileName}";
-                    await RebuildTilesFromDatabaseAsync();
-                }),
-                () => Dispatcher.UIThread.Post(() => SyncStatus = $"Download failed: {fileName}"));
+            var tcs = new TaskCompletionSource<bool>();
+
+            async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
+            {
+                await downloadService.DownloadFileAsync(
+                    result.DownloadUrl,
+                    targetPath,
+                    result.Version,
+                    taskName,
+                    reportProgress: (pct, message) =>
+                    {
+                        Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}");
+                        progress?.Report(new DownloadTaskProgress((int)(pct * 100), message));
+                    },
+                    completed: () => Dispatcher.UIThread.Post(async () =>
+                    {
+                        SyncStatus = $"Downloaded {fileName}";
+                        await RebuildTilesFromDatabaseAsync();
+                        tcs.TrySetResult(true);
+                    }),
+                    failed: () => Dispatcher.UIThread.Post(() =>
+                    {
+                        SyncStatus = $"Download failed: {fileName}";
+                        tcs.TrySetResult(false);
+                    }),
+                    externalCancellationToken: ct,
+                    reportToActivityLog: coordinator is null);
+
+                return await tcs.Task.ConfigureAwait(false);
+            }
+
+            if (coordinator is not null)
+                await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
+            else
+                await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
         });
     }
 

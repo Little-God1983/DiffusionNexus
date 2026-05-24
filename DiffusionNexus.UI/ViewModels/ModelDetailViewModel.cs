@@ -348,14 +348,42 @@ public partial class ModelDetailViewModel : ViewModelBase
             var downloadService = App.Services?.GetService<LoraDownloadService>();
             if (downloadService is not null)
             {
-                await downloadService.DownloadFileAsync(
-                    downloadUrl,
-                    targetPath,
-                    tab.CivitaiVersion,
-                    taskName,
-                    completed: () => Dispatcher.UIThread.Post(async () => await RefreshAfterDownloadAsync(targetPath)),
-                    failed: () => Dispatcher.UIThread.Post(() => tab.IsDownloading = false),
-                    existingModelId: SourceTile?.ModelEntity?.Id);
+                // Route through IDownloadCoordinator so this aggregates with any
+                // other downloads in flight (Civitai queue, etc.) instead of stealing
+                // the single-slot activity-log progress.
+                var coordinator = App.Services?.GetService<IDownloadCoordinator>();
+                var tcs = new TaskCompletionSource<bool>();
+
+                async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
+                {
+                    await downloadService.DownloadFileAsync(
+                        downloadUrl,
+                        targetPath,
+                        tab.CivitaiVersion,
+                        taskName,
+                        reportProgress: (pct, msg) =>
+                            progress?.Report(new DownloadTaskProgress((int)(pct * 100), msg)),
+                        completed: () => Dispatcher.UIThread.Post(async () =>
+                        {
+                            await RefreshAfterDownloadAsync(targetPath);
+                            tcs.TrySetResult(true);
+                        }),
+                        failed: () => Dispatcher.UIThread.Post(() =>
+                        {
+                            tab.IsDownloading = false;
+                            tcs.TrySetResult(false);
+                        }),
+                        existingModelId: SourceTile?.ModelEntity?.Id,
+                        externalCancellationToken: ct,
+                        reportToActivityLog: coordinator is null);
+
+                    return await tcs.Task.ConfigureAwait(false);
+                }
+
+                if (coordinator is not null)
+                    await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
+                else
+                    await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
                 return;
             }
 

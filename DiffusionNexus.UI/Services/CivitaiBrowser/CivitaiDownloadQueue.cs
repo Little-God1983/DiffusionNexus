@@ -486,41 +486,75 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             }
 
             var tcs = new TaskCompletionSource<bool>();
+            var taskName = $"Download {job.ModelName} ({job.VersionName})";
+            var coordinator = App.Services?.GetService<IDownloadCoordinator>();
 
-            await _downloadService!.DownloadFileAsync(
-                downloadUrl: job.DownloadUrl,
-                targetPath: target,
-                civitaiVersion: civVersion,
-                taskName: $"Download {job.ModelName} ({job.VersionName})",
-                reportProgress: (pct, msg) => Dispatcher.UIThread.Post(() =>
-                {
-                    job.ProgressPercent = pct * 100;
-                    job.StatusMessage = msg;
-                }),
-                completed: () => Dispatcher.UIThread.Post(() =>
-                {
-                    job.ProgressPercent = 100;
-                    job.StatusMessage = "Verifying...";
-                    tcs.TrySetResult(true);
-                }),
-                failed: () => Dispatcher.UIThread.Post(() =>
-                {
-                    // If the user clicked Cancel, surface that distinctly; otherwise it's
-                    // a real failure (HTTP error, disk error, etc.).
-                    if (job.WasCancelledByUser)
+            // Local function — the actual download. The Coordinator wraps this and
+            // pushes the aggregated "N downloads in progress" view to the activity log,
+            // so we explicitly tell the download service NOT to also publish progress
+            // there (otherwise concurrent downloads fight over the single status slot).
+            async Task<bool> RunDownloadAsync(IProgress<DownloadTaskProgress>? coordinatorProgress, CancellationToken coordCt)
+            {
+                await _downloadService!.DownloadFileAsync(
+                    downloadUrl: job.DownloadUrl,
+                    targetPath: target,
+                    civitaiVersion: civVersion!,
+                    taskName: taskName,
+                    reportProgress: (pct, msg) =>
                     {
-                        job.Status = JobStatus.Cancelled;
-                        job.StatusMessage = "Cancelled";
-                    }
-                    else
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            job.ProgressPercent = pct * 100;
+                            job.StatusMessage = msg;
+                        });
+                        // Forward to the coordinator so the status bar reflects this
+                        // job's contribution to the aggregate.
+                        coordinatorProgress?.Report(new DownloadTaskProgress((int)(pct * 100), msg));
+                    },
+                    completed: () => Dispatcher.UIThread.Post(() =>
                     {
-                        job.Status = JobStatus.Failed;
-                        if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
-                            job.StatusMessage = "Failed";
-                    }
-                    tcs.TrySetResult(false);
-                }),
-                externalCancellationToken: ct);
+                        job.ProgressPercent = 100;
+                        job.StatusMessage = "Verifying...";
+                        tcs.TrySetResult(true);
+                    }),
+                    failed: () => Dispatcher.UIThread.Post(() =>
+                    {
+                        if (job.WasCancelledByUser)
+                        {
+                            job.Status = JobStatus.Cancelled;
+                            job.StatusMessage = "Cancelled";
+                        }
+                        else
+                        {
+                            job.Status = JobStatus.Failed;
+                            if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
+                                job.StatusMessage = "Failed";
+                        }
+                        tcs.TrySetResult(false);
+                    }),
+                    externalCancellationToken: coordCt,
+                    reportToActivityLog: coordinator is null);
+
+                // The completed/failed callbacks above set the TCS. Wait on it for
+                // the boolean result that the coordinator wants.
+                return await tcs.Task.ConfigureAwait(false);
+            }
+
+            if (coordinator is not null)
+            {
+                // Run through the shared coordinator. It already has a concurrency gate
+                // (typically 3) so it'll queue beyond that — that's fine because our
+                // own _gate already throttles to 2. The coordinator's slot is acquired
+                // immediately since we're well under its cap.
+                await coordinator.EnqueueAsync(taskName, RunDownloadAsync, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // No coordinator available (design-time / unusual DI). Fall back to a
+                // direct call — the download service then DOES report to the activity
+                // log so the user at least sees one download's progress.
+                await RunDownloadAsync(null, ct).ConfigureAwait(false);
+            }
 
             var ok = await tcs.Task.ConfigureAwait(false);
             if (!ok) return;
@@ -592,25 +626,35 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         {
             var path = GetPersistPath();
             // Don't persist transient transitions ("Verifying...") — only stable states.
-            var snapshot = Jobs.Select(j => new PersistedJob
+            var snapshot = Jobs.Select(j =>
             {
-                ModelId = j.ModelId,
-                VersionId = j.VersionId,
-                ModelName = j.ModelName,
-                VersionName = j.VersionName,
-                BaseModel = j.BaseModel,
-                Category = j.Category,
-                FileName = j.FileName,
-                DownloadUrl = j.DownloadUrl,
-                SizeDisplay = j.SizeDisplay,
-                SizeBytes = j.SizeBytes,
-                IsEarlyAccess = j.IsEarlyAccess,
-                ExpectedSha256 = j.ExpectedSha256,
-                ActualSha256 = j.ActualSha256,
-                PreviewImageUrl = j.PreviewImageUrl,
-                CustomTargetDirectory = j.CustomTargetDirectory,
-                TargetPath = j.TargetPath,
-                Status = j.Status == JobStatus.Downloading ? JobStatus.Queued : j.Status
+                // Mid-download jobs come back as Queued so they auto-resume on Start;
+                // discard their in-flight status text/progress in that case.
+                var persistStatus = j.Status == JobStatus.Downloading ? JobStatus.Queued : j.Status;
+                var persistMessage = j.Status == JobStatus.Downloading ? null : j.StatusMessage;
+                var persistPercent = j.Status == JobStatus.Downloading ? 0 : j.ProgressPercent;
+                return new PersistedJob
+                {
+                    ModelId = j.ModelId,
+                    VersionId = j.VersionId,
+                    ModelName = j.ModelName,
+                    VersionName = j.VersionName,
+                    BaseModel = j.BaseModel,
+                    Category = j.Category,
+                    FileName = j.FileName,
+                    DownloadUrl = j.DownloadUrl,
+                    SizeDisplay = j.SizeDisplay,
+                    SizeBytes = j.SizeBytes,
+                    IsEarlyAccess = j.IsEarlyAccess,
+                    ExpectedSha256 = j.ExpectedSha256,
+                    ActualSha256 = j.ActualSha256,
+                    PreviewImageUrl = j.PreviewImageUrl,
+                    CustomTargetDirectory = j.CustomTargetDirectory,
+                    TargetPath = j.TargetPath,
+                    Status = persistStatus,
+                    StatusMessage = persistMessage,
+                    ProgressPercent = persistPercent
+                };
             }).ToList();
             File.WriteAllText(path, JsonSerializer.Serialize(snapshot));
         }
@@ -632,7 +676,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             if (snapshot is null) return;
             foreach (var p in snapshot)
             {
-                Jobs.Add(new CivitaiDownloadJob
+                var job = new CivitaiDownloadJob
                 {
                     ModelId = p.ModelId,
                     VersionId = p.VersionId,
@@ -652,7 +696,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     TargetPath = p.TargetPath,
                     Status = p.Status,
                     CivitaiVersion = null // Rehydrated lazily on resume.
-                });
+                };
+                // Restore the human-readable status text and the final progress so the
+                // tile still reads "Done" / "Failed" / "Cancelled" after a restart
+                // instead of looking blank.
+                job.StatusMessage = p.StatusMessage;
+                job.ProgressPercent = p.ProgressPercent;
+                Jobs.Add(job);
             }
         }
         catch (Exception ex)
@@ -682,6 +732,17 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public JobStatus Status { get; set; }
+
+        /// <summary>
+        /// Human-readable status text last shown on the tile ("Done", "Failed",
+        /// "Cancelled", error detail, etc.). Restored on next session so the user
+        /// sees what happened to past downloads.
+        /// </summary>
+        public string? StatusMessage { get; set; }
+
+        /// <summary>Final progress percent — 100 for Completed, intermediate for in-flight
+        /// snapshots that aren't currently being saved as Downloading.</summary>
+        public double ProgressPercent { get; set; }
     }
 
     #endregion
