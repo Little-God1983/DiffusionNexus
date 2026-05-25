@@ -15,7 +15,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
@@ -54,6 +54,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FavoriteLoraSourcePath")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("GenerateVideoThumbnails")
                         .HasColumnType("INTEGER");
 
@@ -67,6 +70,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("LoraSortTargetPath")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("LoraUpdateCheckStalenessDays")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("MaxBackups")
                         .HasColumnType("INTEGER");

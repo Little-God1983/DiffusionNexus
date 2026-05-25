@@ -23,6 +23,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     private readonly ITaskTracker _taskTracker;
     private PackageProcessManager? _processManager;
     private IServiceProvider? _serviceProvider;
+    private IDatasetEventAggregator? _eventAggregator;
     private Func<int, Task>? _updatePackageFunc;
     private readonly List<LogEntry> _allEntries = [];
     private readonly object _entriesLock = new();
@@ -128,8 +129,21 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         _processManager.RunningStateChanged += OnInstanceRunningStateChanged;
         _processManager.WebUrlDetected += OnInstanceWebUrlDetected;
 
+        // Refresh the docked-instance bar when the Installer Manager adds or
+        // removes a package — otherwise InstanceTabs stays stale until restart.
+        _eventAggregator = serviceProvider.GetService<IDatasetEventAggregator>();
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.InstallerPackagesChanged += OnInstallerPackagesChanged;
+        }
+
         // Load installed packages
         _ = LoadInstancesAsync();
+    }
+
+    private void OnInstallerPackagesChanged(object? sender, InstallerPackagesChangedEventArgs e)
+    {
+        _ = RefreshInstancesAsync();
     }
 
     #region Initialization
@@ -776,6 +790,11 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         {
             _processManager.RunningStateChanged -= OnInstanceRunningStateChanged;
             _processManager.WebUrlDetected -= OnInstanceWebUrlDetected;
+        }
+
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.InstallerPackagesChanged -= OnInstallerPackagesChanged;
         }
 
         GC.SuppressFinalize(this);

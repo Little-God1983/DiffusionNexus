@@ -48,9 +48,18 @@ public sealed record CivitaiModelVersion
     [JsonPropertyName("trainedWords")]
     public IReadOnlyList<string> TrainedWords { get; init; } = [];
 
-    /// <summary>Early access timeframe in days.</summary>
+    /// <summary>Early access timeframe in days (legacy field, often 0 on newer responses).</summary>
     [JsonPropertyName("earlyAccessTimeFrame")]
     public int EarlyAccessTimeFrame { get; init; }
+
+    /// <summary>
+    /// Newer availability classifier. Common values: <c>"Public"</c>,
+    /// <c>"EarlyAccess"</c>, <c>"Private"</c>, <c>"Unsearchable"</c>. Civitai has
+    /// been migrating EA detection from <see cref="EarlyAccessTimeFrame"/> to this
+    /// field — check both when deciding whether a version is gated.
+    /// </summary>
+    [JsonPropertyName("availability")]
+    public string? Availability { get; init; }
 
     /// <summary>The download URL for this version's primary file.</summary>
     [JsonPropertyName("downloadUrl")]

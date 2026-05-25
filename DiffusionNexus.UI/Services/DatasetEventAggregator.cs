@@ -350,6 +350,16 @@ public sealed class SettingsSavedEventArgs : DatasetEventArgs
 {
 }
 
+/// <summary>
+/// Raised when the set of installer packages changes (added, removed, or
+/// deleted from disk). Carries no payload — subscribers are expected to
+/// re-snapshot from the database. Used to keep secondary surfaces like the
+/// Unified Console's docked-instance bar in sync with the Installer Manager.
+/// </summary>
+public sealed class InstallerPackagesChangedEventArgs : DatasetEventArgs
+{
+}
+
 #endregion
 
 /// <summary>
@@ -424,6 +434,13 @@ public interface IDatasetEventAggregator
     /// Raised when application settings are saved.
     /// </summary>
     event EventHandler<SettingsSavedEventArgs>? SettingsSaved;
+
+    /// <summary>
+    /// Raised when the set of installer packages changes (added, removed,
+    /// or deleted from disk). Allows secondary surfaces (e.g. the Unified
+    /// Console's docked-instance bar) to refresh without an app restart.
+    /// </summary>
+    event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
 
     #endregion
 
@@ -517,6 +534,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
     void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
+    void PublishInstallerPackagesChanged(InstallerPackagesChangedEventArgs args);
 
     #endregion
 }
@@ -554,6 +572,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<SettingsSavedEventArgs>? SettingsSaved;
+
+    /// <inheritdoc/>
+    public event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
 
     #endregion
 
@@ -741,6 +762,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(SettingsSaved, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishInstallerPackagesChanged(InstallerPackagesChangedEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(InstallerPackagesChanged, args);
     }
 
     #endregion

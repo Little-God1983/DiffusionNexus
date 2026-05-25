@@ -30,6 +30,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IWorkloadInstallService _installService;
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
     private readonly IUnifiedLogger _unifiedLogger;
+    private readonly DiffusionNexus.Inference.Captioning.CaptioningModelManager? _captioningModelManager;
+    private readonly ICaptioningService? _captioningService;
+    private readonly IActivityLogService? _activityLogService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -67,7 +71,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
         IEnumerable<IInstallerUpdateService> updateServices,
-        IUnifiedLogger unifiedLogger)
+        IUnifiedLogger unifiedLogger,
+        DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null,
+        ICaptioningService? captioningService = null,
+        IActivityLogService? activityLogService = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -78,6 +86,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _installService = installService;
         _updateServices = updateServices;
         _unifiedLogger = unifiedLogger;
+        _captioningModelManager = captioningModelManager;
+        _captioningService = captioningService;
+        _activityLogService = activityLogService;
+        _downloadCoordinator = downloadCoordinator;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -97,6 +109,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             IsLoading = true;
             InstallerCards.Clear();
+
+            // Static "Diffusion Nexus Core" entry — the in-process captioning /
+            // embedding / future capabilities. Pinned to the top of the list so
+            // users find Workloads downloads regardless of how many installations
+            // they have. No backing DB row; the Workloads dialog is the only
+            // surfaced action.
+            InstallerCards.Add(CreateCoreCard());
 
             var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
@@ -155,11 +174,25 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
             }
 
-            InstallerCards.Add(CreateCard(package));
+            var card = CreateCard(package);
+            InstallerCards.Add(card);
+
+            _unifiedLogger.Info(LogCategory.Installation, package.Name,
+                $"Added existing installation at {package.InstallationPath}.");
+
+            // Notify other surfaces (e.g. Unified Console's docked-instance bar)
+            // so they pick up the new package without an app restart.
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+
+            // Run an update check for the newly added card in the background, so
+            // the Update button appears without waiting for an app restart.
+            _ = CheckCardForUpdatesAsync(card);
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to save installation {Name}", package.Name);
+            _unifiedLogger.Error(LogCategory.Installation, package.Name,
+                $"Failed to add installation: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to save installation: {ex.Message}");
         }
     }
@@ -332,10 +365,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             InstallerCards.Remove(card);
+
+            _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                "Removed from Installer Manager. Files on disk were left untouched.");
+
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to remove installation {Name}", card.Name);
+            _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                $"Failed to remove installation: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to remove installation: {ex.Message}");
         }
     }
@@ -431,10 +471,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 await Task.Run(() => ForceDeleteDirectory(card.InstallationPath));
                 Serilog.Log.Information("Deleted installation folder: {Path}", card.InstallationPath);
             }
+
+            _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                $"Deleted installation and removed folder {card.InstallationPath}.");
+
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to delete installation {Name} from disk", card.Name);
+            _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                $"Failed to delete from disk: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to delete: {ex.Message}\n\nSome files may have been partially removed.");
         }
     }
@@ -469,9 +516,21 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private async Task OnWorkloadsRequestedAsync(InstallerPackageCardViewModel card)
     {
+        // Diffusion Nexus Core has no ComfyUI-style workloads (custom nodes /
+        // model bundles), so the heavy ConfigurationChecker pipeline does not
+        // apply — running it against an empty install path is what made the
+        // dialog appear stuck. Show a focused captioning-models view instead.
+        if (card.IsCore)
+        {
+            await ShowCoreCaptioningOverviewAsync();
+            return;
+        }
+
         try
         {
-            var vm = new WorkloadsViewModel(_configurationRepository, _checkerService, _installService, card.InstallationPath);
+            var vm = new WorkloadsViewModel(
+                _configurationRepository, _checkerService, _installService,
+                card.InstallationPath);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog
@@ -490,6 +549,111 @@ public partial class InstallerManagerViewModel : ViewModelBase
             Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Opens the Diffusion Nexus Core captioning models dialog. Uses the same
+    /// dark-themed DataGrid layout as the ComfyUI workloads dialog so the two
+    /// surfaces feel consistent, but pulls its data from
+    /// <see cref="DiffusionNexus.Inference.Captioning.CaptioningModelManager"/>
+    /// — which now scans every registered ComfyUI installation (including
+    /// paths declared in <c>extra_model_paths.yaml</c>) for matching GGUF and
+    /// mmproj files. No ComfyUI configuration checker runs here, so the
+    /// dialog can never appear "stuck" against an empty install path.
+    /// </summary>
+    private async Task ShowCoreCaptioningOverviewAsync()
+    {
+        try
+        {
+            // Prefer the DI-managed manager (which has the ComfyUI path
+            // discovery wired in). When tests construct the viewmodel without
+            // it, fall back to a standalone manager so the action still works.
+            var manager = _captioningModelManager
+                ?? new DiffusionNexus.Inference.Captioning.CaptioningModelManager();
+            var service = _captioningService
+                ?? new DiffusionNexus.Inference.Captioning.CaptioningService(manager);
+
+            var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+
+            // Options picker callback: opens the combined VRAM + destination +
+            // disk-space dialog and returns both the tier and the target
+            // directory the user chose (or null on cancel). The destinations
+            // list is built from the manager's known search paths — Core
+            // default first, then any registered ComfyUI install roots and
+            // their extra_model_paths.yaml entries.
+            Func<DiffusionNexus.Domain.Enums.CaptioningModelType, int[], Task<CaptioningDownloadChoice?>> optionsPicker =
+                async (modelType, tiers) =>
+            {
+                // Non-tiered models pass an empty tier array — the options
+                // dialog hides its VRAM picker and only asks for a destination.
+                // Don't bail out here, that was the bug that made LLaVA /
+                // Qwen 2.5 / Qwen 3 vanilla Download buttons silently do
+                // nothing.
+                tiers ??= Array.Empty<int>();
+
+                var destinations = manager.GetDownloadDestinations();
+                var optionsVm = new CaptioningDownloadOptionsViewModel(manager, modelType, tiers, destinations);
+
+                var optionsDialog = new Views.Dialogs.CaptioningDownloadOptionsDialog
+                {
+                    DataContext = optionsVm
+                };
+
+                if (parentWindow is not null)
+                {
+                    await optionsDialog.ShowDialog(parentWindow);
+                }
+                else
+                {
+                    optionsDialog.Show();
+                    await Task.Yield();
+                }
+
+                if (optionsDialog.SelectedVramGb is null || optionsDialog.SelectedDestination is null)
+                {
+                    return null;
+                }
+
+                return new CaptioningDownloadChoice(
+                    optionsDialog.SelectedVramGb.Value,
+                    optionsDialog.SelectedDestination);
+            };
+
+            var vm = new CaptioningModelsDialogViewModel(manager, service, _downloadCoordinator, optionsPicker);
+            var dialog = new Views.Dialogs.CaptioningModelsDialog
+            {
+                DataContext = vm
+            };
+
+            if (parentWindow is not null)
+            {
+                await dialog.ShowDialog(parentWindow);
+            }
+            else
+            {
+                dialog.Show();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open Diffusion Nexus Core captioning dialog");
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Core",
+                $"Could not open captioning models view: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Builds the singleton "Diffusion Nexus Core" card pinned to the top of
+    /// the manager. Wires only the Workloads handler — the other actions
+    /// (Launch/Stop/Update/etc.) are unsupported on Core and the corresponding
+    /// buttons are hidden in the view.
+    /// </summary>
+    private InstallerPackageCardViewModel CreateCoreCard()
+    {
+        var card = InstallerPackageCardViewModel.CreateCoreCard();
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        return card;
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)

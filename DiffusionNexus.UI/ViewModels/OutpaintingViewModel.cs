@@ -104,7 +104,7 @@ public partial class OutpaintingViewModel : ObservableObject
         Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
@@ -119,8 +119,8 @@ public partial class OutpaintingViewModel : ObservableObject
         _comfyUiService = comfyUiService;
         _unifiedLogger = unifiedLogger;
 
-        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.Outpaint);
-        VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.OutpaintVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision);
 
         ToggleCommand = new RelayCommand(ExecuteToggle, () => _hasImage());
         ResetCommand = new RelayCommand(ExecuteReset, () => _hasImage() && IsPanelOpen);
@@ -138,8 +138,8 @@ public partial class OutpaintingViewModel : ObservableObject
         // status flips from Full → Partial (or vice versa) without a user-driven property change.
         Readiness.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
-                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            if (args.PropertyName is nameof(FeatureReadinessViewModel.IsReady)
+                                  or nameof(FeatureReadinessViewModel.HasChecked))
             {
                 GenerateCommand.NotifyCanExecuteChanged();
                 LogCanExecuteState($"after Readiness.{args.PropertyName}");
@@ -149,7 +149,7 @@ public partial class OutpaintingViewModel : ObservableObject
             // VisionReadiness. Both back the same SDK workload, so when Readiness finishes a
             // check we also re-run Vision so its state doesn't go stale (e.g. left as
             // ServerOffline from a prior run before ComfyUI was started).
-            if (args.PropertyName == nameof(ComfyUIReadinessViewModel.IsChecking)
+            if (args.PropertyName == nameof(FeatureReadinessViewModel.IsChecking)
                 && !Readiness.IsChecking
                 && !VisionReadiness.IsChecking)
             {
@@ -158,8 +158,8 @@ public partial class OutpaintingViewModel : ObservableObject
         };
         VisionReadiness.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady)
-                                  or nameof(ComfyUIReadinessViewModel.HasChecked))
+            if (args.PropertyName is nameof(FeatureReadinessViewModel.IsReady)
+                                  or nameof(FeatureReadinessViewModel.HasChecked))
             {
                 GenerateVisionCommand.NotifyCanExecuteChanged();
                 LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
@@ -172,7 +172,7 @@ public partial class OutpaintingViewModel : ObservableObject
     /// been checked yet (initial state — the button shouldn't be disabled before we know).
     /// As soon as the first check completes with <c>IsReady=false</c>, the button greys out.
     /// </summary>
-    private static bool IsReadinessClickable(ComfyUIReadinessViewModel readiness) =>
+    private static bool IsReadinessClickable(FeatureReadinessViewModel readiness) =>
         !readiness.HasChecked || readiness.IsReady;
 
     /// <summary>
@@ -229,10 +229,10 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
-    public ComfyUIReadinessViewModel Readiness { get; }
+    public FeatureReadinessViewModel Readiness { get; }
 
     /// <summary>Readiness check for the Vision (Qwen3-VL auto-prompt) Outpaint workflow.</summary>
-    public ComfyUIReadinessViewModel VisionReadiness { get; }
+    public FeatureReadinessViewModel VisionReadiness { get; }
 
     #region Properties
 
@@ -320,7 +320,7 @@ public partial class OutpaintingViewModel : ObservableObject
     /// <summary>True when extension is in the +30–60% area band.</summary>
     public bool IsCautionWarning => _warningLevel == OutpaintWarningLevel.Caution;
 
-    /// <summary>True when extension is past +60% area — quality likely drops noticeably.</summary>
+    /// <summary>True when extension is past +100% area — quality likely drops noticeably.</summary>
     public bool IsStrongWarning => _warningLevel == OutpaintWarningLevel.Strong;
 
     /// <summary>
@@ -508,12 +508,12 @@ public partial class OutpaintingViewModel : ObservableObject
         }
 
         var ratio = ComputeAreaRatio(newWidth, newHeight, originalWidth, originalHeight);
-        if (ratio >= 1.60f)
+        if (ratio >= 2.00f)
         {
             WarningLevel = OutpaintWarningLevel.Strong;
             WarningMessage = "Extension is much larger than the original — results will likely diverge significantly.";
         }
-        else if (ratio >= 1.30f)
+        else if (ratio >= 1.50f)
         {
             WarningLevel = OutpaintWarningLevel.Caution;
             WarningMessage = "Large extension — results may drift from the original.";

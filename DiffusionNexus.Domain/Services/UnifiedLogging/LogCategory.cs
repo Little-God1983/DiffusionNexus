@@ -30,5 +30,12 @@ public enum LogCategory
     FileSystem,
 
     /// <summary>Application and instance configuration.</summary>
-    Configuration
+    Configuration,
+
+    /// <summary>
+    /// Image captioning (vision-language model inference). Covers
+    /// preprocessing (resize/scale), model load/unload, and per-image caption
+    /// generation events emitted by the Diffusion Nexus Core backend.
+    /// </summary>
+    Captioning
 }

@@ -157,6 +157,7 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.MaxBackups = settings.MaxBackups;
         existingSettings.LastBackupAt = settings.LastBackupAt;
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
+        existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
         existingSettings.UpdatedAt = settings.UpdatedAt;
 
         // Handle LoRA sources (remove deleted, update existing, add new)
@@ -359,6 +360,29 @@ public sealed class AppSettingsService : IAppSettingsService
 
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetFavoriteLoraSourceAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return settings?.FavoriteLoraSourcePath;
+    }
+
+    /// <inheritdoc />
+    public async Task SetFavoriteLoraSourceAsync(string? folderPath, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (settings is null) return;
+
+        // Normalize empty string to null so "no favorite" is unambiguous.
+        settings.FavoriteLoraSourcePath = string.IsNullOrWhiteSpace(folderPath) ? null : folderPath;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

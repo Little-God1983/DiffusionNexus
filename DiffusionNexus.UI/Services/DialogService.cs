@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
@@ -222,6 +224,18 @@ public class DialogService : IDialogService
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? CreateDatasetResult.Cancelled();
+    }
+
+    public async Task<CreateTrainingRunResult> ShowCreateTrainingRunDialogAsync(
+        ICivitaiBaseModelCatalog? baseModelCatalog,
+        CivitaiCategory defaultCategory,
+        IEnumerable<string>? existingRunNames = null)
+    {
+        var dialog = new CreateTrainingRunDialog()
+            .WithContext(baseModelCatalog, defaultCategory, existingRunNames);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? CreateTrainingRunResult.Cancelled();
     }
 
     public async Task ShowImageViewerDialogAsync(
@@ -537,8 +551,13 @@ public class DialogService : IDialogService
         IReadOnlyList<string> sourceFolders,
         string? category = null)
     {
+        // Pull the favorite path so the per-version dialog (detail-panel "Download")
+        // pre-selects the same source the user picked in Settings.
+        var settings = App.Services?.GetService<IAppSettingsService>();
+        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
+
         var dialog = new DownloadLoraVersionDialog()
-            .WithVersionInfo(modelName, civitaiVersion, sourceFolders, category);
+            .WithVersionInfo(modelName, civitaiVersion, sourceFolders, category, favorite);
 
         await dialog.ShowDialog(_window);
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
@@ -546,12 +565,14 @@ public class DialogService : IDialogService
 
     public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
     {
+        var settings = App.Services?.GetService<IAppSettingsService>();
+        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
         var viewModel = new DownloadLoraDialogViewModel(
             App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
-            App.Services?.GetService<IAppSettingsService>(),
+            settings,
             this,
             App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
-        await viewModel.InitializeAsync(sourceFolders);
+        await viewModel.InitializeAsync(sourceFolders, favorite);
 
         var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
 
@@ -565,6 +586,19 @@ public class DialogService : IDialogService
         viewModel.LoadClusters(clusters);
 
         var dialog = new DuplicateFixerWindow(viewModel, this);
+        await dialog.ShowDialog(_window);
+        return viewModel.DeletedCount;
+    }
+
+    public async Task<int> ShowLoraDuplicateFixerAsync(IEnumerable<Service.Services.LoraDuplicateGroup> groups)
+    {
+        var viewModel = new ViewModels.Dialogs.LoraDuplicateFixerViewModel
+        {
+            Logger = App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()
+        };
+        viewModel.LoadGroups(groups);
+
+        var dialog = new LoraDuplicateFixerWindow(viewModel, this);
         await dialog.ShowDialog(_window);
         return viewModel.DeletedCount;
     }

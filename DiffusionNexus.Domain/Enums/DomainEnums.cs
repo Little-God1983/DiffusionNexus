@@ -193,5 +193,12 @@ public enum InstallerType
     InvokeAI,
     FluxGym,
     SwarmUI,
-    AIToolkit
+    AIToolkit,
+    /// <summary>
+    /// Built-in pseudo-installer representing the in-process Diffusion Nexus Core
+    /// capabilities (image captioning today, future embedding/translation backends).
+    /// Cards of this type have no Launch action — only a Workloads button that
+    /// downloads the supporting GGUF + mmproj files.
+    /// </summary>
+    DiffusionNexusCore
 }

@@ -14,7 +14,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     private static readonly ILogger Logger = Log.ForContext<ComfyUICaptioningBackend>();
 
     private readonly IComfyUIWrapperService _comfyUi;
-    private readonly IComfyUIReadinessService? _readinessService;
+    private readonly IFeatureReadinessService? _readinessService;
 
     /// <summary>
     /// Creates a new ComfyUI captioning backend.
@@ -23,7 +23,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     /// <param name="readinessService">Optional unified readiness service. When provided, <see cref="IsAvailableAsync"/> delegates to it.</param>
     public ComfyUICaptioningBackend(
         IComfyUIWrapperService comfyUiService,
-        IComfyUIReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null)
     {
         ArgumentNullException.ThrowIfNull(comfyUiService);
         _comfyUi = comfyUiService;
@@ -31,7 +31,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     }
 
     /// <inheritdoc />
-    public string DisplayName => "ComfyUI – Qwen3-VL";
+    public string DisplayName => "ComfyUI ï¿½ Qwen3-VL";
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
@@ -52,7 +52,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
         try
         {
-            var result = await _readinessService.CheckFeatureAsync(ComfyUIFeature.Captioning, ct);
+            var result = await _readinessService.CheckAsync(Feature.Captioning, ct);
 
             MissingRequirements = result.MissingRequirements;
             Warnings = result.Warnings;

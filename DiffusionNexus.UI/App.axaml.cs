@@ -550,7 +550,9 @@ public partial class App : Application
             {
                 { "MaxBackups", "ALTER TABLE AppSettings ADD COLUMN MaxBackups INTEGER NOT NULL DEFAULT 10" },
                 { "LastBackupAt", "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT" },
-                { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" }
+                { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" },
+                { "LoraUpdateCheckStalenessDays", "ALTER TABLE AppSettings ADD COLUMN LoraUpdateCheckStalenessDays INTEGER NOT NULL DEFAULT 3" },
+                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" }
             };
 
             foreach (var col in requiredColumns)
@@ -754,6 +756,7 @@ public partial class App : Application
         // Application services - Transient so each consumer gets its own UoW/DbContext
         services.AddTransient<IAppSettingsService, AppSettingsService>();
         services.AddTransient<IModelSyncService, ModelFileSyncService>();
+        services.AddTransient<ILoraDuplicateFinder, LoraDuplicateFinder>();
 
         // DatasetBackupService - use factory to inject activity log service
         services.AddTransient<IDatasetBackupService>(sp => new DatasetBackupService(
@@ -827,6 +830,7 @@ public partial class App : Application
 
         // Installer update services (one per supported type)
         services.AddSingleton<Domain.Services.IInstallerUpdateService, Service.Services.ComfyUIUpdateService>();
+        services.AddSingleton<Domain.Services.IInstallerUpdateService, Service.Services.AIToolkitUpdateService>();
 
         // Register the orchestrator and engine
         services.AddSingleton<IInstallationOrchestrator, InstallationOrchestrator>();
@@ -844,16 +848,40 @@ public partial class App : Application
             return new ComfyUIWrapperService();
         });
 
-        // Unified ComfyUI readiness service (singleton - checks server, nodes, models per feature).
-        // The workload checker bridges to the same disk-walking logic the Installer Manager uses,
-        // so a feature reports "Ready" iff its backing workload would show as "Full" in the dialog.
-        // The unified logger plumb-through makes readiness decisions visible in the in-app console.
-        services.AddSingleton<IComfyUIReadinessService>(sp =>
-            new ComfyUIReadinessService(
+        // Backend-agnostic feature readiness pipeline.
+        //
+        //   IFeatureReadinessService                 (what view-models depend on)
+        //     -> IFeatureBackendRouter               (picks the backend per feature)
+        //       -> ComfyUIFeatureBackend             (ComfyUI server + workload checker)
+        //       -> LocalInferenceFeatureBackend      (LlamaSharp captioning, sd.cpp generation)
+        //
+        // A feature reports "Ready" iff its backing workload would show as "Full" in the
+        // Installer Manager dialog. The unified logger plumb-through makes readiness
+        // decisions visible in the in-app console.
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new ComfyUIFeatureBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
                 sp.GetRequiredService<IAppSettingsService>(),
-                sp.GetService<Domain.Services.IWorkloadInstallationChecker>(),
+                sp.GetRequiredService<Domain.Services.IWorkloadInstallationChecker>(),
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // Resolves the concrete LocalInferenceCaptioningBackend rather than the
+        // ICaptioningBackend collection — going through the collection would force the
+        // ComfyUICaptioningBackend to materialize too, and *it* depends on
+        // IFeatureReadinessService → router → IEnumerable<IFeatureBackend> → here. That
+        // cycle hangs DI on startup.
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new Inference.LocalInferenceFeatureBackend(
+                sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
+                diffusion: null));
+
+        services.AddSingleton<IFeatureBackendRouter>(sp =>
+            new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
+
+        services.AddSingleton<IFeatureReadinessService>(sp =>
+            new FeatureReadinessService(
+                sp.GetRequiredService<IFeatureBackendRouter>(),
+                FeatureRegistry.GetRequirements));
 
         // Civitai API client (singleton - maintains HttpClient)
         services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
@@ -861,11 +889,43 @@ public partial class App : Application
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
 
-        // Captioning backend - ComfyUI only
+        // Captioning backends. Multiple ICaptioningBackend registrations resolve to a
+        // collection via sp.GetServices<ICaptioningBackend>(); the Captioning tab
+        // exposes them as a dropdown.
         services.AddSingleton<ICaptioningBackend>(sp =>
             new ComfyUICaptioningBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetService<IComfyUIReadinessService>()));
+                sp.GetService<IFeatureReadinessService>()));
+
+        // Local LlamaSharp + MTMD captioning (vision-language inference in-process).
+        // Lives in DiffusionNexus.Inference alongside the stable-diffusion.cpp image
+        // generation backend — one project owns all native model inference.
+        //
+        // The model manager is registered via a factory so it can be given a
+        // live ComfyUI path discovery callback. That lets GGUF/mmproj files in
+        // any existing ComfyUI install (including paths declared via
+        // extra_model_paths.yaml) be picked up automatically — no copying, no
+        // env var required.
+        services.AddSingleton<Inference.Captioning.CaptioningModelManager>(sp =>
+        {
+            var uow = sp.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
+            return new Inference.Captioning.CaptioningModelManager(
+                modelsBasePath: null,
+                httpClient: null,
+                extraSearchPathsProvider: () => DiscoverComfyUiCaptioningPaths(uow));
+        });
+        services.AddSingleton<ICaptioningService>(sp =>
+            new Inference.Captioning.CaptioningService(
+                sp.GetRequiredService<Inference.Captioning.CaptioningModelManager>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+        // Registered as a concrete type first so LocalInferenceFeatureBackend can resolve it
+        // without going through the ICaptioningBackend collection (which would drag the
+        // ComfyUI captioning backend into the readiness pipeline and create a DI cycle).
+        services.AddSingleton<Inference.Captioning.LocalInferenceCaptioningBackend>(sp =>
+            new Inference.Captioning.LocalInferenceCaptioningBackend(
+                sp.GetRequiredService<ICaptioningService>()));
+        services.AddSingleton<ICaptioningBackend>(sp =>
+            sp.GetRequiredService<Inference.Captioning.LocalInferenceCaptioningBackend>());
 
         // Dataset Helper services (singletons - shared state across all components)
         services.AddSingleton<IDatasetEventAggregator, DatasetEventAggregator>();
@@ -908,13 +968,16 @@ public partial class App : Application
             sp.GetService<ISettingsExportService>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
         
+        services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
+
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IModelSyncService>(),
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<ISecureStorage>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<ILoraUpdateChecker>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
@@ -928,7 +991,11 @@ public partial class App : Application
             sp.GetRequiredService<IConfigurationCheckerService>(),
             sp.GetRequiredService<IWorkloadInstallService>(),
             sp.GetServices<Domain.Services.IInstallerUpdateService>(),
-            sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Inference.Captioning.CaptioningModelManager>(),
+            sp.GetService<ICaptioningService>(),
+            sp.GetService<IActivityLogService>(),
+            sp.GetService<IDownloadCoordinator>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -953,12 +1020,56 @@ public partial class App : Application
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
-            sp.GetService<IComfyUIReadinessService>(),
+            sp.GetService<IFeatureReadinessService>(),
             sp.GetServices<IImageQualityCheck>(),
             sp.GetService<AnalysisRunStore>(),
             sp.GetService<DuplicateDetector>(),
             sp.GetService<ColorDistributionAnalyzer>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<IDownloadCoordinator>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+    }
+
+    /// <summary>
+    /// Builds the live list of additional model search paths the captioning
+    /// service should scan. For every registered ComfyUI installation, we add
+    /// the standard <c>models/</c> root plus any <c>base_path</c>/model-type
+    /// entries declared in <c>extra_model_paths.yaml</c>. Invoked lazily by
+    /// <see cref="Inference.Captioning.CaptioningModelManager"/> on each file
+    /// lookup so install changes are picked up without restarting the app.
+    /// </summary>
+    private static IReadOnlyList<string> DiscoverComfyUiCaptioningPaths(DataAccess.UnitOfWork.IUnitOfWork uow)
+    {
+        try
+        {
+            // Blocking on the async call is acceptable here: it runs on a
+            // background captioning lookup, not the UI thread, and queries
+            // the local SQLite repository which is effectively synchronous.
+            var packages = uow.InstallerPackages.GetAllAsync().GetAwaiter().GetResult();
+
+            var aggregated = new List<string>();
+            foreach (var package in packages)
+            {
+                if (package.Type != Domain.Enums.InstallerType.ComfyUI)
+                {
+                    continue;
+                }
+
+                foreach (var root in DiffusionNexus.UI.Services.ComfyUiPathDiscovery.EnumerateModelSearchPaths(package.InstallationPath))
+                {
+                    if (!aggregated.Contains(root, StringComparer.OrdinalIgnoreCase))
+                    {
+                        aggregated.Add(root);
+                    }
+                }
+            }
+            return aggregated;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to enumerate ComfyUI captioning paths — falling back to defaults.");
+            return [];
+        }
     }
 
     private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)

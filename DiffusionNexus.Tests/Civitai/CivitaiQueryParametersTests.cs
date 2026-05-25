@@ -38,7 +38,7 @@ public class CivitaiQueryParametersTests
             Username = "alice",
             Sort = "Most Downloaded",
             Period = CivitaiPeriod.Month,
-            Nsfw = false,
+            Nsfw = "false",
             PrimaryFileOnly = true,
             BaseModel = "SDXL 1.0"
         };
@@ -85,10 +85,74 @@ public class CivitaiQueryParametersTests
     }
 
     [Fact]
-    public void ModelsQuery_Bool_IsLowercase()
+    public void ModelsQuery_PrimaryFileOnly_IsLowercase()
     {
-        Build(new CivitaiModelsQuery { Nsfw = true }).Should().Be("nsfw=true");
+        Build(new CivitaiModelsQuery { PrimaryFileOnly = true }).Should().Be("primaryFileOnly=true");
         Build(new CivitaiModelsQuery { PrimaryFileOnly = false }).Should().Be("primaryFileOnly=false");
+    }
+
+    [Fact]
+    public void ModelsQuery_Nsfw_IsPassedThroughAsString()
+    {
+        // Civitai's API expects a string on the models endpoint, not a bool.
+        Build(new CivitaiModelsQuery { Nsfw = "true" }).Should().Be("nsfw=true");
+        Build(new CivitaiModelsQuery { Nsfw = "X" }).Should().Be("nsfw=X");
+    }
+
+    [Fact]
+    public void ModelsQuery_Nsfw_NullOrWhitespace_IsOmitted()
+    {
+        Build(new CivitaiModelsQuery { Nsfw = null }).Should().BeEmpty();
+        Build(new CivitaiModelsQuery { Nsfw = "   " }).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ModelsQuery_Cursor_IsEscapedAndEmittedEarly()
+    {
+        // Cursor is opaque — must be URL-escaped (it can contain '+' or '/').
+        var q = new CivitaiModelsQuery { Limit = 5, Cursor = "abc+def/ghi" };
+
+        Build(q).Should().Be("limit=5&cursor=abc%2Bdef%2Fghi");
+    }
+
+    [Fact]
+    public void ModelsQuery_BaseModels_EmitsRepeatedBaseModelsParameter()
+    {
+        // REST endpoint takes repeated `baseModels=` (plural) — NOT comma-joined,
+        // and NOT the singular `baseModel=` form the civitai.com web UI uses.
+        var q = new CivitaiModelsQuery
+        {
+            BaseModels = new[] { "SDXL 1.0", "Pony" }
+        };
+
+        Build(q).Should().Be("baseModels=SDXL%201.0&baseModels=Pony");
+    }
+
+    [Fact]
+    public void ModelsQuery_BaseModels_WhitespaceEntriesAreOmitted()
+    {
+        var q = new CivitaiModelsQuery
+        {
+            BaseModels = new[] { "SDXL 1.0", "", "   ", "Pony" }
+        };
+
+        Build(q).Should().Be("baseModels=SDXL%201.0&baseModels=Pony");
+    }
+
+    [Fact]
+    public void ModelsQuery_EmptyBaseModelsList_IsOmitted()
+    {
+        var q = new CivitaiModelsQuery { BaseModels = Array.Empty<string>() };
+
+        Build(q).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ImagesQuery_Bool_IsLowercase()
+    {
+        // ImagesQuery.Nsfw is still bool? — only the Models endpoint requires a string.
+        Build(new CivitaiImagesQuery { Nsfw = true }).Should().Be("nsfw=true");
+        Build(new CivitaiImagesQuery { Nsfw = false }).Should().Be("nsfw=false");
     }
 
     [Fact]

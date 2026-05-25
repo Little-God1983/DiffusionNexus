@@ -58,6 +58,14 @@ public class AppSettings
     /// </summary>
     public bool MergeLoraSources { get; set; }
 
+    /// <summary>
+    /// Maximum age (in days) of a model's <c>LastCheckedForUpdatesUtc</c> before
+    /// the LoRA Viewer will silently re-check Civitai for new versions of the
+    /// currently visible tiles. Defaults to 3 days; <c>0</c> disables the
+    /// automatic update check entirely.
+    /// </summary>
+    public int LoraUpdateCheckStalenessDays { get; set; } = 3;
+
     #endregion
 
     #region LoRA Sort Settings
@@ -66,6 +74,14 @@ public class AppSettings
     /// Default source folder for LoRA Sort.
     /// </summary>
     public string? LoraSortSourcePath { get; set; }
+
+    /// <summary>
+    /// User-favorited LoRA source folder. When set, this folder is pre-selected
+    /// in download destination pickers (Installed-tab "Download LoRA" dialog and
+    /// the Civitai browser's queue destination panel). Null = no favorite, fall
+    /// back to the first enabled source.
+    /// </summary>
+    public string? FavoriteLoraSourcePath { get; set; }
 
     /// <summary>
     /// Default target folder for LoRA Sort.

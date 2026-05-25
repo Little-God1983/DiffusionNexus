@@ -13,6 +13,13 @@ namespace DiffusionNexus.Domain.Services;
 /// <param name="DatasetPath">Output directory for caption files.</param>
 /// <param name="OverrideExisting">Whether to overwrite existing caption (.txt) files.</param>
 /// <param name="Temperature">Inference creativity parameter (0.0-2.0). Lower values are more deterministic.</param>
+/// <param name="MaxWordCount">
+/// When greater than zero, instructs the model — via an appended sentence in
+/// the system prompt — to cap the caption at this many words. Zero (the
+/// default) leaves the prompt untouched. This is a soft, prompt-driven limit:
+/// the inference token cap is held high enough that the model finishes its
+/// final sentence cleanly rather than being cut off mid-word.
+/// </param>
 public record CaptioningJobConfig(
     IEnumerable<string> ImagePaths,
     CaptioningModelType SelectedModel,
@@ -21,7 +28,8 @@ public record CaptioningJobConfig(
     IReadOnlyList<string>? BlacklistedWords = null,
     string? DatasetPath = null,
     bool OverrideExisting = false,
-    float Temperature = 0.7f)
+    float Temperature = 0.7f,
+    int MaxWordCount = 0)
 {
     /// <summary>
     /// Validates the configuration.
@@ -44,6 +52,11 @@ public record CaptioningJobConfig(
         if (Temperature is < 0f or > 2f)
         {
             errors.Add("Temperature must be between 0.0 and 2.0.");
+        }
+
+        if (MaxWordCount < 0)
+        {
+            errors.Add("Max word count cannot be negative.");
         }
 
         return errors;

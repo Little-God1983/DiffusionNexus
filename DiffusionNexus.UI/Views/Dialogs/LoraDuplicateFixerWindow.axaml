@@ -1,0 +1,176 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels.Dialogs"
+        xmlns:converters="using:DiffusionNexus.UI.Converters"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.LoraDuplicateFixerWindow"
+        x:DataType="vm:LoraDuplicateFixerViewModel"
+        Title="Find Duplicate LoRAs"
+        Width="1200" Height="800"
+        MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#1A1A1A">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- Header -->
+    <Border Grid.Row="0"
+            Background="#1E1E1E"
+            Padding="16,12"
+            BorderBrush="#333"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <TextBlock Text="{Binding Groups.Count, StringFormat='{}{0} duplicate group(s)'}"
+                     FontWeight="SemiBold" FontSize="14"
+                     VerticalAlignment="Center"/>
+          <TextBlock Text="·" Opacity="0.4" VerticalAlignment="Center"/>
+          <TextBlock Text="Pick the copy you want to keep — every other file in the group is permanently deleted."
+                     Opacity="0.7" FontSize="12"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+        <TextBlock Grid.Column="1"
+                   Text="{Binding BytesReclaimedDisplay, StringFormat='{}{0} reclaimed'}"
+                   Opacity="0.7" FontSize="12"
+                   VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+
+    <!-- Group list -->
+    <ScrollViewer Grid.Row="1"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto"
+                  Padding="12">
+      <ItemsControl ItemsSource="{Binding Groups}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:LoraDuplicateGroupItem">
+            <Border Margin="4,6"
+                    Padding="12"
+                    Background="#222"
+                    BorderBrush="#333"
+                    BorderThickness="1"
+                    CornerRadius="6">
+              <StackPanel Spacing="10">
+
+                <!-- Group header -->
+                <Grid ColumnDefinitions="*,Auto,Auto" VerticalAlignment="Center">
+                  <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Text="{Binding Header}"
+                               FontWeight="SemiBold" FontSize="13"/>
+                    <TextBlock Text="{Binding SavingsDisplay}"
+                               Opacity="0.6" FontSize="11"
+                               IsVisible="{Binding !IsResolved}"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="✓ Resolved"
+                             Foreground="#4CAF50"
+                             FontWeight="SemiBold"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             Margin="8,0"
+                             IsVisible="{Binding IsResolved}"/>
+                </Grid>
+
+                <!-- File cards -->
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                  <ItemsControl ItemsSource="{Binding Files}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="10"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:LoraDuplicateFileItem">
+                        <Border Width="240"
+                                Padding="10"
+                                Background="#2A2A2A"
+                                BorderBrush="#3A3A3A"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                          <StackPanel Spacing="8">
+
+                            <!-- Thumbnail -->
+                            <Border Background="#1A1A1A"
+                                    CornerRadius="3"
+                                    Height="170"
+                                    ClipToBounds="True">
+                              <Panel>
+                                <Image Source="{Binding Thumbnail}"
+                                       Stretch="UniformToFill"
+                                       IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                <TextBlock Text="No preview"
+                                           Opacity="0.4"
+                                           FontSize="12"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNull}}"/>
+                              </Panel>
+                            </Border>
+
+                            <!-- File metadata -->
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding FileName}"
+                                         FontWeight="SemiBold"
+                                         FontSize="12"
+                                         TextWrapping="Wrap"
+                                         MaxLines="2"
+                                         TextTrimming="CharacterEllipsis"
+                                         ToolTip.Tip="{Binding FileName}"/>
+                              <TextBlock Text="{Binding FolderPath}"
+                                         Opacity="0.65"
+                                         FontSize="11"
+                                         TextTrimming="CharacterEllipsis"
+                                         ToolTip.Tip="{Binding FolderPath}"/>
+                              <TextBlock Text="{Binding SizeDisplay}"
+                                         Opacity="0.65"
+                                         FontSize="11"/>
+                            </StackPanel>
+
+                            <!-- Keep button -->
+                            <Button Content="Keep this"
+                                    Command="{Binding KeepCommand}"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Padding="0,6"
+                                    Background="#4CAF50"
+                                    Foreground="White"
+                                    FontWeight="SemiBold"
+                                    IsEnabled="{Binding !Group.IsResolved}"/>
+
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <!-- Footer -->
+    <Border Grid.Row="2"
+            Background="#1E1E1E"
+            Padding="12"
+            BorderBrush="#333"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="{Binding DeletedCount, StringFormat='{}{0} file(s) deleted'}"
+                   Opacity="0.7" FontSize="12"
+                   VerticalAlignment="Center"/>
+        <Button Grid.Column="1"
+                Content="Close"
+                Click="OnCloseClick"
+                Padding="16,6"/>
+      </Grid>
+    </Border>
+
+  </Grid>
+</Window>

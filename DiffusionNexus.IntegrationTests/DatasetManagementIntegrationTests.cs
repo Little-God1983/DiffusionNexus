@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
@@ -108,6 +110,12 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<CreateDatasetResult> ShowCreateDatasetDialogAsync(IEnumerable<DatasetCategoryViewModel> availableCategories) =>
             Task.FromResult(CreateDatasetResult.Cancelled());
+
+        public Task<CreateTrainingRunResult> ShowCreateTrainingRunDialogAsync(
+            ICivitaiBaseModelCatalog? baseModelCatalog,
+            CivitaiCategory defaultCategory,
+            IEnumerable<string>? existingRunNames = null) =>
+            Task.FromResult(CreateTrainingRunResult.Cancelled());
 
         public Task ShowImageViewerDialogAsync(
             ObservableCollection<DatasetImageViewModel> images,
@@ -218,6 +226,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Task.FromResult(ExportTrainingRunsResult.Cancelled());
 
         public Task<int> ShowDuplicateFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.DuplicateClusterItemViewModel> clusters) =>
+            Task.FromResult(0);
+
+        public Task<int> ShowLoraDuplicateFixerAsync(IEnumerable<DiffusionNexus.Service.Services.LoraDuplicateGroup> groups) =>
             Task.FromResult(0);
 
         public Task<int> ShowColorFixerAsync(IEnumerable<DiffusionNexus.UI.ViewModels.Tabs.ColorDistributionItemViewModel> images) =>

@@ -186,9 +186,11 @@ public class InstallerManagerViewModelTests
             Enumerable.Empty<IInstallerUpdateService>(),
             new Mock<IUnifiedLogger>().Object);
 
-        // Load cards
+        // Load cards. The list now contains 3 DB-backed packages plus the
+        // singleton static "Diffusion Nexus Core" card pinned to the top.
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
-        vm.InstallerCards.Should().HaveCount(3);
+        vm.InstallerCards.Should().HaveCount(4);
+        vm.InstallerCards.Count(c => c.IsCore).Should().Be(1);
 
         var cardToMakeDefault = vm.InstallerCards.First(c => c.Id == 2);
 

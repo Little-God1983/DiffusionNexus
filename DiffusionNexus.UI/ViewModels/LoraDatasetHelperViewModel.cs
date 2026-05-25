@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
@@ -174,12 +175,14 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         AnalysisPipeline? analysisPipeline = null,
         BucketAnalyzer? bucketAnalyzer = null,
-        IComfyUIReadinessService? readinessService = null,
+        IFeatureReadinessService? readinessService = null,
         IEnumerable<IImageQualityCheck>? imageQualityChecks = null,
         AnalysisRunStore? analysisRunStore = null,
         DuplicateDetector? duplicateDetector = null,
         ColorDistributionAnalyzer? colorDistributionAnalyzer = null,
-        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
+        IDownloadCoordinator? downloadCoordinator = null,
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
+        ICivitaiBaseModelCatalog? baseModelCatalog = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -205,10 +208,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             imageQualityChecks,
             analysisRunStore,
             duplicateDetector,
-            colorDistributionAnalyzer);
+            colorDistributionAnalyzer,
+            baseModelCatalog);
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
-        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService);
+        Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);
 
         // Subscribe to state changes for property forwarding
@@ -224,7 +228,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 

@@ -34,8 +34,32 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         EnsureNativeEventsInitialized();
     }
 
+    /// <inheritdoc />
+    public string DisplayName => "Diffusion Nexus Core";
+
     /// <summary>The catalog of models discovered under the configured ComfyUI root.</summary>
     public IModelCatalog Catalog => _catalog;
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Warnings => [];
+
+    /// <inheritdoc />
+    public Task<bool> IsAvailableAsync(CancellationToken ct = default)
+    {
+        // The native library is loaded eagerly via EnsureNativeEventsInitialized() in the ctor,
+        // so the only remaining gate is "at least one runnable model is on disk."
+        if (_catalog.ListAvailable().Count == 0)
+        {
+            MissingRequirements = ["No runnable diffusion models were found under the configured models root."];
+            return Task.FromResult(false);
+        }
+
+        MissingRequirements = [];
+        return Task.FromResult(true);
+    }
 
     /// <inheritdoc />
     public async IAsyncEnumerable<DiffusionStreamItem> GenerateAsync(

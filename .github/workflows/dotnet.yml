@@ -29,5 +29,11 @@ jobs:
     - name: Build
       run: dotnet build --no-restore --configuration Release
 
+    - name: Install EF Core tools
+      run: dotnet tool install --global dotnet-ef
+
+    - name: Check for pending EF model changes
+      run: dotnet ef migrations has-pending-model-changes --project DiffusionNexus.DataAccess --startup-project DiffusionNexus.DataAccess --context DiffusionNexusCoreDbContext --no-build --configuration Release
+
     - name: Test
       run: dotnet test --no-build --configuration Release --verbosity normal

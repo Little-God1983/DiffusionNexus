@@ -62,6 +62,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     private bool _isMissing;
 
     // ── Process state ──
@@ -70,15 +72,17 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
     [NotifyPropertyChangedFor(nameof(ShowRunningControls))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     private bool _isRunning;
 
     [ObservableProperty]
     private string? _detectedWebUrl;
 
     /// <summary>
-    /// True when not running and not missing — show the Launch button.
+    /// True when not running, not missing, AND this is not a non-launchable
+    /// pseudo-installer (e.g. Diffusion Nexus Core) — show the Launch button.
     /// </summary>
-    public bool ShowLaunchButton => !IsRunning && !IsMissing;
+    public bool ShowLaunchButton => !IsRunning && !IsMissing && !IsCore;
 
     /// <summary>
     /// True when running — show Stop/Restart/Console buttons.
@@ -86,14 +90,37 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public bool ShowRunningControls => IsRunning;
 
     /// <summary>
-    /// True when an update is available, not currently updating, not running, and not missing.
+    /// True when an update is available, not currently updating, not running,
+    /// not missing, and not a Core pseudo-card.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsCore;
 
     /// <summary>
     /// True when this installation is a ComfyUI installation.
     /// </summary>
     public bool IsComfyUi => Type == InstallerType.ComfyUI;
+
+    /// <summary>
+    /// True when this card represents the built-in Diffusion Nexus Core pseudo-installer.
+    /// Core cards have no Launch button and always show the Workloads button.
+    /// </summary>
+    public bool IsCore => Type == InstallerType.DiffusionNexusCore;
+
+    /// <summary>
+    /// True when the Workloads button should be visible. ComfyUI installations
+    /// have curated model bundles, but only when the install still exists on
+    /// disk; Core always offers its captioning/embedding workloads regardless
+    /// of disk state.
+    /// </summary>
+    public bool ShowWorkloadsButton => IsCore || (IsComfyUi && !IsMissing);
+
+    /// <summary>
+    /// True when the bottom action panel (Launch + Workloads container) should
+    /// be visible at all. The container is hidden when neither action applies
+    /// — e.g. when the install is currently running, missing on disk, and not
+    /// Core. Used by the view to avoid leaving an empty gap on the card.
+    /// </summary>
+    public bool ShowActionsPanel => ShowLaunchButton || ShowWorkloadsButton;
 
     /// <summary>
     /// Console output lines captured from the process.
@@ -190,6 +217,35 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Creates the singleton "Diffusion Nexus Core" card shown at the top of
+    /// the Installer Manager. This card has no backing database row — it
+    /// represents the in-process Core capabilities and only exposes the
+    /// Workloads action.
+    /// </summary>
+    public static InstallerPackageCardViewModel CreateCoreCard()
+    {
+        return new InstallerPackageCardViewModel(forCore: true);
+    }
+
+    private InstallerPackageCardViewModel(bool forCore)
+    {
+        if (!forCore)
+            throw new ArgumentException("Use the public constructor for database-backed packages.", nameof(forCore));
+
+        Id = 0;
+        _name = "Diffusion Nexus Core";
+        _type = InstallerType.DiffusionNexusCore;
+        _installationPath = string.Empty;
+        _executablePath = null;
+        _arguments = string.Empty;
+        _isUpdateAvailable = false;
+        _isDefault = false;
+        _versionDisplay = "Built-in";
+
+        LogoImage = LoadLogo(InstallerType.DiffusionNexusCore);
+    }
+
+    /// <summary>
     /// Loads the logo bitmap for the given installer type from embedded assets.
     /// Falls back to the default Installer.png when no specific logo exists.
     /// </summary>
@@ -200,6 +256,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             InstallerType.Automatic1111 => "avares://DiffusionNexus.UI/Assets/InstallerManager/Automatic-Logo.png",
             InstallerType.Forge => "avares://DiffusionNexus.UI/Assets/InstallerManager/ForgeUI-Logo.png",
             InstallerType.ComfyUI => "avares://DiffusionNexus.UI/Assets/InstallerManager/ComfyUI-logo.png",
+            InstallerType.AIToolkit => "avares://DiffusionNexus.UI/Assets/InstallerManager/AI-Toolkit-Logo.png",
             _ => "avares://DiffusionNexus.UI/Assets/Installer.png"
         };
 

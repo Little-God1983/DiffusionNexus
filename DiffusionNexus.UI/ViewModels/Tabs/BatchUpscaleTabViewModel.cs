@@ -277,7 +277,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         IDatasetState state,
         IComfyUIWrapperService? comfyUiService = null,
         IAppSettingsService? settingsService = null,
-        IComfyUIReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -285,8 +285,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _settingsService = settingsService;
 
         // Create readiness ViewModels for both upscale variants
-        Readiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscale);
-        VisionReadiness = new ComfyUIReadinessViewModel(readinessService, ComfyUIFeature.BatchUpscaleVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscaleVision);
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -305,12 +305,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         // Re-evaluate start command when readiness changes
         Readiness.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+            if (e.PropertyName is nameof(FeatureReadinessViewModel.IsReady))
                 StartUpscaleCommand.NotifyCanExecuteChanged();
         };
         VisionReadiness.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(ComfyUIReadinessViewModel.IsReady))
+            if (e.PropertyName is nameof(FeatureReadinessViewModel.IsReady))
                 StartUpscaleCommand.NotifyCanExecuteChanged();
         };
 
@@ -335,19 +335,19 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Unified readiness state for the standard batch upscale workflow.
     /// Bind to <c>Readiness.IsReady</c>, <c>Readiness.MissingRequirements</c>, etc.
     /// </summary>
-    public ComfyUIReadinessViewModel Readiness { get; }
+    public FeatureReadinessViewModel Readiness { get; }
 
     /// <summary>
     /// Unified readiness state for the vision auto-prompt upscale workflow.
     /// Has additional requirements (Qwen3_VQA node + model) compared to <see cref="Readiness"/>.
     /// </summary>
-    public ComfyUIReadinessViewModel VisionReadiness { get; }
+    public FeatureReadinessViewModel VisionReadiness { get; }
 
     /// <summary>
     /// Returns the readiness ViewModel that matches the currently selected <see cref="PromptMode"/>.
     /// Vision Auto-Prompt requires <see cref="VisionReadiness"/>; all other modes use <see cref="Readiness"/>.
     /// </summary>
-    public ComfyUIReadinessViewModel ActiveReadiness =>
+    public FeatureReadinessViewModel ActiveReadiness =>
         PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
 
     /// <summary>

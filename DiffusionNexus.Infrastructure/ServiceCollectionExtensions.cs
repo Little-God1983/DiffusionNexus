@@ -48,6 +48,12 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ITaskTracker>()));
 #pragma warning restore CS0618
 
+        // Concurrent download coordinator (default 3 slots). Multiple
+        // captioning or LoRA downloads in flight are aggregated into the
+        // status bar via the activity-log shim it owns.
+        services.AddSingleton<IDownloadCoordinator>(sp =>
+            new Services.DownloadCoordinator(sp.GetService<IActivityLogService>()));
+
         return services;
     }
 

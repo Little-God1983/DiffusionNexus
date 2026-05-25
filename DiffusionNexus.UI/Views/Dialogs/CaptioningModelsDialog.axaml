@@ -1,0 +1,136 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="540"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.CaptioningModelsDialog"
+        x:DataType="vm:CaptioningModelsDialogViewModel"
+        Title="Diffusion Nexus Core — Captioning Models"
+        Width="800" Height="540"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E">
+
+    <Window.Styles>
+        <Style Selector="Button.close-btn">
+            <Setter Property="Background" Value="#333333"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="16,8"/>
+        </Style>
+        <Style Selector="Button.close-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#444444"/>
+        </Style>
+        <Style Selector="Button.download-btn">
+            <Setter Property="Background" Value="#0088CC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="Button.download-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#009AE0"/>
+        </Style>
+        <Style Selector="Button.download-btn:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="#3A3A3A"/>
+            <Setter Property="Opacity" Value="0.7"/>
+        </Style>
+        <Style Selector="TextBlock.section-header">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#BBBBBB"/>
+            <Setter Property="Margin" Value="0,12,0,4"/>
+        </Style>
+        <Style Selector="TextBlock.search-path">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="FontFamily" Value="Consolas, Cascadia Mono, monospace"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto,Auto">
+        <TextBlock Grid.Row="0"
+                   Text="Diffusion Nexus Core — Captioning Models"
+                   FontSize="18" FontWeight="Bold" Foreground="White"
+                   Margin="0,0,0,8"/>
+
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding Models}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  CanUserReorderColumns="False"
+                  CanUserSortColumns="True"
+                  GridLinesVisibility="Horizontal"
+                  Background="#1E1E1E"
+                  Foreground="White"
+                  BorderThickness="0"
+                  Margin="0,8,0,0">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Model" Binding="{Binding Name}" Width="2*"/>
+                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*"/>
+                <DataGridTemplateColumn Header="Status" Width="160">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:CaptioningModelRowViewModel">
+                            <!-- Live download progress is surfaced globally via
+                                 IActivityLogService → status bar (same pattern
+                                 the LoRA downloader uses) so the user sees it
+                                 even after closing this dialog. The row just
+                                 shows the label colour state. -->
+                            <TextBlock Text="{Binding StatusLabel}"
+                                       Foreground="{Binding StatusColor}"
+                                       VerticalAlignment="Center"
+                                       Margin="4,0"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- Actions column. Visible only for tiered downloadable
+                     models (Abliterated-Caption / NSFW-Caption-V4); hidden
+                     entirely for legacy upstream URL models and the
+                     user-supplied abliterated entry. Clicking opens
+                     VramSelectionDialog before fetching. -->
+                <DataGridTemplateColumn Header="" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:CaptioningModelRowViewModel">
+                            <Button Classes="download-btn"
+                                    Content="{Binding DownloadButtonLabel}"
+                                    Command="{Binding DownloadCommand}"
+                                    IsVisible="{Binding IsDownloadable}"
+                                    HorizontalAlignment="Stretch"
+                                    Margin="4,0"
+                                    VerticalAlignment="Center"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Search paths block: shows exactly where the manager looks for
+             GGUF / mmproj files. Includes ComfyUI install roots and any
+             extra_model_paths.yaml entries. -->
+        <StackPanel Grid.Row="2" Margin="0,4,0,0">
+            <TextBlock Text="Search paths (scanned recursively)" Classes="section-header"/>
+            <ScrollViewer MaxHeight="120" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding SearchPaths}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <TextBlock Classes="search-path" Text="{Binding}"
+                                       Margin="0,1,0,1" ToolTip.Tip="{Binding}"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+            <TextBlock Text="Drop GGUF/mmproj files into any of these directories — they are picked up automatically."
+                       FontSize="11" Foreground="#999999" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <Button Grid.Row="3"
+                Classes="close-btn"
+                Content="Close"
+                HorizontalAlignment="Right"
+                Margin="0,12,0,0"
+                Click="OnClose"/>
+    </Grid>
+</Window>
