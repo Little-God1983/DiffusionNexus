@@ -464,7 +464,7 @@
                   </StackPanel>
                 </Border>
 
-                <!-- Caution (≥ +30% area) -->
+                <!-- Caution (≥ +50% area) -->
                 <Border Background="#2A2210" CornerRadius="6" Padding="10,8" Margin="0,4,0,0"
                         IsVisible="{Binding ImageEditor.Outpainting.IsCautionWarning}">
                   <StackPanel Spacing="4">
@@ -477,7 +477,7 @@
                   </StackPanel>
                 </Border>
 
-                <!-- Strong (≥ +60% area) -->
+                <!-- Strong (≥ +100% area) -->
                 <Border Background="#2A1A10" CornerRadius="6" Padding="10,8" Margin="0,4,0,0"
                         IsVisible="{Binding ImageEditor.Outpainting.IsStrongWarning}">
                   <StackPanel Spacing="4">

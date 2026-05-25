@@ -123,15 +123,15 @@ public class OutpaintTool
     }
 
     /// <summary>
-    /// Severity tier based on <see cref="AreaRatio"/>: ≥1.60 → Strong, ≥1.30 → Caution, otherwise None.
+    /// Severity tier based on <see cref="AreaRatio"/>: ≥2.00 → Strong, ≥1.50 → Caution, otherwise None.
     /// </summary>
     public OutpaintSeverity Severity
     {
         get
         {
             var ratio = AreaRatio;
-            if (ratio >= 1.60f) return OutpaintSeverity.Strong;
-            if (ratio >= 1.30f) return OutpaintSeverity.Caution;
+            if (ratio >= 2.00f) return OutpaintSeverity.Strong;
+            if (ratio >= 1.50f) return OutpaintSeverity.Caution;
             return OutpaintSeverity.None;
         }
     }

@@ -320,7 +320,7 @@ public partial class OutpaintingViewModel : ObservableObject
     /// <summary>True when extension is in the +30–60% area band.</summary>
     public bool IsCautionWarning => _warningLevel == OutpaintWarningLevel.Caution;
 
-    /// <summary>True when extension is past +60% area — quality likely drops noticeably.</summary>
+    /// <summary>True when extension is past +100% area — quality likely drops noticeably.</summary>
     public bool IsStrongWarning => _warningLevel == OutpaintWarningLevel.Strong;
 
     /// <summary>
@@ -508,12 +508,12 @@ public partial class OutpaintingViewModel : ObservableObject
         }
 
         var ratio = ComputeAreaRatio(newWidth, newHeight, originalWidth, originalHeight);
-        if (ratio >= 1.60f)
+        if (ratio >= 2.00f)
         {
             WarningLevel = OutpaintWarningLevel.Strong;
             WarningMessage = "Extension is much larger than the original — results will likely diverge significantly.";
         }
-        else if (ratio >= 1.30f)
+        else if (ratio >= 1.50f)
         {
             WarningLevel = OutpaintWarningLevel.Caution;
             WarningMessage = "Large extension — results may drift from the original.";
