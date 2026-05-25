@@ -174,7 +174,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
             }
 
-            InstallerCards.Add(CreateCard(package));
+            var card = CreateCard(package);
+            InstallerCards.Add(card);
+
+            // Run an update check for the newly added card in the background, so
+            // the Update button appears without waiting for an app restart.
+            _ = CheckCardForUpdatesAsync(card);
         }
         catch (Exception ex)
         {

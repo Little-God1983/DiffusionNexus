@@ -830,6 +830,7 @@ public partial class App : Application
 
         // Installer update services (one per supported type)
         services.AddSingleton<Domain.Services.IInstallerUpdateService, Service.Services.ComfyUIUpdateService>();
+        services.AddSingleton<Domain.Services.IInstallerUpdateService, Service.Services.AIToolkitUpdateService>();
 
         // Register the orchestrator and engine
         services.AddSingleton<IInstallationOrchestrator, InstallationOrchestrator>();
