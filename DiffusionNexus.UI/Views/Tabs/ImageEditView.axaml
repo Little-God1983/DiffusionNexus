@@ -455,12 +455,12 @@
 
                 <!-- Outpaint extension warnings -->
                 <!-- No extension yet — Generate is disabled, tell the user what to do -->
-                <Border Background="#2A2A2A" CornerRadius="6" Padding="10,8" Margin="0,4,0,0"
+                <Border Background="#2A2210" CornerRadius="6" Padding="10,8" Margin="0,4,0,0"
                         IsVisible="{Binding ImageEditor.Outpainting.IsNeedsExtensionWarning}">
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Ellipse Width="10" Height="10" Fill="#888" VerticalAlignment="Center"/>
+                    <Ellipse Width="10" Height="10" Fill="#FFC107" VerticalAlignment="Center"/>
                     <TextBlock Text="{Binding ImageEditor.Outpainting.WarningMessage}"
-                               FontSize="11" Foreground="#CCC" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                               FontSize="11" Foreground="#FFD54F" TextWrapping="Wrap" VerticalAlignment="Center"/>
                   </StackPanel>
                 </Border>
 
