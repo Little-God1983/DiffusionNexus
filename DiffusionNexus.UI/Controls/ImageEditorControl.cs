@@ -407,7 +407,7 @@ public class ImageEditorControl : Control
             if (!string.IsNullOrEmpty(newPath))
             {
                 // Skip redundant reload when binding restores the same path
-                // after a tab-switch reattach — the bitmap is still in memory.
+                // after a tab-switch reattach ï¿½ the bitmap is still in memory.
                 if (_editorCore.HasImage &&
                     string.Equals(newPath, _editorCore.CurrentImagePath, StringComparison.OrdinalIgnoreCase))
                 {
@@ -939,14 +939,14 @@ public class ImageEditorControl : Control
 
     private void UpdateCursor(SKPoint point)
     {
-        // Inpaint tool uses a custom rendered brush cursor — hide the system cursor
+        // Inpaint tool uses a custom rendered brush cursor ï¿½ hide the system cursor
         if (_isInpaintingToolActive)
         {
             Cursor = new Cursor(StandardCursorType.None);
             return;
         }
 
-        // Drawing tool uses a custom rendered brush cursor — hide the system cursor
+        // Drawing tool uses a custom rendered brush cursor ï¿½ hide the system cursor
         if (_editorCore.DrawingTool.IsActive)
         {
             Cursor = new Cursor(StandardCursorType.None);
@@ -1008,6 +1008,9 @@ public class ImageEditorControl : Control
             {
                 ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
                 ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+                ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
+                    or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
+                    => new Cursor(StandardCursorType.SizeAll),
                 _ => Cursor.Default
             };
             return;
