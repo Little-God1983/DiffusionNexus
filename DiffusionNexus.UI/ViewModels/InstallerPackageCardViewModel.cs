@@ -62,6 +62,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     private bool _isMissing;
 
     // ── Process state ──
@@ -70,6 +72,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
     [NotifyPropertyChangedFor(nameof(ShowRunningControls))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     private bool _isRunning;
 
     [ObservableProperty]
@@ -105,10 +108,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// True when the Workloads button should be visible. ComfyUI installations
-    /// have curated model bundles; Core always offers its captioning/embedding
-    /// workloads regardless of disk state.
+    /// have curated model bundles, but only when the install still exists on
+    /// disk; Core always offers its captioning/embedding workloads regardless
+    /// of disk state.
     /// </summary>
-    public bool ShowWorkloadsButton => IsComfyUi || IsCore;
+    public bool ShowWorkloadsButton => IsCore || (IsComfyUi && !IsMissing);
 
     /// <summary>
     /// True when the bottom action panel (Launch + Workloads container) should
