@@ -112,6 +112,7 @@ public partial class InstanceTabItem : ObservableObject
             InstallerType.Automatic1111 => "avares://DiffusionNexus.UI/Assets/InstallerManager/Automatic-Logo.png",
             InstallerType.Forge => "avares://DiffusionNexus.UI/Assets/InstallerManager/ForgeUI-Logo.png",
             InstallerType.ComfyUI => "avares://DiffusionNexus.UI/Assets/InstallerManager/ComfyUI-logo.png",
+            InstallerType.AIToolkit => "avares://DiffusionNexus.UI/Assets/InstallerManager/AI-Toolkit-Logo.png",
             _ => "avares://DiffusionNexus.UI/Assets/Installer.png"
         };
 
