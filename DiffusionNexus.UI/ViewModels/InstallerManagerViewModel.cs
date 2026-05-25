@@ -177,6 +177,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             var card = CreateCard(package);
             InstallerCards.Add(card);
 
+            _unifiedLogger.Info(LogCategory.Installation, package.Name,
+                $"Added existing installation at {package.InstallationPath}.");
+
+            // Notify other surfaces (e.g. Unified Console's docked-instance bar)
+            // so they pick up the new package without an app restart.
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+
             // Run an update check for the newly added card in the background, so
             // the Update button appears without waiting for an app restart.
             _ = CheckCardForUpdatesAsync(card);
@@ -184,6 +191,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to save installation {Name}", package.Name);
+            _unifiedLogger.Error(LogCategory.Installation, package.Name,
+                $"Failed to add installation: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to save installation: {ex.Message}");
         }
     }
@@ -356,10 +365,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             InstallerCards.Remove(card);
+
+            _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                "Removed from Installer Manager. Files on disk were left untouched.");
+
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to remove installation {Name}", card.Name);
+            _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                $"Failed to remove installation: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to remove installation: {ex.Message}");
         }
     }
@@ -455,10 +471,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 await Task.Run(() => ForceDeleteDirectory(card.InstallationPath));
                 Serilog.Log.Information("Deleted installation folder: {Path}", card.InstallationPath);
             }
+
+            _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                $"Deleted installation and removed folder {card.InstallationPath}.");
+
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to delete installation {Name} from disk", card.Name);
+            _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                $"Failed to delete from disk: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to delete: {ex.Message}\n\nSome files may have been partially removed.");
         }
     }
