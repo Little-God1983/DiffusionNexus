@@ -17,7 +17,7 @@
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
 
     <!-- Shared image preprocessing -->
-    <PackageReference Include="SkiaSharp" Version="3.119.2" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
 
     <!-- Logging + DI surface -->
     <PackageReference Include="Serilog" Version="4.3.1" />
