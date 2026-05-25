@@ -11,7 +11,11 @@ public enum OutpaintHandle
     Top,
     Right,
     Bottom,
-    Left
+    Left,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight
 }
 
 /// <summary>
@@ -270,23 +274,41 @@ public class OutpaintTool
         var scaleX = _imageRect.Width > 0 ? (float)ImagePixelWidth / _imageRect.Width : 1f;
         var scaleY = _imageRect.Height > 0 ? (float)ImagePixelHeight / _imageRect.Height : 1f;
 
+        // Corner handles extend two adjacent edges simultaneously from one drag.
+        var extendTopDelta = -(int)(deltaY * scaleY);
+        var extendBottomDelta = (int)(deltaY * scaleY);
+        var extendLeftDelta = -(int)(deltaX * scaleX);
+        var extendRightDelta = (int)(deltaX * scaleX);
+
         switch (_activeHandle)
         {
             case OutpaintHandle.Top:
-                // Dragging top arrow upward (negative deltaY) extends top
-                _extendTop = Math.Max(0, _dragStartExtendTop - (int)(deltaY * scaleY));
+                _extendTop = Math.Max(0, _dragStartExtendTop + extendTopDelta);
                 break;
             case OutpaintHandle.Bottom:
-                // Dragging bottom arrow downward (positive deltaY) extends bottom
-                _extendBottom = Math.Max(0, _dragStartExtendBottom + (int)(deltaY * scaleY));
+                _extendBottom = Math.Max(0, _dragStartExtendBottom + extendBottomDelta);
                 break;
             case OutpaintHandle.Left:
-                // Dragging left arrow leftward (negative deltaX) extends left
-                _extendLeft = Math.Max(0, _dragStartExtendLeft - (int)(deltaX * scaleX));
+                _extendLeft = Math.Max(0, _dragStartExtendLeft + extendLeftDelta);
                 break;
             case OutpaintHandle.Right:
-                // Dragging right arrow rightward (positive deltaX) extends right
-                _extendRight = Math.Max(0, _dragStartExtendRight + (int)(deltaX * scaleX));
+                _extendRight = Math.Max(0, _dragStartExtendRight + extendRightDelta);
+                break;
+            case OutpaintHandle.TopLeft:
+                _extendTop = Math.Max(0, _dragStartExtendTop + extendTopDelta);
+                _extendLeft = Math.Max(0, _dragStartExtendLeft + extendLeftDelta);
+                break;
+            case OutpaintHandle.TopRight:
+                _extendTop = Math.Max(0, _dragStartExtendTop + extendTopDelta);
+                _extendRight = Math.Max(0, _dragStartExtendRight + extendRightDelta);
+                break;
+            case OutpaintHandle.BottomLeft:
+                _extendBottom = Math.Max(0, _dragStartExtendBottom + extendBottomDelta);
+                _extendLeft = Math.Max(0, _dragStartExtendLeft + extendLeftDelta);
+                break;
+            case OutpaintHandle.BottomRight:
+                _extendBottom = Math.Max(0, _dragStartExtendBottom + extendBottomDelta);
+                _extendRight = Math.Max(0, _dragStartExtendRight + extendRightDelta);
                 break;
         }
 
@@ -428,30 +450,44 @@ public class OutpaintTool
 
     private void DrawArrowHandles(SKCanvas canvas)
     {
-        var (topCenter, rightCenter, bottomCenter, leftCenter) = GetHandleCenters();
+        var c = GetHandleCenters();
 
-        DrawArrow(canvas, topCenter, Direction.Up, _activeHandle == OutpaintHandle.Top);
-        DrawArrow(canvas, bottomCenter, Direction.Down, _activeHandle == OutpaintHandle.Bottom);
-        DrawArrow(canvas, leftCenter, Direction.Left, _activeHandle == OutpaintHandle.Left);
-        DrawArrow(canvas, rightCenter, Direction.Right, _activeHandle == OutpaintHandle.Right);
+        DrawArrow(canvas, c.Top, Direction.Up, _activeHandle == OutpaintHandle.Top);
+        DrawArrow(canvas, c.Bottom, Direction.Down, _activeHandle == OutpaintHandle.Bottom);
+        DrawArrow(canvas, c.Left, Direction.Left, _activeHandle == OutpaintHandle.Left);
+        DrawArrow(canvas, c.Right, Direction.Right, _activeHandle == OutpaintHandle.Right);
+        DrawArrow(canvas, c.TopLeft, Direction.UpLeft, _activeHandle == OutpaintHandle.TopLeft);
+        DrawArrow(canvas, c.TopRight, Direction.UpRight, _activeHandle == OutpaintHandle.TopRight);
+        DrawArrow(canvas, c.BottomLeft, Direction.DownLeft, _activeHandle == OutpaintHandle.BottomLeft);
+        DrawArrow(canvas, c.BottomRight, Direction.DownRight, _activeHandle == OutpaintHandle.BottomRight);
     }
 
     /// <summary>
     /// Handle positions are anchored to the extended rect so they ride along with the
-    /// outpaint frame as the user drags. Centered on each edge of the extended rect.
+    /// outpaint frame as the user drags. Edge handles are centered on each side;
+    /// corner handles sit diagonally outside the rect corners and extend two
+    /// adjacent edges at once when dragged.
     /// </summary>
-    private (SKPoint Top, SKPoint Right, SKPoint Bottom, SKPoint Left) GetHandleCenters()
+    private (SKPoint Top, SKPoint Right, SKPoint Bottom, SKPoint Left,
+             SKPoint TopLeft, SKPoint TopRight, SKPoint BottomLeft, SKPoint BottomRight)
+        GetHandleCenters()
     {
         var rect = GetExtendedScreenRect();
         var midX = rect.MidX;
         var midY = rect.MidY;
         const float gap = 4f;
+        var outX = ArrowSize + gap;
+        var outY = ArrowSize + gap;
 
         return (
-            Top: new SKPoint(midX, rect.Top - ArrowSize - gap),
-            Right: new SKPoint(rect.Right + ArrowSize + gap, midY),
-            Bottom: new SKPoint(midX, rect.Bottom + ArrowSize + gap),
-            Left: new SKPoint(rect.Left - ArrowSize - gap, midY));
+            Top: new SKPoint(midX, rect.Top - outY),
+            Right: new SKPoint(rect.Right + outX, midY),
+            Bottom: new SKPoint(midX, rect.Bottom + outY),
+            Left: new SKPoint(rect.Left - outX, midY),
+            TopLeft: new SKPoint(rect.Left - outX, rect.Top - outY),
+            TopRight: new SKPoint(rect.Right + outX, rect.Top - outY),
+            BottomLeft: new SKPoint(rect.Left - outX, rect.Bottom + outY),
+            BottomRight: new SKPoint(rect.Right + outX, rect.Bottom + outY));
     }
 
     private static void DrawArrow(SKCanvas canvas, SKPoint center, Direction direction, bool isActive)
@@ -507,6 +543,30 @@ public class OutpaintTool
                 path.MoveTo(center.X + halfArrow, center.Y);
                 path.LineTo(center.X - halfArrow * 0.5f, center.Y - halfArrow);
                 path.LineTo(center.X - halfArrow * 0.5f, center.Y + halfArrow);
+                break;
+
+            // Diagonal arrowheads — the cardinal "Up" triangle rotated by ±45°.
+            // tip = ±(√2/2, √2/2)·halfArrow; base spans perpendicular to the diagonal,
+            // backed off by half a halfArrow so the tip sits at the outer corner.
+            case Direction.UpLeft:
+                path.MoveTo(center.X - halfArrow * 0.707f, center.Y - halfArrow * 0.707f);
+                path.LineTo(center.X + halfArrow * 1.061f, center.Y - halfArrow * 0.354f);
+                path.LineTo(center.X - halfArrow * 0.354f, center.Y + halfArrow * 1.061f);
+                break;
+            case Direction.UpRight:
+                path.MoveTo(center.X + halfArrow * 0.707f, center.Y - halfArrow * 0.707f);
+                path.LineTo(center.X + halfArrow * 0.354f, center.Y + halfArrow * 1.061f);
+                path.LineTo(center.X - halfArrow * 1.061f, center.Y - halfArrow * 0.354f);
+                break;
+            case Direction.DownLeft:
+                path.MoveTo(center.X - halfArrow * 0.707f, center.Y + halfArrow * 0.707f);
+                path.LineTo(center.X - halfArrow * 0.354f, center.Y - halfArrow * 1.061f);
+                path.LineTo(center.X + halfArrow * 1.061f, center.Y + halfArrow * 0.354f);
+                break;
+            case Direction.DownRight:
+                path.MoveTo(center.X + halfArrow * 0.707f, center.Y + halfArrow * 0.707f);
+                path.LineTo(center.X - halfArrow * 1.061f, center.Y + halfArrow * 0.354f);
+                path.LineTo(center.X + halfArrow * 0.354f, center.Y - halfArrow * 1.061f);
                 break;
         }
 
@@ -570,12 +630,20 @@ public class OutpaintTool
 
     private OutpaintHandle HitTestHandle(SKPoint point)
     {
-        var (top, right, bottom, left) = GetHandleCenters();
+        var c = GetHandleCenters();
 
-        if (IsPointNearHandle(point, top)) return OutpaintHandle.Top;
-        if (IsPointNearHandle(point, bottom)) return OutpaintHandle.Bottom;
-        if (IsPointNearHandle(point, left)) return OutpaintHandle.Left;
-        if (IsPointNearHandle(point, right)) return OutpaintHandle.Right;
+        // Corners first — their hit zones don't overlap the edge handles (which
+        // are centered on each side), but corners are the "more specific" choice
+        // when a stray click lands in the diagonal area, so resolve them first.
+        if (IsPointNearHandle(point, c.TopLeft)) return OutpaintHandle.TopLeft;
+        if (IsPointNearHandle(point, c.TopRight)) return OutpaintHandle.TopRight;
+        if (IsPointNearHandle(point, c.BottomLeft)) return OutpaintHandle.BottomLeft;
+        if (IsPointNearHandle(point, c.BottomRight)) return OutpaintHandle.BottomRight;
+
+        if (IsPointNearHandle(point, c.Top)) return OutpaintHandle.Top;
+        if (IsPointNearHandle(point, c.Bottom)) return OutpaintHandle.Bottom;
+        if (IsPointNearHandle(point, c.Left)) return OutpaintHandle.Left;
+        if (IsPointNearHandle(point, c.Right)) return OutpaintHandle.Right;
 
         return OutpaintHandle.None;
     }
@@ -592,6 +660,10 @@ public class OutpaintTool
         Up,
         Down,
         Left,
-        Right
+        Right,
+        UpLeft,
+        UpRight,
+        DownLeft,
+        DownRight
     }
 }
