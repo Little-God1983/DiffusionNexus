@@ -34,6 +34,9 @@ public class SpellCheckServiceTests
         userDict.Setup(d => d.Contains(It.IsAny<string>())).Returns(false);
 
         _sut = new SpellCheckService(userDict.Object, _tempDir);
+        // The service loads its dictionary on a background task; wait for it to
+        // finish so assertions about IsReady / CheckText see a populated WordList.
+        _sut.LoadCompleted.GetAwaiter().GetResult();
     }
 
     [Fact]

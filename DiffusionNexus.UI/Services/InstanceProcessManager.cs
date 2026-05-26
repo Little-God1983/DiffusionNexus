@@ -41,34 +41,6 @@ public sealed class InstanceProcessManager : IInstanceProcessManager, IDisposabl
         _processManager.OutputReceived += OnProcessOutput;
         _processManager.RunningStateChanged += OnRunningStateChanged;
         _processManager.WebUrlDetected += OnWebUrlDetected;
-
-        // Pre-populate name cache so the very first output line uses the correct source
-        _ = PopulateNameCacheAsync();
-    }
-
-    /// <summary>
-    /// Loads all package names into the cache. Called once at startup so that
-    /// process output logged before RunningStateChanged can use the correct source.
-    /// </summary>
-    private async Task PopulateNameCacheAsync()
-    {
-        try
-        {
-            using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
-                .CreateScope(_serviceProvider);
-            var repo = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
-                .GetRequiredService<IInstallerPackageRepository>(scope.ServiceProvider);
-
-            var packages = await repo.GetAllAsync();
-            foreach (var p in packages)
-            {
-                _packageNameCache[p.Id] = p.Name;
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "InstanceProcessManager: Failed to pre-populate name cache");
-        }
     }
 
     /// <inheritdoc />

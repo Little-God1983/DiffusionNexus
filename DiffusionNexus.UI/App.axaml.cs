@@ -380,6 +380,21 @@ public partial class App : Application
             CheckAndRepairSchema(dbContext);
             MarkPendingMigrationsAsApplied(dbContext);
         }
+        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
+        {
+            // Migration ADD COLUMN ran against a schema where the column was already present
+            // — typically because an earlier startup applied the schema but failed before
+            // stamping __EFMigrationsHistory. Repair + stamp so the next startup is clean.
+            Serilog.Log.Warning("InitializeDatabase: Column already present from a prior partial migration (continuing): {Message}", ex.Message);
+            CheckAndRepairSchema(dbContext);
+            MarkPendingMigrationsAsApplied(dbContext);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("duplicate column"))
+        {
+            Serilog.Log.Warning("InitializeDatabase: Column already present from a prior partial migration (continuing): {Message}", ex.Message);
+            CheckAndRepairSchema(dbContext);
+            MarkPendingMigrationsAsApplied(dbContext);
+        }
         catch (SqliteException ex) when (ex.Message.Contains("no such column"))
         {
             Serilog.Log.Warning("InitializeDatabase: Schema mismatch detected: {Message}", ex.Message);
@@ -396,6 +411,10 @@ public partial class App : Application
             try
             {
                 CheckAndRepairSchema(dbContext);
+                // After repairing the schema, stamp any still-pending migrations as applied
+                // so the next startup doesn't re-attempt them and hit the same exception.
+                // Defense-in-depth for schema errors not matched by the specific filters above.
+                MarkPendingMigrationsAsApplied(dbContext);
             }
             catch (Exception repairEx)
             {
