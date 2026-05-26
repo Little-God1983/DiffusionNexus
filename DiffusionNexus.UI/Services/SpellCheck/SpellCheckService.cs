@@ -9,7 +9,10 @@ namespace DiffusionNexus.UI.Services.SpellCheck;
 public sealed class SpellCheckService : ISpellCheckService
 {
     private WordList? _wordList;
-    private readonly HashSet<string> _supplementaryWords = new(StringComparer.OrdinalIgnoreCase);
+    // Reassigned at end of background load via atomic reference swap. Readers (Check)
+    // see either the empty initial set or the fully-populated one — never a torn
+    // HashSet mid-resize.
+    private HashSet<string> _supplementaryWords = new(StringComparer.OrdinalIgnoreCase);
     private readonly IUserDictionaryService _userDictionary;
     private readonly string _dictionaryDirectory;
 
@@ -22,7 +25,11 @@ public sealed class SpellCheckService : ISpellCheckService
         _userDictionary = userDictionary;
         _dictionaryDirectory = dictionaryDirectory
             ?? Path.Combine(AppContext.BaseDirectory, "Dictionaries");
-        LoadDictionary();
+
+        // Background-load so the UI thread doesn't block on Hunspell's ~6s dictionary
+        // parse. Until the load completes, IsReady is false, Check() returns true
+        // (no error), and CheckText() returns no errors — so callers degrade silently.
+        _ = Task.Run(LoadDictionary);
     }
 
     /// <inheritdoc />
@@ -150,18 +157,24 @@ public sealed class SpellCheckService : ISpellCheckService
             var path = Path.Combine(_dictionaryDirectory, "supplementary_words.txt");
             if (!File.Exists(path)) return;
 
+            // Build into a local set so concurrent Check() calls don't observe a
+            // partially-populated HashSet (which would risk InvalidOperationException
+            // during internal resize).
+            var newSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in File.ReadLines(path))
             {
                 var trimmed = line.Trim();
                 if (trimmed.Length >= 2 && !trimmed.StartsWith('#'))
                 {
-                    _supplementaryWords.Add(trimmed);
+                    newSet.Add(trimmed);
                 }
             }
 
+            _supplementaryWords = newSet;
+
             Serilog.Log.Information(
                 "Supplementary dictionary loaded with {Count} words from {Path}",
-                _supplementaryWords.Count, path);
+                newSet.Count, path);
         }
         catch (Exception ex)
         {
