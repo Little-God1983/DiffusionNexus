@@ -29,8 +29,15 @@ public sealed class SpellCheckService : ISpellCheckService
         // Background-load so the UI thread doesn't block on Hunspell's ~6s dictionary
         // parse. Until the load completes, IsReady is false, Check() returns true
         // (no error), and CheckText() returns no errors — so callers degrade silently.
-        _ = Task.Run(LoadDictionary);
+        // Tests (and any caller that needs to wait) can await LoadCompleted.
+        LoadCompleted = Task.Run(LoadDictionary);
     }
+
+    /// <summary>
+    /// Task that completes once the dictionary load (including supplementary words)
+    /// has finished — successfully or otherwise. Always completes, never faults.
+    /// </summary>
+    public Task LoadCompleted { get; }
 
     /// <inheritdoc />
     public bool IsReady => _wordList is not null;

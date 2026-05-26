@@ -22,8 +22,15 @@ public sealed class AutoCompleteService : IAutoCompleteService
         // inflected-form generation. GetSuggestions/RecordWord called during the load
         // window will briefly contend on _lock — acceptable because caption editors
         // aren't visible during the first seconds of cold start.
-        _ = Task.Run(() => LoadFromDictionary(dir));
+        // Tests (and any caller that needs to wait) can await LoadCompleted.
+        LoadCompleted = Task.Run(() => LoadFromDictionary(dir));
     }
+
+    /// <summary>
+    /// Task that completes once the dictionary + supplementary words have finished
+    /// loading — successfully or otherwise. Always completes, never faults.
+    /// </summary>
+    public Task LoadCompleted { get; }
 
     /// <inheritdoc />
     public IReadOnlyList<string> GetSuggestions(string prefix, int maxResults = 8)
