@@ -245,7 +245,9 @@ public class ActivityLogServiceTests
         sut.DownloadOperationName.Should().BeNull();
         sut.CurrentStatus.Should().Be("complete");
         sut.CurrentStatusSeverity.Should().Be(ActivitySeverity.Success);
-        sut.GetEntries().Should().NotContain(e => e.Message == "complete");
+        sut.GetEntries().Should().NotContain(
+            e => e.Message == "complete" && e.Severity == ActivitySeverity.Info,
+            "success should update CurrentStatus without polluting the activity log at info level");
     }
 
     [Fact]

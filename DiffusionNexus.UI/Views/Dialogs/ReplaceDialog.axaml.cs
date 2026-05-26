@@ -13,7 +13,14 @@ public partial class ReplaceDialog : Window, IDialogCloseable
     public ReplaceDialog()
     {
         InitializeComponent();
-        Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
+        try
+        {
+            Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to set ReplaceDialog window icon — continuing without it");
+        }
 
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);

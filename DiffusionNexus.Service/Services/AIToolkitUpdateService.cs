@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using DiffusionNexus.Domain.Enums;
@@ -17,18 +18,51 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
 {
     private static readonly ILogger Logger = Log.ForContext<AIToolkitUpdateService>();
 
+    // Collapses concurrent CheckForUpdatesAsync calls for the same path to a single
+    // git fetch. UnifiedConsoleViewModel and InstallerManagerViewModel both fan out
+    // update checks at startup against the same installations — without this they
+    // race on ref updates and one fetch fails with "incorrect old value provided".
+    private readonly ConcurrentDictionary<string, Lazy<Task<UpdateCheckResult>>> _inflight =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <inheritdoc />
     public IReadOnlySet<InstallerType> SupportedTypes { get; } =
         new HashSet<InstallerType> { InstallerType.AIToolkit };
 
     /// <inheritdoc />
-    public async Task<UpdateCheckResult> CheckForUpdatesAsync(
+    public Task<UpdateCheckResult> CheckForUpdatesAsync(
         string installationPath,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(installationPath);
 
+        var key = Path.GetFullPath(installationPath);
+        var lazy = _inflight.GetOrAdd(key, k => new Lazy<Task<UpdateCheckResult>>(
+            () => RunAndRemoveAsync(k, progress, ct)));
+        return lazy.Value;
+    }
+
+    private async Task<UpdateCheckResult> RunAndRemoveAsync(
+        string installationPath,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await CheckForUpdatesCoreAsync(installationPath, progress, ct);
+        }
+        finally
+        {
+            _inflight.TryRemove(installationPath, out _);
+        }
+    }
+
+    private async Task<UpdateCheckResult> CheckForUpdatesCoreAsync(
+        string installationPath,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
         var repoDir = ResolveRepoDir(installationPath);
         if (repoDir is null)
         {

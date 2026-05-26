@@ -9,7 +9,14 @@ public partial class DiffusionNexusMainWindow : Window
     public DiffusionNexusMainWindow()
     {
         InitializeComponent();
-        Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
+        try
+        {
+            Icon = SafeAssetBitmap.LoadWindowIcon("avares://DiffusionNexus.UI/Assets/AIKnowledgeIcon.png");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to set main window icon — continuing without it");
+        }
         Closing += OnWindowClosing;
     }
 

@@ -17,8 +17,20 @@ public sealed class AutoCompleteService : IAutoCompleteService
     public AutoCompleteService(string? dictionaryDirectory = null)
     {
         var dir = dictionaryDirectory ?? Path.Combine(AppContext.BaseDirectory, "Dictionaries");
-        LoadFromDictionary(dir);
+
+        // Background-load so the UI thread doesn't block on Hunspell's ~6s parse plus
+        // inflected-form generation. GetSuggestions/RecordWord called during the load
+        // window will briefly contend on _lock — acceptable because caption editors
+        // aren't visible during the first seconds of cold start.
+        // Tests (and any caller that needs to wait) can await LoadCompleted.
+        LoadCompleted = Task.Run(() => LoadFromDictionary(dir));
     }
+
+    /// <summary>
+    /// Task that completes once the dictionary + supplementary words have finished
+    /// loading — successfully or otherwise. Always completes, never faults.
+    /// </summary>
+    public Task LoadCompleted { get; }
 
     /// <inheritdoc />
     public IReadOnlyList<string> GetSuggestions(string prefix, int maxResults = 8)
