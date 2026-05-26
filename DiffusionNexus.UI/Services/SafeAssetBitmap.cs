@@ -51,7 +51,7 @@ public static class SafeAssetBitmap
             catch (Exception ex)
             {
                 lastEx = ex;
-                if (attempt < 2) Thread.Sleep(10);
+                if (attempt < 2) Thread.Sleep(50);
             }
         }
 
@@ -68,6 +68,25 @@ public static class SafeAssetBitmap
     public static WindowIcon? LoadWindowIcon(string avaresUri)
     {
         var bmp = Load(avaresUri);
-        return bmp is null ? null : new WindowIcon(bmp);
+        if (bmp is null)
+            return null;
+
+        Exception? lastEx = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                return new WindowIcon(bmp);
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < 2) Thread.Sleep(50);
+            }
+        }
+
+        Serilog.Log.Error(lastEx,
+            "SafeAssetBitmap: failed to create WindowIcon from {Uri}", avaresUri);
+        return null;
     }
 }
