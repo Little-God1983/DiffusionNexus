@@ -242,7 +242,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // Offload all heavy I/O (file discovery + DB reads + grouping) to a
             // single background task so the UI thread stays responsive.
             // DiscoverNewFilesAsync already marshals progress to the UI via Dispatcher.Post.
-            var (allModels, tiles) = await Task.Run(async () =>
+            var (uniqueModelCount, tiles) = await Task.Run(async () =>
             {
                 await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
@@ -254,9 +254,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
                 var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
-                var models = await freshSyncService.LoadCachedModelsAsync();
-                var grouped = GroupModelsIntoTiles(models);
-                return (models, grouped);
+                // Issue #380: one tile per (Model, LoRA-source-location). A LoRA with files
+                // in two configured locations produces two tiles; each tile keeps its
+                // version switcher and exposes only the versions present in that location.
+                var files = await freshSyncService.LoadCachedFilesAsync();
+                var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
+                var perLocationTiles = BuildPerLocationTiles(files);
+                return (distinctModels, perLocationTiles);
             });
 
             // Back on UI thread after await — update observable collections
@@ -270,7 +274,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
             ApplyFilters();
-            SyncStatus = $"Loaded {allModels.Count} models ({AllTiles.Count} tiles)";
+            SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
 
             // Phase 3: Verify existing files in background (low priority)
             _ = VerifyFilesInBackgroundAsync();
@@ -414,8 +418,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
                 var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-                var models = await freshSyncService.LoadCachedModelsAsync();
-                return GroupModelsIntoTiles(models);
+                // Issue #380: per-location fan-out (see RefreshAsync for the rationale).
+                var files = await freshSyncService.LoadCachedFilesAsync();
+                return BuildPerLocationTiles(files);
             });
 
             // Update UI with discovered tiles
@@ -565,13 +570,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Uses a fresh DI scope so the DbContext sees the latest committed data.
     /// Preserves the user's search/filter state.
     /// </summary>
+    /// <summary>
+    /// Groups installed-file entries by (Model, LoRA-source root) and builds one
+    /// <see cref="ModelTileViewModel"/> per group. Each tile carries the (version → file)
+    /// map for that location so the version switcher and OpenFolder/Delete work
+    /// correctly. Issue #380.
+    /// </summary>
+    private static List<ModelTileViewModel> BuildPerLocationTiles(IReadOnlyList<InstalledModelFile> files)
+    {
+        return files
+            // Group by Civitai page so two Model rows that point at the same page (legacy
+            // local-discovery duplicates) collapse into one tile; fall back to Model.Id
+            // for rows without a page id, using -Id so it can't collide with a page id.
+            .GroupBy(f => (
+                PageKey: f.Model.CivitaiModelPageId ?? -f.Model.Id,
+                f.SourceRoot))
+            .Select(g =>
+            {
+                var models = g.Select(f => f.Model).DistinctBy(m => m.Id).ToList();
+                var versionFiles = g.Select(f => (f.Version, f.File)).ToList();
+                return ModelTileViewModel.FromModelInLocation(models, g.Key.SourceRoot, versionFiles);
+            })
+            .ToList();
+    }
+
     private async Task RebuildTilesFromDatabaseAsync()
     {
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
-        var models = await syncService.LoadCachedModelsAsync();
-        var tiles = GroupModelsIntoTiles(models);
+        // Issue #380: per-location fan-out — one tile per (Model, LoRA-source).
+        var files = await syncService.LoadCachedFilesAsync();
+        var tiles = BuildPerLocationTiles(files);
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {

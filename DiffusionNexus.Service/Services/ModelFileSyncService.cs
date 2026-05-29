@@ -70,6 +70,10 @@ public class ModelFileSyncService : IModelSyncService
                 foreach (var file in version.Files)
                 {
                     if (string.IsNullOrEmpty(file.LocalPath)) continue;
+                    // Issue #380: skip rows that have been explicitly verified as missing
+                    // (file gone from disk). LocalFileVerifiedAt == null = legacy row that
+                    // predates verification; trust it until verification updates the flag.
+                    if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
                     if (PathIsUnderAnyRoot(file.LocalPath, normalizedRoots))
                     {
                         anyMatch = true;
@@ -84,6 +88,78 @@ public class ModelFileSyncService : IModelSyncService
             }
         }
         return filtered;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesAsync(CancellationToken cancellationToken = default)
+    {
+        var all = await _unitOfWork.Models
+            .GetModelsWithLocalFilesLightAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var normalizedRoots = enabledRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
+
+        if (normalizedRoots.Count == 0)
+        {
+            return [];
+        }
+
+        // Dedup by LocalPath so two ModelFile rows that somehow point at the same
+        // file (legacy data from pre-fix re-discovery scans) collapse into one entry.
+        var seen = new Dictionary<string, InstalledModelFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in all)
+        {
+            // The LoRA viewer is LoRA-family only — exclude upscalers, VAEs, checkpoints,
+            // text encoders etc. that may share the configured folders. Matches the
+            // "All LoRA types" preset in the Civitai browser.
+            if (!IsLoraFamily(model.Type)) continue;
+
+            foreach (var version in model.Versions)
+            {
+                foreach (var file in version.Files)
+                {
+                    if (string.IsNullOrEmpty(file.LocalPath)) continue;
+                    if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
+                    var root = MatchEnabledRoot(file.LocalPath, normalizedRoots);
+                    if (root is null) continue;
+                    seen.TryAdd(file.LocalPath, new InstalledModelFile(model, version, file, root));
+                }
+            }
+        }
+
+        return seen.Values.ToList();
+    }
+
+    // Unknown is included so legacy rows (Type never set explicitly) still appear —
+    // the explicit non-LoRA types (Checkpoint, Upscaler, VAE, TextualInversion, etc.)
+    // are the ones we want filtered out of the LoRA viewer.
+    private static bool IsLoraFamily(ModelType type) =>
+        type is ModelType.LORA or ModelType.LoCon or ModelType.DoRA or ModelType.Unknown;
+
+    /// <summary>
+    /// Returns the normalized root that contains <paramref name="filePath"/>, or
+    /// null if it lives outside every enabled source.
+    /// </summary>
+    private static string? MatchEnabledRoot(string filePath, IReadOnlyList<string> normalizedRoots)
+    {
+        foreach (var root in normalizedRoots)
+        {
+            if (filePath.Equals(root, StringComparison.OrdinalIgnoreCase)) return root;
+            if (filePath.Length > root.Length
+                && filePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                && (filePath[root.Length] == Path.DirectorySeparatorChar
+                    || filePath[root.Length] == Path.AltDirectorySeparatorChar))
+            {
+                return root;
+            }
+        }
+        return null;
     }
 
     /// <summary>
