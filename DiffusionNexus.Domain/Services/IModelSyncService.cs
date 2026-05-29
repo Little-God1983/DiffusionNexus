@@ -43,6 +43,18 @@ public record SyncProgress
 }
 
 /// <summary>
+/// One physical LoRA file on disk together with the database entities that own it
+/// and the enabled LoRA-source root the file lives under. The Installed tab groups
+/// these by <c>(Model, SourceRoot)</c> so each location becomes a separate tile —
+/// issue #380.
+/// </summary>
+public sealed record InstalledModelFile(
+    Entities.Model Model,
+    Entities.ModelVersion Version,
+    Entities.ModelFile File,
+    string SourceRoot);
+
+/// <summary>
 /// Service for synchronizing local model files with the database.
 /// Handles discovery of new files, verification of existing files,
 /// and detection/resolution of moved files.
@@ -56,6 +68,13 @@ public interface IModelSyncService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Models with local files from the database.</returns>
     Task<IReadOnlyList<Entities.Model>> LoadCachedModelsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns one entry per physical ModelFile under an enabled LoRA source. Used by
+    /// the Installed tab to render one tile per copy on disk — two folders containing
+    /// the same LoRA produce two entries (issue #380).
+    /// </summary>
+    Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Scans configured source folders for new safetensor files not yet in the database.

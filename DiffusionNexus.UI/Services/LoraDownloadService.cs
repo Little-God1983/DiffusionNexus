@@ -460,8 +460,28 @@ public sealed class LoraDownloadService
 
             if (duplicateVersion is not null)
             {
+                // Issue #380: re-download of a known version (typically into a different
+                // LoRA folder than the original). The schema permits many ModelFiles per
+                // ModelVersion — attach the new file to the existing version instead of
+                // dropping it, so the Installed tab can see it.
                 _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"Version CivitaiId={version.CivitaiId} already exists on model '{model.Name}' — skipping add");
+                    $"Version CivitaiId={version.CivitaiId} already exists on model '{model.Name}' — attaching new file to existing version");
+
+                foreach (var existingFile in duplicateVersion.Files)
+                {
+                    if (string.IsNullOrEmpty(existingFile.LocalPath)) continue;
+                    if (!File.Exists(existingFile.LocalPath))
+                    {
+                        existingFile.IsLocalFileValid = false;
+                        existingFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                    }
+                }
+
+                modelFile.IsPrimary = !duplicateVersion.Files.Any(f => f.IsPrimary && f.IsLocalFileValid);
+
+                version.Files.Remove(modelFile);
+                modelFile.ModelVersion = duplicateVersion;
+                duplicateVersion.Files.Add(modelFile);
             }
             else
             {

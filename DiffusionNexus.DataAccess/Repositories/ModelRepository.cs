@@ -267,7 +267,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
         {
             var ids = await Context.ModelVersions
                 .Where(v => v.CivitaiId != null
-                            && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""))
+                            && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""
+                                && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)))
                 .Select(v => v.CivitaiId!.Value)
                 .Distinct()
                 .ToListAsync(cancellationToken)
@@ -278,13 +279,20 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
         // Root filter: pull (civitaiId, file paths) pairs and check StartsWith in C#.
         // EF Core can't translate a runtime OR-of-StartsWith list cleanly, and the
         // result-set is small (one row per installed version).
+        // Issue #380: also exclude files explicitly verified as missing
+        // (IsLocalFileValid=false with a non-null verification timestamp).
         var rows = await Context.ModelVersions
             .Where(v => v.CivitaiId != null
-                        && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""))
+                        && v.Files.Any(f => f.LocalPath != null && f.LocalPath != ""
+                            && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)))
             .Select(v => new
             {
                 CivitaiId = v.CivitaiId!.Value,
-                Paths = v.Files.Where(f => f.LocalPath != null).Select(f => f.LocalPath!).ToList()
+                Paths = v.Files
+                    .Where(f => f.LocalPath != null
+                        && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null))
+                    .Select(f => f.LocalPath!)
+                    .ToList()
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

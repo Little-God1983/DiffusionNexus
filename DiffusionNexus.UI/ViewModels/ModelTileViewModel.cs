@@ -130,6 +130,35 @@ public partial class ModelTileViewModel : ViewModelBase
     private HashSet<int> _allDatabaseModelIds = [];
 
     /// <summary>
+    /// When set, this tile represents the model's files inside one specific LoRA-source
+    /// location. Maps each <see cref="ModelVersion.Id"/> that has a file in this
+    /// location to that file. The version switcher only exposes those versions, and
+    /// destructive ops only touch files in this map. Set by <see cref="FromModelInLocation"/>
+    /// for the Installed-tab fan-out (issue #380).
+    /// </summary>
+    private Dictionary<int, ModelFile>? _scopedFilesByVersionId;
+
+    /// <summary>
+    /// The LoRA-source root path this tile represents, or null for non-scoped tiles.
+    /// </summary>
+    public string? ScopedRootPath { get; private set; }
+
+    /// <summary>
+    /// The <see cref="ModelFile"/> in this tile's location that backs the currently
+    /// <see cref="SelectedVersion"/>, or null for non-scoped tiles / unknown versions.
+    /// Used by <c>FileName</c>, <c>OpenFolder</c>, and the per-version delete flow.
+    /// </summary>
+    public ModelFile? ScopedFile =>
+        SelectedVersion is not null && _scopedFilesByVersionId is not null
+            ? _scopedFilesByVersionId.GetValueOrDefault(SelectedVersion.Id)
+            : null;
+
+    /// <summary>
+    /// True when this tile is scoped to a single LoRA-source location.
+    /// </summary>
+    public bool IsLocationScoped => _scopedFilesByVersionId is not null;
+
+    /// <summary>
     /// Updates the tile after a new version has been downloaded and persisted.
     /// Replaces or adds the refreshed model in the grouped models list, then triggers
     /// a full UI rebuild via the <see cref="ModelEntity"/> property change.
@@ -228,7 +257,8 @@ public partial class ModelTileViewModel : ViewModelBase
     {
         get
         {
-            var file = SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary) 
+            var file = ScopedFile
+                       ?? SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary)
                        ?? SelectedVersion?.Files?.FirstOrDefault();
             if (file?.FileName is not null)
             {
@@ -249,7 +279,8 @@ public partial class ModelTileViewModel : ViewModelBase
     {
         get
         {
-            var file = SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary)
+            var file = ScopedFile
+                       ?? SelectedVersion?.Files?.FirstOrDefault(f => f.IsPrimary)
                        ?? SelectedVersion?.Files?.FirstOrDefault();
             if (file?.FileName is null) return DisplayName;
 
@@ -502,13 +533,14 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private void OpenFolder()
     {
-        var file = SelectedVersion?.Files?.FirstOrDefault(f => f.LocalPath is not null);
-        if (file?.LocalPath is null)
+        var path = ScopedFile?.LocalPath
+                   ?? SelectedVersion?.Files?.FirstOrDefault(f => f.LocalPath is not null)?.LocalPath;
+        if (path is null)
         {
             return;
         }
 
-        var folder = Path.GetDirectoryName(file.LocalPath);
+        var folder = Path.GetDirectoryName(path);
         if (folder is not null && Directory.Exists(folder))
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder)
@@ -535,6 +567,13 @@ public partial class ModelTileViewModel : ViewModelBase
             return;
         }
 
+        // Issue #380: a tile bound to a specific physical file deletes only that copy.
+        if (ScopedFile is not null)
+        {
+            await DeleteScopedFileAsync(logger, dialogService);
+            return;
+        }
+
         var allVersions = Versions.ToList();
 
         if (allVersions.Count <= 1)
@@ -546,6 +585,74 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             // Multiple versions: show version picker
             await DeleteWithVersionPickerAsync(logger);
+        }
+    }
+
+    /// <summary>
+    /// Deletes the currently-selected version's file in this tile's LoRA location and its
+    /// ModelFile row. Leaves the ModelVersion and Model intact so other locations and
+    /// future re-downloads keep working. Removes the deleted version from the tile's
+    /// switcher; if no versions remain in this location, raises <see cref="Deleted"/>.
+    /// Issue #380.
+    /// </summary>
+    private async Task DeleteScopedFileAsync(IUnifiedLogger? logger, IDialogService dialogService)
+    {
+        var scoped = ScopedFile;
+        var scopedVersion = SelectedVersion;
+        if (scoped is null || scopedVersion is null) return;
+
+        var path = scoped.LocalPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            logger?.Warn(LogCategory.General, "Delete",
+                $"Scoped tile for '{DisplayName}' has no LocalPath — nothing to delete.");
+            return;
+        }
+
+        var confirmed = await dialogService.ShowConfirmAsync(
+            "Delete LoRA copy",
+            $"Delete this copy of '{DisplayName}' from disk?\n\n{path}\n\nOnly the file at this location is removed; other copies stay intact. This action cannot be undone.");
+
+        if (!confirmed) return;
+
+        try
+        {
+            DeleteFilesFromDisk(logger, [path]);
+
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var dbContext = scope.ServiceProvider
+                .GetRequiredService<IDbContextFactory<DiffusionNexusCoreDbContext>>()
+                .CreateDbContext();
+            await using (dbContext)
+            {
+                var dbFile = await dbContext.ModelFiles.FirstOrDefaultAsync(f => f.Id == scoped.Id);
+                if (dbFile is not null)
+                {
+                    dbContext.ModelFiles.Remove(dbFile);
+                    await dbContext.SaveChangesAsync();
+                    logger?.Info(LogCategory.General, "Delete",
+                        $"Removed ModelFile Id={scoped.Id} ({path}) for '{DisplayName}'.");
+                }
+            }
+
+            // Drop the deleted version from this tile's in-memory state so the
+            // version switcher refreshes without a full grid reload.
+            _scopedFilesByVersionId?.Remove(scopedVersion.Id);
+
+            if (_scopedFilesByVersionId is null || _scopedFilesByVersionId.Count == 0)
+            {
+                Deleted?.Invoke(this, EventArgs.Empty);
+            }
+            else
+            {
+                // Trigger OnModelEntityChanged to rebuild Versions / VersionButtons.
+                OnModelEntityChanged(ModelEntity);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.Error(LogCategory.General, "Delete",
+                $"Failed to delete copy at '{path}': {ex.Message}", ex);
         }
     }
 
@@ -829,9 +936,17 @@ public partial class ModelTileViewModel : ViewModelBase
 
     /// <summary>
     /// Collects all local file paths across all grouped models and their versions.
+    /// For scoped tiles (issue #380), returns just the one file this tile represents.
     /// </summary>
     private List<string> CollectAllLocalFiles()
     {
+        if (ScopedFile is not null)
+        {
+            return string.IsNullOrWhiteSpace(ScopedFile.LocalPath)
+                ? []
+                : [ScopedFile.LocalPath];
+        }
+
         var models = _allGroupedModels.Count > 0
             ? _allGroupedModels
             : ModelEntity is not null ? [ModelEntity] : [];
@@ -855,9 +970,13 @@ public partial class ModelTileViewModel : ViewModelBase
         Versions.Clear();
         VersionButtons.Clear();
 
-        var allVersions = _allGroupedModels.Count > 0
-            ? _allGroupedModels.SelectMany(m => m.Versions)
-            : value?.Versions ?? Enumerable.Empty<ModelVersion>();
+        var allVersions = _scopedFilesByVersionId is not null
+            ? _allGroupedModels
+                .SelectMany(m => m.Versions)
+                .Where(v => _scopedFilesByVersionId.ContainsKey(v.Id))
+            : _allGroupedModels.Count > 0
+                ? _allGroupedModels.SelectMany(m => m.Versions)
+                : value?.Versions ?? Enumerable.Empty<ModelVersion>();
 
         // Deduplicate versions that share the same primary filename (re-discovery duplicates).
         // Keep the version with the richest data per filename.
@@ -1867,6 +1986,46 @@ public partial class ModelTileViewModel : ViewModelBase
         vm._allGroupedModels = [model];
         vm._allDatabaseModelIds = [model.Id];
         vm.ModelEntity = model;
+        return vm;
+    }
+
+    /// <summary>
+    /// Creates a tile scoped to one LoRA-source location, possibly spanning multiple
+    /// <see cref="Model"/> rows that share a Civitai page (legacy data where local-file
+    /// discovery created separate entities for the same Civitai model). The version
+    /// switcher exposes one button per <paramref name="versionFiles"/> entry; switching
+    /// retargets <see cref="FileName"/> / <see cref="OpenFolder"/> / delete to that
+    /// version's file in this location. Issue #380.
+    /// </summary>
+    public static ModelTileViewModel FromModelInLocation(
+        IReadOnlyList<Model> models,
+        string rootPath,
+        IReadOnlyList<(ModelVersion Version, ModelFile File)> versionFiles)
+    {
+        var map = new Dictionary<int, ModelFile>(versionFiles.Count);
+        foreach (var (version, file) in versionFiles)
+        {
+            // Last-write-wins if the same version has two files in this root
+            // (subdirectories of the same source). The Installed tab will still
+            // show one button per version; the user can disambiguate via OpenFolder.
+            map[version.Id] = file;
+        }
+
+        // Pick the richest row as the display primary — same heuristic as FromModelGroup.
+        var primary = models
+            .OrderByDescending(m => m.CivitaiId.HasValue)
+            .ThenByDescending(m => m.Versions.Sum(v => v.Images.Count))
+            .ThenByDescending(m => m.LastSyncedAt)
+            .First();
+
+        var vm = new ModelTileViewModel
+        {
+            _allGroupedModels = models.ToList(),
+            _allDatabaseModelIds = models.Select(m => m.Id).ToHashSet(),
+            _scopedFilesByVersionId = map,
+            ScopedRootPath = rootPath,
+            ModelEntity = primary,
+        };
         return vm;
     }
 
