@@ -317,6 +317,48 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
         return result;
     }
 
+    /// <inheritdoc />
+    public async Task<HashSet<string>> GetInstalledFileHashesAsync(
+        IReadOnlyList<string>? allowedRootPaths = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (allowedRootPaths is null || allowedRootPaths.Count == 0)
+        {
+            var hashes = await Context.ModelFiles
+                .Where(f => f.HashSHA256 != null && f.HashSHA256 != ""
+                            && f.LocalPath != null && f.LocalPath != ""
+                            && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null))
+                .Select(f => f.HashSHA256!)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return new HashSet<string>(hashes.Select(h => h.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+        }
+
+        var rows = await Context.ModelFiles
+            .Where(f => f.HashSHA256 != null && f.HashSHA256 != ""
+                        && f.LocalPath != null && f.LocalPath != ""
+                        && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null))
+            .Select(f => new { f.HashSHA256, f.LocalPath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var normalizedRoots = allowedRootPaths
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
+
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (PathIsUnderAnyRoot(row.LocalPath!, normalizedRoots))
+            {
+                result.Add(row.HashSHA256!.ToLowerInvariant());
+            }
+        }
+        return result;
+    }
+
     /// <summary>
     /// Returns true when <paramref name="filePath"/> is exactly one of, or sits
     /// inside any of, the given normalized roots. Case-insensitive; ensures that

@@ -77,6 +77,19 @@ public interface IModelRepository : IRepository<Model>
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns the set of SHA256 hashes (lowercase) of locally-valid model files —
+    /// the same eligibility rule as <see cref="GetInstalledCivitaiVersionIdsAsync"/>
+    /// (non-empty LocalPath and either IsLocalFileValid or never verified).
+    /// Used by the Civitai browser as a fallback signal: when a local row's
+    /// <see cref="ModelVersion.CivitaiId"/> is missing (e.g. orphan duplicate rows
+    /// from past indexing bugs), a hash match against the API response still
+    /// surfaces the model as installed.
+    /// </summary>
+    Task<HashSet<string>> GetInstalledFileHashesAsync(
+        IReadOnlyList<string>? allowedRootPaths = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds an existing <see cref="Creator"/> by username (case-insensitive) so it can be reused
     /// instead of creating a duplicate row.
     /// </summary>

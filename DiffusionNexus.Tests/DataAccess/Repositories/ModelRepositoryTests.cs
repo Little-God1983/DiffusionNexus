@@ -189,7 +189,72 @@ public class ModelRepositoryTests : IDisposable
         modelB.CivitaiId.Should().BeNull();
     }
 
-    private static Model CreateModelWithLocalFile(string name, string? localPath)
+    [Fact]
+    public async Task WhenLocalFileHasSha256ButNoCivitaiIdThenHashIsReportedInstalled()
+    {
+        // Reproduces the "Civitai Browser does not show installed" bug:
+        // a ModelVersion row with no CivitaiId can still be matched by file
+        // hash against the API response, so the badge should appear.
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var orphan = CreateModelWithLocalFile(
+            "OrphanModel",
+            @"D:\Models\Lora\edgerunners.comfy.safetensors",
+            hashSha256: "B9372B072DCC91FF1EFD707E060BE0C842210F073CF985E07166D38B2794028C");
+        // Mirrors the broken DB state: CivitaiId is null on both Model and Version.
+        await uow.Models.AddAsync(orphan);
+        await uow.SaveChangesAsync();
+
+        var hashes = await uow.Models.GetInstalledFileHashesAsync();
+
+        hashes.Should().ContainSingle();
+        hashes.Should().Contain("b9372b072dcc91ff1efd707e060be0c842210f073cf985e07166d38b2794028c");
+    }
+
+    [Fact]
+    public async Task WhenLocalFileIsMarkedInvalidThenHashIsExcluded()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = CreateModelWithLocalFile(
+            "Stale", @"D:\Models\gone.safetensors",
+            hashSha256: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF");
+        // File was verified missing — should not be in the installed set.
+        model.Versions.First().Files.First().IsLocalFileValid = false;
+        model.Versions.First().Files.First().LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        var hashes = await uow.Models.GetInstalledFileHashesAsync();
+
+        hashes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task WhenAllowedRootsExcludeFilePathThenHashIsExcluded()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var inside = CreateModelWithLocalFile(
+            "Inside", @"D:\Models\Lora\a.safetensors",
+            hashSha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        var outside = CreateModelWithLocalFile(
+            "Outside", @"E:\Other\b.safetensors",
+            hashSha256: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        await uow.Models.AddAsync(inside);
+        await uow.Models.AddAsync(outside);
+        await uow.SaveChangesAsync();
+
+        var hashes = await uow.Models.GetInstalledFileHashesAsync(new[] { @"D:\Models\Lora" });
+
+        hashes.Should().ContainSingle();
+        hashes.Should().Contain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+
+    private static Model CreateModelWithLocalFile(string name, string? localPath, string? hashSha256 = null)
     {
         var model = new Model
         {
@@ -211,6 +276,7 @@ public class ModelRepositoryTests : IDisposable
             LocalPath = localPath,
             IsPrimary = true,
             IsLocalFileValid = localPath is not null,
+            HashSHA256 = hashSha256,
             ModelVersion = version
         };
 
