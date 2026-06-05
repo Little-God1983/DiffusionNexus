@@ -55,6 +55,15 @@ public interface IModelRepository : IRepository<Model>
     Task<Model?> FindByLocalFilePathAsync(string localFilePath, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Finds a model by SHA256 hash on any of its files, with full includes. Case-insensitive.
+    /// Used by the download path as a fallback when no model matches by
+    /// <c>CivitaiModelPageId</c> — catches local-discovery rows that have the
+    /// file on disk but no Civitai linkage yet, so we don't create a duplicate
+    /// Model for the same file. Returns null if no match.
+    /// </summary>
+    Task<Model?> FindByFileHashAsync(string sha256, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Checks whether any model (other than <paramref name="excludeModelId"/>) already owns the given CivitaiId.
     /// </summary>
     Task<bool> IsCivitaiIdTakenAsync(int civitaiId, int excludeModelId, CancellationToken cancellationToken = default);

@@ -300,6 +300,22 @@ public sealed class LoraDownloadService
                           ?? civitaiVersion.Files.FirstOrDefault();
 
             var model = await unitOfWork.Models.FindByModelPageIdOrIdAsync(modelPageId, existingModelId);
+
+            // Hash fallback: when the page-id lookup misses, a local-discovery
+            // Model row may already exist for this exact file (same SHA256) without
+            // any Civitai linkage yet. Reusing it here is what prevents the duplicate
+            // Models-per-page-id rows that the "not recognized as installed" bug
+            // ultimately came from.
+            if (model is null && !string.IsNullOrWhiteSpace(civFile?.Hashes?.SHA256))
+            {
+                model = await unitOfWork.Models.FindByFileHashAsync(civFile!.Hashes!.SHA256!);
+                if (model is not null)
+                {
+                    _logger?.Debug(LogCategory.Download, "LoraDownload",
+                        $"Matched existing Model '{model.Name}' (Id={model.Id}) by SHA256 — adopting instead of creating duplicate");
+                }
+            }
+
             bool isExistingModel = false;
 
             if (model is not null)
@@ -310,7 +326,15 @@ public sealed class LoraDownloadService
 
                 if (civitaiModel is not null)
                 {
-                    model.CivitaiId ??= modelPageId;
+                    // Guard the CivitaiId backfill: an orphan duplicate Model elsewhere
+                    // in the DB may already own this CivitaiId (UNIQUE), in which case
+                    // a blind assignment would throw on save. Page id has no UNIQUE
+                    // constraint so it can always be set.
+                    if (model.CivitaiId is null && modelPageId.HasValue
+                        && !await unitOfWork.Models.IsCivitaiIdTakenAsync(modelPageId.Value, model.Id))
+                    {
+                        model.CivitaiId = modelPageId;
+                    }
                     model.CivitaiModelPageId ??= modelPageId;
                     model.Name = civitaiModel.Name;
                     model.Description ??= civitaiModel.Description;
@@ -458,6 +482,16 @@ public sealed class LoraDownloadService
                 ? model.Versions.FirstOrDefault(v => v.CivitaiId == version.CivitaiId)
                 : null;
 
+            // Hash fallback at the version level — pairs with the model-level
+            // FindByFileHashAsync above. Catches the case where we adopted a
+            // local-discovery Model whose existing ModelVersion has no CivitaiId
+            // but already owns a file with the same SHA256 we just downloaded.
+            if (duplicateVersion is null && !string.IsNullOrWhiteSpace(modelFile.HashSHA256))
+            {
+                duplicateVersion = model.Versions.FirstOrDefault(v => v.Files.Any(f =>
+                    string.Equals(f.HashSHA256, modelFile.HashSHA256, StringComparison.OrdinalIgnoreCase)));
+            }
+
             if (duplicateVersion is not null)
             {
                 // Issue #380: re-download of a known version (typically into a different
@@ -482,6 +516,24 @@ public sealed class LoraDownloadService
                 version.Files.Remove(modelFile);
                 modelFile.ModelVersion = duplicateVersion;
                 duplicateVersion.Files.Add(modelFile);
+
+                // Backfill Civitai linkage onto an orphan version we just matched
+                // by hash, so future installed-checks work via CivitaiId (the
+                // hash-fallback path is a safety net, not a permanent crutch).
+                // CivitaiId is UNIQUE — guard before assigning.
+                if (duplicateVersion.CivitaiId is null && version.CivitaiId.HasValue
+                    && !await unitOfWork.Models.IsVersionCivitaiIdTakenAsync(version.CivitaiId.Value, duplicateVersion.Id))
+                {
+                    duplicateVersion.CivitaiId = version.CivitaiId;
+                    duplicateVersion.Name = version.Name;
+                    duplicateVersion.Description ??= version.Description;
+                    duplicateVersion.BaseModel = version.BaseModel;
+                    duplicateVersion.BaseModelRaw = version.BaseModelRaw;
+                    duplicateVersion.DownloadUrl ??= version.DownloadUrl;
+                    duplicateVersion.PublishedAt ??= version.PublishedAt;
+                    duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;
+                    duplicateVersion.DownloadCount = version.DownloadCount;
+                }
             }
             else
             {

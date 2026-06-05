@@ -190,6 +190,47 @@ public class ModelRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task WhenFindByFileHashCalledThenReturnsMatchingModelCaseInsensitive()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = CreateModelWithLocalFile(
+            "EdgerunnersLora",
+            @"D:\Models\Lora\edgerunners.comfy.safetensors",
+            hashSha256: "B9372B072DCC91FF1EFD707E060BE0C842210F073CF985E07166D38B2794028C");
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        // Civitai API returns hashes uppercase; locally we may have stored either case.
+        var found = await uow.Models.FindByFileHashAsync(
+            "b9372b072dcc91ff1efd707e060be0c842210f073cf985e07166d38b2794028c");
+
+        found.Should().NotBeNull();
+        found!.Name.Should().Be("EdgerunnersLora");
+        found.Versions.Should().HaveCount(1);
+        found.Versions.First().Files.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task WhenFindByFileHashWithUnknownHashThenReturnsNull()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = CreateModelWithLocalFile(
+            "OtherLora", @"D:\Models\Lora\other.safetensors",
+            hashSha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        var found = await uow.Models.FindByFileHashAsync(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+
+        found.Should().BeNull();
+    }
+
+    [Fact]
     public async Task WhenLocalFileHasSha256ButNoCivitaiIdThenHashIsReportedInstalled()
     {
         // Reproduces the "Civitai Browser does not show installed" bug:
