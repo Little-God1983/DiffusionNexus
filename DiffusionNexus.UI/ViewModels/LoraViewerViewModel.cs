@@ -41,6 +41,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private CancellationTokenSource? _updateCheckCts;
 
+    /// <summary>
+    /// Debounces search-text keystrokes. Every edit cancels the previous pending
+    /// filter pass and schedules a new one, so <see cref="ApplyFilters"/> (which
+    /// rebuilds the visible tile window — too expensive per keystroke) runs once
+    /// after typing pauses instead of blocking the UI thread on every character.
+    /// </summary>
+    private CancellationTokenSource? _searchDebounceCts;
+
+    /// <summary>Delay between the last keystroke and the debounced filter pass. Internal so tests can shorten it.</summary>
+    internal TimeSpan SearchDebounceInterval { get; set; } = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>The pending debounced filter pass, exposed so tests can await it instead of sleeping.</summary>
+    internal Task? SearchDebounceTask { get; private set; }
+
     #region Observable Properties
 
     /// <summary>
@@ -2153,6 +2167,31 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     partial void OnSearchTextChanged(string? value)
     {
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _searchDebounceCts = cts;
+        SearchDebounceTask = ApplyFiltersDebouncedAsync(cts.Token);
+    }
+
+    /// <summary>
+    /// Runs <see cref="ApplyFilters"/> after <see cref="SearchDebounceInterval"/>
+    /// unless a newer keystroke (or a direct <see cref="ApplyFilters"/> call)
+    /// cancels it first.
+    /// </summary>
+    private async Task ApplyFiltersDebouncedAsync(CancellationToken token)
+    {
+        try
+        {
+            // No ConfigureAwait(false): must resume on the UI thread's sync
+            // context because ApplyFilters mutates UI-bound collections.
+            await Task.Delay(SearchDebounceInterval, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
         ApplyFilters();
     }
 
@@ -2320,11 +2359,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     private void ApplyFilters()
     {
-        // 1. Build the FULL filtered set in _allFiltered (used for count + windowing).
+        // A direct apply supersedes any pending debounced search pass.
+        _searchDebounceCts?.Cancel();
+
+        // 1. Build the FULL filtered set (used for count + windowing).
         //    Search / NSFW / base-model filters all run against AllTiles, not against
         //    the window — so 4K LoRAs stay searchable.
-        _allFiltered.Clear();
-
         var query = AllTiles.AsEnumerable();
 
         if (!string.IsNullOrWhiteSpace(SearchText))
@@ -2355,7 +2395,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     activeBaseModels.Contains(v.BaseModelRaw)));
         }
 
-        _allFiltered.AddRange(query);
+        var filtered = query.ToList();
+
+        // Unchanged result set (e.g. the extra keystroke matched the same tiles):
+        // keep the current window and scroll position, skip the expensive rebuild.
+        // Refresh paths always create new tile instances, so they never hit this.
+        if (filtered.SequenceEqual(_allFiltered))
+        {
+            return;
+        }
+
+        _allFiltered.Clear();
+        _allFiltered.AddRange(filtered);
 
         // 2. Reset the window to the head and rebuild FilteredTiles.
         _windowStart = 0;
