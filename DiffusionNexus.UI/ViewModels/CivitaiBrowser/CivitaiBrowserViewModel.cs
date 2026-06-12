@@ -32,6 +32,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _isLoading;
     private bool _initialized;
     private HashSet<int> _installedVersionIds = [];
+    private HashSet<string> _installedFileHashes = new(StringComparer.OrdinalIgnoreCase);
     private CivitaiResultViewModel? _lastClickedItem;
 
     public CivitaiBrowserViewModel()
@@ -438,7 +439,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         if (!existingIds.Add(model.Id)) continue;
                         var vm = new CivitaiResultViewModel(model)
                         {
-                            IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                            IsInstalled = IsModelInstalled(model),
                             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                         };
                         vm.SelectionChanged += OnResultSelectionChanged;
@@ -550,7 +551,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model)
                     {
-                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                        IsInstalled = IsModelInstalled(model),
                         EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                     };
                     vm.SelectionChanged += OnResultSelectionChanged;
@@ -820,14 +821,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             }
 
             var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
+            // Hash fallback: covers orphan DB rows where ModelVersion.CivitaiId is
+            // missing (legacy indexing bugs created duplicate Models without a
+            // CivitaiId — see "Cyberpunk Edgerunners" report) but the file's
+            // SHA256 still matches the Civitai API response.
+            var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
             _installedVersionIds = set;
+            _installedFileHashes = hashes;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var r in Results)
                 {
                     if (r.Model is null) continue;
-                    r.IsInstalled = r.Model.ModelVersions.Any(v => set.Contains(v.Id));
+                    r.IsInstalled = IsModelInstalled(r.Model);
                 }
                 ApplyClientSideFilters();
             });
@@ -836,6 +843,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             _logger?.Debug(LogCategory.Network, "CivitaiBrowser", $"Installed-set refresh failed: {ex.Message}");
         }
+    }
+
+    private bool IsModelInstalled(CivitaiModel model)
+    {
+        foreach (var version in model.ModelVersions)
+        {
+            if (_installedVersionIds.Contains(version.Id)) return true;
+            foreach (var file in version.Files)
+            {
+                var sha = file.Hashes?.SHA256;
+                if (!string.IsNullOrEmpty(sha) && _installedFileHashes.Contains(sha)) return true;
+            }
+        }
+        return false;
     }
 
     private async Task<string?> GetApiKeyAsync()

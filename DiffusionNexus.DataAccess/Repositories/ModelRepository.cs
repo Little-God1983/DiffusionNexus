@@ -242,6 +242,33 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
+    public async Task<Model?> FindByFileHashAsync(string sha256, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sha256)) return null;
+        var normalized = sha256.ToLowerInvariant();
+
+        // Cheap indexed hit on ModelFiles.HashSHA256 first, then a single Model fetch
+        // with full includes — avoids ToLower inside the heavy Include graph query.
+        var modelId = await Context.ModelFiles
+            .Where(f => f.HashSHA256 != null && f.HashSHA256.ToLower() == normalized)
+            .Select(f => (int?)f.ModelVersion!.ModelId)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (modelId is null) return null;
+
+        return await Context.Models
+            .Include(m => m.Creator)
+            .Include(m => m.Tags).ThenInclude(mt => mt.Tag)
+            .Include(m => m.Versions).ThenInclude(v => v.Files)
+            .Include(m => m.Versions).ThenInclude(v => v.Images)
+            .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(m => m.Id == modelId.Value, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<bool> IsCivitaiIdTakenAsync(int civitaiId, int excludeModelId, CancellationToken cancellationToken = default)
     {
         return await Context.Models
@@ -312,6 +339,48 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                     result.Add(row.CivitaiId);
                     break;
                 }
+            }
+        }
+        return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<HashSet<string>> GetInstalledFileHashesAsync(
+        IReadOnlyList<string>? allowedRootPaths = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (allowedRootPaths is null || allowedRootPaths.Count == 0)
+        {
+            var hashes = await Context.ModelFiles
+                .Where(f => f.HashSHA256 != null && f.HashSHA256 != ""
+                            && f.LocalPath != null && f.LocalPath != ""
+                            && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null))
+                .Select(f => f.HashSHA256!)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return new HashSet<string>(hashes.Select(h => h.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+        }
+
+        var rows = await Context.ModelFiles
+            .Where(f => f.HashSHA256 != null && f.HashSHA256 != ""
+                        && f.LocalPath != null && f.LocalPath != ""
+                        && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null))
+            .Select(f => new { f.HashSHA256, f.LocalPath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var normalizedRoots = allowedRootPaths
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
+
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (PathIsUnderAnyRoot(row.LocalPath!, normalizedRoots))
+            {
+                result.Add(row.HashSHA256!.ToLowerInvariant());
             }
         }
         return result;
