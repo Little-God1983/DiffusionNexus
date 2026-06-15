@@ -154,6 +154,14 @@ public partial class ModelTileViewModel : ViewModelBase
             : null;
 
     /// <summary>
+    /// The <see cref="ModelFile"/> in this tile's location backing the given version,
+    /// or null for non-scoped tiles / versions without a file in this location.
+    /// Unlike <see cref="ScopedFile"/>, independent of <see cref="SelectedVersion"/>.
+    /// </summary>
+    public ModelFile? GetScopedFileForVersion(int versionId) =>
+        _scopedFilesByVersionId?.GetValueOrDefault(versionId);
+
+    /// <summary>
     /// True when this tile is scoped to a single LoRA-source location.
     /// </summary>
     public bool IsLocationScoped => _scopedFilesByVersionId is not null;

@@ -234,7 +234,7 @@
               <!-- Metadata -->
               <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
                 <Grid ColumnDefinitions="Auto,*"
-                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       Margin="0">
 
                   <TextBlock Grid.Row="0" Grid.Column="0"
@@ -312,10 +312,22 @@
                              Text="Creator:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
-                             Margin="0,0,12,0"/>
+                             Margin="0,0,12,6"/>
                   <TextBlock Grid.Row="6" Grid.Column="1"
                              Text="{Binding CreatorDisplay}"
-                             Foreground="White"/>
+                             Foreground="White"
+                             Margin="0,0,0,6"/>
+
+                  <TextBlock Grid.Row="7" Grid.Column="0"
+                             Text="Folder:"
+                             Foreground="#FF66AA"
+                             FontWeight="SemiBold"
+                             Margin="0,0,12,0"/>
+                  <SelectableTextBlock Grid.Row="7" Grid.Column="1"
+                                       Text="{Binding FolderPathDisplay}"
+                                       Foreground="White"
+                                       TextWrapping="Wrap"
+                                       ToolTip.Tip="{Binding FolderPathDisplay}"/>
                 </Grid>
               </StackPanel>
             </Grid>
