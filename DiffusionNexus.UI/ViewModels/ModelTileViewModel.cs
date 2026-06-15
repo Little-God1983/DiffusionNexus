@@ -154,6 +154,14 @@ public partial class ModelTileViewModel : ViewModelBase
             : null;
 
     /// <summary>
+    /// The <see cref="ModelFile"/> in this tile's location backing the given version,
+    /// or null for non-scoped tiles / versions without a file in this location.
+    /// Unlike <see cref="ScopedFile"/>, independent of <see cref="SelectedVersion"/>.
+    /// </summary>
+    public ModelFile? GetScopedFileForVersion(int versionId) =>
+        _scopedFilesByVersionId?.GetValueOrDefault(versionId);
+
+    /// <summary>
     /// True when this tile is scoped to a single LoRA-source location.
     /// </summary>
     public bool IsLocationScoped => _scopedFilesByVersionId is not null;
@@ -175,6 +183,26 @@ public partial class ModelTileViewModel : ViewModelBase
             _allGroupedModels.Add(refreshedModel);
         }
 
+        // Location-scoped tiles (#380) filter Versions through the file map
+        // snapshot taken at tile-build time. Fold in the refreshed model's files
+        // that live under this tile's root so a just-downloaded version isn't
+        // dropped when the version list rebuilds below.
+        if (_scopedFilesByVersionId is not null && !string.IsNullOrEmpty(ScopedRootPath))
+        {
+            foreach (var version in refreshedModel.Versions)
+            {
+                if (_scopedFilesByVersionId.ContainsKey(version.Id)) continue;
+
+                var fileInRoot = version.Files.FirstOrDefault(f =>
+                    !string.IsNullOrWhiteSpace(f.LocalPath) &&
+                    IsPathUnderRoot(f.LocalPath!, ScopedRootPath));
+                if (fileInRoot is not null)
+                {
+                    _scopedFilesByVersionId[version.Id] = fileInRoot;
+                }
+            }
+        }
+
         // Pick the richest model as primary (same logic as FromModelGroup)
         var primary = _allGroupedModels
             .OrderByDescending(m => m.CivitaiId.HasValue)
@@ -182,7 +210,27 @@ public partial class ModelTileViewModel : ViewModelBase
             .ThenByDescending(m => m.LastSyncedAt)
             .First();
 
-        ModelEntity = primary;
+        if (ReferenceEquals(ModelEntity, primary))
+        {
+            // The generated setter short-circuits on an unchanged reference, but
+            // the group's version/file content changed — rebuild explicitly.
+            OnModelEntityChanged(primary);
+        }
+        else
+        {
+            ModelEntity = primary;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is the root itself or points inside it.
+    /// </summary>
+    private static bool IsPathUnderRoot(string path, string root)
+    {
+        var trimmedRoot = Path.TrimEndingDirectorySeparator(root);
+        return path.StartsWith(trimmedRoot, StringComparison.OrdinalIgnoreCase)
+               && (path.Length == trimmedRoot.Length
+                   || path[trimmedRoot.Length] is '\\' or '/');
     }
 
     /// <summary>

@@ -153,6 +153,14 @@ public partial class ModelDetailViewModel : ViewModelBase
     private string _fileNameDisplay = string.Empty;
 
     /// <summary>
+    /// Folder containing the selected version's local file ("—" when the version
+    /// has no file on disk). For per-location tiles this is the file in the tile's
+    /// own LoRA-source location.
+    /// </summary>
+    [ObservableProperty]
+    private string _folderPathDisplay = "—";
+
+    /// <summary>
     /// Version ID display for the selected version.
     /// </summary>
     [ObservableProperty]
@@ -187,6 +195,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         BaseModelDisplay = "Flux.1 Kontext";
         ModelTypeDisplay = "LORA";
         FileNameDisplay = "40fy_v1.safetensors";
+        FolderPathDisplay = @"C:\AI\Loras\Styles";
         CreatorDisplay = "ExampleCreator";
         DescriptionText = "Transform persons into a vibrant semi-transparent 3D style with this LoRA for Flux Kontext!";
         TriggerWordsDisplay = "40fy, 3d style, fortnite";
@@ -965,9 +974,13 @@ public partial class ModelDetailViewModel : ViewModelBase
         VersionIdDisplay = version?.CivitaiId?.ToString() ?? "\u2014";
         BaseModelDisplay = version?.BaseModelRaw ?? "Unknown";
 
-        // File name
+        // File name + containing folder
         var primaryFile = version?.PrimaryFile;
         FileNameDisplay = primaryFile?.FileName ?? "\u2014";
+        var localFile = version is not null
+            ? tile.GetScopedFileForVersion(version.Id) ?? primaryFile
+            : null;
+        FolderPathDisplay = FolderDisplayFromFile(localFile);
 
         // Description
         DescriptionText = HtmlTextHelper.HtmlToPlainText(model?.Description);
@@ -982,6 +995,18 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         // Build version tabs from local data only (Civitai fetch will enhance this)
         BuildLocalVersionTabs(tile);
+    }
+
+    /// <summary>
+    /// Directory of the given file's <see cref="ModelFile.LocalPath"/>, or "—"
+    /// when the version has no file on disk.
+    /// </summary>
+    private static string FolderDisplayFromFile(ModelFile? file)
+    {
+        var path = file?.LocalPath;
+        if (string.IsNullOrWhiteSpace(path)) return "—";
+        var dir = Path.GetDirectoryName(path);
+        return string.IsNullOrEmpty(dir) ? "—" : dir;
     }
 
     private void PopulateTags(Model? model)
@@ -1337,6 +1362,12 @@ public partial class ModelDetailViewModel : ViewModelBase
                           ?? selected.CivitaiVersion.Files.FirstOrDefault();
             FileNameDisplay = civFile?.Name ?? "\u2014";
         }
+
+        // Containing folder \u2014 prefer the file in the tile's own location (#380)
+        var versionFile = selected.LocalVersion is { } lv
+            ? SourceTile?.GetScopedFileForVersion(lv.Id) ?? lv.PrimaryFile
+            : null;
+        FolderPathDisplay = FolderDisplayFromFile(versionFile);
 
         // Update thumbnail if local version available
         if (selected.LocalVersion is not null && SourceTile is not null)
