@@ -211,6 +211,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
 
+        // Live-update the base-model filter whenever the catalog is force-refreshed
+        // (e.g. from the "Update base-model filter" button in Settings). Both the
+        // Installed and Browse Civitai filters share AvailableBaseModels, so a single
+        // rebuild covers both tabs without requiring an app restart.
+        if (_baseModelCatalog is not null)
+        {
+            _baseModelCatalog.StatusChanged += OnBaseModelCatalogStatusChanged;
+        }
+
         // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
@@ -2325,7 +2334,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// snapshot), so this almost always yields a list; the only no-op path is when
     /// <see cref="_baseModelCatalog"/> is null (design-time).
     /// </summary>
-    private async Task LoadBaseModelCatalogAsync()
+    private Task LoadBaseModelCatalogAsync() => ReloadBaseModelFilterAsync();
+
+    /// <summary>
+    /// Pulls the current catalog labels (memory/disk cache or the freshly-fetched
+    /// list after a forced refresh) and rebuilds <see cref="AvailableBaseModels"/>
+    /// on the UI thread. Used both for the one-time startup load and for the live
+    /// refresh triggered by <see cref="OnBaseModelCatalogStatusChanged"/>.
+    /// </summary>
+    private async Task ReloadBaseModelFilterAsync()
     {
         if (_baseModelCatalog is null) return;
 
@@ -2345,6 +2362,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger?.Warn(LogCategory.Network, "LoraViewer",
                 $"Civitai base-model catalog load failed; falling back to distinct-from-installed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Live-updates the base-model filter shared by the Installed and Browse Civitai
+    /// tabs whenever the catalog completes a refresh that produced a list (a forced
+    /// refresh from Settings, or its bundled fallback). Without this the filter would
+    /// only reflect a refreshed catalog after an app restart. Normal startup cache
+    /// hits are already handled by the initial <see cref="LoadBaseModelCatalogAsync"/>.
+    /// </summary>
+    private void OnBaseModelCatalogStatusChanged(object? sender, CivitaiBaseModelCatalogEventArgs e)
+    {
+        if (e.Kind is not (CivitaiBaseModelCatalogEventKind.FetchSucceeded
+                           or CivitaiBaseModelCatalogEventKind.UsedBundledFallback))
+        {
+            return;
+        }
+
+        _ = ReloadBaseModelFilterAsync();
     }
 
     /// <summary>
