@@ -539,6 +539,12 @@
                         ToolTip.ShowOnDisabled="True"
                         Padding="10,6"
                         FontSize="12"/>
+                <Button Content="Download Metadata"
+                        Command="{Binding DownloadMetadataCommand}"
+                        ToolTip.Tip="Fetch Civitai metadata (description, tags, preview images and the full version list) for this LoRA by matching its file hash."
+                        ToolTip.ShowOnDisabled="True"
+                        Padding="10,6"
+                        FontSize="12"/>
                 <Button Content="Assign Civitai IDs Manually"
                         Command="{Binding AssignCivitaiIdsManuallyCommand}"
                         IsEnabled="{Binding !HasCivitaiId}"

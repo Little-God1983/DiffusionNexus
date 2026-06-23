@@ -124,6 +124,28 @@
                 </StackPanel>
               </Button>
 
+              <!-- Sort: field dropdown + ascending/descending toggle -->
+              <TextBlock Text="Sort"
+                         VerticalAlignment="Center"
+                         Opacity="0.7"/>
+              <ComboBox ItemsSource="{Binding SortOptions}"
+                        SelectedItem="{Binding SelectedSortOption, Mode=TwoWay}"
+                        MinWidth="120"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="Choose how installed models are sorted"/>
+              <ToggleButton IsChecked="{Binding SortDescending, Mode=TwoWay}"
+                            VerticalAlignment="Center"
+                            Padding="8,6"
+                            ToolTip.Tip="Toggle ascending / descending">
+                <Panel>
+                  <!-- Ascending (A→Z / oldest first) when unchecked, descending when checked. -->
+                  <TextBlock Text="&#x2191;" FontSize="14"
+                             IsVisible="{Binding !SortDescending}"/>
+                  <TextBlock Text="&#x2193;" FontSize="14"
+                             IsVisible="{Binding SortDescending}"/>
+                </Panel>
+              </ToggleButton>
+
             </StackPanel>
 
             <!-- Center: Model Count -->

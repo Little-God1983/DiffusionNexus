@@ -135,9 +135,11 @@ public partial class ModelDetailViewModel : ViewModelBase
     private Bitmap? _thumbnailImage;
 
     /// <summary>
-    /// Whether data is loading.
+    /// Whether data is loading. Also gates the "Download Metadata" button so it
+    /// can't be triggered while a fetch is already in flight.
     /// </summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMetadataCommand))]
     private bool _isLoading;
 
     /// <summary>
@@ -278,6 +280,22 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (!CanOpenOnCivitai) return;
         SourceTile?.OpenOnCivitaiCommand.Execute(null);
     }
+
+    /// <summary>
+    /// Requests a Civitai metadata download for this single LoRA. The parent
+    /// <see cref="LoraViewerViewModel"/> handles the request (it owns the hash-lookup
+    /// and persistence logic shared with the bulk "Download Metadata" flow): it hashes
+    /// the LoRA file, looks it up on Civitai, persists the returned metadata, and then
+    /// reloads this detail view so the new description/tags/images/versions appear.
+    /// Disabled while a load or fetch is already in flight.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDownloadMetadata))]
+    private void DownloadMetadata()
+    {
+        MetadataDownloadRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanDownloadMetadata() => !IsLoading;
 
     /// <summary>
     /// Copies trigger words to clipboard.
@@ -944,6 +962,13 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// Raised when the user requests to close the detail panel.
     /// </summary>
     public event EventHandler? CloseRequested;
+
+    /// <summary>
+    /// Raised when the user clicks "Download Metadata" for this individual LoRA.
+    /// The parent <see cref="LoraViewerViewModel"/> performs the hash-based Civitai
+    /// lookup + persistence, then reloads this detail view.
+    /// </summary>
+    public event EventHandler? MetadataDownloadRequested;
 
     /// <summary>
     /// Raised after a version download completes and is persisted to the database.
