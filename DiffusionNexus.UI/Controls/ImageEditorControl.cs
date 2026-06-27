@@ -369,6 +369,12 @@ public class ImageEditorControl : Control
     public event EventHandler<float>? DrawingBrushSizeChanged;
 
     /// <summary>
+    /// Event raised when the text tool changes its own font size (e.g. corner-drag resize),
+    /// so the font-size control can be kept in sync. Carries the new size in pixels.
+    /// </summary>
+    public event EventHandler<float>? TextFontSizeChanged;
+
+    /// <summary>
     /// Event raised when the eyedropper picks a color from the image.
     /// </summary>
     public event EventHandler<SKColor>? EyedropperColorPicked;
@@ -987,6 +993,7 @@ public class ImageEditorControl : Control
                     ImageEditor.ShapeManipulationHandle.Body => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.TopLeft or ImageEditor.ShapeManipulationHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.TopRight or ImageEditor.ShapeManipulationHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.ShapeManipulationHandle.Start or ImageEditor.ShapeManipulationHandle.End => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.Rotate => new Cursor(StandardCursorType.Hand),
                     ImageEditor.ShapeManipulationHandle.Delete => new Cursor(StandardCursorType.Hand),
                     _ => new Cursor(StandardCursorType.Cross)
@@ -1051,15 +1058,17 @@ public class ImageEditorControl : Control
                 _isInpaintPainting ? [.. _inpaintStrokePoints] : null)
             : null;
 
+        // Brush/stroke sizes are in image pixels; scale by the current zoom so the
+        // on-screen cursor footprint matches what will actually be painted.
         var drawingOverlay = _hasDrawingCursorPosition && (_editorCore.DrawingTool.IsActive || _editorCore.ShapeTool.IsActive)
             ? new DrawingOverlayState(
                 _drawingCursorPosition,
                 _editorCore.DrawingTool.IsActive,
-                _editorCore.DrawingTool.BrushSize,
+                _editorCore.DrawingTool.BrushSize * _editorCore.DrawingTool.DisplayScale,
                 _editorCore.DrawingTool.BrushShape,
                 _editorCore.DrawingTool.BrushColor,
                 _editorCore.ShapeTool.IsActive,
-                _editorCore.ShapeTool.StrokeWidth,
+                _editorCore.ShapeTool.StrokeWidth * _editorCore.ShapeTool.DisplayScale,
                 _editorCore.ShapeTool.StrokeColor,
                 _editorCore.ShapeTool.HasPlacedShape)
             : null;
@@ -1314,6 +1323,11 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    private void OnTextFontSizeChanged(object? sender, float newSize)
+    {
+        TextFontSizeChanged?.Invoke(this, newSize);
+    }
+
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
     {
         SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
@@ -1363,6 +1377,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextChanged += OnTextChanged;
         _editorCore.TextTool.TextCompleted += OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged += OnPlacedTextStateChanged;
+        _editorCore.TextTool.FontSizeChanged += OnTextFontSizeChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
         InvalidateVisual();
@@ -1382,6 +1397,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextChanged -= OnTextChanged;
         _editorCore.TextTool.TextCompleted -= OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged -= OnPlacedTextStateChanged;
+        _editorCore.TextTool.FontSizeChanged -= OnTextFontSizeChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
     }
