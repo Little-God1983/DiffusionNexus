@@ -141,6 +141,7 @@ public sealed class AppSettingsService : IAppSettingsService
 
         // Update scalar properties
         existingSettings.EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey;
+        existingSettings.EncryptedHuggingfaceApiKey = settings.EncryptedHuggingfaceApiKey;
         existingSettings.ShowNsfw = settings.ShowNsfw;
         existingSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
         existingSettings.ShowVideoPreview = settings.ShowVideoPreview;
@@ -292,6 +293,25 @@ public sealed class AppSettingsService : IAppSettingsService
         settings.EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(apiKey)
             ? null
             : _secureStorage.Encrypt(apiKey);
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetHuggingfaceApiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return _secureStorage.Decrypt(settings.EncryptedHuggingfaceApiKey);
+    }
+
+    /// <inheritdoc />
+    public async Task SetHuggingfaceApiKeyAsync(string? token, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.EncryptedHuggingfaceApiKey = string.IsNullOrWhiteSpace(token)
+            ? null
+            : _secureStorage.Encrypt(token);
         settings.UpdatedAt = DateTimeOffset.UtcNow;
 
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

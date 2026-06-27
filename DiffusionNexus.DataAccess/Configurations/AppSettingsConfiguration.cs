@@ -13,6 +13,7 @@ internal sealed class AppSettingsConfiguration : IEntityTypeConfiguration<AppSet
 
         // Properties
         entity.Property(e => e.EncryptedCivitaiApiKey).HasMaxLength(2000);
+        entity.Property(e => e.EncryptedHuggingfaceApiKey).HasMaxLength(2000);
         entity.Property(e => e.LoraSortSourcePath).HasMaxLength(1000);
         entity.Property(e => e.LoraSortTargetPath).HasMaxLength(1000);
         entity.Property(e => e.DatasetStoragePath).HasMaxLength(1000);

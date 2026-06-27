@@ -68,10 +68,44 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
         var found = new List<ModelDescriptor>();
 
         TryAddZImageTurbo(found);
+        TryAddFlux2Klein(found);
 
-        // TODO(v2-models): add SDXL checkpoint discovery, Flux UNET discovery, Qwen-Image-Edit (incl. mmproj), etc.
+        // TODO(v2-models): add SDXL checkpoint discovery, Qwen-Image-Edit (incl. mmproj), etc.
 
         return found;
+    }
+
+    private void TryAddFlux2Klein(List<ModelDescriptor> sink)
+    {
+        // The diffusion model ships as one GGUF per VRAM/quant tier (e.g.
+        // flux-2-klein-9b-Q4_K_M.gguf … flux-2-klein-9b-BF16.gguf) — any one present satisfies it.
+        var unet = FindFileByPattern("flux-2-klein-9b-*.gguf");
+        var llm = FindFile("qwen_3_8b_fp8mixed.safetensors");
+        var vae = FindFile("flux2-vae.safetensors");
+
+        if (unet is null || llm is null || vae is null)
+            return;
+
+        sink.Add(new ModelDescriptor
+        {
+            Key = ModelKeys.Flux2Klein,
+            DisplayName = "FLUX.2-klein",
+            Kind = ModelKind.Flux2Klein,
+            DiffusionModelPath = unet,
+            VaePath = vae,
+            TextEncoders = new Dictionary<TextEncoderSlot, string>
+            {
+                [TextEncoderSlot.Llm] = llm,
+            },
+            // FLUX.2-klein is a distilled flow model; CFG=1 (guidance is baked in). Tune as needed.
+            DefaultSteps = 20,
+            DefaultCfg = 1.0f,
+            DefaultSampler = "euler",
+            DefaultScheduler = "simple",
+            DimensionAlignment = 16,
+            DefaultWidth = 1024,
+            DefaultHeight = 1024,
+        });
     }
 
     private void TryAddZImageTurbo(List<ModelDescriptor> sink)
@@ -124,6 +158,49 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
         return null;
     }
 
+    /// <summary>
+    /// Like <see cref="FindFile"/> but matches a wildcard search pattern (e.g.
+    /// <c>flux-2-klein-9b-*.gguf</c>). Returns the first match across all roots, or null.
+    /// </summary>
+    private string? FindFileByPattern(string searchPattern)
+    {
+        foreach (var root in _modelsRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                continue;
+
+            var hit = SearchRecursivePattern(root, searchPattern);
+            if (hit is not null) return hit;
+        }
+        return null;
+    }
+
+    private string? SearchRecursivePattern(string directory, string searchPattern)
+    {
+        var stack = new Stack<string>();
+        stack.Push(directory);
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            _searchedLocationCount++;
+
+            try
+            {
+                var match = Directory.EnumerateFiles(current, searchPattern).FirstOrDefault();
+                if (match is not null) return match;
+
+                foreach (var subDir in Directory.EnumerateDirectories(current))
+                    stack.Push(subDir);
+            }
+            catch (UnauthorizedAccessException) { /* skip inaccessible folders */ }
+            catch (DirectoryNotFoundException) { /* race: folder removed mid-scan */ }
+            catch (IOException) { /* skip transient I/O errors */ }
+        }
+
+        return null;
+    }
+
     private string? SearchRecursive(string directory, string fileName)
     {
         var stack = new Stack<string>();
@@ -156,7 +233,9 @@ public static class ModelKeys
 {
     public const string ZImageTurbo = "z-image-turbo";
 
-    // TODO(v2-models): add SDXL/Flux/QwenImageEdit keys here.
+    public const string Flux2Klein = "flux2-klein";
+
+    // TODO(v2-models): add SDXL/QwenImageEdit keys here.
 }
 
 // Bridge interface so DiffusionContextHost can stay independent of the public IModelCatalog

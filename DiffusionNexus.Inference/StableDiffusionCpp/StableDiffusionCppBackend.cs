@@ -172,8 +172,16 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             .WithScheduler(MapScheduler(req.Scheduler ?? d.DefaultScheduler))
             .WithSeed(seed);
 
+        // LoRAs are applied per-generation (stable-diffusion.cpp loads them at runtime for this
+        // call only), so the cached base context is shared across requests with different LoRAs.
+        foreach (var lora in req.Loras)
+        {
+            if (string.IsNullOrWhiteSpace(lora.FilePath))
+                continue;
+            genParams.Loras.Add(new SDNet.Lora(lora.FilePath) { Multiplier = lora.Strength });
+        }
+
         // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
-        // TODO(v2-loras):           apply req.Loras via DiffusionModelParameter.WithLora at load time.
         // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
         // TODO(v2-img2img):         switch to ImageGenerationParameter.ImageToImage(...) when req.InitImage != null.
         // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.

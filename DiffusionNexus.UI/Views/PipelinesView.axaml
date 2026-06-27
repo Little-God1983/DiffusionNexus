@@ -68,10 +68,26 @@
 
                   <!-- Icon / preview area -->
                   <Border Grid.Row="0" Background="#1A1A1A">
-                    <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/HumanCogwheel.png}"
-                           Width="96" Height="96"
-                           HorizontalAlignment="Center"
-                           VerticalAlignment="Center"/>
+                    <Grid>
+                      <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/HumanCogwheel.png}"
+                             Width="96" Height="96"
+                             HorizontalAlignment="Center"
+                             VerticalAlignment="Center"/>
+
+                      <!-- Readiness badge -->
+                      <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6"
+                              Background="{Binding StatusBrush}"
+                              CornerRadius="4" Padding="6,2">
+                        <TextBlock Text="{Binding StatusText}"
+                                   FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                      </Border>
+
+                      <!-- Busy overlay while downloading -->
+                      <Border IsVisible="{Binding IsBusy}" Background="#80000000">
+                        <ProgressBar IsIndeterminate="True" Width="120"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                      </Border>
+                    </Grid>
                   </Border>
 
                   <!-- Caption -->

@@ -51,6 +51,7 @@ public sealed class SettingsExportService : ISettingsExportService
             ExportedAt = DateTimeOffset.UtcNow,
 
             EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey,
+            EncryptedHuggingfaceApiKey = settings.EncryptedHuggingfaceApiKey,
 
             ShowNsfw = settings.ShowNsfw,
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails,
@@ -138,6 +139,7 @@ public sealed class SettingsExportService : ISettingsExportService
         {
             Id = 1,
             EncryptedCivitaiApiKey = export.EncryptedCivitaiApiKey,
+            EncryptedHuggingfaceApiKey = export.EncryptedHuggingfaceApiKey,
 
             ShowNsfw = export.ShowNsfw,
             GenerateVideoThumbnails = export.GenerateVideoThumbnails,

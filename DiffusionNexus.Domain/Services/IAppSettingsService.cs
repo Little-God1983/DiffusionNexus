@@ -45,6 +45,20 @@ public interface IAppSettingsService
     Task SetCivitaiApiKeyAsync(string? apiKey, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the decrypted HuggingFace access token, or null if not set.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The token or null if not set.</returns>
+    Task<string?> GetHuggingfaceApiKeyAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets the HuggingFace access token (will be encrypted before storage).
+    /// </summary>
+    /// <param name="token">The token to store.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SetHuggingfaceApiKeyAsync(string? token, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets all enabled LoRA source paths.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

@@ -571,7 +571,8 @@ public partial class App : Application
                 { "LastBackupAt", "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT" },
                 { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" },
                 { "LoraUpdateCheckStalenessDays", "ALTER TABLE AppSettings ADD COLUMN LoraUpdateCheckStalenessDays INTEGER NOT NULL DEFAULT 3" },
-                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" }
+                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" },
+                { "EncryptedHuggingfaceApiKey", "ALTER TABLE AppSettings ADD COLUMN EncryptedHuggingfaceApiKey TEXT" }
             };
 
             foreach (var col in requiredColumns)
@@ -1001,6 +1002,21 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // Pipelines: app-side manifest provider + asset installer + module ViewModel.
+        services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
+        services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
+            sp.GetRequiredService<IDownloadCoordinator>(),
+            sp.GetRequiredService<Civitai.ICivitaiClient>(),
+            sp.GetRequiredService<LoraDownloadService>(),
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+        services.AddScoped<PipelinesViewModel>(sp => new PipelinesViewModel(
+            sp.GetRequiredService<Services.Pipelines.IPipelineManifestProvider>(),
+            sp.GetRequiredService<Services.Pipelines.IPipelineAssetInstaller>(),
+            sp.GetService<IDialogService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
             sp.GetRequiredService<IUnitOfWork>(),
@@ -1213,7 +1229,7 @@ public partial class App : Application
         mainViewModel.RegisterModule(imageComparerModule);
 
         // Pipelines module — tile gallery of guided image pipelines (currently Anime-To-Real).
-        var pipelinesVm = new PipelinesViewModel();
+        var pipelinesVm = Services!.GetRequiredService<PipelinesViewModel>();
         var pipelinesView = new PipelinesView { DataContext = pipelinesVm };
 
         var pipelinesModule = new ModuleItem(

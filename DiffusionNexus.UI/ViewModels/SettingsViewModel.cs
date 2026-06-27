@@ -281,8 +281,9 @@ public partial class SettingsViewModel : BusyViewModelBase
         {
             var settings = await _settingsService.GetSettingsAsync();
 
-            // Decrypt API key
+            // Decrypt API keys
             CivitaiApiKey = _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+            HuggingfaceApiKey = _secureStorage.Decrypt(settings.EncryptedHuggingfaceApiKey);
 
             // Map settings to view model
             ComfyUiServerUrl = settings.ComfyUiServerUrl;
@@ -491,6 +492,9 @@ public partial class SettingsViewModel : BusyViewModelBase
                 EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey)
                     ? null
                     : _secureStorage.Encrypt(CivitaiApiKey),
+                EncryptedHuggingfaceApiKey = string.IsNullOrWhiteSpace(HuggingfaceApiKey)
+                    ? null
+                    : _secureStorage.Encrypt(HuggingfaceApiKey),
                 ComfyUiServerUrl = ComfyUiServerUrl,
                 ShowNsfw = ShowNsfw,
                 GenerateVideoThumbnails = GenerateVideoThumbnails,

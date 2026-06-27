@@ -1,37 +1,74 @@
+using Avalonia.Media;
+using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Models.Pipelines;
+
 namespace DiffusionNexus.UI.ViewModels;
 
-/// <summary>
-/// Represents a single pipeline tile shown in the <see cref="PipelinesViewModel"/> gallery.
-/// </summary>
-public class PipelineTileViewModel : ViewModelBase
+/// <summary>On-disk readiness of a pipeline's assets, surfaced as a tile badge.</summary>
+public enum PipelineStatus
 {
-    /// <summary>
-    /// Stable identifier used to dispatch the tile when it is launched.
-    /// </summary>
-    public string Id { get; }
+    /// <summary>Readiness has not been determined yet.</summary>
+    Unknown,
 
-    /// <summary>
-    /// Display title shown on the tile (e.g. "Anime-To-Real").
-    /// </summary>
-    public string Title { get; }
+    /// <summary>One or more required assets are missing.</summary>
+    NotInstalled,
 
-    /// <summary>
-    /// Short description rendered under the title and as the tile tooltip.
-    /// </summary>
-    public string Description { get; }
+    /// <summary>Assets are currently downloading.</summary>
+    Downloading,
 
-    public PipelineTileViewModel(string id, string title, string description)
+    /// <summary>All required assets are present.</summary>
+    Ready,
+
+    /// <summary>The last check or install failed.</summary>
+    Error,
+}
+
+/// <summary>
+/// A single pipeline tile in the <see cref="PipelinesViewModel"/> gallery. Carries the
+/// underlying <see cref="PipelineManifest"/> plus the live readiness badge state.
+/// </summary>
+public partial class PipelineTileViewModel : ViewModelBase
+{
+    /// <summary>The manifest describing this pipeline and its required assets.</summary>
+    public PipelineManifest Manifest { get; }
+
+    public string Id => Manifest.Id;
+    public string Title => Manifest.Title;
+    public string Description => Manifest.Description;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusBrush))]
+    private PipelineStatus _status = PipelineStatus.Unknown;
+
+    [ObservableProperty]
+    private string _statusText = "Checking…";
+
+    [ObservableProperty]
+    private bool _isBusy;
+
+    /// <summary>Badge colour derived from <see cref="Status"/>.</summary>
+    public IBrush StatusBrush => Status switch
     {
-        Id = id;
-        Title = title;
-        Description = description;
+        PipelineStatus.Ready => new SolidColorBrush(Color.Parse("#2E7D32")),
+        PipelineStatus.Downloading => new SolidColorBrush(Color.Parse("#1565C0")),
+        PipelineStatus.NotInstalled => new SolidColorBrush(Color.Parse("#5A5A5A")),
+        PipelineStatus.Error => new SolidColorBrush(Color.Parse("#C62828")),
+        _ => new SolidColorBrush(Color.Parse("#424242")),
+    };
+
+    public PipelineTileViewModel(PipelineManifest manifest)
+    {
+        Manifest = manifest;
     }
 
-    /// <summary>
-    /// Parameterless constructor for the XAML design-time <c>Design.DataContext</c>.
-    /// </summary>
+    /// <summary>Parameterless constructor for the XAML design-time <c>Design.DataContext</c>.</summary>
     public PipelineTileViewModel()
-        : this("anime-to-real", "Anime-To-Real", "Convert anime-style images into photorealistic renders.")
+        : this(new PipelineManifest
+        {
+            Id = "anime-to-real",
+            Title = "Anime-To-Real",
+            Description = "Convert anime-style images into photorealistic renders.",
+        })
     {
     }
 }
