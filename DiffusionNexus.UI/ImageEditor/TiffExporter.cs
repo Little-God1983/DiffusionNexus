@@ -176,9 +176,6 @@ public static class TiffExporter
             var pageIndex = 0;
             do
             {
-                var pageWidth = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
-                var pageHeight = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-
                 // Per-layer metadata (present on app-written TIFFs; defaults otherwise).
                 var description = tiff.GetField(TiffTag.IMAGEDESCRIPTION);
                 var layerName = $"Layer {pageIndex + 1}";
@@ -188,30 +185,14 @@ public static class TiffExporter
                 if (description != null && description.Length > 0)
                     ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible);
 
-                // Robust decode: ReadRGBAImageOriented handles every TIFF variant and returns
-                // a top-left-origin ABGR raster. stopOnError:false so partial/odd files still
-                // yield an image where possible.
-                var raster = new int[pageWidth * pageHeight];
-                if (!tiff.ReadRGBAImageOriented(pageWidth, pageHeight, raster, Orientation.TOPLEFT, false))
+                var bitmap = ReadCurrentPageRgba(tiff);
+                if (bitmap is null)
                 {
                     logger?.Warn(LogCategory.General, LogSource,
-                        $"ReadRGBAImageOriented failed for page {pageIndex} ({pageWidth}x{pageHeight}); skipping page.", filePath);
+                        $"ReadRGBAImageOriented failed for page {pageIndex}; skipping page.", filePath);
                     pageIndex++;
                     continue;
                 }
-
-                var bitmap = new SKBitmap(pageWidth, pageHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul);
-                var skPixels = new SKColor[pageWidth * pageHeight];
-                for (var i = 0; i < skPixels.Length; i++)
-                {
-                    var p = raster[i];
-                    skPixels[i] = new SKColor(
-                        (byte)Tiff.GetR(p),
-                        (byte)Tiff.GetG(p),
-                        (byte)Tiff.GetB(p),
-                        (byte)Tiff.GetA(p));
-                }
-                bitmap.Pixels = skPixels;
 
                 var layer = new Layer(bitmap, layerName)
                 {
@@ -243,6 +224,65 @@ public static class TiffExporter
             logger?.Error(LogCategory.General, LogSource, $"LoadLayeredTiff failed for {filePath}", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Decodes only the FIRST page of a TIFF into a flat RGBA bitmap. Intended for lightweight
+    /// previews/thumbnails where layer structure is irrelevant — a "rough" look of the image.
+    /// Returns null if the file cannot be read. Caller owns the returned bitmap.
+    /// </summary>
+    public static SKBitmap? DecodeFlatImage(string filePath, IUnifiedLogger? logger = null)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+
+        try
+        {
+            using var tiff = Tiff.Open(filePath, "r");
+            if (tiff == null)
+            {
+                logger?.Warn(LogCategory.General, LogSource, $"DecodeFlatImage: Tiff.Open returned null for {filePath}");
+                return null;
+            }
+
+            var bitmap = ReadCurrentPageRgba(tiff);
+            if (bitmap is null)
+                logger?.Warn(LogCategory.General, LogSource, $"DecodeFlatImage: could not read first page of {filePath}");
+            return bitmap;
+        }
+        catch (Exception ex)
+        {
+            logger?.Error(LogCategory.General, LogSource, $"DecodeFlatImage failed for {filePath}", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the TIFF's current directory (page) into a flat RGBA SKBitmap using LibTiff's
+    /// robust high-level reader (handles any compression/tiling/photometric). The raster is
+    /// top-left origin, so it maps directly to SKBitmap pixel order. Returns null on failure.
+    /// </summary>
+    private static SKBitmap? ReadCurrentPageRgba(Tiff tiff)
+    {
+        var width = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+        var height = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+
+        var raster = new int[width * height];
+        if (!tiff.ReadRGBAImageOriented(width, height, raster, Orientation.TOPLEFT, false))
+            return null;
+
+        var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+        var pixels = new SKColor[width * height];
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var p = raster[i];
+            pixels[i] = new SKColor(
+                (byte)Tiff.GetR(p),
+                (byte)Tiff.GetG(p),
+                (byte)Tiff.GetB(p),
+                (byte)Tiff.GetA(p));
+        }
+        bitmap.Pixels = pixels;
+        return bitmap;
     }
 
     /// <summary>
