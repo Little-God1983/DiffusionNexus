@@ -308,6 +308,12 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Navigates to the Batch Upscale tab with the current image loaded.</summary>
     public IRelayCommand SendToBatchUpscaleCommand { get; }
 
+    /// <summary>Navigates to the Batch Crop/Scale tab with the current image loaded.</summary>
+    public IRelayCommand SendToBatchCropCommand { get; }
+
+    /// <summary>Navigates to the Captioning tab with the current image loaded.</summary>
+    public IRelayCommand SendToCaptioningCommand { get; }
+
     #endregion
 
     #region Events (for View wiring)
@@ -406,6 +412,8 @@ public partial class ImageEditorViewModel : ObservableObject
         FlipHorizontalCommand = new RelayCommand(ExecuteFlipHorizontal, () => HasImage);
         FlipVerticalCommand = new RelayCommand(ExecuteFlipVertical, () => HasImage);
         SendToBatchUpscaleCommand = new RelayCommand(ExecuteSendToBatchUpscale, () => HasImage && !string.IsNullOrEmpty(CurrentImagePath));
+        SendToBatchCropCommand = new RelayCommand(ExecuteSendToBatchCrop, () => HasImage && !string.IsNullOrEmpty(CurrentImagePath));
+        SendToCaptioningCommand = new RelayCommand(ExecuteSendToCaptioning, () => HasImage && !string.IsNullOrEmpty(CurrentImagePath));
     }
 
     /// <summary>Wires internal coordination events from sub-ViewModels (status, tool state, services).</summary>
@@ -565,6 +573,8 @@ public partial class ImageEditorViewModel : ObservableObject
         FlipHorizontalCommand.NotifyCanExecuteChanged();
         FlipVerticalCommand.NotifyCanExecuteChanged();
         SendToBatchUpscaleCommand.NotifyCanExecuteChanged();
+        SendToBatchCropCommand.NotifyCanExecuteChanged();
+        SendToCaptioningCommand.NotifyCanExecuteChanged();
 
         NotifyToolCommandsCanExecuteChanged();
         Rating.RefreshCommandStates();
@@ -1075,24 +1085,36 @@ public partial class ImageEditorViewModel : ObservableObject
     private void ExecuteFlipVertical() => FlipVerticalRequested?.Invoke(this, EventArgs.Empty);
 
     private void ExecuteSendToBatchUpscale()
+        => SendCurrentImageTo("upscale", path => _eventAggregator?.PublishNavigateToBatchUpscale(
+            new NavigateToBatchUpscaleEventArgs { ImagePaths = [path] }));
+
+    private void ExecuteSendToBatchCrop()
+        => SendCurrentImageTo("crop", path => _eventAggregator?.PublishNavigateToBatchCropScale(
+            new NavigateToBatchCropScaleEventArgs { ImagePaths = [path] }));
+
+    private void ExecuteSendToCaptioning()
+        => SendCurrentImageTo("caption", path => _eventAggregator?.PublishNavigateToCaptioning(
+            new NavigateToCaptioningEventArgs { ImagePaths = [path] }));
+
+    /// <summary>
+    /// Exports the current edited image to a temp file (so the destination receives the edits,
+    /// not the original on disk) and hands the resulting path to <paramref name="publish"/>.
+    /// Falls back to the on-disk path when no export function is wired or the export fails.
+    /// </summary>
+    private void SendCurrentImageTo(string suffix, Action<string> publish)
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return;
 
-        // Export the current edited state to a temp file so the upscaler
-        // receives the edited image, not the original on disk.
         var pathToSend = CurrentImagePath;
         if (SaveImageFunc is not null)
         {
             var ext = Path.GetExtension(CurrentImagePath);
-            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_upscale_{Guid.NewGuid()}{ext}");
+            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{suffix}_{Guid.NewGuid()}{ext}");
             if (SaveImageFunc(tempPath))
-            {
                 pathToSend = tempPath;
-            }
         }
 
-        _eventAggregator?.PublishNavigateToBatchUpscale(
-            new NavigateToBatchUpscaleEventArgs { ImagePaths = [pathToSend] });
+        publish(pathToSend);
     }
 
     #endregion

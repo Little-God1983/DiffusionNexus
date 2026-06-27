@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Globalization;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
+using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
@@ -105,10 +107,16 @@ public partial class ImageListInputControl : UserControl
     /// </summary>
     public ICommand ClearCommand { get; }
 
+    /// <summary>
+    /// Command bound by a thumbnail to select it for the large preview.
+    /// </summary>
+    public ICommand SelectCommand { get; }
+
     public ImageListInputControl()
     {
         RemoveCommand = new RelayCommand<string>(RemoveImage);
         ClearCommand = new RelayCommand(ClearImages);
+        SelectCommand = new RelayCommand<string>(SelectImage);
 
         InitializeComponent();
 
@@ -164,6 +172,12 @@ public partial class ImageListInputControl : UserControl
     {
         if (path is null) return;
         ImagePaths?.Remove(path);
+    }
+
+    private void SelectImage(string? path)
+    {
+        if (!string.IsNullOrEmpty(path))
+            SelectedImagePath = path;
     }
 
     private void ClearImages() => ImagePaths?.Clear();
@@ -262,4 +276,27 @@ public partial class ImageListInputControl : UserControl
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    /// <summary>
+    /// Multi-value converter for the per-thumbnail selected highlight: returns an accent brush
+    /// when the item path (values[0]) equals the control's <see cref="SelectedImagePath"/>
+    /// (values[1]), otherwise transparent.
+    /// </summary>
+    public static readonly IMultiValueConverter SelectedHighlightConverter = new SelectedHighlightConverterImpl();
+
+    private sealed class SelectedHighlightConverterImpl : IMultiValueConverter
+    {
+        private static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#4CAF50"));
+
+        public object Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture)
+        {
+            if (values.Count >= 2 && values[0] is string item && values[1] is string selected &&
+                string.Equals(item, selected, StringComparison.OrdinalIgnoreCase))
+            {
+                return Accent;
+            }
+
+            return Brushes.Transparent;
+        }
+    }
 }

@@ -42,43 +42,51 @@
                  Source="{Binding SelectedImagePath, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"/>
         </Border>
 
-        <!-- Thumbnail list -->
-        <ListBox MaxHeight="150"
-                 Background="Transparent"
-                 ItemsSource="{Binding ImagePaths, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
-                 SelectedItem="{Binding SelectedImagePath, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Mode=TwoWay}">
-          <ListBox.ItemsPanel>
-            <ItemsPanelTemplate>
-              <WrapPanel Orientation="Horizontal"/>
-            </ItemsPanelTemplate>
-          </ListBox.ItemsPanel>
-          <ListBox.Styles>
-            <!-- Tight item padding so thumbnails sit close together -->
-            <Style Selector="ListBoxItem">
-              <Setter Property="Padding" Value="2"/>
-              <Setter Property="Margin" Value="0"/>
-            </Style>
-          </ListBox.Styles>
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="sys:String">
-              <Grid Width="68" Height="68" ToolTip.Tip="{Binding}">
-                <Border Background="#333" CornerRadius="4" ClipToBounds="True">
-                  <Image Stretch="UniformToFill"
-                         Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"/>
-                </Border>
-                <!-- Per-item remove button -->
-                <Button Content="&#x2715;"
-                        Command="{Binding RemoveCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
-                        CommandParameter="{Binding}"
-                        HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Width="18" Height="18" Padding="0" Margin="0,2,2,0"
-                        FontSize="10" FontWeight="Bold"
-                        Background="#CC000000" Foreground="#FF6B6B"
-                        ToolTip.Tip="Remove this image"/>
-              </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
+        <!-- Thumbnail list. Deliberately an ItemsControl (NOT a ListBox): a ListBox keeps a
+             SelectionModel, and removing the currently-selected item via the per-item button
+             threw ArgumentOutOfRangeException and crashed the app. An ItemsControl has no
+             selection model, so removal is safe; preview selection is handled explicitly via
+             SelectCommand. -->
+        <ScrollViewer MaxHeight="150" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding ImagePaths, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="sys:String">
+                <Grid Width="68" Height="68" Margin="2" ToolTip.Tip="{Binding}">
+                  <!-- Clicking the thumbnail selects it for the large preview -->
+                  <Button Command="{Binding SelectCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                          CommandParameter="{Binding}"
+                          Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                          HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                    <Border Background="#333" CornerRadius="4" ClipToBounds="True" BorderThickness="2">
+                      <Border.BorderBrush>
+                        <MultiBinding Converter="{x:Static local:ImageListInputControl.SelectedHighlightConverter}">
+                          <Binding/>
+                          <Binding Path="SelectedImagePath" RelativeSource="{RelativeSource AncestorType=local:ImageListInputControl}"/>
+                        </MultiBinding>
+                      </Border.BorderBrush>
+                      <Image Stretch="UniformToFill"
+                             Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"/>
+                    </Border>
+                  </Button>
+                  <!-- Per-item remove button -->
+                  <Button Content="&#x2715;"
+                          Command="{Binding RemoveCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                          CommandParameter="{Binding}"
+                          HorizontalAlignment="Right" VerticalAlignment="Top"
+                          Width="18" Height="18" Padding="0" Margin="0,2,2,0"
+                          FontSize="10" FontWeight="Bold"
+                          Background="#CC000000" Foreground="#FF6B6B"
+                          ToolTip.Tip="Remove this image"/>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
 
         <!-- Footer: count + actions -->
         <Grid ColumnDefinitions="*,Auto,Auto">
