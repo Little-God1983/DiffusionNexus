@@ -48,7 +48,7 @@ public class DrawingTool
     public SKColor BrushColor { get; set; } = SKColors.White;
 
     /// <summary>
-    /// Gets or sets the brush size in pixels.
+    /// Gets or sets the brush size in image pixels (zoom-independent).
     /// </summary>
     public float BrushSize { get; set; } = 10f;
 
@@ -56,6 +56,18 @@ public class DrawingTool
     /// Gets or sets the brush shape.
     /// </summary>
     public BrushShape BrushShape { get; set; } = BrushShape.Round;
+
+    /// <summary>
+    /// Gets or sets the image width in pixels. Used to size the brush in image pixels
+    /// independently of the current zoom level. Set by the editor core each render pass.
+    /// </summary>
+    public int ImagePixelWidth { get; set; }
+
+    /// <summary>
+    /// Gets the on-screen scale (display pixels per image pixel) at the current zoom level.
+    /// </summary>
+    public float DisplayScale =>
+        ImagePixelWidth > 0 && _imageRect.Width > 0 ? _imageRect.Width / ImagePixelWidth : 1f;
 
     /// <summary>
     /// Gets whether the user is currently drawing.
@@ -178,7 +190,7 @@ public class DrawingTool
             var args = new DrawingStrokeEventArgs(
                 imagePoints,
                 BrushColor,
-                BrushSize / GetCurrentScale(),
+                BrushSize / GetImagePixelWidth(),
                 BrushShape);
 
             StrokeCompleted?.Invoke(this, args);
@@ -196,7 +208,10 @@ public class DrawingTool
     {
         if (!_isActive || !_isDrawing) return;
 
-        using var paint = CreatePaint();
+        // The stroke is painted at BrushSize image pixels, so its on-screen preview
+        // must be scaled by the current zoom to match what will be committed.
+        var screenBrushSize = BrushSize * DisplayScale;
+        using var paint = CreatePaint(screenBrushSize);
 
         if (_isShiftHeld)
         {
@@ -212,12 +227,12 @@ public class DrawingTool
                 var point = _currentStrokePoints[0];
                 if (BrushShape == BrushShape.Round)
                 {
-                    canvas.DrawCircle(point, BrushSize / 2, paint);
+                    canvas.DrawCircle(point, screenBrushSize / 2, paint);
                 }
                 else
                 {
-                    var halfSize = BrushSize / 2;
-                    canvas.DrawRect(point.X - halfSize, point.Y - halfSize, BrushSize, BrushSize, paint);
+                    var halfSize = screenBrushSize / 2;
+                    canvas.DrawRect(point.X - halfSize, point.Y - halfSize, screenBrushSize, screenBrushSize, paint);
                 }
             }
             else if (_currentStrokePoints.Count > 1)
@@ -248,25 +263,27 @@ public class DrawingTool
             IsAntialias = true
         };
 
+        var screenBrushSize = BrushSize * DisplayScale;
+
         if (BrushShape == BrushShape.Round)
         {
-            canvas.DrawCircle(position, BrushSize / 2, paint);
+            canvas.DrawCircle(position, screenBrushSize / 2, paint);
         }
         else
         {
-            var halfSize = BrushSize / 2;
-            canvas.DrawRect(position.X - halfSize, position.Y - halfSize, BrushSize, BrushSize, paint);
+            var halfSize = screenBrushSize / 2;
+            canvas.DrawRect(position.X - halfSize, position.Y - halfSize, screenBrushSize, screenBrushSize, paint);
         }
     }
 
-    private SKPaint CreatePaint()
+    private SKPaint CreatePaint(float strokeWidth)
     {
         var paint = new SKPaint
         {
             Color = BrushColor,
             IsAntialias = true,
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = BrushSize
+            StrokeWidth = strokeWidth
         };
 
         if (BrushShape == BrushShape.Round)
@@ -295,10 +312,12 @@ public class DrawingTool
         return new SKPoint(x, y);
     }
 
-    private float GetCurrentScale()
+    // The basis for normalizing the brush size: the image's pixel width, so the brush
+    // is measured in image pixels regardless of zoom. Falls back to the displayed width
+    // (legacy behavior) if the pixel width has not been set yet (e.g. before first render).
+    private float GetImagePixelWidth()
     {
-        // Get the current scale factor based on image rect
-        // This assumes the image rect represents the displayed size
+        if (ImagePixelWidth > 0) return ImagePixelWidth;
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
     }
 }

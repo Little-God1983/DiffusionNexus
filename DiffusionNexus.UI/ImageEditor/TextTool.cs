@@ -129,6 +129,12 @@ public class TextTool
     public float OutlineWidth { get; set; }
 
     /// <summary>
+    /// Gets or sets the image width in pixels. Used to size the font and outline in image
+    /// pixels independently of the current zoom level. Set by the editor core each render pass.
+    /// </summary>
+    public int ImagePixelWidth { get; set; }
+
+    /// <summary>
     /// Gets the current interaction phase.
     /// </summary>
     public TextToolPhase Phase => _phase;
@@ -189,12 +195,12 @@ public class TextTool
         {
             Text = Text,
             FontFamily = FontFamily,
-            FontSize = FontSize / GetCurrentScale(),
+            FontSize = FontSize / GetImagePixelWidth(),
             IsBold = IsBold,
             IsItalic = IsItalic,
             TextColor = TextColor,
             OutlineColor = OutlineColor,
-            OutlineWidth = OutlineWidth / GetCurrentScale(),
+            OutlineWidth = OutlineWidth / GetImagePixelWidth(),
             NormalizedTopLeft = normalizedTopLeft,
             NormalizedBottomRight = normalizedBottomRight,
             RotationDegrees = 0f
@@ -334,12 +340,12 @@ public class TextTool
 
         _placedText.Text = Text;
         _placedText.FontFamily = FontFamily;
-        _placedText.FontSize = FontSize / GetCurrentScale();
+        _placedText.FontSize = FontSize / GetImagePixelWidth();
         _placedText.IsBold = IsBold;
         _placedText.IsItalic = IsItalic;
         _placedText.TextColor = TextColor;
         _placedText.OutlineColor = OutlineColor;
-        _placedText.OutlineWidth = OutlineWidth / GetCurrentScale();
+        _placedText.OutlineWidth = OutlineWidth / GetImagePixelWidth();
 
         TextChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -409,8 +415,9 @@ public class TextTool
             Math.Max(topLeft.Y, bottomRight.Y));
         var center = new SKPoint((topLeft.X + bottomRight.X) / 2f, (topLeft.Y + bottomRight.Y) / 2f);
 
-        var screenFontSize = _placedText.FontSize * GetCurrentScale();
-        var screenOutlineWidth = _placedText.OutlineWidth * GetCurrentScale();
+        // FontSize/OutlineWidth are normalized to image width; * display width gives screen pixels.
+        var screenFontSize = _placedText.FontSize * GetDisplayWidth();
+        var screenOutlineWidth = _placedText.OutlineWidth * GetDisplayWidth();
 
         canvas.Save();
         canvas.RotateDegrees(_placedText.RotationDegrees, center.X, center.Y);
@@ -752,8 +759,19 @@ public class TextTool
         return new SKPoint(x, y);
     }
 
-    private float GetCurrentScale()
+    // The displayed image width in screen pixels. Used to convert a normalized font size
+    // back to screen pixels for previewing placed text.
+    private float GetDisplayWidth()
     {
+        return _imageRect.Width > 0 ? _imageRect.Width : 1f;
+    }
+
+    // The basis for normalizing the font size: the image's pixel width, so the font is
+    // measured in image pixels regardless of zoom. Falls back to the displayed width
+    // (legacy behavior) if the pixel width has not been set yet (e.g. before first render).
+    private float GetImagePixelWidth()
+    {
+        if (ImagePixelWidth > 0) return ImagePixelWidth;
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
     }
 

@@ -7,7 +7,7 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public enum ShapeToolPhase
 {
-    /// <summary>No shape is active — ready to draw a new one.</summary>
+    /// <summary>No shape is active ï¿½ ready to draw a new one.</summary>
     Idle,
     /// <summary>User is dragging to create a new shape.</summary>
     Drawing,
@@ -26,9 +26,9 @@ public enum ShapeToolPhase
 /// </summary>
 public enum ShapeManipulationHandle
 {
-    /// <summary>No handle — click is outside the shape.</summary>
+    /// <summary>No handle ï¿½ click is outside the shape.</summary>
     None,
-    /// <summary>Click is inside the shape body — drag to move.</summary>
+    /// <summary>Click is inside the shape body ï¿½ drag to move.</summary>
     Body,
     /// <summary>Top-left corner resize handle.</summary>
     TopLeft,
@@ -142,7 +142,7 @@ public class ShapeTool
     public SKColor FillColor { get; set; } = SKColors.White;
 
     /// <summary>
-    /// Gets or sets the stroke width in pixels.
+    /// Gets or sets the stroke width in image pixels (zoom-independent).
     /// </summary>
     public float StrokeWidth { get; set; } = 3f;
 
@@ -150,6 +150,18 @@ public class ShapeTool
     /// Gets or sets the arrow head size as a multiplier of stroke width.
     /// </summary>
     public float ArrowHeadSize { get; set; } = 4f;
+
+    /// <summary>
+    /// Gets or sets the image width in pixels. Used to size the stroke in image pixels
+    /// independently of the current zoom level. Set by the editor core each render pass.
+    /// </summary>
+    public int ImagePixelWidth { get; set; }
+
+    /// <summary>
+    /// Gets the on-screen scale (display pixels per image pixel) at the current zoom level.
+    /// </summary>
+    public float DisplayScale =>
+        ImagePixelWidth > 0 && _imageRect.Width > 0 ? _imageRect.Width / ImagePixelWidth : 1f;
 
     /// <summary>
     /// Gets or sets whether to constrain proportions (Ctrl held).
@@ -397,7 +409,7 @@ public class ShapeTool
             FillMode = FillMode,
             StrokeColor = StrokeColor,
             FillColor = FillColor,
-            StrokeWidth = StrokeWidth / GetCurrentScale(),
+            StrokeWidth = StrokeWidth / GetImagePixelWidth(),
             ArrowHeadSize = ArrowHeadSize,
             NormalizedStart = normalizedStart,
             NormalizedEnd = normalizedEnd,
@@ -416,7 +428,7 @@ public class ShapeTool
 
         if (handle == ShapeManipulationHandle.None)
         {
-            // Click outside — commit current shape and start a new one if inside image
+            // Click outside ï¿½ commit current shape and start a new one if inside image
             CommitPlacedShape();
             if (_imageRect.Contains(screenPoint))
             {
@@ -587,7 +599,9 @@ public class ShapeTool
                 ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType)
                 : _currentPoint;
 
-            RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
+            // The shape is painted at StrokeWidth image pixels, so the live drag preview
+            // (drawn in screen space) must scale the stroke width by the current zoom.
+            RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth * DisplayScale, ArrowHeadSize);
         }
 
         // Render placed shape with handles
@@ -596,7 +610,8 @@ public class ShapeTool
             var start = NormalizedToScreen(_placedShape.NormalizedStart);
             var end = NormalizedToScreen(_placedShape.NormalizedEnd);
             var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
-            var screenStrokeWidth = _placedShape.StrokeWidth * GetCurrentScale();
+            // StrokeWidth is normalized to image width; * display width gives screen pixels.
+            var screenStrokeWidth = _placedShape.StrokeWidth * GetDisplayWidth();
 
             canvas.Save();
             canvas.RotateDegrees(_placedShape.RotationDegrees, center.X, center.Y);
@@ -886,8 +901,19 @@ public class ShapeTool
         return new SKPoint(x, y);
     }
 
-    private float GetCurrentScale()
+    // The displayed image width in screen pixels. Used to convert a normalized stroke
+    // width back to screen pixels for previewing a placed shape.
+    private float GetDisplayWidth()
     {
+        return _imageRect.Width > 0 ? _imageRect.Width : 1f;
+    }
+
+    // The basis for normalizing the stroke width: the image's pixel width, so the stroke
+    // is measured in image pixels regardless of zoom. Falls back to the displayed width
+    // (legacy behavior) if the pixel width has not been set yet (e.g. before first render).
+    private float GetImagePixelWidth()
+    {
+        if (ImagePixelWidth > 0) return ImagePixelWidth;
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
     }
 

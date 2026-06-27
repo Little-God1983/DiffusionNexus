@@ -22,11 +22,11 @@ public partial class ImageEditorCore : IDisposable
     private readonly object _bitmapLock = new();
     private SKRect _lastImageRect;
 
-    // Layer state — delegated to LayerManager when services are wired
+    // Layer state ï¿½ delegated to LayerManager when services are wired
     private LayerStack? _layers => _services?.Layers.Stack;
     private bool _isLayerMode => _services?.Layers.IsLayerMode ?? false;
 
-    // Viewport state — delegated to ViewportManager when services are wired
+    // Viewport state ï¿½ delegated to ViewportManager when services are wired
     private float _zoomLevel
     {
         get => _services?.Viewport.ZoomLevel ?? 1f;
@@ -843,16 +843,20 @@ public partial class ImageEditorCore : IDisposable
             CropTool.ImagePixelHeight = imageHeight;
             CropTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
-            // Update drawing tool with current image bounds and render overlay
+            // Update drawing tool with current image bounds and render overlay.
+            // ImagePixelWidth lets the tool size the brush in image pixels (zoom-independent).
             DrawingTool.SetImageBounds(imageRect);
+            DrawingTool.ImagePixelWidth = imageWidth;
             DrawingTool.Render(canvas);
 
             // Update shape tool with current image bounds and render overlay
             ShapeTool.SetImageBounds(imageRect);
+            ShapeTool.ImagePixelWidth = imageWidth;
             ShapeTool.Render(canvas);
 
             // Update text tool with current image bounds and render overlay
             TextTool.SetImageBounds(imageRect);
+            TextTool.ImagePixelWidth = imageWidth;
             TextTool.Render(canvas);
 
             // Update outpaint tool with current image bounds and render overlay
@@ -1056,7 +1060,7 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     /// <param name="normalizedPoints">Points in normalized coordinates (0-1).</param>
     /// <param name="color">The stroke color.</param>
-    /// <param name="brushSize">The brush size in pixels relative to display size.</param>
+    /// <param name="brushSize">The brush size normalized to image width (0-1); multiplied by the bitmap width to get image pixels.</param>
     /// <param name="brushShape">The brush shape.</param>
     /// <returns>True if the stroke was applied successfully.</returns>
     public bool ApplyStroke(IReadOnlyList<SKPoint> normalizedPoints, SKColor color, float brushSize, BrushShape brushShape)

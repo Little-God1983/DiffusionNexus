@@ -1051,15 +1051,17 @@ public class ImageEditorControl : Control
                 _isInpaintPainting ? [.. _inpaintStrokePoints] : null)
             : null;
 
+        // Brush/stroke sizes are in image pixels; scale by the current zoom so the
+        // on-screen cursor footprint matches what will actually be painted.
         var drawingOverlay = _hasDrawingCursorPosition && (_editorCore.DrawingTool.IsActive || _editorCore.ShapeTool.IsActive)
             ? new DrawingOverlayState(
                 _drawingCursorPosition,
                 _editorCore.DrawingTool.IsActive,
-                _editorCore.DrawingTool.BrushSize,
+                _editorCore.DrawingTool.BrushSize * _editorCore.DrawingTool.DisplayScale,
                 _editorCore.DrawingTool.BrushShape,
                 _editorCore.DrawingTool.BrushColor,
                 _editorCore.ShapeTool.IsActive,
-                _editorCore.ShapeTool.StrokeWidth,
+                _editorCore.ShapeTool.StrokeWidth * _editorCore.ShapeTool.DisplayScale,
                 _editorCore.ShapeTool.StrokeColor,
                 _editorCore.ShapeTool.HasPlacedShape)
             : null;
