@@ -127,7 +127,6 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private DatasetCardViewModel? _tempDataset;
     private string? _tempStagingDir;
-    private string? _singleImagePath;
     private bool _isSingleImageMode;
 
     #region Single Image Properties
@@ -143,7 +142,7 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _isSingleImageMode, value))
             {
                 if (value) SelectedDataset = null;
-                else SingleImagePath = null;
+                else SingleImagePaths.Clear();
                 OnPropertyChanged(nameof(IsDatasetMode));
                 OnPropertyChanged(nameof(HasSourceSelected));
                 OnPropertyChanged(nameof(CanStart));
@@ -159,34 +158,15 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     public bool IsDatasetMode => !IsSingleImageMode;
 
     /// <summary>
-    /// Path to a single image for crop/scale.
+    /// Paths of the loose images to crop/scale in single-image mode. Mutated in place by
+    /// <c>ImageListInputControl</c> (drag-drop / file picker) and staged for processing.
     /// </summary>
-    public string? SingleImagePath
-    {
-        get => _singleImagePath;
-        set
-        {
-            if (SetProperty(ref _singleImagePath, value))
-            {
-                if (!string.IsNullOrEmpty(value)) IsSingleImageMode = true;
-                OnPropertyChanged(nameof(SingleImageName));
-                OnPropertyChanged(nameof(HasSingleImage));
-                OnPropertyChanged(nameof(HasSourceSelected));
-                OnPropertyChanged(nameof(CanStart));
-                StartCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
+    public ObservableCollection<string> SingleImagePaths { get; } = [];
 
     /// <summary>
-    /// Display name for the selected single image.
+    /// Whether at least one image is loaded for single-image (loose images) mode.
     /// </summary>
-    public string? SingleImageName => Path.GetFileName(SingleImagePath);
-
-    /// <summary>
-    /// Whether a single image is currently loaded.
-    /// </summary>
-    public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
+    public bool HasSingleImage => SingleImagePaths.Count > 0;
 
     #endregion
 
@@ -475,16 +455,6 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
 
     public IDialogService? DialogService { get; set; }
 
-    /// <summary>
-    /// Opens a file dialog to select a single image for crop/scale.
-    /// </summary>
-    public IAsyncRelayCommand SelectSingleImageCommand { get; }
-
-    /// <summary>
-    /// Clears the currently loaded single image.
-    /// </summary>
-    public IRelayCommand ClearSingleImageCommand { get; }
-
     #endregion
 
     #region Constructor
@@ -499,8 +469,14 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         _settingsService = settingsService;
         _cropperService = new ImageCropperService();
 
-        SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
-        ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
+        // The image list is mutated in place by ImageListInputControl; react to its changes.
+        SingleImagePaths.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasSingleImage));
+            OnPropertyChanged(nameof(HasSourceSelected));
+            OnPropertyChanged(nameof(CanStart));
+            StartCommand.NotifyCanExecuteChanged();
+        };
 
         // Subscribe to events for dataset/version creation
         if (_eventAggregator is not null)
@@ -557,10 +533,9 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrWhiteSpace(value))
         {
             _isSingleImageMode = false;
-            _singleImagePath = null;
+            SingleImagePaths.Clear();
             OnPropertyChanged(nameof(IsSingleImageMode));
             OnPropertyChanged(nameof(IsDatasetMode));
-            OnPropertyChanged(nameof(SingleImagePath));
             OnPropertyChanged(nameof(HasSingleImage));
 
             _selectedDataset = null;
@@ -695,20 +670,6 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Opens a file dialog to select a single image for crop/scale.
-    /// </summary>
-    private async Task SelectSingleImageAsync()
-    {
-        if (DialogService is null) return;
-
-        var result = await DialogService.ShowOpenFileDialogAsync("Select Image", null);
-        if (!string.IsNullOrEmpty(result))
-        {
-            SingleImagePath = result;
-        }
-    }
-
-    /// <summary>
     /// Loads a single image for crop/scale. Can be called from drag-drop or external navigation.
     /// </summary>
     public void LoadSingleImage(string imagePath)
@@ -719,7 +680,9 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
         }
 
         ClearGallerySelection();
-        SingleImagePath = imagePath;
+        IsSingleImageMode = true;
+        SingleImagePaths.Clear();
+        SingleImagePaths.Add(imagePath);
     }
 
     /// <summary>
@@ -1032,30 +995,49 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 }
                 : null;
 
-            // --- Single Image Mode ---
+            // --- Single Image(s) Mode ---
             if (IsSingleImageMode)
             {
-                if (string.IsNullOrEmpty(SingleImagePath) || !File.Exists(SingleImagePath))
+                var sourceImages = SingleImagePaths.Where(File.Exists).ToList();
+                if (sourceImages.Count == 0)
                 {
                     StatusMessage = "No image selected.";
                     return;
                 }
 
-                var outputPath = GetSingleImageOutputPath(SingleImagePath);
-                var outputDir = Path.GetDirectoryName(outputPath) ?? ".";
+                // Stage all loose images into one temp input dir and collect results in a
+                // temp output dir, then move each result next to its original as
+                // {name}_cropped{ext}. The crop service writes outputs flat using the input
+                // file name, so we track a staged-name -> final-path map (and de-collide
+                // names that came from different source folders).
+                var stamp = Guid.NewGuid().ToString("N");
+                var tempRoot = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "crop-single", stamp);
+                var tempInput = Path.Combine(tempRoot, "in");
+                var tempOutput = Path.Combine(tempRoot, "out");
+                Directory.CreateDirectory(tempInput);
+                Directory.CreateDirectory(tempOutput);
 
-                // Stage the single image in a temp directory for the crop service
-                var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "crop-single", Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(tempDir);
-                var stagedFile = Path.Combine(tempDir, Path.GetFileName(SingleImagePath));
-                File.Copy(SingleImagePath, stagedFile);
+                var finalByStagedName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var src in sourceImages)
+                {
+                    var fileName = Path.GetFileName(src);
+                    var stagedName = fileName;
+                    var counter = 1;
+                    while (finalByStagedName.ContainsKey(stagedName))
+                    {
+                        stagedName = $"{Path.GetFileNameWithoutExtension(fileName)}_{counter++}{Path.GetExtension(fileName)}";
+                    }
+
+                    File.Copy(src, Path.Combine(tempInput, stagedName));
+                    finalByStagedName[stagedName] = GetSingleImageOutputPath(src);
+                }
 
                 var progress = new Progress<CropProgress>(OnProgressUpdate);
-                ImageFiles = 1;
+                ImageFiles = sourceImages.Count;
 
                 var result = await _cropperService.ProcessImagesAsync(
-                    tempDir,
-                    outputDir,
+                    tempInput,
+                    tempOutput,
                     SelectedBuckets,
                     maxLongestSide,
                     skipUnchanged: false,
@@ -1068,18 +1050,22 @@ public partial class BatchCropScaleTabViewModel : ObservableObject, IDisposable
                 FailedCount = result.FailedCount;
                 SkippedCount = result.SkippedCount;
 
-                // Rename the output file to the _cropped name if the service wrote it with the original name
-                var serviceOutput = Path.Combine(outputDir, Path.GetFileName(SingleImagePath));
-                if (File.Exists(serviceOutput) && serviceOutput != outputPath)
+                // Move each produced file next to its original with the _cropped suffix.
+                foreach (var (stagedName, finalPath) in finalByStagedName)
                 {
-                    File.Move(serviceOutput, outputPath, overwrite: true);
+                    var produced = Path.Combine(tempOutput, stagedName);
+                    if (File.Exists(produced))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(finalPath)!);
+                        File.Move(produced, finalPath, overwrite: true);
+                    }
                 }
 
                 var modeInfo = UsePadding ? " (padded)" : " (cropped)";
-                StatusMessage = $"Done{modeInfo} – saved to {Path.GetFileName(outputPath)}";
+                StatusMessage = $"Done{modeInfo} – {SuccessCount}/{sourceImages.Count} image(s) saved with the _cropped suffix.";
 
                 // Cleanup temp staging
-                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+                try { Directory.Delete(tempRoot, recursive: true); } catch { /* best-effort */ }
                 return;
             }
 
