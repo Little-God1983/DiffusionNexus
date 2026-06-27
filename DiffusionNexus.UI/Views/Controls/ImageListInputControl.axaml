@@ -1,0 +1,101 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="using:System"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.ImageListInputControl"
+             x:DataType="local:ImageListInputControl"
+             DragDrop.AllowDrop="True">
+
+  <StackPanel Spacing="8">
+
+    <!-- Empty state: drop prompt -->
+    <Border x:Name="EmptyDropZone"
+            Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+            CornerRadius="8" Padding="16" MinHeight="100"
+            DragDrop.AllowDrop="True"
+            IsVisible="{Binding HasImages, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Converter={x:Static converters:BoolConverters.Not}}">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <TextBlock Text="No images loaded" FontSize="14" FontWeight="SemiBold"
+                   HorizontalAlignment="Center" Opacity="0.6"/>
+        <TextBlock Text="Drag and drop one or more images here"
+                   FontSize="12" Opacity="0.4" HorizontalAlignment="Center"/>
+        <Button Content="+ Add Images"
+                Click="OnAddImagesClick"
+                HorizontalAlignment="Center"
+                Background="#4CAF50" Foreground="White"
+                Padding="12,6" Margin="0,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Loaded state: preview + thumbnail list -->
+    <Border x:Name="LoadedZone"
+            Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+            CornerRadius="8" Padding="12"
+            DragDrop.AllowDrop="True"
+            IsVisible="{Binding HasImages, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}">
+      <StackPanel Spacing="8">
+
+        <!-- Large preview of the selected image -->
+        <Border Background="#111111" CornerRadius="6" Height="180" ClipToBounds="True">
+          <Image Stretch="Uniform"
+                 Source="{Binding SelectedImagePath, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"/>
+        </Border>
+
+        <!-- Thumbnail list -->
+        <ListBox MaxHeight="150"
+                 Background="Transparent"
+                 ItemsSource="{Binding ImagePaths, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                 SelectedItem="{Binding SelectedImagePath, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Mode=TwoWay}">
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel Orientation="Horizontal"/>
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.Styles>
+            <!-- Tight item padding so thumbnails sit close together -->
+            <Style Selector="ListBoxItem">
+              <Setter Property="Padding" Value="2"/>
+              <Setter Property="Margin" Value="0"/>
+            </Style>
+          </ListBox.Styles>
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="sys:String">
+              <Grid Width="68" Height="68" ToolTip.Tip="{Binding}">
+                <Border Background="#333" CornerRadius="4" ClipToBounds="True">
+                  <Image Stretch="UniformToFill"
+                         Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"/>
+                </Border>
+                <!-- Per-item remove button -->
+                <Button Content="&#x2715;"
+                        Command="{Binding RemoveCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                        CommandParameter="{Binding}"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Width="18" Height="18" Padding="0" Margin="0,2,2,0"
+                        FontSize="10" FontWeight="Bold"
+                        Background="#CC000000" Foreground="#FF6B6B"
+                        ToolTip.Tip="Remove this image"/>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- Footer: count + actions -->
+        <Grid ColumnDefinitions="*,Auto,Auto">
+          <TextBlock Grid.Column="0"
+                     Text="{Binding CountText, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                     FontSize="12" Opacity="0.6" VerticalAlignment="Center"/>
+          <Button Grid.Column="1" Content="+ Add"
+                  Click="OnAddImagesClick"
+                  Padding="10,4" Margin="0,0,4,0"
+                  ToolTip.Tip="Add more images"/>
+          <Button Grid.Column="2" Content="Clear all"
+                  Command="{Binding ClearCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
+                  Padding="10,4"
+                  Foreground="#FF6B6B"
+                  ToolTip.Tip="Remove all images"/>
+        </Grid>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>
