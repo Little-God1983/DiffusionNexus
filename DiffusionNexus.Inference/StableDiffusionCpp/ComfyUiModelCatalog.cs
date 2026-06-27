@@ -80,7 +80,10 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
         // The diffusion model ships as one GGUF per VRAM/quant tier (e.g.
         // flux-2-klein-9b-Q4_K_M.gguf … flux-2-klein-9b-BF16.gguf) — any one present satisfies it.
         var unet = FindFileByPattern("flux-2-klein-9b-*.gguf");
-        var llm = FindFile("qwen_3_8b_fp8mixed.safetensors");
+        // Text encoder = Qwen3-8B. stable-diffusion.cpp loads it via WithLLMPath and needs a GGUF or
+        // plain bf16 — NOT Comfy-Org's fp8-scaled "fp8mixed" safetensors (those fail to load with a
+        // tensor-shape error). Match any Qwen3-8B GGUF quant (unsloth/Qwen3-8B-GGUF naming).
+        var llm = FindFileByPattern("Qwen3-8B-*.gguf");
         var vae = FindFile("flux2-vae.safetensors");
 
         if (unet is null || llm is null || vae is null)

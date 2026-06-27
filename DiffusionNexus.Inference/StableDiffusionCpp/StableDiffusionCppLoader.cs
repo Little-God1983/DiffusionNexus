@@ -51,6 +51,9 @@ internal static class StableDiffusionCppLoader
             .WithLLMPath(llmPath)
             .WithVae(d.VaePath)
             .WithPrediction(SDNet.Prediction.Flux2Flow)
+            // FLUX.2-klein is large (~24 GB VRAM for the BF16 weights alone). Tile the VAE decode so
+            // the (otherwise multi-GB) decode buffer at 1024px doesn't push a 24 GB card into OOM.
+            .WithVaeTiling()
             .WithMultithreading()
             .WithFlashAttention();
     }

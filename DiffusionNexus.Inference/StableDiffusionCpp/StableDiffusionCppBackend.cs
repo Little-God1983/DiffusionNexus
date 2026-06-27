@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.Models;
 using HPPH;
@@ -19,18 +20,30 @@ namespace DiffusionNexus.Inference.StableDiffusionCpp;
 /// </summary>
 public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 {
+    private const string NativeSource = "stable-diffusion.cpp";
+
+    private static readonly Serilog.ILogger Logger = Serilog.Log.ForContext<StableDiffusionCppBackend>();
+    private static readonly Serilog.ILogger NativeLog = Serilog.Log.ForContext("SourceContext", NativeSource);
+
     private readonly DiffusionContextHost _host = new();
     private readonly ComfyUiModelCatalog _catalog;
     private static int _eventsInitialized;
+
+    /// <summary>
+    /// Static so the (static) native <c>StableDiffusionCpp.Log</c> handler can route native engine
+    /// output to the Unified Console. Set from the ctor; the backend is a singleton in practice.
+    /// </summary>
+    private static IUnifiedLogger? _unifiedLogger;
 
     public StableDiffusionCppBackend(string modelsRoot)
         : this(new[] { modelsRoot })
     {
     }
 
-    public StableDiffusionCppBackend(IEnumerable<string> modelsRoots)
+    public StableDiffusionCppBackend(IEnumerable<string> modelsRoots, IUnifiedLogger? unifiedLogger = null)
     {
         _catalog = new ComfyUiModelCatalog(modelsRoots);
+        _unifiedLogger = unifiedLogger;
         EnsureNativeEventsInitialized();
     }
 
@@ -136,6 +149,12 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             }
             catch (Exception ex)
             {
+                // Log the full exception to Serilog + the Unified Console (the in-frame message is
+                // necessarily short). Native engine detail, if any, was already routed via OnNativeLog.
+                Logger.Error(ex, "Diffusion generation failed for model {ModelKey}", descriptor.Key);
+                _unifiedLogger?.Error(LogCategory.General, "DiffusionNexus.Core",
+                    $"Generation failed for '{descriptor.DisplayName}': {ex.GetType().Name}: {ex.Message}", ex);
+
                 // Surface the failure as a final progress message; the consumer sees the error message.
                 TryWrite(channel, new DiffusionProgress
                 {
@@ -236,7 +255,43 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     private static void EnsureNativeEventsInitialized()
     {
         if (Interlocked.Exchange(ref _eventsInitialized, 1) == 0)
+        {
             SDNet.StableDiffusionCpp.InitializeEvents();
+            // Route the native engine's own log (the ONLY place that explains *why* a model fails to
+            // load, e.g. unsupported architecture / missing tensor / bad quant) to Serilog + the
+            // Unified Console. Without this, failures surface only as the generic wrapper exception
+            // "Failed to initialize diffusion-model." with no detail.
+            SDNet.StableDiffusionCpp.Log += OnNativeLog;
+        }
+    }
+
+    /// <summary>
+    /// Forwards stable-diffusion.cpp's native log lines. Warn/Error go to the Unified Console so the
+    /// user can see them; the full firehose (incl. Info/Debug) always goes to the Serilog file.
+    /// </summary>
+    private static void OnNativeLog(object? sender, SDNet.StableDiffusionLogEventArgs e)
+    {
+        var text = e.Text?.TrimEnd();
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        switch (e.Level)
+        {
+            case SDNet.LogLevel.Error:
+                NativeLog.Error("{NativeText}", text);
+                _unifiedLogger?.Error(LogCategory.General, NativeSource, text);
+                break;
+            case SDNet.LogLevel.Warn:
+                NativeLog.Warning("{NativeText}", text);
+                _unifiedLogger?.Warn(LogCategory.General, NativeSource, text);
+                break;
+            case SDNet.LogLevel.Info:
+                NativeLog.Information("{NativeText}", text);
+                break;
+            default:
+                NativeLog.Debug("{NativeText}", text);
+                break;
+        }
     }
 
     public void Dispose() => _host.Dispose();

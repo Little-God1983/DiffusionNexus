@@ -10,10 +10,16 @@
   <Grid RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,0,0,1">
       <StackPanel Orientation="Horizontal" Spacing="4">
-        <ComboBox MinWidth="200" IsEnabled="False"
-                  ItemsSource="{Binding AvailableBackends}"
-                  SelectedItem="{Binding SelectedBackend}"
-                  ToolTip.Tip="TODO(v2-backend-dropdown): Switch between local and ComfyUI backends." />
+        <ComboBox MinWidth="220"
+                  ItemsSource="{Binding AvailableModels}"
+                  SelectedItem="{Binding SelectedModel}"
+                  ToolTip.Tip="Local model rendered by the Diffusion Nexus core.">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:CanvasModelOption">
+              <TextBlock Text="{Binding DisplayName}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
         <Separator Margin="6,0" />
         <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="False"
                 ToolTip.Tip="TODO(v2-cancel): Mid-sampling cancellation requires upstream stable-diffusion.cpp support." />

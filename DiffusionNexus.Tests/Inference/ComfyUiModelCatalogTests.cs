@@ -101,7 +101,7 @@ public class ComfyUiModelCatalogTests : IDisposable
     public void ListAvailable_AnyFlux2KleinGgufVariant_ReturnsDescriptor(string ggufFileName)
     {
         var unet = CreateFile(Path.Combine("diffusion_models", ggufFileName));
-        var llm = CreateFile(Path.Combine("text_encoders", "qwen_3_8b_fp8mixed.safetensors"));
+        var llm = CreateFile(Path.Combine("text_encoders", "Qwen3-8B-Q4_K_M.gguf"));
         var vae = CreateFile(Path.Combine("vae", "flux2-vae.safetensors"));
 
         var sut = new ComfyUiModelCatalog(_root);

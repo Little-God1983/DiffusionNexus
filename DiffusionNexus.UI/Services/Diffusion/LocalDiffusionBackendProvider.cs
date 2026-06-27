@@ -49,7 +49,10 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
 
             Logger.Information("Initializing local diffusion backend with {Count} models root(s): {Roots}",
                 roots.Count, string.Join(" | ", roots));
-            _backend = new StableDiffusionCppBackend(roots);
+            // Pass the Unified Logger so native engine logs + generation failures surface in the
+            // Unified Console (singleton, resolved from the root provider).
+            var unifiedLogger = _serviceProvider.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>();
+            _backend = new StableDiffusionCppBackend(roots, unifiedLogger);
             _resolvedRoots = roots;
             return _backend;
         }
