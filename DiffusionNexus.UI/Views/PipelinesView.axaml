@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:m="using:DiffusionNexus.UI.Markup"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+             x:Class="DiffusionNexus.UI.Views.PipelinesView"
+             x:DataType="vm:PipelinesViewModel">
+
+  <Design.DataContext>
+    <vm:PipelinesViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*" Margin="24">
+
+    <!-- Header -->
+    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,20">
+      <TextBlock Text="Image Pipelines" FontSize="26" FontWeight="Bold" Foreground="White"/>
+      <TextBlock Text="Pick a guided pipeline to start working"
+                 FontSize="13" Foreground="#A0A0A0"/>
+    </StackPanel>
+
+    <!-- Tile gallery -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding Pipelines}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal"/>
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:PipelineTileViewModel">
+            <Button Width="240" Height="260" Margin="0,0,16,16"
+                    Padding="0"
+                    CornerRadius="8"
+                    BorderThickness="0"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch"
+                    Cursor="Hand"
+                    Command="{Binding $parent[ItemsControl].DataContext.OpenPipelineCommand}"
+                    CommandParameter="{Binding}"
+                    ToolTip.Tip="{Binding Description}">
+
+              <!-- Keep the button chrome flat so only the rounded card below is visible -->
+              <Button.Styles>
+                <Style Selector="Button">
+                  <Setter Property="Background" Value="Transparent"/>
+                </Style>
+                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                  <Setter Property="Background" Value="Transparent"/>
+                </Style>
+                <Style Selector="Button:pressed /template/ ContentPresenter">
+                  <Setter Property="Background" Value="Transparent"/>
+                </Style>
+                <Style Selector="Button:pointerover Border#Card">
+                  <Setter Property="BorderBrush" Value="#0078D4"/>
+                </Style>
+              </Button.Styles>
+
+              <Border x:Name="Card"
+                      Background="#2D2D2D"
+                      CornerRadius="8"
+                      BorderBrush="#3D3D3D"
+                      BorderThickness="1"
+                      ClipToBounds="True">
+                <Grid RowDefinitions="*,Auto">
+
+                  <!-- Icon / preview area -->
+                  <Border Grid.Row="0" Background="#1A1A1A">
+                    <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/HumanCogwheel.png}"
+                           Width="96" Height="96"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+                  </Border>
+
+                  <!-- Caption -->
+                  <StackPanel Grid.Row="1" Background="#252525" Spacing="2">
+                    <TextBlock Text="{Binding Title}"
+                               FontSize="15" FontWeight="SemiBold" Foreground="White"
+                               Margin="12,8,12,0"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Description}"
+                               FontSize="11" Foreground="#A0A0A0"
+                               Margin="12,0,12,10"
+                               TextWrapping="Wrap" MaxLines="2"
+                               TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+
+                </Grid>
+              </Border>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+  </Grid>
+</UserControl>

@@ -1212,6 +1212,20 @@ public partial class App : Application
 
         mainViewModel.RegisterModule(imageComparerModule);
 
+        // Pipelines module — tile gallery of guided image pipelines (currently Anime-To-Real).
+        var pipelinesVm = new PipelinesViewModel();
+        var pipelinesView = new PipelinesView { DataContext = pipelinesVm };
+
+        var pipelinesModule = new ModuleItem(
+            "Pipelines",
+            "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
+            pipelinesView)
+        {
+            ViewModel = pipelinesVm
+        };
+
+        mainViewModel.RegisterModule(pipelinesModule);
+
         // Settings module
         var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
         var settingsView = new SettingsView { DataContext = settingsVm };
