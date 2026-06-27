@@ -89,13 +89,13 @@ public partial class TextToolViewModel : ObservableObject
         }
     }
 
-    /// <summary>Font size in pixels (8-500).</summary>
+    /// <summary>Font size in pixels (8-1000).</summary>
     public float FontSize
     {
         get => _fontSize;
         set
         {
-            var clamped = Math.Clamp(value, 8f, 500f);
+            var clamped = Math.Clamp(value, 8f, 1000f);
             if (SetProperty(ref _fontSize, clamped))
             {
                 OnPropertyChanged(nameof(FontSizeText));
@@ -207,13 +207,13 @@ public partial class TextToolViewModel : ObservableObject
     /// <summary>Hex string representation of the outline color.</summary>
     public string OutlineColorHex => $"#{_outlineColorRed:X2}{_outlineColorGreen:X2}{_outlineColorBlue:X2}";
 
-    /// <summary>Outline width in pixels (0-20).</summary>
+    /// <summary>Outline width in pixels (0-100).</summary>
     public float OutlineWidth
     {
         get => _outlineWidth;
         set
         {
-            var clamped = Math.Clamp(value, 0f, 20f);
+            var clamped = Math.Clamp(value, 0f, 100f);
             if (SetProperty(ref _outlineWidth, clamped))
             {
                 OnPropertyChanged(nameof(OutlineWidthText));
