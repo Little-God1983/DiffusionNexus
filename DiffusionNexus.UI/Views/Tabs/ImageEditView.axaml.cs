@@ -764,6 +764,24 @@ public partial class ImageEditView : UserControl
             imageEditor.TextTools.HasPlacedText = _imageEditorCanvas!.HasPlacedText;
         _imageEditorCanvas!.PlacedTextStateChanged += onPlacedTextState;
         _eventCleanup.Add(() => _imageEditorCanvas!.PlacedTextStateChanged -= onPlacedTextState);
+
+        // Corner-drag resize scales the font; sync the slider so it follows and later
+        // edits keep the resized size.
+        EventHandler<float> onTextFontSizeChanged = (_, newSize) =>
+        {
+            imageEditor.TextTools.FontSize = newSize;
+            // If the value was already at the slider's min/max, the setter does not raise a
+            // change event, so force the placed text back to the clamped slider value to keep
+            // them consistent (otherwise the next edit would resize the text).
+            var textTool = _imageEditorCanvas!.EditorCore.TextTool;
+            if (Math.Abs(textTool.FontSize - imageEditor.TextTools.FontSize) > 0.01f)
+            {
+                textTool.FontSize = imageEditor.TextTools.FontSize;
+                textTool.UpdatePlacedTextProperties();
+            }
+        };
+        _imageEditorCanvas!.TextFontSizeChanged += onTextFontSizeChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.TextFontSizeChanged -= onTextFontSizeChanged);
     }
 
     private void WireInpaintingEvents(ImageEditorViewModel imageEditor)

@@ -61,13 +61,15 @@ public class TextTool
     private SKPoint _placedScreenBottomRight;
     private float _rotationStartAngle;
     private float _rotationBaseAngle;
+    private float _resizeStartFontSize;
+    private float _resizeStartDistance;
 
     private const float HandleRadius = 6f;
     private const float RotateHandleOffset = 30f;
     private const float DeleteHandleOffset = 32f;
     private const float HandleHitRadius = 12f;
-    private const float DefaultTextBoxWidth = 300f;
-    private const float DefaultTextBoxHeight = 100f;
+    // Multiplier applied to the font size to derive line spacing; must match RenderText.
+    private const float LineHeightFactor = 1.2f;
 
     /// <summary>
     /// Gets or sets whether the text tool is currently active.
@@ -135,6 +137,12 @@ public class TextTool
     public int ImagePixelWidth { get; set; }
 
     /// <summary>
+    /// Gets or sets the image height in pixels. Used together with <see cref="ImagePixelWidth"/>
+    /// to size the bounding box around the text. Set by the editor core each render pass.
+    /// </summary>
+    public int ImagePixelHeight { get; set; }
+
+    /// <summary>
     /// Gets the current interaction phase.
     /// </summary>
     public TextToolPhase Phase => _phase;
@@ -166,6 +174,12 @@ public class TextTool
     public event EventHandler? PlacedTextStateChanged;
 
     /// <summary>
+    /// Event raised when the tool changes the font size itself (e.g. via a corner-drag resize),
+    /// so the UI font-size control can follow. Carries the new font size in pixels.
+    /// </summary>
+    public event EventHandler<float>? FontSizeChanged;
+
+    /// <summary>
     /// Sets the current image bounds for coordinate mapping.
     /// </summary>
     public void SetImageBounds(SKRect imageRect)
@@ -185,11 +199,9 @@ public class TextTool
         if (HasPlacedText)
             CommitPlacedText();
 
-        var halfW = DefaultTextBoxWidth / 2f;
-        var halfH = DefaultTextBoxHeight / 2f;
-
-        var normalizedTopLeft = ScreenToNormalized(new SKPoint(screenPoint.X - halfW, screenPoint.Y - halfH));
-        var normalizedBottomRight = ScreenToNormalized(new SKPoint(screenPoint.X + halfW, screenPoint.Y + halfH));
+        // Anchor a zero-size box on the click point, then grow it to fit the text so it
+        // is centered on the click. The box is always derived from the measured text.
+        var center = ScreenToNormalized(screenPoint);
 
         _placedText = new TextElementData
         {
@@ -201,10 +213,12 @@ public class TextTool
             TextColor = TextColor,
             OutlineColor = OutlineColor,
             OutlineWidth = OutlineWidth / GetImagePixelWidth(),
-            NormalizedTopLeft = normalizedTopLeft,
-            NormalizedBottomRight = normalizedBottomRight,
+            NormalizedTopLeft = center,
+            NormalizedBottomRight = center,
             RotationDegrees = 0f
         };
+
+        RecalculateBounds();
 
         _phase = TextToolPhase.Placed;
         TextChanged?.Invoke(this, EventArgs.Empty);
@@ -347,6 +361,9 @@ public class TextTool
         _placedText.OutlineColor = OutlineColor;
         _placedText.OutlineWidth = OutlineWidth / GetImagePixelWidth();
 
+        // Re-fit the bounding box so it always encloses the text after a font/content change.
+        RecalculateBounds();
+
         TextChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -459,8 +476,10 @@ public class TextTool
             Edging = SKFontEdging.SubpixelAntialias
         };
 
-        var lines = text.Split('\n');
-        var lineHeight = fontSize * 1.2f;
+        // Normalize all line-ending styles to '\n' so stray '\r' (from CRLF input) is not
+        // rendered as a missing-glyph box.
+        var lines = text.ReplaceLineEndings("\n").Split('\n');
+        var lineHeight = fontSize * LineHeightFactor;
         var y = rect.Top + fontSize;
 
         // Draw outline first if needed
@@ -643,8 +662,13 @@ public class TextTool
                 _rotationBaseAngle = _placedText.RotationDegrees;
                 break;
 
-            default: // Corner resize handles
+            default: // Corner resize handles scale the font size around the center
                 _phase = TextToolPhase.Resizing;
+                var resizeCenter = new SKPoint(
+                    (_placedScreenTopLeft.X + _placedScreenBottomRight.X) / 2f,
+                    (_placedScreenTopLeft.Y + _placedScreenBottomRight.Y) / 2f);
+                _resizeStartFontSize = _placedText.FontSize;
+                _resizeStartDistance = MathF.Sqrt(DistanceSq(screenPoint, resizeCenter));
                 break;
         }
 
@@ -670,51 +694,27 @@ public class TextTool
 
     private void HandleResizing(SKPoint screenPoint)
     {
-        if (_placedText is null) return;
+        if (_placedText is null || _resizeStartDistance <= 0.0001f) return;
 
-        var center = new SKPoint(
-            (_placedScreenTopLeft.X + _placedScreenBottomRight.X) / 2f,
-            (_placedScreenTopLeft.Y + _placedScreenBottomRight.Y) / 2f);
+        // Corner drag scales the font size by how far the pointer moves relative to the
+        // center (rotation-invariant). The box is rederived from the text afterwards, so
+        // it always encloses the text and the center stays anchored.
+        var center = NormalizedToScreen(_placedText.NormalizedCenter);
+        var distance = MathF.Sqrt(DistanceSq(screenPoint, center));
+        var scale = distance / _resizeStartDistance;
 
-        // Work in local (unrotated) coordinates
-        var localPoint = RotatePointAround(screenPoint, center, -_placedText.RotationDegrees);
-        var localTopLeft = RotatePointAround(_placedScreenTopLeft, center, -_placedText.RotationDegrees);
-        var localBottomRight = RotatePointAround(_placedScreenBottomRight, center, -_placedText.RotationDegrees);
+        var newFontSize = _resizeStartFontSize * scale;
+        var minFontSize = 1f / GetImagePixelWidth(); // never smaller than one image pixel
+        if (newFontSize < minFontSize) newFontSize = minFontSize;
 
-        var left = Math.Min(localTopLeft.X, localBottomRight.X);
-        var top = Math.Min(localTopLeft.Y, localBottomRight.Y);
-        var right = Math.Max(localTopLeft.X, localBottomRight.X);
-        var bottom = Math.Max(localTopLeft.Y, localBottomRight.Y);
+        _placedText.FontSize = newFontSize;
+        RecalculateBounds();
 
-        switch (_activeHandle)
-        {
-            case TextManipulationHandle.TopLeft:
-                left = localPoint.X;
-                top = localPoint.Y;
-                break;
-            case TextManipulationHandle.TopRight:
-                right = localPoint.X;
-                top = localPoint.Y;
-                break;
-            case TextManipulationHandle.BottomLeft:
-                left = localPoint.X;
-                bottom = localPoint.Y;
-                break;
-            case TextManipulationHandle.BottomRight:
-                right = localPoint.X;
-                bottom = localPoint.Y;
-                break;
-        }
-
-        // Ensure minimum size
-        if (Math.Abs(right - left) < 20 || Math.Abs(bottom - top) < 20) return;
-
-        // Rotate back to screen coordinates
-        var newTopLeft = RotatePointAround(new SKPoint(left, top), center, _placedText.RotationDegrees);
-        var newBottomRight = RotatePointAround(new SKPoint(right, bottom), center, _placedText.RotationDegrees);
-
-        _placedText.NormalizedTopLeft = ScreenToNormalized(newTopLeft);
-        _placedText.NormalizedBottomRight = ScreenToNormalized(newBottomRight);
+        // Write the new size back to the tool setting and notify the UI so the font-size
+        // slider follows the drag and later edits don't revert the text to the old size.
+        var newFontSizePixels = newFontSize * GetImagePixelWidth();
+        FontSize = newFontSizePixels;
+        FontSizeChanged?.Invoke(this, newFontSizePixels);
 
         TextChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -773,6 +773,84 @@ public class TextTool
     {
         if (ImagePixelWidth > 0) return ImagePixelWidth;
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
+    }
+
+    // The image's pixel height, used to normalize the bounding box height.
+    private float GetImagePixelHeight()
+    {
+        if (ImagePixelHeight > 0) return ImagePixelHeight;
+        return _imageRect.Height > 0 ? _imageRect.Height : 1f;
+    }
+
+    /// <summary>
+    /// Recomputes the bounding box so it exactly encloses the current text, keeping the
+    /// box centered on its current center. Called whenever the font, text, or size changes.
+    /// </summary>
+    private void RecalculateBounds()
+    {
+        if (_placedText is null) return;
+
+        var (widthNorm, heightNorm) = MeasureTextNormalized();
+        var center = _placedText.NormalizedCenter;
+        var halfW = widthNorm / 2f;
+        var halfH = heightNorm / 2f;
+        _placedText.NormalizedTopLeft = new SKPoint(center.X - halfW, center.Y - halfH);
+        _placedText.NormalizedBottomRight = new SKPoint(center.X + halfW, center.Y + halfH);
+    }
+
+    /// <summary>
+    /// Measures the placed text and returns its size in normalized image coordinates (0-1):
+    /// width normalized to image width, height normalized to image height.
+    /// </summary>
+    private (float Width, float Height) MeasureTextNormalized()
+    {
+        if (_placedText is null) return (0f, 0f);
+
+        var imageWidth = GetImagePixelWidth();
+        var imageHeight = GetImagePixelHeight();
+
+        var fontSizePx = _placedText.FontSize * imageWidth;
+        var outlinePx = _placedText.OutlineWidth * imageWidth;
+
+        var (wPx, hPx) = MeasureTextPixels(
+            _placedText.Text, fontSizePx, _placedText.FontFamily,
+            _placedText.IsBold, _placedText.IsItalic, outlinePx);
+
+        return (wPx / imageWidth, hPx / imageHeight);
+    }
+
+    /// <summary>
+    /// Measures the pixel size of a text block (widest line x total height), including outline
+    /// padding. Mirrors the layout used by <see cref="RenderText"/> so the box matches the text.
+    /// </summary>
+    internal static (float Width, float Height) MeasureTextPixels(
+        string text, float fontSizePx, string fontFamily, bool isBold, bool isItalic, float outlineWidth)
+    {
+        var lineHeight = fontSizePx * LineHeightFactor;
+
+        if (string.IsNullOrEmpty(text))
+            return (Math.Max(fontSizePx, 1f), lineHeight);
+
+        using var typeface = SKTypeface.FromFamilyName(
+            fontFamily,
+            isBold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal,
+            SKFontStyleWidth.Normal,
+            isItalic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
+
+        using var font = new SKFont(typeface, fontSizePx);
+
+        var lines = text.ReplaceLineEndings("\n").Split('\n');
+        var maxWidth = 0f;
+        foreach (var line in lines)
+        {
+            var w = font.MeasureText(line);
+            if (w > maxWidth) maxWidth = w;
+        }
+
+        // Guarantee a minimally grabbable box even for empty / whitespace-only lines.
+        var width = Math.Max(maxWidth, fontSizePx * 0.5f) + outlineWidth;
+        var height = lines.Length * lineHeight + outlineWidth;
+        return (width, height);
     }
 
     private static float DistanceSq(SKPoint a, SKPoint b)

@@ -857,6 +857,7 @@ public partial class ImageEditorCore : IDisposable
             // Update text tool with current image bounds and render overlay
             TextTool.SetImageBounds(imageRect);
             TextTool.ImagePixelWidth = imageWidth;
+            TextTool.ImagePixelHeight = imageHeight;
             TextTool.Render(canvas);
 
             // Update outpaint tool with current image bounds and render overlay
