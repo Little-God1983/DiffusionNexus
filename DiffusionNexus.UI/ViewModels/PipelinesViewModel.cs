@@ -2,31 +2,24 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Pipelines;
-using DiffusionNexus.UI.Views.Dialogs;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
-/// ViewModel for the Pipelines module — a tile gallery of guided image pipelines. Each tile
-/// declares the model/LoRA assets its pipeline needs; clicking it downloads whatever is missing
-/// (mirroring the Installer Manager's workload flow) into the default ComfyUI models tree, after
-/// the user picks a VRAM tier for the diffusion model.
+/// ViewModel for the Pipelines module — a tile gallery of guided image pipelines. The tile is a
+/// launcher + readiness indicator; the actual model downloading is handled centrally in the
+/// Installer Manager → Workloads dialog (Diffusion Nexus tab). Clicking a tile re-checks readiness
+/// and, when assets are missing, points the user to that dialog.
 /// </summary>
 public partial class PipelinesViewModel : ViewModelBase
 {
     private static readonly ILogger Logger = Log.ForContext<PipelinesViewModel>();
-
-    // VRAM tiers offered for the diffusion-model variant pick (GGUF quantizations).
-    private static readonly int[] VramTiers = [8, 12, 16, 24, 32];
 
     private readonly IPipelineManifestProvider? _manifestProvider;
     private readonly IPipelineAssetInstaller? _installer;
@@ -117,87 +110,41 @@ public partial class PipelinesViewModel : ViewModelBase
 
         try
         {
-            // 1) Resolve the download target (default ComfyUI install's models tree).
+            // The tile is a launcher + readiness indicator only. All model downloading is handled
+            // centrally in the Installer Manager → Workloads dialog (Diffusion Nexus tab), so here
+            // we just refresh status and point the user there when assets are missing.
             var root = await _installer.ResolveModelsRootAsync();
             if (string.IsNullOrEmpty(root))
             {
                 await ShowMessageAsync("No ComfyUI installation",
-                    "Pipeline models are stored in a ComfyUI installation's models folder, which the local renderer also reads.\n\n" +
+                    "Pipeline models live in a ComfyUI installation's models folder (which the local renderer also reads).\n\n" +
                     "Add a ComfyUI installation in the Installer Manager first, then try again.");
                 SetStatus(tile, PipelineStatus.NotInstalled, "No ComfyUI install");
                 return;
             }
 
-            // 2) What's already on disk? (searches every core model root, incl. extra_model_paths)
             var readiness = await _installer.CheckAsync(tile.Manifest);
             if (readiness.IsComplete)
             {
                 SetStatus(tile, PipelineStatus.Ready, "Ready");
                 await ShowMessageAsync(tile.Title,
-                    "All required models and LoRAs for this pipeline are already installed.");
+                    "All required models and LoRAs for this pipeline are installed and ready.");
                 return;
             }
 
-            // 3) Pick a VRAM tier for the diffusion-model variant.
-            var vramGb = await PickVramTierAsync();
-            if (vramGb is null)
-                return; // cancelled
-
-            // 4) Confirm.
+            SetStatus(tile, PipelineStatus.NotInstalled, $"{readiness.Missing.Count} missing");
             var missingNames = string.Join("\n", readiness.Missing.Select(m => $"  • {m.Name}"));
-            var proceed = await ShowConfirmAsync(tile.Title,
-                $"Download the following missing assets for the {vramGb} GB profile?\n\n{missingNames}\n\n" +
-                "Large model files may take a while. Progress is shown in the status bar.");
-            if (!proceed)
-                return;
-
-            // 5) Install.
-            tile.IsBusy = true;
-            SetStatus(tile, PipelineStatus.Downloading, "Downloading…");
-            _unifiedLogger?.Info(LogCategory.Download, "Pipelines",
-                $"Installing assets for pipeline '{tile.Id}' (VRAM tier {vramGb} GB).");
-
-            var result = await _installer.InstallMissingAsync(tile.Manifest, vramGb.Value);
-
-            // 6) Report.
-            if (result.IsComplete)
-            {
-                SetStatus(tile, PipelineStatus.Ready, "Ready");
-                await ShowMessageAsync(tile.Title, "All pipeline assets are installed and ready.");
-            }
-            else
-            {
-                var stillMissing = string.Join("\n", result.Missing.Select(m => $"  • {m.Name}"));
-                SetStatus(tile, PipelineStatus.NotInstalled, $"{result.Missing.Count} missing");
-                await ShowMessageAsync(tile.Title,
-                    $"Some assets are still missing:\n\n{stillMissing}");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            SetStatus(tile, PipelineStatus.NotInstalled, "Cancelled");
+            await ShowMessageAsync(tile.Title,
+                $"This pipeline still needs {readiness.Missing.Count} asset(s):\n\n{missingNames}\n\n" +
+                "Install them from the Installer Manager → Diffusion Nexus Core → Workloads → " +
+                $"the \"Pipelines\" tab → \"{tile.Title}\" → Details.");
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Pipeline install failed for {Id}.", tile.Id);
+            Logger.Error(ex, "Pipeline open failed for {Id}.", tile.Id);
             SetStatus(tile, PipelineStatus.Error, "Failed");
-            await ShowMessageAsync("Install failed", ex.Message);
+            await ShowMessageAsync("Error", ex.Message);
         }
-        finally
-        {
-            tile.IsBusy = false;
-        }
-    }
-
-    private async Task<int?> PickVramTierAsync()
-    {
-        var owner = (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-        if (owner is null)
-            return null;
-
-        var dialog = new VramSelectionDialog(VramTiers);
-        await dialog.ShowDialog(owner);
-        return dialog.SelectedVramGb;
     }
 
     private static void SetStatus(PipelineTileViewModel tile, PipelineStatus status, string text)
@@ -219,7 +166,4 @@ public partial class PipelinesViewModel : ViewModelBase
 
     private Task ShowMessageAsync(string title, string message)
         => _dialogService?.ShowMessageAsync(title, message) ?? Task.CompletedTask;
-
-    private Task<bool> ShowConfirmAsync(string title, string message)
-        => _dialogService?.ShowConfirmAsync(title, message) ?? Task.FromResult(true);
 }

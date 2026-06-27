@@ -166,6 +166,13 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
             })
             .ToList();
 
+        // Guard: a VRAM-tiered asset MUST have a concrete tier chosen. With vramGb <= 0 the SDK
+        // selector returns *every* link (it would download all 5 GGUF variants), so refuse instead.
+        var isVramTiered = links.Any(l => l.VramProfile.HasValue);
+        if (isVramTiered && vramGb <= 0)
+            throw new InvalidOperationException(
+                $"{asset.Name}: a VRAM tier must be selected before downloading this model.");
+
         var selected = SdkVramSelector.SelectBestMatchingLinks(links, vramGb, logProgress: null, modelName: asset.Name);
         if (selected.Count == 0)
             throw new InvalidOperationException($"{asset.Name}: no download link matched the selected {vramGb} GB profile.");
