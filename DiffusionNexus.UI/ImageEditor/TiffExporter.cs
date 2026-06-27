@@ -1,94 +1,66 @@
 using BitMiracle.LibTiff.Classic;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor;
 
 /// <summary>
-/// Provides TIFF file export functionality with multi-layer support.
-/// Uses LibTiff.NET for proper multi-page/layered TIFF creation.
+/// Provides TIFF file export/import functionality with multi-layer support.
+/// Uses LibTiff.NET for proper multi-page/layered TIFF creation, and the robust
+/// <c>ReadRGBAImageOriented</c> reader so arbitrary third-party TIFFs (tiled, planar,
+/// compressed, palette, CMYK, etc.) load correctly — not just app-written ones.
+/// All operations report progress/errors through the optional <see cref="IUnifiedLogger"/>.
 /// </summary>
 public static class TiffExporter
 {
+    private const string LogSource = "TiffExporter";
+
     /// <summary>
     /// Saves layers to a multi-page TIFF file.
     /// Each layer is saved as a separate page with metadata.
     /// </summary>
     /// <param name="layers">The layer stack to export.</param>
     /// <param name="filePath">The output file path.</param>
+    /// <param name="logger">Optional unified logger for diagnostics.</param>
     /// <returns>True if saved successfully.</returns>
-    public static bool SaveLayeredTiff(LayerStack layers, string filePath)
+    public static bool SaveLayeredTiff(LayerStack layers, string filePath, IUnifiedLogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         ArgumentNullException.ThrowIfNull(filePath);
 
         if (layers.Count == 0)
+        {
+            logger?.Warn(LogCategory.General, LogSource, "SaveLayeredTiff: no layers to write.", filePath);
             return false;
+        }
 
         try
         {
             using var tiff = Tiff.Open(filePath, "w");
             if (tiff == null)
+            {
+                logger?.Error(LogCategory.General, LogSource, $"SaveLayeredTiff: Tiff.Open returned null for {filePath}");
                 return false;
+            }
 
-            // Write each layer as a separate page
+            var pagesWritten = 0;
             for (var pageIndex = 0; pageIndex < layers.Count; pageIndex++)
             {
                 var layer = layers[pageIndex];
                 if (layer.Bitmap == null)
                     continue;
 
-                var bitmap = layer.Bitmap;
-                var width = bitmap.Width;
-                var height = bitmap.Height;
-
-                // Set TIFF tags for this page
-                tiff.SetField(TiffTag.IMAGEWIDTH, width);
-                tiff.SetField(TiffTag.IMAGELENGTH, height);
-                tiff.SetField(TiffTag.SAMPLESPERPIXEL, 4); // RGBA
-                tiff.SetField(TiffTag.BITSPERSAMPLE, 8);
-                tiff.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
-                tiff.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
-                tiff.SetField(TiffTag.PHOTOMETRIC, Photometric.RGB);
-                tiff.SetField(TiffTag.COMPRESSION, Compression.LZW);
-                tiff.SetField(TiffTag.ROWSPERSTRIP, height);
-                
-                // Set extra samples for alpha channel
-                tiff.SetField(TiffTag.EXTRASAMPLES, 1, new short[] { (short)ExtraSample.ASSOCALPHA });
-
-                // Store layer metadata in TIFF description
-                var metadata = CreateLayerMetadata(layer, pageIndex);
-                tiff.SetField(TiffTag.IMAGEDESCRIPTION, metadata);
-
-                // Set page number (for multi-page TIFF)
-                tiff.SetField(TiffTag.PAGENUMBER, pageIndex, layers.Count);
-
-                // Get pixel data
-                var pixels = bitmap.Pixels;
-                var rowData = new byte[width * 4]; // RGBA
-
-                for (var row = 0; row < height; row++)
-                {
-                    var rowOffset = row * width;
-                    for (var x = 0; x < width; x++)
-                    {
-                        var pixel = pixels[rowOffset + x];
-                        var dataOffset = x * 4;
-                        rowData[dataOffset] = pixel.Red;
-                        rowData[dataOffset + 1] = pixel.Green;
-                        rowData[dataOffset + 2] = pixel.Blue;
-                        rowData[dataOffset + 3] = pixel.Alpha;
-                    }
-                    tiff.WriteScanline(rowData, row);
-                }
-
-                // Write directory entry for this page
-                tiff.WriteDirectory();
+                WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex), pageIndex, layers.Count);
+                pagesWritten++;
             }
 
-            return true;
+            logger?.Info(LogCategory.General, LogSource,
+                $"Saved {pagesWritten}-page TIFF.", filePath);
+            return pagesWritten > 0;
         }
-        catch
+        catch (Exception ex)
         {
+            logger?.Error(LogCategory.General, LogSource, $"SaveLayeredTiff failed for {filePath}", ex);
             return false;
         }
     }
@@ -98,8 +70,9 @@ public static class TiffExporter
     /// </summary>
     /// <param name="bitmap">The bitmap to save.</param>
     /// <param name="filePath">The output file path.</param>
+    /// <param name="logger">Optional unified logger for diagnostics.</param>
     /// <returns>True if saved successfully.</returns>
-    public static bool SaveFlattenedTiff(SKBitmap bitmap, string filePath)
+    public static bool SaveFlattenedTiff(SKBitmap bitmap, string filePath, IUnifiedLogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         ArgumentNullException.ThrowIfNull(filePath);
@@ -108,56 +81,82 @@ public static class TiffExporter
         {
             using var tiff = Tiff.Open(filePath, "w");
             if (tiff == null)
-                return false;
-
-            var width = bitmap.Width;
-            var height = bitmap.Height;
-
-            // Set TIFF tags
-            tiff.SetField(TiffTag.IMAGEWIDTH, width);
-            tiff.SetField(TiffTag.IMAGELENGTH, height);
-            tiff.SetField(TiffTag.SAMPLESPERPIXEL, 4);
-            tiff.SetField(TiffTag.BITSPERSAMPLE, 8);
-            tiff.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
-            tiff.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
-            tiff.SetField(TiffTag.PHOTOMETRIC, Photometric.RGB);
-            tiff.SetField(TiffTag.COMPRESSION, Compression.LZW);
-            tiff.SetField(TiffTag.ROWSPERSTRIP, height);
-            tiff.SetField(TiffTag.EXTRASAMPLES, 1, new short[] { (short)ExtraSample.ASSOCALPHA });
-
-            var pixels = bitmap.Pixels;
-            var rowData = new byte[width * 4];
-
-            for (var row = 0; row < height; row++)
             {
-                var rowOffset = row * width;
-                for (var x = 0; x < width; x++)
-                {
-                    var pixel = pixels[rowOffset + x];
-                    var dataOffset = x * 4;
-                    rowData[dataOffset] = pixel.Red;
-                    rowData[dataOffset + 1] = pixel.Green;
-                    rowData[dataOffset + 2] = pixel.Blue;
-                    rowData[dataOffset + 3] = pixel.Alpha;
-                }
-                tiff.WriteScanline(rowData, row);
+                logger?.Error(LogCategory.General, LogSource, $"SaveFlattenedTiff: Tiff.Open returned null for {filePath}");
+                return false;
             }
 
-            tiff.WriteDirectory();
+            WritePage(tiff, bitmap, metadata: null, pageIndex: 0, pageCount: 1);
+            logger?.Info(LogCategory.General, LogSource, "Saved flattened TIFF.", filePath);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            logger?.Error(LogCategory.General, LogSource, $"SaveFlattenedTiff failed for {filePath}", ex);
             return false;
         }
     }
 
     /// <summary>
-    /// Loads a layered TIFF file into a layer stack.
+    /// Writes a single RGBA page (8-bit, LZW, straight/unassociated alpha) to an open TIFF.
+    /// </summary>
+    private static void WritePage(Tiff tiff, SKBitmap bitmap, string? metadata, int pageIndex, int pageCount)
+    {
+        var width = bitmap.Width;
+        var height = bitmap.Height;
+
+        tiff.SetField(TiffTag.IMAGEWIDTH, width);
+        tiff.SetField(TiffTag.IMAGELENGTH, height);
+        tiff.SetField(TiffTag.SAMPLESPERPIXEL, 4); // RGBA
+        tiff.SetField(TiffTag.BITSPERSAMPLE, 8);
+        tiff.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
+        tiff.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
+        tiff.SetField(TiffTag.PHOTOMETRIC, Photometric.RGB);
+        tiff.SetField(TiffTag.COMPRESSION, Compression.LZW);
+        // Straight (non-premultiplied) alpha: SKBitmap.Pixels returns unassociated SKColor
+        // channels, so the file must be tagged UNASSALPHA (tagging ASSOCALPHA made viewers
+        // such as GIMP mis-composite semi-transparent pixels).
+        tiff.SetField(TiffTag.EXTRASAMPLES, 1, new short[] { (short)ExtraSample.UNASSALPHA });
+        // Let LibTiff pick a standard strip size (~8 KB) instead of one giant strip, which is
+        // friendlier to third-party readers.
+        tiff.SetField(TiffTag.ROWSPERSTRIP, tiff.DefaultStripSize(0));
+
+        if (metadata is not null)
+            tiff.SetField(TiffTag.IMAGEDESCRIPTION, metadata);
+
+        if (pageCount > 1)
+            tiff.SetField(TiffTag.PAGENUMBER, pageIndex, pageCount);
+
+        var pixels = bitmap.Pixels;
+        var rowData = new byte[width * 4];
+
+        for (var row = 0; row < height; row++)
+        {
+            var rowOffset = row * width;
+            for (var x = 0; x < width; x++)
+            {
+                var pixel = pixels[rowOffset + x];
+                var dataOffset = x * 4;
+                rowData[dataOffset] = pixel.Red;
+                rowData[dataOffset + 1] = pixel.Green;
+                rowData[dataOffset + 2] = pixel.Blue;
+                rowData[dataOffset + 3] = pixel.Alpha;
+            }
+            tiff.WriteScanline(rowData, row);
+        }
+
+        tiff.WriteDirectory();
+    }
+
+    /// <summary>
+    /// Loads a TIFF (single- or multi-page) into a layer stack. Uses LibTiff's high-level
+    /// <c>ReadRGBAImageOriented</c> reader so any valid TIFF — regardless of compression,
+    /// tiling, planar config, photometric interpretation or bit depth — is decoded to RGBA.
     /// </summary>
     /// <param name="filePath">The TIFF file path.</param>
-    /// <returns>A new LayerStack with loaded layers, or null if failed.</returns>
-    public static LayerStack? LoadLayeredTiff(string filePath)
+    /// <param name="logger">Optional unified logger for diagnostics.</param>
+    /// <returns>A new LayerStack with loaded layers, or null if nothing could be read.</returns>
+    public static LayerStack? LoadLayeredTiff(string filePath, IUnifiedLogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(filePath);
 
@@ -165,69 +164,55 @@ public static class TiffExporter
         {
             using var tiff = Tiff.Open(filePath, "r");
             if (tiff == null)
+            {
+                logger?.Error(LogCategory.General, LogSource, $"LoadLayeredTiff: Tiff.Open returned null for {filePath}");
                 return null;
+            }
 
-            // Read first page to get dimensions
-            var width = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
-            var height = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+            var firstWidth = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+            var firstHeight = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+            var layerStack = new LayerStack(firstWidth, firstHeight);
 
-            var layerStack = new LayerStack(width, height);
             var pageIndex = 0;
-
             do
             {
                 var pageWidth = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
                 var pageHeight = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-                var samplesPerPixel = tiff.GetField(TiffTag.SAMPLESPERPIXEL)?[0].ToInt() ?? 3;
 
-                // Read layer metadata
+                // Per-layer metadata (present on app-written TIFFs; defaults otherwise).
                 var description = tiff.GetField(TiffTag.IMAGEDESCRIPTION);
                 var layerName = $"Layer {pageIndex + 1}";
                 var opacity = 1.0f;
                 var blendMode = BlendMode.Normal;
                 var isVisible = true;
-
                 if (description != null && description.Length > 0)
-                {
                     ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible);
-                }
 
-                // Read pixel data
-                var bitmap = new SKBitmap(pageWidth, pageHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
-                var pixels = new SKColor[pageWidth * pageHeight];
-                var rowData = new byte[tiff.ScanlineSize()];
-
-                for (var row = 0; row < pageHeight; row++)
+                // Robust decode: ReadRGBAImageOriented handles every TIFF variant and returns
+                // a top-left-origin ABGR raster. stopOnError:false so partial/odd files still
+                // yield an image where possible.
+                var raster = new int[pageWidth * pageHeight];
+                if (!tiff.ReadRGBAImageOriented(pageWidth, pageHeight, raster, Orientation.TOPLEFT, false))
                 {
-                    tiff.ReadScanline(rowData, row);
-                    var rowOffset = row * pageWidth;
-
-                    for (var x = 0; x < pageWidth; x++)
-                    {
-                        byte r, g, b, a;
-                        if (samplesPerPixel >= 4)
-                        {
-                            var dataOffset = x * 4;
-                            r = rowData[dataOffset];
-                            g = rowData[dataOffset + 1];
-                            b = rowData[dataOffset + 2];
-                            a = rowData[dataOffset + 3];
-                        }
-                        else
-                        {
-                            var dataOffset = x * samplesPerPixel;
-                            r = rowData[dataOffset];
-                            g = samplesPerPixel > 1 ? rowData[dataOffset + 1] : r;
-                            b = samplesPerPixel > 2 ? rowData[dataOffset + 2] : r;
-                            a = 255;
-                        }
-                        pixels[rowOffset + x] = new SKColor(r, g, b, a);
-                    }
+                    logger?.Warn(LogCategory.General, LogSource,
+                        $"ReadRGBAImageOriented failed for page {pageIndex} ({pageWidth}x{pageHeight}); skipping page.", filePath);
+                    pageIndex++;
+                    continue;
                 }
 
-                bitmap.Pixels = pixels;
+                var bitmap = new SKBitmap(pageWidth, pageHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+                var skPixels = new SKColor[pageWidth * pageHeight];
+                for (var i = 0; i < skPixels.Length; i++)
+                {
+                    var p = raster[i];
+                    skPixels[i] = new SKColor(
+                        (byte)Tiff.GetR(p),
+                        (byte)Tiff.GetG(p),
+                        (byte)Tiff.GetB(p),
+                        (byte)Tiff.GetA(p));
+                }
+                bitmap.Pixels = skPixels;
 
-                // Create and add layer (append to maintain save order: index 0 = bottom)
                 var layer = new Layer(bitmap, layerName)
                 {
                     Opacity = opacity,
@@ -235,23 +220,27 @@ public static class TiffExporter
                     IsVisible = isVisible
                 };
                 layerStack.InsertLayer(layerStack.Count, layer);
-                
-                bitmap.Dispose(); // Layer makes a copy
 
+                bitmap.Dispose(); // Layer makes a copy
                 pageIndex++;
             }
             while (tiff.ReadDirectory());
 
-            // Set top layer as active
-            if (layerStack.Count > 0)
+            if (layerStack.Count == 0)
             {
-                layerStack.ActiveLayer = layerStack[layerStack.Count - 1];
+                logger?.Error(LogCategory.General, LogSource, $"LoadLayeredTiff: no readable pages in {filePath}");
+                layerStack.Dispose();
+                return null;
             }
 
+            layerStack.ActiveLayer = layerStack[layerStack.Count - 1];
+            logger?.Info(LogCategory.General, LogSource,
+                $"Loaded TIFF with {layerStack.Count} layer(s) ({firstWidth}x{firstHeight}).", filePath);
             return layerStack;
         }
-        catch
+        catch (Exception ex)
         {
+            logger?.Error(LogCategory.General, LogSource, $"LoadLayeredTiff failed for {filePath}", ex);
             return null;
         }
     }

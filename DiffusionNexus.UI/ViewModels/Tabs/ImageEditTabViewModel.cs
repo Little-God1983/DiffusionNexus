@@ -867,11 +867,64 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         SelectedEditorVersion = versionItem;
     }
 
+    /// <summary>
+    /// Builds a temporary "Drag and Drop Selection" dataset from one or more dropped image
+    /// files and loads it into the editor — the same flow used when images are sent from the
+    /// gallery. Every image appears in the left thumbnail list; the first one is opened in the
+    /// editor. Works for a single dropped image or many.
+    /// </summary>
+    public void LoadDirectDropSelection(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null) return;
+
+        // The View already restricts the drop/open payload to image files, and its filter
+        // accepts TIFF. Here we only drop non-existent files, videos and video thumbnails — we
+        // must NOT re-apply the narrower SupportedMediaTypes image set (no .tif/.tiff), which
+        // would silently discard dropped TIFFs. De-dupe so the same file dropped twice shows a
+        // single thumbnail.
+        var images = imagePaths
+            .Where(p => !string.IsNullOrWhiteSpace(p)
+                        && File.Exists(p)
+                        && !MediaFileExtensions.IsVideoFile(p)
+                        && !MediaFileExtensions.IsVideoThumbnailFile(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(p => DatasetImageViewModel.FromFile(p, _eventAggregator))
+            .Where(img => !img.IsVideo)
+            .ToList();
+
+        if (images.Count == 0)
+        {
+            StatusMessage = "No images available for editing.";
+            return;
+        }
+
+        var tempDataset = new DatasetCardViewModel
+        {
+            Name = "Drag and Drop Selection",
+            FolderPath = "TEMP://ImageEditDrop",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = images.Count,
+            TotalImageCountAllVersions = images.Count,
+            IsTemporary = true
+        };
+
+        LoadTemporaryEditorDataset(tempDataset, images, images[0]);
+    }
+
     private void LoadTemporaryEditorDataset(
         DatasetCardViewModel dataset,
         IReadOnlyList<DatasetImageViewModel> images,
         DatasetImageViewModel selectedImage)
     {
+        // Drop any previous temporary selection from the combo so successive Gallery /
+        // Drag-and-Drop selections replace each other instead of stacking up.
+        if (_temporaryEditorDataset is not null && !ReferenceEquals(_temporaryEditorDataset, dataset))
+        {
+            _editorDatasets.Remove(_temporaryEditorDataset);
+        }
+
         _temporaryEditorDataset = dataset;
         _temporaryEditorDataset.IsTemporary = true;
         _temporaryEditorDataset.CurrentVersion = 1;

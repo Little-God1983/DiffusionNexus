@@ -337,6 +337,13 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #endregion
 
+    private readonly Domain.Services.UnifiedLogging.IUnifiedLogger? _unifiedLogger;
+
+    /// <summary>
+    /// Unified logger for editor diagnostics (e.g. TIFF load/save). May be null.
+    /// </summary>
+    public Domain.Services.UnifiedLogging.IUnifiedLogger? Logger => _unifiedLogger;
+
     /// <summary>
     /// Creates a new ImageEditorViewModel with event aggregator integration.
     /// </summary>
@@ -349,6 +356,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator;
+        _unifiedLogger = unifiedLogger;
         _services = services ?? EditorServiceFactory.Create();
 
         // Initialize sub-ViewModels
