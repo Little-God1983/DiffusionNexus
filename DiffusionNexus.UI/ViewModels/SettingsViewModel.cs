@@ -596,7 +596,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// Forces a live refresh of the Civitai base model catalog from GitHub,
     /// bypassing the in-memory and on-disk caches. Status is surfaced to the
     /// Unified Console via the catalog's <see cref="ICivitaiBaseModelCatalog.StatusChanged"/>
-    /// event (wired up in <c>App.axaml.cs</c>).
+    /// event (wired up in <c>App.axaml.cs</c>). The LoRA Viewer also listens to that
+    /// event and rebuilds its base-model filter (shared by the Installed and Browse
+    /// Civitai tabs) from the refreshed list, so the filter updates without a restart.
     /// </summary>
     [RelayCommand]
     private async Task RefreshBaseModelCatalogAsync()

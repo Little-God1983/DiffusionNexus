@@ -183,6 +183,17 @@
                       </StackPanel>
                       <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
                       <StackPanel Spacing="8">
+                        <TextBlock Text="Base Model Filter" FontWeight="SemiBold" FontSize="14"/>
+                        <TextBlock Text="Force-updates the base-model filter list shared by the Installed and Browse Civitai tabs. Fetches the latest base-model definition from Civitai and rebuilds the filter immediately, without an app restart. Status is reported in the Unified Console."
+                                   FontSize="12"
+                                   Opacity="0.7"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="Update Installed &amp; Browse Civitai filter"
+                                Command="{Binding RefreshBaseModelCatalogCommand}"
+                                HorizontalAlignment="Left"/>
+                      </StackPanel>
+                      <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+                      <StackPanel Spacing="8">
                         <TextBlock Text="Database" FontWeight="SemiBold" FontSize="14"/>
                         <TextBlock Text="Clear all cached LoRA metadata, thumbnails, and sync data from the database. Your LoRA files on disk and app settings are not affected." 
                                    FontSize="12" 

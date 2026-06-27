@@ -70,6 +70,31 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private bool _showNsfw = true;
 
     /// <summary>
+    /// Sort options offered in the Installed-tab "Sort by" dropdown. The record's
+    /// <c>ToString</c> returns its label, so the ComboBox renders it without a template.
+    /// </summary>
+    public IReadOnlyList<LoraSortOption> SortOptions { get; } =
+    [
+        new LoraSortOption("Name", LoraSortField.Name),
+        new LoraSortOption("Date added", LoraSortField.DateAdded),
+    ];
+
+    /// <summary>
+    /// Currently selected sort field for the Installed tab. Defaults to Name.
+    /// (The historical default was database insertion order — roughly date-added
+    /// ascending — which this dropdown now makes explicit and switchable.)
+    /// </summary>
+    [ObservableProperty]
+    private LoraSortOption _selectedSortOption;
+
+    /// <summary>
+    /// Sort direction for the Installed tab. <c>false</c> = ascending (A→Z / oldest
+    /// first), <c>true</c> = descending (Z→A / newest first).
+    /// </summary>
+    [ObservableProperty]
+    private bool _sortDescending;
+
+    /// <summary>
     /// Currently selected model tile.
     /// </summary>
     [ObservableProperty]
@@ -179,6 +204,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     public LoraViewerViewModel()
     {
+        _selectedSortOption = SortOptions[0];
         _settingsService = null;
         _syncService = null;
         _civitaiClient = null;
@@ -203,6 +229,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
         ILoraUpdateChecker? updateChecker = null)
     {
+        _selectedSortOption = SortOptions[0];
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
         _civitaiClient = civitaiClient;
@@ -210,6 +237,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
+
+        // Live-update the base-model filter whenever the catalog is force-refreshed
+        // (e.g. from the "Update base-model filter" button in Settings). Both the
+        // Installed and Browse Civitai filters share AvailableBaseModels, so a single
+        // rebuild covers both tabs without requiring an app restart.
+        if (_baseModelCatalog is not null)
+        {
+            _baseModelCatalog.StatusChanged += OnBaseModelCatalogStatusChanged;
+        }
 
         // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
@@ -2070,6 +2106,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
+            DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
 
         var detailVm = new ModelDetailViewModel(
@@ -2082,6 +2119,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
         detailVm.MetadataDeleted += OnDetailMetadataDeleted;
+        detailVm.MetadataDownloadRequested += OnDetailMetadataDownloadRequested;
         DetailViewModel = detailVm;
         IsDetailOpen = true;
 
@@ -2099,6 +2137,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
             DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
+            DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
 
         IsDetailOpen = false;
@@ -2113,6 +2152,121 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
     {
         await RebuildTilesFromDatabaseAsync();
+    }
+
+    /// <summary>
+    /// Handles <see cref="ModelDetailViewModel.MetadataDownloadRequested"/> (the
+    /// detail-view "Download Metadata" button) by fetching Civitai metadata for that
+    /// single LoRA and then reloading the detail view so the freshly fetched data
+    /// (description, tags, images, full version list) is shown. The loading spinner
+    /// and status text are driven via the detail VM's <c>IsLoading</c>/<c>StatusMessage</c>.
+    /// </summary>
+    private async void OnDetailMetadataDownloadRequested(object? sender, EventArgs e)
+    {
+        if (sender is not ModelDetailViewModel detail || detail.SourceTile is null)
+            return;
+
+        var tile = detail.SourceTile;
+
+        detail.IsLoading = true;
+        detail.StatusMessage = "Downloading metadata from Civitai...";
+
+        try
+        {
+            var applied = await DownloadMetadataForTileAsync(tile);
+
+            if (applied)
+            {
+                // UpdateModelFromCivitaiAsync already refreshed the in-memory tile (it now
+                // carries a CivitaiId), so reloading the detail re-fetches the full version
+                // list and repaints description/tags/images.
+                await detail.LoadAsync(tile);
+            }
+            else
+            {
+                detail.StatusMessage = "No metadata found on Civitai for this file.";
+            }
+        }
+        catch (Exception ex)
+        {
+            detail.StatusMessage = $"Metadata download failed: {ex.Message}";
+            _logger?.Error(LogCategory.Network, "CivitaiSync",
+                $"Single-LoRA metadata download failed for '{tile.DisplayName}': {ex.Message}", ex);
+        }
+        finally
+        {
+            // LoadAsync clears IsLoading on success; ensure it's reset on every other path.
+            detail.IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Downloads Civitai metadata for a single LoRA (the detail-view "Download Metadata"
+    /// button). Mirrors Phase 1 of <see cref="DownloadMissingMetadataAsync"/> scoped to one
+    /// tile: hashes the primary file, looks it up on Civitai by hash, and persists the
+    /// returned metadata via <see cref="UpdateModelFromCivitaiAsync"/> (which also refreshes
+    /// the in-memory tile). Falls back to local <c>.civitai.info</c>/<c>.json</c> sidecars on
+    /// a 404. Unlike the bulk flow this runs even for already-synced models, so the user can
+    /// force a re-fetch. Returns <c>true</c> when metadata (remote or local) was applied.
+    /// </summary>
+    public async Task<bool> DownloadMetadataForTileAsync(ModelTileViewModel tile)
+    {
+        if (_civitaiClient is null)
+        {
+            SyncStatus = "Civitai client not available.";
+            return false;
+        }
+
+        var file = tile.SelectedVersion?.PrimaryFile;
+        var localPath = file?.LocalPath;
+        if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
+        {
+            _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                $"Cannot download metadata for '{tile.DisplayName}': no local file on disk.");
+            return false;
+        }
+
+        // Fresh DI scope so we read the latest API key from the database, not a stale
+        // tracked entity (same approach as the bulk DownloadMissingMetadataAsync).
+        string? apiKey;
+        using (var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope())
+        {
+            var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+            apiKey = await freshSettings.GetCivitaiApiKeyAsync();
+        }
+
+        var hash = await Task.Run(() => ComputeFullSha256(localPath));
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Metadata download for '{tile.DisplayName}'",
+            $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
+
+        var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
+        if (civitaiVersion is null)
+        {
+            // 404 on Civitai — try the local .civitai.info / .json sidecar, then mark
+            // synced so the bulk flow doesn't keep retrying it.
+            var localApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
+            await MarkModelSyncedAsync(tile.ModelEntity);
+            return localApplied;
+        }
+
+        await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+
+        // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
+        if (tile.IsThumbnailMissing)
+        {
+            try
+            {
+                await tile.TryDownloadMissingThumbnailAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(LogCategory.General, "CivitaiSync",
+                    $"Thumbnail download after metadata fetch failed for '{tile.DisplayName}': {ex.Message}");
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -2325,7 +2479,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// snapshot), so this almost always yields a list; the only no-op path is when
     /// <see cref="_baseModelCatalog"/> is null (design-time).
     /// </summary>
-    private async Task LoadBaseModelCatalogAsync()
+    private Task LoadBaseModelCatalogAsync() => ReloadBaseModelFilterAsync();
+
+    /// <summary>
+    /// Pulls the current catalog labels (memory/disk cache or the freshly-fetched
+    /// list after a forced refresh) and rebuilds <see cref="AvailableBaseModels"/>
+    /// on the UI thread. Used both for the one-time startup load and for the live
+    /// refresh triggered by <see cref="OnBaseModelCatalogStatusChanged"/>.
+    /// </summary>
+    private async Task ReloadBaseModelFilterAsync()
     {
         if (_baseModelCatalog is null) return;
 
@@ -2348,6 +2510,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Live-updates the base-model filter shared by the Installed and Browse Civitai
+    /// tabs whenever the catalog completes a refresh that produced a list (a forced
+    /// refresh from Settings, or its bundled fallback). Without this the filter would
+    /// only reflect a refreshed catalog after an app restart. Normal startup cache
+    /// hits are already handled by the initial <see cref="LoadBaseModelCatalogAsync"/>.
+    /// </summary>
+    private void OnBaseModelCatalogStatusChanged(object? sender, CivitaiBaseModelCatalogEventArgs e)
+    {
+        if (e.Kind is not (CivitaiBaseModelCatalogEventKind.FetchSucceeded
+                           or CivitaiBaseModelCatalogEventKind.UsedBundledFallback))
+        {
+            return;
+        }
+
+        _ = ReloadBaseModelFilterAsync();
+    }
+
+    /// <summary>
     /// Called when any base model filter item's selection changes.
     /// </summary>
     private void OnBaseModelFilterChanged(object? sender, EventArgs e)
@@ -2355,6 +2535,42 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
         ApplyFilters();
+    }
+
+    /// <summary>
+    /// Re-applies filters (and thus the sort) when the Installed-tab sort field changes.
+    /// </summary>
+    partial void OnSelectedSortOptionChanged(LoraSortOption value) => ApplyFilters();
+
+    /// <summary>
+    /// Re-applies filters (and thus the sort) when the Installed-tab sort direction changes.
+    /// </summary>
+    partial void OnSortDescendingChanged(bool value) => ApplyFilters();
+
+    /// <summary>
+    /// Orders the filtered tiles by the selected <see cref="SelectedSortOption"/> field and
+    /// <see cref="SortDescending"/> direction. Name uses a case-insensitive comparison;
+    /// Date added uses <see cref="Model.CreatedAt"/> (when the LoRA was first discovered /
+    /// imported into the database). Name is the tiebreaker for stable ordering.
+    /// </summary>
+    private List<ModelTileViewModel> SortTiles(List<ModelTileViewModel> tiles)
+    {
+        var field = SelectedSortOption?.Field ?? LoraSortField.Name;
+
+        IOrderedEnumerable<ModelTileViewModel> ordered = field switch
+        {
+            LoraSortField.DateAdded => SortDescending
+                ? tiles.OrderByDescending(t => t.ModelEntity?.CreatedAt ?? DateTimeOffset.MinValue)
+                : tiles.OrderBy(t => t.ModelEntity?.CreatedAt ?? DateTimeOffset.MinValue),
+            _ => SortDescending
+                ? tiles.OrderByDescending(t => t.DisplayName, StringComparer.OrdinalIgnoreCase)
+                : tiles.OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase),
+        };
+
+        // Stable tiebreaker so equal dates / names keep a deterministic order.
+        ordered = ordered.ThenBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+        return ordered.ToList();
     }
 
     private void ApplyFilters()
@@ -2395,11 +2611,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     activeBaseModels.Contains(v.BaseModelRaw)));
         }
 
-        var filtered = query.ToList();
+        var filtered = SortTiles(query.ToList());
 
-        // Unchanged result set (e.g. the extra keystroke matched the same tiles):
-        // keep the current window and scroll position, skip the expensive rebuild.
-        // Refresh paths always create new tile instances, so they never hit this.
+        // Unchanged result set AND order (e.g. the extra keystroke matched the same
+        // tiles): keep the current window and scroll position, skip the expensive
+        // rebuild. A sort change reorders the list, so SequenceEqual is false and the
+        // rebuild runs. Refresh paths always create new tile instances, so they never hit this.
         if (filtered.SequenceEqual(_allFiltered))
         {
             return;
@@ -2762,4 +2979,26 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
 
     #endregion
+}
+
+/// <summary>
+/// Field the Installed-tab tile grid is sorted by.
+/// </summary>
+public enum LoraSortField
+{
+    /// <summary>Sort by the model's display name.</summary>
+    Name,
+
+    /// <summary>Sort by when the LoRA was first added (Model.CreatedAt).</summary>
+    DateAdded,
+}
+
+/// <summary>
+/// One entry in the Installed-tab "Sort by" dropdown. <see cref="ToString"/> returns the
+/// label so the ComboBox can render it without an item template.
+/// </summary>
+public sealed record LoraSortOption(string Label, LoraSortField Field)
+{
+    /// <inheritdoc/>
+    public override string ToString() => Label;
 }
