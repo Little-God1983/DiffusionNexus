@@ -159,6 +159,12 @@ public partial class ImageEditorCore : IDisposable
     public bool HasImage => _isLayerMode ? (_layers?.Count > 0) : (_workingBitmap is not null);
 
     /// <summary>
+    /// Optional unified logger for diagnostics (image / TIFF load and save). Set by the view
+    /// wiring so failures surface in the unified log console instead of failing silently.
+    /// </summary>
+    public Domain.Services.UnifiedLogging.IUnifiedLogger? Logger { get; set; }
+
+    /// <summary>
     /// Gets whether a preview is currently active.
     /// </summary>
     public bool IsPreviewActive => _isPreviewActive;
@@ -440,7 +446,11 @@ public partial class ImageEditorCore : IDisposable
             using var stream = File.OpenRead(filePath);
             _originalBitmap = SKBitmap.Decode(stream);
             if (_originalBitmap is null)
+            {
+                Logger?.Error(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+                    $"SKBitmap.Decode returned null (unsupported or corrupt format — note: Skia cannot decode TIFF) for {filePath}");
                 return false;
+            }
 
             _workingBitmap = _originalBitmap.Copy();
             CurrentImagePath = filePath;
@@ -1355,7 +1365,7 @@ public partial class ImageEditorCore : IDisposable
         if (!_isLayerMode || _layers == null)
             return false;
 
-        return TiffExporter.SaveLayeredTiff(_layers, filePath);
+        return TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
     }
 
     /// <summary>
@@ -1368,7 +1378,7 @@ public partial class ImageEditorCore : IDisposable
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || _services is null)
             return false;
 
-        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath);
+        var loadedLayers = TiffExporter.LoadLayeredTiff(filePath, Logger);
         if (loadedLayers == null || loadedLayers.Count == 0)
             return false;
 

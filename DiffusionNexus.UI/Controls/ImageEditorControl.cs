@@ -420,7 +420,7 @@ public class ImageEditorControl : Control
                     return;
                 }
 
-                _editorCore.LoadImage(newPath);
+                LoadCoreDetectingTiff(newPath);
             }
             else if (!_isDetachedFromTree)
             {
@@ -1086,7 +1086,7 @@ public class ImageEditorControl : Control
     /// </summary>
     public bool LoadImage(string filePath)
     {
-        var result = _editorCore.LoadImage(filePath);
+        var result = LoadCoreDetectingTiff(filePath);
         if (result)
         {
             _suppressImagePathLoad = true;
@@ -1124,6 +1124,46 @@ public class ImageEditorControl : Control
             _suppressImagePathLoad = false;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Loads <paramref name="filePath"/> into the editor core, decoding multi-page/layered
+    /// TIFFs as layers and falling back to the flat decoder for single-frame or otherwise
+    /// non-LibTiff-readable TIFFs (and all non-TIFF images). Shared by the ImagePath binding
+    /// handler and the public <see cref="LoadImage(string)"/> entry point so every editor path
+    /// — drag-drop, gallery send, and dataset thumbnail selection — treats TIFFs consistently.
+    /// </summary>
+    private bool LoadCoreDetectingTiff(string filePath)
+    {
+        var logger = _editorCore.Logger;
+
+        if (IsTiffPath(filePath))
+        {
+            logger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                "Loading TIFF as layers.", filePath);
+            if (_editorCore.LoadLayeredTiff(filePath))
+                return true;
+
+            logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                "Layered TIFF load failed; trying flat decode (note: Skia has no TIFF codec, so this usually also fails).", filePath);
+        }
+
+        var loaded = _editorCore.LoadImage(filePath);
+        if (!loaded)
+        {
+            logger?.Error(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                $"Failed to load image into the editor: {filePath}");
+        }
+        return loaded;
+    }
+
+    private static bool IsTiffPath(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+            return false;
+        var ext = System.IO.Path.GetExtension(filePath);
+        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

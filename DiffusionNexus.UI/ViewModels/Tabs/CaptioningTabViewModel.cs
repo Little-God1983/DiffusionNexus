@@ -106,7 +106,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     // Input Selection
     private DatasetCardViewModel? _selectedDataset;
     private EditorVersionItem? _selectedDatasetVersion;
-    private string? _singleImagePath;
     private bool _isSingleImageMode;
     private bool _isCompareMode;
     private DatasetCardViewModel? _tempDataset;
@@ -188,9 +187,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
         DownloadModelCommand = new AsyncRelayCommand<CaptioningModelType>(DownloadModelAsync, CanDownloadModel);
         GenerateCommand = new AsyncRelayCommand(GenerateCaptionsAsync, CanGenerate);
-        SelectSingleImageCommand = new AsyncRelayCommand(SelectSingleImageAsync);
-        ClearSingleImageCommand = new RelayCommand(() => SingleImagePath = null);
         ToggleHistoryItemCommand = new RelayCommand<CaptionHistoryItemViewModel>(ToggleHistoryItem);
+
+        // The image list is mutated in place by ImageListInputControl; react to its changes.
+        SingleImagePaths.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasSingleImage));
+            OnPropertyChanged(nameof(SingleImageHasExistingCaption));
+            IsCompareMode = SingleImageHasExistingCaption;
+            GenerateCommand.NotifyCanExecuteChanged();
+        };
         PauseCommand = new RelayCommand(PauseCaptioning, () => IsProcessing);
         RefreshDatasetsCommand = new RelayCommand(
             () => _eventAggregator.PublishRefreshDatasetsRequested(new RefreshDatasetsRequestedEventArgs()));
@@ -713,36 +719,15 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     }
 
     /// <summary>
-    /// Path to a single image for captioning.
+    /// Paths of the loose images to caption in single-image mode. Mutated in place by
+    /// <c>ImageListInputControl</c> (drag-drop / file picker) and iterated during processing.
     /// </summary>
-    public string? SingleImagePath
-    {
-        get => _singleImagePath;
-        set
-        {
-            if (SetProperty(ref _singleImagePath, value))
-            {
-                if (!string.IsNullOrEmpty(value)) IsSingleImageMode = true;
-                GenerateCommand.NotifyCanExecuteChanged();
-                OnPropertyChanged(nameof(SingleImageName));
-                OnPropertyChanged(nameof(HasSingleImage));
-                OnPropertyChanged(nameof(SingleImageHasExistingCaption));
-
-                // Auto-enable compare mode when the image already has a caption
-                IsCompareMode = HasExistingCaption(value);
-            }
-        }
-    }
+    public ObservableCollection<string> SingleImagePaths { get; } = [];
 
     /// <summary>
-    /// Display name for the selected single image.
+    /// Whether at least one image is loaded for single-image (loose images) mode.
     /// </summary>
-    public string? SingleImageName => Path.GetFileName(SingleImagePath);
-
-    /// <summary>
-    /// Whether a single image is currently loaded.
-    /// </summary>
-    public bool HasSingleImage => !string.IsNullOrEmpty(SingleImagePath);
+    public bool HasSingleImage => SingleImagePaths.Count > 0;
 
     /// <summary>
     /// Whether to open a compare dialog when a single image already has a caption.
@@ -755,9 +740,11 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     }
 
     /// <summary>
-    /// Whether the selected single image already has a caption file on disk.
+    /// Whether a lone single image already has a caption file on disk. Only meaningful when
+    /// exactly one image is loaded (compare mode is single-image only).
     /// </summary>
-    public bool SingleImageHasExistingCaption => HasExistingCaption(SingleImagePath);
+    public bool SingleImageHasExistingCaption =>
+        SingleImagePaths.Count == 1 && HasExistingCaption(SingleImagePaths[0]);
 
     /// <summary>
     /// Whether to caption a single image instead of a dataset.
@@ -770,7 +757,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             if (SetProperty(ref _isSingleImageMode, value))
             {
                 if (value) SelectedDataset = null;
-                else SingleImagePath = null;
+                else SingleImagePaths.Clear();
                 GenerateCommand.NotifyCanExecuteChanged();
             }
         }
@@ -932,16 +919,6 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     public IAsyncRelayCommand GenerateCommand { get; }
 
     /// <summary>
-    /// Command to select a single image file.
-    /// </summary>
-    public IAsyncRelayCommand SelectSingleImageCommand { get; }
-
-    /// <summary>
-    /// Command to clear the selected single image.
-    /// </summary>
-    public IRelayCommand ClearSingleImageCommand { get; }
-
-    /// <summary>
     /// Command to toggle a history item's expanded state and show its caption in the detail area.
     /// </summary>
     public IRelayCommand<CaptionHistoryItemViewModel> ToggleHistoryItemCommand { get; }
@@ -1089,7 +1066,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (IsProcessing) return false;
 
         var hasInput = SelectedDataset is not null
-            || (!string.IsNullOrEmpty(SingleImagePath) && File.Exists(SingleImagePath));
+            || (IsSingleImageMode && SingleImagePaths.Any(File.Exists));
         if (!hasInput) return false;
 
         // ComfyUI / non-local backend
@@ -1104,24 +1081,13 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             && IsModelReady;
     }
 
-    private async Task SelectSingleImageAsync()
-    {
-        if (DialogService is null) return;
-
-        var result = await DialogService.ShowOpenFileDialogAsync("Select Image", null);
-        if (!string.IsNullOrEmpty(result))
-        {
-            SingleImagePath = result;
-        }
-    }
-
     private async Task GenerateCaptionsAsync()
     {
         if (!CanGenerate()) return;
 
         // In compare mode for single image, capture the existing caption before generation
-        var compareModeActive = IsSingleImageMode && IsCompareMode && !string.IsNullOrEmpty(SingleImagePath);
-        var existingCaption = compareModeActive ? ReadExistingCaption(SingleImagePath!) : string.Empty;
+        var compareModeActive = IsSingleImageMode && IsCompareMode && SingleImagePaths.Count == 1;
+        var existingCaption = compareModeActive ? ReadExistingCaption(SingleImagePaths[0]) : string.Empty;
 
         IsProcessing = true;
         TotalProgress = 0;
@@ -1290,7 +1256,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
                 var firstSuccess = results.FirstOrDefault(r => r is { Success: true, WasSkipped: false, Caption: not null });
                 if (firstSuccess?.Caption is not null)
                 {
-                    await ShowCaptionCompareAsync(SingleImagePath!, existingCaption, firstSuccess.Caption);
+                    await ShowCaptionCompareAsync(SingleImagePaths[0], existingCaption, firstSuccess.Caption);
                 }
             }
         }
@@ -1317,16 +1283,16 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
             RefreshDatasetStats();
 
             // The just-completed run may have written a fresh caption to
-            // disk. In single-image mode, re-evaluate the "existing caption"
+            // disk. With a lone image loaded, re-evaluate the "existing caption"
             // state so the next Generate click sees the new reality: the
             // compare-mode banner / dialog should appear if a caption now
             // exists, and the user should never silently overwrite a file
-            // they just produced. Mirrors the auto-enable behaviour from
-            // the SingleImagePath setter.
-            if (IsSingleImageMode && !string.IsNullOrEmpty(SingleImagePath))
+            // they just produced. Mirrors the auto-enable behaviour from the
+            // SingleImagePaths CollectionChanged handler.
+            if (IsSingleImageMode && SingleImagePaths.Count == 1)
             {
                 OnPropertyChanged(nameof(SingleImageHasExistingCaption));
-                IsCompareMode = HasExistingCaption(SingleImagePath);
+                IsCompareMode = HasExistingCaption(SingleImagePaths[0]);
             }
         }
     }
@@ -1499,9 +1465,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
 
     private IEnumerable<string> GetImagePaths()
     {
-        if (IsSingleImageMode && !string.IsNullOrEmpty(SingleImagePath))
+        if (IsSingleImageMode)
         {
-            return [SingleImagePath];
+            return SingleImagePaths.ToList();
         }
 
         // Gallery Selection: return stored paths directly
@@ -1583,7 +1549,9 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
 
         ClearGallerySelection();
-        SingleImagePath = imagePath;
+        IsSingleImageMode = true;
+        SingleImagePaths.Clear();
+        SingleImagePaths.Add(imagePath);
     }
 
     /// <summary>
@@ -1598,7 +1566,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         if (validPaths.Count == 0) return;
 
         _tempImagePaths = validPaths;
-        SingleImagePath = null;
+        SingleImagePaths.Clear();
         IsSingleImageMode = false;
 
         _tempDataset = new DatasetCardViewModel
