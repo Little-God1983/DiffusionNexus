@@ -21,14 +21,19 @@ namespace DiffusionNexus.UI.ViewModels.Pipelines;
 /// </summary>
 public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewModel
 {
-    // Fixed photoreal default prompt (editable in the UI). Kept simple for v1.
-    private const string DefaultPrompt = "photorealistic, realistic skin texture, natural lighting, detailed, high quality";
+    // Default prompt (editable in the UI). Mirrors the reference ComfyUI workflow's intent.
+    private const string DefaultPrompt = "turn this image into a photorealistic image";
+
+    // Generation config proven against the reference workflow (FLUX.2-klein + the 2 A2R LoRAs).
+    private const int Steps = 8;
+    private const float Cfg = 1.0f;
+    private const string Sampler = "euler";
 
     // Fixed seed for test renders so adjusting LoRA strength is directly comparable.
     private const long TestSeed = 12345L;
 
-    /// <summary>Multiplier applied to both anime-to-real LoRAs (bound to a slider).</summary>
-    [ObservableProperty] private double _loraStrength = 0.85;
+    /// <summary>Multiplier applied to both anime-to-real LoRAs (bound to a slider). Workflow uses 0.75.</summary>
+    [ObservableProperty] private double _loraStrength = 0.75;
 
     public override string Title => "Anime to Real";
 
@@ -41,7 +46,7 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
         IDialogService dialogs,
         IUnifiedLogger? unifiedLogger = null)
         : base(manifest, installer, backendProvider, outputWriter, datasetState, dialogs, unifiedLogger,
-               defaultPrompt: DefaultPrompt, defaultImageInfluence: 0.6)
+               defaultPrompt: DefaultPrompt, defaultImageInfluence: 1.0)
     {
     }
 
@@ -56,15 +61,21 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
                 "Diffusion Nexus Core → Workloads → the Pipelines tab.");
         }
 
-        var (width, height) = ReadAlignedDimensions(inputPath);
+        var (width, height) = ComputeOutputDimensions(inputPath);
 
+        // FLUX.2 reference-image conditioning (matches the ComfyUI workflow): the anime image is a
+        // VAE-encoded reference injected into the conditioning, generated on an empty latent (full
+        // "denoise 1.0"). AutoResize (on by default in the request) avoids size-mismatch crashes.
         var request = new DiffusionRequest
         {
             ModelKey = ModelKeys.Flux2Klein,
             Prompt = Prompt,
             Width = width,
             Height = height,
-            InitImage = new DiffusionReferenceImage(inputPath, (float)ImageInfluence),
+            Steps = Steps,
+            Cfg = Cfg,
+            Sampler = Sampler,
+            ReferenceImages = [new DiffusionReferenceImage(inputPath)],
             Loras = loras,
             Seed = isTestRun ? TestSeed : null,
         };
@@ -91,33 +102,38 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
         return loras;
     }
 
+    // Target output budget ≈ 1 megapixel (1024²). Keeps VRAM bounded while preserving aspect ratio.
+    private const double TargetPixels = 1024.0 * 1024.0;
+
     /// <summary>
-    /// Reads the input image's dimensions and clamps/rounds them to a FLUX.2-klein-valid size
-    /// (multiple of 16, within a sane VRAM range). Falls back to 1024² if the size can't be read.
+    /// Computes the output dimensions: the input image's aspect ratio scaled to ≈1 MP, each side
+    /// rounded to a multiple of 16 and clamped to a FLUX.2-klein-valid VRAM range. Falls back to
+    /// 1024² if the size can't be read. The reference image itself is auto-resized by the backend.
     /// </summary>
-    private static (int Width, int Height) ReadAlignedDimensions(string path)
+    private static (int Width, int Height) ComputeOutputDimensions(string path)
     {
-        int width = 1024, height = 1024;
+        double width = 1024, height = 1024;
         try
         {
             using var codec = SkiaSharp.SKCodec.Create(path);
-            if (codec is not null)
+            if (codec is not null && codec.Info is { Width: > 0, Height: > 0 } info)
             {
-                width = codec.Info.Width;
-                height = codec.Info.Height;
+                width = info.Width;
+                height = info.Height;
             }
         }
         catch
         {
-            // keep defaults
+            // keep 1024² fallback
         }
 
-        return (Align(width), Align(height));
+        var scale = Math.Sqrt(TargetPixels / (width * height));
+        return (Align(width * scale), Align(height * scale));
 
-        static int Align(int value)
+        static int Align(double value)
         {
-            value = Math.Clamp(value, 512, 1536);
-            return value - (value % 16);
+            var v = (int)Math.Round(Math.Clamp(value, 512, 1536));
+            return v - (v % 16);
         }
     }
 }

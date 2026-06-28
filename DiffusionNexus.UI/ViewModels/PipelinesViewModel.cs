@@ -171,6 +171,7 @@ public partial class PipelinesViewModel : ViewModelBase
         try
         {
             var run = _runFactory(tile);
+            run.ResourceMonitor = ResourceMonitor; // reuse the gallery's single nvidia-smi poller
             run.CloseRequested += OnRunCloseRequested;
             ActiveRun = run;
         }

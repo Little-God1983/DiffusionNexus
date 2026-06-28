@@ -14,11 +14,16 @@
     <!-- Left: settings -->
     <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto" Background="#1E1E1E">
 
-      <!-- Header -->
-      <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="16,16,16,8">
-        <Button Content="←  Back" Command="{Binding BackCommand}" Padding="10,6"/>
-        <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="White"
-                   VerticalAlignment="Center"/>
+      <!-- Header + live GPU/RAM monitor (always visible while running a pipeline) -->
+      <StackPanel Grid.Row="0" Spacing="10" Margin="16,16,16,8">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Content="←  Back" Command="{Binding BackCommand}" Padding="10,6"/>
+          <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="White"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+        <ContentControl IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}"/>
+        </ContentControl>
       </StackPanel>
 
       <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -73,9 +78,9 @@
               <TextBlock Text="Prompt"/>
               <TextBox Text="{Binding Prompt}" AcceptsReturn="True" MaxHeight="90" TextWrapping="Wrap"/>
 
-              <TextBlock Text="{Binding ImageInfluence, StringFormat='Image influence (denoise): {0:F2}'}"/>
-              <Slider Minimum="0.2" Maximum="0.95" Value="{Binding ImageInfluence}"
-                      ToolTip.Tip="Lower = closer to the input image; higher = more re-imagined."/>
+              <TextBlock Text="{Binding ImageInfluence, StringFormat='Denoise: {0:F2}'}"/>
+              <Slider Minimum="0.2" Maximum="1.0" Value="{Binding ImageInfluence}"
+                      ToolTip.Tip="1.0 = full generation guided by the reference image (recommended for Anime → Real)."/>
 
               <!-- Pipeline-specific controls (e.g. LoRA strength for Anime-To-Real) -->
               <ContentControl Content="{Binding}">

@@ -41,6 +41,12 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
     public PipelineManifest Manifest { get; }
     public abstract string Title { get; }
 
+    /// <summary>
+    /// GPU VRAM + RAM monitor shown atop the run UI. Assigned by the host to the SAME instance the
+    /// gallery uses, so there's a single nvidia-smi poller (the visible view drives the timer).
+    /// </summary>
+    public ResourceMonitorViewModel? ResourceMonitor { get; set; }
+
     /// <summary>Raised when the user clicks Back; the host clears its active run.</summary>
     public event EventHandler? CloseRequested;
 

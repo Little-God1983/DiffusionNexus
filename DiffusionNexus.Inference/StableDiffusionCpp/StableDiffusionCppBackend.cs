@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -210,6 +211,18 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             .WithSampler(MapSampler(req.Sampler ?? d.DefaultSampler))
             .WithScheduler(MapScheduler(req.Scheduler ?? d.DefaultScheduler))
             .WithSeed(seed);
+
+        // FLUX.2 reference-image conditioning (kontext / edit). The reference image(s) are VAE-encoded
+        // and injected into the conditioning while the latent stays empty — this is the "anime → real"
+        // path. AutoResize fixes the size mismatch that otherwise crashes the native generator.
+        if (req.ReferenceImages.Count > 0)
+        {
+            genParams = genParams.WithRefImageAutoResize(req.AutoResizeReferenceImages);
+            genParams.RefImages = req.ReferenceImages
+                .Where(r => !string.IsNullOrWhiteSpace(r.FilePath))
+                .Select(r => HPPH.SkiaSharp.ImageHelper.LoadImage(r.FilePath))
+                .ToArray();
+        }
 
         // LoRAs are applied per-generation (stable-diffusion.cpp loads them at runtime for this
         // call only), so the cached base context is shared across requests with different LoRAs.

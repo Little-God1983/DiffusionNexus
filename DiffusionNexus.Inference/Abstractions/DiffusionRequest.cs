@@ -66,6 +66,19 @@ public sealed class DiffusionRequest
     /// <summary>Initial image for img2img. <b>Currently ignored by the v1 backend.</b></summary>
     public DiffusionReferenceImage? InitImage { get; init; }
 
+    /// <summary>
+    /// FLUX.2 reference images (kontext / edit conditioning). Each is VAE-encoded and injected into the
+    /// positive conditioning while the latent stays empty (full generation) — this is how "anime → real"
+    /// works (NOT classic img2img denoise). Honored by the stable-diffusion.cpp backend.
+    /// </summary>
+    public IReadOnlyList<DiffusionReferenceImage> ReferenceImages { get; init; } = [];
+
+    /// <summary>
+    /// When true (default), reference images are auto-resized to a model-valid size before VAE-encoding.
+    /// This prevents a native size-mismatch crash when the output dimensions differ from the reference.
+    /// </summary>
+    public bool AutoResizeReferenceImages { get; init; } = true;
+
     // TODO(v2-inpaint): Backend currently ignores this — placeholder for inpaint mask painting.
     /// <summary>Mask for inpainting (white = repaint, black = keep). <b>Currently ignored by the v1 backend.</b></summary>
     public DiffusionReferenceImage? MaskImage { get; init; }
