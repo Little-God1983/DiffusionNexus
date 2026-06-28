@@ -189,7 +189,21 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     {
         var seed = req.Seed ?? Random.Shared.NextInt64();
 
-        var genParams = SDNet.ImageGenerationParameter.TextToImage(req.Prompt)
+        // Image-to-image when an init image is supplied (e.g. anime → real), otherwise text-to-image.
+        // The init image's Strength is the denoise strength (0 = keep input, 1 = ignore input).
+        SDNet.ImageGenerationParameter genParams;
+        if (req.InitImage is { } init && !string.IsNullOrWhiteSpace(init.FilePath))
+        {
+            var initImage = HPPH.SkiaSharp.ImageHelper.LoadImage(init.FilePath);
+            genParams = SDNet.ImageGenerationParameter.ImageToImage(req.Prompt, initImage)
+                .WithStrength(init.Strength);
+        }
+        else
+        {
+            genParams = SDNet.ImageGenerationParameter.TextToImage(req.Prompt);
+        }
+
+        genParams = genParams
             .WithSize(req.Width, req.Height)
             .WithSteps(req.Steps ?? d.DefaultSteps)
             .WithCfg(req.Cfg ?? d.DefaultCfg)
@@ -208,7 +222,6 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 
         // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
         // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-img2img):         switch to ImageGenerationParameter.ImageToImage(...) when req.InitImage != null.
         // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
 
         var image = model.GenerateImage(genParams)

@@ -3,10 +3,12 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Pipelines;
+using DiffusionNexus.UI.ViewModels.Pipelines;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -25,12 +27,19 @@ public partial class PipelinesViewModel : ViewModelBase
     private readonly IPipelineAssetInstaller? _installer;
     private readonly IDialogService? _dialogService;
     private readonly IUnifiedLogger? _unifiedLogger;
+    private readonly Func<PipelineTileViewModel, PipelineRunViewModel>? _runFactory;
 
     /// <summary>The pipeline tiles displayed in the gallery.</summary>
     public ObservableCollection<PipelineTileViewModel> Pipelines { get; } = new();
 
     /// <summary>GPU/RAM monitor widget shown atop the gallery (null at design time).</summary>
     public ResourceMonitorViewModel? ResourceMonitor { get; }
+
+    /// <summary>
+    /// The pipeline currently being run (its run UI replaces the gallery). Null = showing the gallery.
+    /// </summary>
+    [ObservableProperty]
+    private PipelineRunViewModel? _activeRun;
 
     /// <summary>Design-time constructor (also used as a safe fallback).</summary>
     public PipelinesViewModel()
@@ -42,12 +51,14 @@ public partial class PipelinesViewModel : ViewModelBase
         IPipelineManifestProvider manifestProvider,
         IPipelineAssetInstaller installer,
         ResourceMonitorViewModel? resourceMonitor = null,
+        Func<PipelineTileViewModel, PipelineRunViewModel>? runFactory = null,
         IDialogService? dialogService = null,
         IUnifiedLogger? unifiedLogger = null)
     {
         _manifestProvider = manifestProvider ?? throw new ArgumentNullException(nameof(manifestProvider));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         ResourceMonitor = resourceMonitor;
+        _runFactory = runFactory;
         _dialogService = dialogService;
         _unifiedLogger = unifiedLogger;
 
@@ -132,8 +143,7 @@ public partial class PipelinesViewModel : ViewModelBase
             if (readiness.IsComplete)
             {
                 SetStatus(tile, PipelineStatus.Ready, "Ready");
-                await ShowMessageAsync(tile.Title,
-                    "All required models and LoRAs for this pipeline are installed and ready.");
+                OpenRun(tile);
                 return;
             }
 
@@ -150,6 +160,41 @@ public partial class PipelinesViewModel : ViewModelBase
             SetStatus(tile, PipelineStatus.Error, "Failed");
             await ShowMessageAsync("Error", ex.Message);
         }
+    }
+
+    /// <summary>Opens the pipeline's run UI (replaces the gallery) via the registered factory.</summary>
+    private void OpenRun(PipelineTileViewModel tile)
+    {
+        if (_runFactory is null)
+            return;
+
+        try
+        {
+            var run = _runFactory(tile);
+            run.CloseRequested += OnRunCloseRequested;
+            ActiveRun = run;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to open run UI for pipeline {Id}.", tile.Id);
+            _ = ShowMessageAsync("Error", $"Could not open '{tile.Title}': {ex.Message}");
+        }
+    }
+
+    private void OnRunCloseRequested(object? sender, EventArgs e) => CloseRun();
+
+    [RelayCommand]
+    private void CloseRun()
+    {
+        if (ActiveRun is { } run)
+        {
+            run.CloseRequested -= OnRunCloseRequested;
+            run.Dispose();
+            ActiveRun = null;
+        }
+
+        // A run may have created a new dataset version / written outputs; refresh the badges.
+        _ = RefreshAllStatusesAsync();
     }
 
     private static void SetStatus(PipelineTileViewModel tile, PipelineStatus status, string text)

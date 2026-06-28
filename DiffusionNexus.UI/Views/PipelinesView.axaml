@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:pipelines="using:DiffusionNexus.UI.Views.Pipelines"
              xmlns:m="using:DiffusionNexus.UI.Markup"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.PipelinesView"
@@ -13,7 +14,15 @@
     <vm:PipelinesViewModel/>
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,Auto,*" Margin="24">
+  <Panel>
+
+  <!-- Active pipeline run (img2img etc.) — replaces the gallery while open -->
+  <ContentControl IsVisible="{Binding ActiveRun, Converter={x:Static ObjectConverters.IsNotNull}}">
+    <pipelines:PipelineRunView DataContext="{Binding ActiveRun}"/>
+  </ContentControl>
+
+  <Grid RowDefinitions="Auto,Auto,*" Margin="24"
+        IsVisible="{Binding ActiveRun, Converter={x:Static ObjectConverters.IsNull}}">
 
     <!-- GPU/RAM monitor strip -->
     <ContentControl Grid.Row="0" HorizontalAlignment="Left" Margin="0,0,0,16"
@@ -119,4 +128,5 @@
     </ScrollViewer>
 
   </Grid>
+  </Panel>
 </UserControl>

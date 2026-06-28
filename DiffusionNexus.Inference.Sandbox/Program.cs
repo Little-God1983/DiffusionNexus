@@ -49,15 +49,29 @@ catch (Exception ex)
 
 try
 {
-    Console.WriteLine("=== Generating 1024x1024 / 8 steps (matches canvas default size) ===");
-    var image = model.GenerateImage(
-        ImageGenerationParameter.TextToImage("a photo of a red apple on a wooden table, studio lighting")
-            .WithSize(1024, 1024)
-            .WithSteps(8)
-            .WithCfg(1.0f)
-            .WithSampler(Sampler.Euler));
+    // img2img smoke test (anime->real path): init image + denoise strength + the 2 anime-to-real LoRAs.
+    const string InitImage = @"D:\Models\flux2-klein-smoketest.png"; // any existing image as the init
+    const string Lora1 = @"D:\Models\Lora\Flux2\A2R_Klein_Standard.safetensors";            // modelId 1934100
+    const string Lora2 = @"D:\Models\Lora\Sort\flux220kleinE58AA8E6BCABE8BDACE5.O9j8.safetensors"; // modelId 2343188
 
-    var outPath = @"D:\Models\flux2-klein-smoketest.png";
+    Console.WriteLine($"=== img2img 1024x1024 / 8 steps, strength 0.6, 2 LoRAs @0.85 ===");
+    Console.WriteLine($"  init : {(File.Exists(InitImage) ? "OK" : "MISSING")} {InitImage}");
+    Console.WriteLine($"  lora1: {(File.Exists(Lora1) ? "OK" : "MISSING")} {Lora1}");
+    Console.WriteLine($"  lora2: {(File.Exists(Lora2) ? "OK" : "MISSING")} {Lora2}");
+
+    var initImage = HPPH.SkiaSharp.ImageHelper.LoadImage(InitImage);
+    var genParams = ImageGenerationParameter.ImageToImage("photorealistic, realistic skin texture, natural lighting", initImage)
+        .WithStrength(0.6f)
+        .WithSize(1024, 1024)
+        .WithSteps(8)
+        .WithCfg(1.0f)
+        .WithSampler(Sampler.Euler);
+    if (File.Exists(Lora1)) genParams.Loras.Add(new Lora(Lora1) { Multiplier = 0.85f });
+    if (File.Exists(Lora2)) genParams.Loras.Add(new Lora(Lora2) { Multiplier = 0.85f });
+
+    var image = model.GenerateImage(genParams);
+
+    var outPath = @"D:\Models\flux2-img2img-smoketest.png";
     File.WriteAllBytes(outPath, image.ToPng());
     Console.WriteLine($">>> GENERATED OK -> {outPath}");
     return 0;

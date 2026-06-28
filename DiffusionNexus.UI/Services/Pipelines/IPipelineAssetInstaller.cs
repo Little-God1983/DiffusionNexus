@@ -36,4 +36,11 @@ public interface IPipelineAssetInstaller
         PipelineManifest manifest,
         int vramGb,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the on-disk <c>.safetensors</c> path of a LoRA previously downloaded from the given
+    /// Civitai model id (matched via its <c>.civitai.info</c> sidecar), searching every model root.
+    /// Returns null if no matching weights file is present.
+    /// </summary>
+    Task<string?> FindLoraPathByModelIdAsync(int civitaiModelId, CancellationToken cancellationToken = default);
 }

@@ -129,6 +129,21 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         return await ComputeReadinessAsync(manifest, afterRoots, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task<string?> FindLoraPathByModelIdAsync(int civitaiModelId, CancellationToken cancellationToken = default)
+    {
+        var roots = await _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var root in roots)
+        {
+            var hit = FindLoraByCivitaiModelId(root, civitaiModelId);
+            // FindLoraByCivitaiModelId may return the sidecar path when no weights file sits beside it;
+            // for inference we need the actual .safetensors.
+            if (hit is not null && hit.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+                return hit;
+        }
+        return null;
+    }
+
     private static PipelineReadiness BuildReadiness(PipelineManifest manifest, IReadOnlyList<string> roots)
     {
         var states = new List<PipelineAssetState>(manifest.Assets.Count);
