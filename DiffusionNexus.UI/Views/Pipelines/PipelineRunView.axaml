@@ -82,14 +82,11 @@
               <Slider Minimum="0.2" Maximum="1.0" Value="{Binding ImageInfluence}"
                       ToolTip.Tip="1.0 = full generation guided by the reference image (recommended for Anime → Real)."/>
 
-              <!-- Pipeline-specific controls (e.g. LoRA strength for Anime-To-Real) -->
+              <!-- Pipeline-specific controls (e.g. Steps for Anime-To-Real) -->
               <ContentControl Content="{Binding}">
                 <ContentControl.DataTemplates>
                   <DataTemplate DataType="vm:AnimeToRealPipelineRunViewModel">
                     <StackPanel Spacing="6">
-                      <TextBlock Text="{Binding LoraStrength, StringFormat='LoRA strength: {0:F2}'}"/>
-                      <Slider Minimum="0" Maximum="1.5" Value="{Binding LoraStrength}"/>
-
                       <TextBlock Text="{Binding Steps, StringFormat='Steps: {0}'}"/>
                       <Slider Minimum="4" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True"
                               Value="{Binding Steps}"
@@ -98,6 +95,16 @@
                   </DataTemplate>
                 </ContentControl.DataTemplates>
               </ContentControl>
+            </StackPanel>
+          </Border>
+
+          <!-- LoRAs (reusable multi-LoRA picker; required LoRAs come from the workflow) -->
+          <Border Background="#333333" CornerRadius="8" Padding="16"
+                  IsVisible="{Binding SupportsLoras}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="LoRAs" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+              <controls:MultiLoraPickerControl Loras="{Binding Loras}"
+                                               AvailableLoras="{Binding AvailableLoras}"/>
             </StackPanel>
           </Border>
 

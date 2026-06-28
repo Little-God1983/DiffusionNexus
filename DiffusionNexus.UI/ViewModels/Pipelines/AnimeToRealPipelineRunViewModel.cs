@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -10,14 +9,16 @@ using DiffusionNexus.Inference.StableDiffusionCpp;
 using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Diffusion;
+using DiffusionNexus.UI.Services.Lora;
 using DiffusionNexus.UI.Services.Pipelines;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
 
 /// <summary>
-/// Anime-To-Real pipeline: img2img with FLUX.2-klein + the two anime-to-real LoRAs at a chosen
-/// strength turns an anime image into a photoreal one. Adds only the LoRA-strength knob; everything
-/// else (input source, output options, batch, progress) is inherited from <see cref="PipelineRunViewModel"/>.
+/// Anime-To-Real pipeline: FLUX.2-klein reference-image conditioning + LoRAs turns an anime image into
+/// a photoreal one. Supplies the two mandatory anime-to-real LoRAs (via the manifest) and filters the
+/// Multi-LoRA Picker to the FLUX.2-klein base models; everything else (input source, output options,
+/// batch, progress, LoRA picker) is inherited from <see cref="PipelineRunViewModel"/>.
 /// </summary>
 public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewModel
 {
@@ -28,16 +29,26 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
     private const float Cfg = 1.0f;
     private const string Sampler = "euler";
 
-    // Fixed seed for test renders so adjusting LoRA strength is directly comparable.
+    // Fixed seed for test renders so adjusting settings is directly comparable.
     private const long TestSeed = 12345L;
 
-    /// <summary>Multiplier applied to both anime-to-real LoRAs (bound to a slider). Workflow uses 0.75.</summary>
-    [ObservableProperty] private double _loraStrength = 0.75;
+    // FLUX.2-klein base-model labels (raw Civitai strings) the LoRA picker is filtered to.
+    private static readonly string[] FluxKleinBaseModels =
+    [
+        "Flux.2 Klein 9B",
+        "Flux.2 Klein 9B-base",
+        "Flux.2 Klein 4B",
+        "Flux.2 Klein 4B-base",
+    ];
 
     /// <summary>Sampling steps (bound to a 4–30 slider). Reference workflow uses 8.</summary>
     [ObservableProperty] private int _steps = 8;
 
     public override string Title => "Anime to Real";
+
+    protected override IReadOnlyList<string> LoraBaseModels => FluxKleinBaseModels;
+
+    protected override double DefaultLoraStrength => 0.75;
 
     public AnimeToRealPipelineRunViewModel(
         PipelineManifest manifest,
@@ -46,8 +57,9 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
         IPipelineOutputWriter outputWriter,
         IDatasetState datasetState,
         IDialogService dialogs,
+        ILoraCatalog loraCatalog,
         IUnifiedLogger? unifiedLogger = null)
-        : base(manifest, installer, backendProvider, outputWriter, datasetState, dialogs, unifiedLogger,
+        : base(manifest, installer, backendProvider, outputWriter, datasetState, dialogs, loraCatalog, unifiedLogger,
                defaultPrompt: DefaultPrompt, defaultImageInfluence: 1.0)
     {
     }
@@ -90,18 +102,6 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
         }
 
         return png ?? throw new InvalidOperationException("No image was produced.");
-    }
-
-    private async Task<List<LoraReference>> ResolveLorasAsync(CancellationToken ct)
-    {
-        var loras = new List<LoraReference>();
-        foreach (var asset in Manifest.Assets.Where(a => a.Kind == PipelineAssetKind.Lora && a.CivitaiModelId.HasValue))
-        {
-            var path = await Installer.FindLoraPathByModelIdAsync(asset.CivitaiModelId!.Value, ct).ConfigureAwait(true);
-            if (!string.IsNullOrWhiteSpace(path))
-                loras.Add(new LoraReference(path, (float)LoraStrength));
-        }
-        return loras;
     }
 
     // Target output budget ≈ 1 megapixel (1024²). Keeps VRAM bounded while preserving aspect ratio.

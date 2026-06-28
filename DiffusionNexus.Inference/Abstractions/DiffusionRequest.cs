@@ -54,8 +54,7 @@ public sealed class DiffusionRequest
     /// <summary>Negative prompt. <b>Currently ignored by the v1 backend.</b></summary>
     public string? NegativePrompt { get; init; }
 
-    // TODO(v2-loras): Backend currently ignores this collection — placeholder for the LoRA picker.
-    /// <summary>LoRAs to load over the base model. <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>LoRAs to load over the base model (applied per-generation by the stable-diffusion.cpp backend).</summary>
     public IReadOnlyList<LoraReference> Loras { get; init; } = [];
 
     // TODO(v2-controlnet): Backend currently ignores this collection — placeholder for ControlNet inputs.

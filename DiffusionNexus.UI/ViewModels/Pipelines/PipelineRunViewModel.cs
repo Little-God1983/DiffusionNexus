@@ -13,6 +13,7 @@ using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Diffusion;
+using DiffusionNexus.UI.Services.Lora;
 using DiffusionNexus.UI.Services.Pipelines;
 using DiffusionNexus.UI.ViewModels.Controls;
 using Serilog;
@@ -37,11 +38,32 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
 
     private readonly IPipelineOutputWriter _outputWriter;
     private readonly IDatasetState _datasetState;
+    private readonly ILoraCatalog _loraCatalog;
     private CancellationTokenSource? _cts;
     private string? _lastTempPreviewPath;
+    private bool _disposed;
 
     public PipelineManifest Manifest { get; }
     public abstract string Title { get; }
+
+    // ── LoRAs (reusable Multi-LoRA Picker) ──────────────────────────────────────
+    /// <summary>The picker rows: workflow-mandated LoRAs (seeded from the manifest) + any the user adds.</summary>
+    public ObservableCollection<LoraPickerItemViewModel> Loras { get; } = [];
+
+    /// <summary>Installed LoRAs offered in each row's search dropdown, filtered to <see cref="LoraBaseModels"/>.</summary>
+    public ObservableCollection<AvailableLora> AvailableLoras { get; } = [];
+
+    /// <summary>
+    /// Base-model strings (raw Civitai values, matched case-insensitively) the picker filters installed
+    /// LoRAs to. Empty = no filter (all installed LoRAs). Overridden per workflow.
+    /// </summary>
+    protected virtual IReadOnlyList<string> LoraBaseModels => [];
+
+    /// <summary>Default strength applied to a workflow's mandatory LoRAs. Overridden per workflow.</summary>
+    protected virtual double DefaultLoraStrength => 1.0;
+
+    /// <summary>Whether this workflow exposes the LoRA picker (override to false for non-LoRA workflows).</summary>
+    public virtual bool SupportsLoras => true;
 
     /// <summary>
     /// GPU VRAM + RAM monitor shown atop the run UI. Assigned by the host to the SAME instance the
@@ -104,6 +126,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         IPipelineOutputWriter outputWriter,
         IDatasetState datasetState,
         IDialogService dialogs,
+        ILoraCatalog loraCatalog,
         IUnifiedLogger? unifiedLogger,
         string defaultPrompt,
         double defaultImageInfluence)
@@ -114,6 +137,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         _outputWriter = outputWriter ?? throw new ArgumentNullException(nameof(outputWriter));
         _datasetState = datasetState ?? throw new ArgumentNullException(nameof(datasetState));
         Dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
+        _loraCatalog = loraCatalog ?? throw new ArgumentNullException(nameof(loraCatalog));
         UnifiedLogger = unifiedLogger;
         _prompt = defaultPrompt;
         _imageInfluence = defaultImageInfluence;
@@ -128,6 +152,48 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         };
 
         RecomputeOutputOptions();
+        SeedMandatoryLoras();
+        _ = LoadAvailableLorasAsync();
+    }
+
+    /// <summary>Seeds the picker with the workflow's mandatory LoRAs (from the manifest's LoRA assets).</summary>
+    private void SeedMandatoryLoras()
+    {
+        foreach (var asset in Manifest.Assets.Where(a => a.Kind == PipelineAssetKind.Lora && a.CivitaiModelId.HasValue))
+        {
+            Loras.Add(new LoraPickerItemViewModel
+            {
+                DisplayName = asset.Name,
+                CivitaiModelId = asset.CivitaiModelId,
+                IsMandatory = true,
+                Strength = DefaultLoraStrength,
+            });
+        }
+    }
+
+    /// <summary>Loads the installed LoRAs (filtered to <see cref="LoraBaseModels"/>) for the search dropdowns.</summary>
+    private async Task LoadAvailableLorasAsync()
+    {
+        try
+        {
+            // ConfigureAwait(true): ctor runs on the UI thread, so AvailableLoras is mutated there.
+            var loras = await _loraCatalog.GetInstalledLorasAsync(LoraBaseModels, CancellationToken.None).ConfigureAwait(true);
+            if (_disposed)
+                return; // user navigated away (Back) before the DB read finished
+            AvailableLoras.Clear();
+            foreach (var lora in loras)
+                AvailableLoras.Add(lora);
+
+            Log.Information("Loaded {Count} LoRAs for the picker (base models: {BaseModels}).",
+                loras.Count, string.Join(", ", LoraBaseModels));
+            UnifiedLogger?.Info(LogCategory.General, "Workflows",
+                $"LoRA picker loaded {loras.Count} matching LoRA(s).");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load available LoRAs for the picker.");
+            UnifiedLogger?.Error(LogCategory.General, "Workflows", $"Failed to load LoRAs: {ex.Message}", ex);
+        }
     }
 
     partial void OnIsSingleImageModeChanged(bool value)
@@ -458,6 +524,28 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Resolves the enabled picker rows into <see cref="LoraReference"/>s for a generation request.
+    /// Optional rows use their picked <see cref="LoraPickerItemViewModel.FilePath"/>; mandatory rows
+    /// (no path yet) are resolved on disk from their Civitai model id. Disabled rows are dropped.
+    /// </summary>
+    protected async Task<List<LoraReference>> ResolveLorasAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<LoraReference>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in Loras.Where(l => l.IsEnabled))
+        {
+            var path = item.FilePath;
+            if (string.IsNullOrWhiteSpace(path) && item.CivitaiModelId is { } modelId)
+                path = await Installer.FindLoraPathByModelIdAsync(modelId, cancellationToken).ConfigureAwait(true);
+
+            // Never apply the same LoRA file twice (e.g. a required LoRA also picked in an optional row).
+            if (!string.IsNullOrWhiteSpace(path) && seenPaths.Add(path))
+                result.Add(new LoraReference(path, (float)item.Strength));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// THE inheritance hook: a concrete pipeline turns one input image into one output PNG (model,
     /// prompt, LoRAs, strength, etc.). Called once per image by both Generate commands.
     /// </summary>
@@ -466,6 +554,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = null;

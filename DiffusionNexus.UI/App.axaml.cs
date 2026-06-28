@@ -1007,6 +1007,9 @@ public partial class App : Application
             sp.GetService<IAppSettingsService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
+        // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
+        services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
+
         // Pipelines: app-side manifest provider + asset installer + module ViewModel.
         services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
         services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
