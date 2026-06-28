@@ -283,6 +283,55 @@ public partial class ImageEditorCore
     }
 
     /// <summary>
+    /// Exports the inpaint mask as a standalone opaque grayscale PNG (white = repaint, black = keep),
+    /// feathered to soften brush edges. This is the separate mask the local DiffusionNexus core
+    /// renderer expects (alongside the base image), as opposed to the alpha-punched composite the
+    /// ComfyUI path uploads. Returns null if no mask has been painted.
+    /// </summary>
+    /// <param name="featherRadius">Mask feather radius for softening brush edges (0 = hard).</param>
+    public byte[]? GetInpaintMaskAsPng(float featherRadius)
+    {
+        SKBitmap? maskCopy;
+        lock (_bitmapLock)
+        {
+            maskCopy = _layers?.Layers
+                .FirstOrDefault(l => l.IsInpaintMask)?.Bitmap?.Copy();
+        }
+
+        if (maskCopy is null)
+            return null;
+
+        try
+        {
+            using var feathered = FeatherMask(maskCopy, featherRadius);
+
+            // The mask layer stores painted areas as white pixels with non-zero alpha on a transparent
+            // background. Convert painted coverage (alpha) into an opaque grayscale value so the mask
+            // reads white = repaint, black = keep.
+            var srcPixels = feathered.Pixels;
+            var dst = new SKColor[srcPixels.Length];
+            for (var i = 0; i < srcPixels.Length; i++)
+            {
+                var coverage = srcPixels[i].Alpha;
+                dst[i] = new SKColor(coverage, coverage, coverage, 255);
+            }
+
+            using var result = new SKBitmap(
+                feathered.Width, feathered.Height,
+                SKColorType.Rgba8888, SKAlphaType.Unpremul);
+            result.Pixels = dst;
+
+            using var img = SKImage.FromBitmap(result);
+            using var encoded = img.Encode(SKEncodedImageFormat.Png, 100);
+            return encoded.ToArray();
+        }
+        finally
+        {
+            maskCopy.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Composites the base image with the feathered mask and encodes to PNG.
     /// Disposes both input bitmaps.
     /// </summary>

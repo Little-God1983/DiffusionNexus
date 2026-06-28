@@ -868,6 +868,7 @@ public partial class ImageEditView : UserControl
                 if (!prepareResult.Success)
                 {
                     imageEditor.StatusMessage = prepareResult.ErrorMessage;
+                    imageEditor.Inpainting.AbortGeneration();
                     return;
                 }
 
@@ -877,6 +878,47 @@ public partial class ImageEditView : UserControl
                 if (imageEditor.Inpainting.IsCompareModePending)
                 {
                     beforePng = editorCore.GetInpaintBaseAsPng();
+                }
+
+                // Route to the local DiffusionNexus core renderer when the user picked it in the
+                // readiness panel's backend dropdown. The local path wants the base image and a
+                // separate white/black mask, rather than the alpha-punched composite ComfyUI uploads.
+                var useLocalBackend = imageEditor.Inpainting.Readiness.SelectedBackend?.Kind
+                    == DiffusionNexus.Domain.Enums.BackendKind.LocalInference;
+
+                if (useLocalBackend)
+                {
+                    var basePngBytes = editorCore.GetInpaintBaseAsPng();
+                    var maskPngBytes = editorCore.GetInpaintMaskAsPng(imageEditor.Inpainting.MaskFeather);
+                    if (basePngBytes is null || maskPngBytes is null)
+                    {
+                        imageEditor.StatusMessage = "Could not prepare the base image or mask for local inpainting.";
+                        imageEditor.Inpainting.AbortGeneration();
+                        return;
+                    }
+
+                    var localBasePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_localbase_{Guid.NewGuid():N}.png");
+                    var localMaskPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_localmask_{Guid.NewGuid():N}.png");
+                    await File.WriteAllBytesAsync(localBasePath, basePngBytes);
+                    await File.WriteAllBytesAsync(localMaskPath, maskPngBytes);
+
+                    if (beforePng is not null)
+                    {
+                        var beforePath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_before_{Guid.NewGuid():N}.png");
+                        await File.WriteAllBytesAsync(beforePath, beforePng);
+                        imageEditor.Inpainting.SetCompareBeforeImagePath(beforePath);
+                    }
+
+                    try
+                    {
+                        await imageEditor.Inpainting.ProcessInpaintLocalAsync(localBasePath, localMaskPath);
+                    }
+                    finally
+                    {
+                        try { if (File.Exists(localBasePath)) File.Delete(localBasePath); } catch { /* best effort */ }
+                        try { if (File.Exists(localMaskPath)) File.Delete(localMaskPath); } catch { /* best effort */ }
+                    }
+                    return;
                 }
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
@@ -894,6 +936,9 @@ public partial class ImageEditView : UserControl
             catch (Exception ex)
             {
                 imageEditor.StatusMessage = $"Inpainting failed: {ex.Message}";
+                // Reset busy state for failures that happened before a Process* method took over
+                // (those reset it themselves); without this the Generate buttons stay disabled.
+                imageEditor.Inpainting.AbortGeneration();
             }
             finally
             {

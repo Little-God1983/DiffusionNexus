@@ -69,10 +69,57 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
 
         TryAddZImageTurbo(found);
         TryAddFlux2Klein(found);
+        TryAddQwenImageInpaint(found);
 
         // TODO(v2-models): add SDXL checkpoint discovery, Qwen-Image-Edit (incl. mmproj), etc.
 
         return found;
+    }
+
+    private void TryAddQwenImageInpaint(List<ModelDescriptor> sink)
+    {
+        // Mirrors the ComfyUI inpaint workflow (Inpaint-Qwen-2512.json): Qwen-Image-2512 GGUF DiT +
+        // Qwen2.5-VL text encoder + Qwen-Image VAE + the InstantX inpainting ControlNet. The 4-step
+        // Lightning LoRA is applied per-generation (via the request's Loras), not loaded here.
+        var unet = FindFileByPattern("qwen-image-2512-*.gguf");
+        // Text encoder = Qwen2.5-VL-7B, loaded via WithLLMPath. Prefer a GGUF quant when present:
+        // ComfyUI loads the fp8-scaled safetensors, but — as with the Qwen3-8B encoder for FLUX.2
+        // (see TryAddFlux2Klein) — Comfy-Org's fp8-scaled safetensors can fail to load in
+        // stable-diffusion.cpp with a tensor-shape error. The fp8 file is the fallback (it is what
+        // the inpaint workload downloads), so it still works if it loads; discovery is purely
+        // existence-based (no header probing), so this is a best-effort preference, not a load-time
+        // retry. If the fp8 file fails to load, add a GGUF Qwen2.5-VL-7B to text_encoders/.
+        var llm = FindFileByPattern("Qwen2.5-VL-7B*.gguf")
+                  ?? FindFileByPattern("qwen2.5-vl-7b*.gguf")
+                  ?? FindFile("qwen_2.5_vl_7b_fp8_scaled.safetensors");
+        var vae = FindFile("qwen_image_vae.safetensors");
+        var controlNet = FindFile("Qwen-Image-InstantX-ControlNet-Inpainting.safetensors");
+
+        if (unet is null || llm is null || vae is null || controlNet is null)
+            return;
+
+        sink.Add(new ModelDescriptor
+        {
+            Key = ModelKeys.QwenImageInpaint,
+            DisplayName = "Qwen-Image 2512 (Inpaint)",
+            Kind = ModelKind.QwenImageInpaint,
+            DiffusionModelPath = unet,
+            VaePath = vae,
+            ControlNetPath = controlNet,
+            TextEncoders = new Dictionary<TextEncoderSlot, string>
+            {
+                [TextEncoderSlot.Llm] = llm,
+            },
+            // 4-step Lightning distillation, CFG 1 (guidance baked in), AuraFlow shift 3.1.
+            DefaultSteps = 4,
+            DefaultCfg = 1.0f,
+            DefaultSampler = "euler",
+            DefaultScheduler = "simple",
+            DefaultFlowShift = 3.1f,
+            DimensionAlignment = 16,
+            DefaultWidth = 1024,
+            DefaultHeight = 1024,
+        });
     }
 
     private void TryAddFlux2Klein(List<ModelDescriptor> sink)
@@ -238,7 +285,9 @@ public static class ModelKeys
 
     public const string Flux2Klein = "flux2-klein";
 
-    // TODO(v2-models): add SDXL/QwenImageEdit keys here.
+    public const string QwenImageInpaint = "qwen-image-2512-inpaint";
+
+    // TODO(v2-models): add SDXL keys here.
 }
 
 // Bridge interface so DiffusionContextHost can stay independent of the public IModelCatalog

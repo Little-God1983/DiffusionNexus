@@ -16,5 +16,14 @@ public enum ModelKind
     /// </summary>
     Flux2Klein,
 
-    // TODO(v2-models): Add SDXL, SD15, QwenImageEdit, etc. as we extend the catalog.
+    /// <summary>
+    /// Qwen-Image (2512) inpainting: Qwen-Image flow DiT (GGUF) + Qwen2.5-VL text encoder
+    /// (WithLLMPath) + Qwen-Image VAE + the InstantX inpainting ControlNet (load-time
+    /// <c>ControlNetPath</c>), with <c>Prediction.Flow</c>. The mask + control image are supplied
+    /// per generation. Mirrors the ComfyUI inpaint workflow (Qwen-Image + ControlNetInpaintingAliMama
+    /// + 4-step Lightning LoRA).
+    /// </summary>
+    QwenImageInpaint,
+
+    // TODO(v2-models): Add SDXL, SD15, etc. as we extend the catalog.
 }

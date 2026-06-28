@@ -233,9 +233,29 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             genParams.Loras.Add(new SDNet.Lora(lora.FilePath) { Multiplier = lora.Strength });
         }
 
-        // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
-        // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
+        if (!string.IsNullOrWhiteSpace(req.NegativePrompt))
+            genParams = genParams.WithNegativePrompt(req.NegativePrompt);
+
+        // Flow-matching timestep shift (mirrors ComfyUI's ModelSamplingAuraFlow for Qwen-Image).
+        if (d.DefaultFlowShift is { } flowShift)
+            genParams = genParams.WithFlowShift(flowShift);
+
+        // Inpaint mask (white = repaint, black = keep). Confines regeneration to the masked region
+        // alongside the InitImage above — the local equivalent of ComfyUI's SetLatentNoiseMask.
+        if (req.MaskImage is { } mask && !string.IsNullOrWhiteSpace(mask.FilePath))
+            genParams = genParams.WithMaskImage(HPPH.SkiaSharp.ImageHelper.LoadImage(mask.FilePath));
+
+        // ControlNet conditioning. Only meaningful when the model was loaded WITH a ControlNet
+        // (the descriptor's ControlNetPath), so gate on it — attaching a control image to a context
+        // that loaded no control model is undefined in the native engine. The wrapper supports a
+        // single control image, so the first usable entry wins.
+        if (req.ControlNets.Count > 0 && !string.IsNullOrWhiteSpace(d.ControlNetPath))
+        {
+            var control = req.ControlNets.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.FilePath));
+            if (control is not null)
+                genParams = genParams.WithControlNet(
+                    HPPH.SkiaSharp.ImageHelper.LoadImage(control.FilePath), control.Strength);
+        }
 
         var image = model.GenerateImage(genParams)
             ?? throw new InvalidOperationException("Native generator returned a null image.");

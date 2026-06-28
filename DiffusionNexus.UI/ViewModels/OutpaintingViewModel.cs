@@ -119,7 +119,7 @@ public partial class OutpaintingViewModel : ObservableObject
         _comfyUiService = comfyUiService;
         _unifiedLogger = unifiedLogger;
 
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint, allowBackendSelection: true);
         VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision);
 
         ToggleCommand = new RelayCommand(ExecuteToggle, () => _hasImage());

@@ -359,7 +359,8 @@ public partial class ImageEditorViewModel : ObservableObject
         IComfyUIWrapperService? comfyUiService = null,
         EditorServices? services = null,
         IFeatureReadinessService? readinessService = null,
-        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
+        Services.Diffusion.LocalDiffusionBackendProvider? backendProvider = null)
     {
         _eventAggregator = eventAggregator;
         _unifiedLogger = unifiedLogger;
@@ -372,7 +373,7 @@ public partial class ImageEditorViewModel : ObservableObject
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
-        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
+        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService, backendProvider);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 

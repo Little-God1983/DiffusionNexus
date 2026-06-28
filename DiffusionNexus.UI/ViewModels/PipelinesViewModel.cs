@@ -143,6 +143,18 @@ public partial class PipelinesViewModel : ViewModelBase
             if (readiness.IsComplete)
             {
                 SetStatus(tile, PipelineStatus.Ready, "Ready");
+
+                // Install-and-launcher tiles (e.g. Inpaint) have no in-gallery batch run screen —
+                // the interactive tool lives in the Image Editor. Point the user there instead.
+                if (tile.Manifest.OpensInImageEditor)
+                {
+                    await ShowMessageAsync(tile.Title,
+                        "All models for this workflow are installed.\n\n" +
+                        "Inpainting runs in the Image Editor: open an image, switch to the Inpaint tool, " +
+                        "paint the area you want to change, then pick \"Diffusion Nexus Core\" as the backend.");
+                    return;
+                }
+
                 OpenRun(tile);
                 return;
             }

@@ -50,19 +50,23 @@ public sealed class DiffusionRequest
     /// <summary>RNG seed. <c>null</c> picks a random one and reports it back via <c>DiffusionResult.Seed</c>.</summary>
     public long? Seed { get; init; }
 
-    // TODO(v2-negative-prompt): Backend currently ignores this field — placeholder for the negative-prompt UI control.
-    /// <summary>Negative prompt. <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>Negative prompt. Honored by the stable-diffusion.cpp backend (WithNegativePrompt).</summary>
     public string? NegativePrompt { get; init; }
 
     /// <summary>LoRAs to load over the base model (applied per-generation by the stable-diffusion.cpp backend).</summary>
     public IReadOnlyList<LoraReference> Loras { get; init; } = [];
 
-    // TODO(v2-controlnet): Backend currently ignores this collection — placeholder for ControlNet inputs.
-    /// <summary>ControlNet conditioning inputs. <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// ControlNet conditioning inputs (control image + strength). Honored by the stable-diffusion.cpp
+    /// backend when the selected model was loaded with a ControlNet (<c>ModelDescriptor.ControlNetPath</c>),
+    /// e.g. the Qwen-Image inpaint model. The wrapper applies a single control image (the first entry).
+    /// </summary>
     public IReadOnlyList<DiffusionReferenceImage> ControlNets { get; init; } = [];
 
-    // TODO(v2-img2img): Backend currently ignores this — placeholder for the img2img / canvas init-image flow.
-    /// <summary>Initial image for img2img. <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// Initial image for img2img / inpaint. Honored by the stable-diffusion.cpp backend
+    /// (<c>ImageToImage</c>); <see cref="DiffusionReferenceImage.Strength"/> is the denoise strength.
+    /// </summary>
     public DiffusionReferenceImage? InitImage { get; init; }
 
     /// <summary>
@@ -78,7 +82,10 @@ public sealed class DiffusionRequest
     /// </summary>
     public bool AutoResizeReferenceImages { get; init; } = true;
 
-    // TODO(v2-inpaint): Backend currently ignores this — placeholder for inpaint mask painting.
-    /// <summary>Mask for inpainting (white = repaint, black = keep). <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// Mask for inpainting (white = repaint, black = keep). Honored by the stable-diffusion.cpp
+    /// backend (<c>WithMaskImage</c>), used together with <see cref="InitImage"/> to confine
+    /// regeneration to the masked region.
+    /// </summary>
     public DiffusionReferenceImage? MaskImage { get; init; }
 }

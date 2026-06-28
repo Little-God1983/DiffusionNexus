@@ -2,8 +2,12 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Inference.Abstractions;
+using DiffusionNexus.Inference.StableDiffusionCpp;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Diffusion;
 using Serilog;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -19,6 +23,10 @@ public partial class InpaintingViewModel : ObservableObject
     private readonly Action<string> _deactivateOtherTools;
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly LocalDiffusionBackendProvider? _backendProvider;
+
+    /// <summary>On-disk name of the 4-step Qwen-Image Lightning LoRA (installed by the inpaint workload).</summary>
+    private const string LightningLoraFileName = "Qwen-Image-Lightning-4steps-V1.0.safetensors";
 
     private const string InpaintWorkflowPath = "Assets/Workflows/Inpaint-Qwen-2512.json";
     private const string InpaintLoadImageNodeId = "16";
@@ -78,7 +86,8 @@ public partial class InpaintingViewModel : ObservableObject
         Action<string> deactivateOtherTools,
         IComfyUIWrapperService? comfyUiService,
         IDatasetEventAggregator? eventAggregator,
-        IFeatureReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null,
+        LocalDiffusionBackendProvider? backendProvider = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
@@ -86,8 +95,9 @@ public partial class InpaintingViewModel : ObservableObject
         _deactivateOtherTools = deactivateOtherTools;
         _comfyUiService = comfyUiService;
         _eventAggregator = eventAggregator;
+        _backendProvider = backendProvider;
 
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting, allowBackendSelection: true);
 
         ClearMaskCommand = new RelayCommand(
             () => ClearMaskRequested?.Invoke(this, EventArgs.Empty),
@@ -382,6 +392,19 @@ public partial class InpaintingViewModel : ObservableObject
         UseCurrentAsBaseCommand.NotifyCanExecuteChanged();
     }
 
+    /// <summary>
+    /// Aborts a generation that set the busy state (via Generate) but never reached a Process*
+    /// method — e.g. the View couldn't prepare the image/mask. Resets <see cref="IsBusy"/> so the
+    /// Generate buttons re-enable. Without this, an early return in the View's generate handler
+    /// would leave the buttons permanently greyed out.
+    /// </summary>
+    public void AbortGeneration(string? statusMessage = null)
+    {
+        if (!string.IsNullOrWhiteSpace(statusMessage))
+            StatusMessageChanged?.Invoke(this, statusMessage);
+        OnFinished();
+    }
+
     /// <summary>Closes the panel without triggering deactivation of other tools.</summary>
     public void ClosePanel()
     {
@@ -556,9 +579,269 @@ public partial class InpaintingViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Processes inpainting <b>locally</b> via the DiffusionNexus core (stable-diffusion.cpp),
+    /// mirroring the ComfyUI Qwen-Image inpaint workflow: Qwen-Image-2512 + the InstantX inpainting
+    /// ControlNet + the 4-step Lightning LoRA, with the painted mask confining regeneration. The View
+    /// supplies the base image and the white/black mask as separate PNGs. Called when the user has
+    /// picked "Diffusion Nexus Core" in the readiness panel's backend dropdown.
+    /// </summary>
+    public async Task ProcessInpaintLocalAsync(string baseImagePath, string maskImagePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseImagePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(maskImagePath);
+
+        if (_backendProvider is null)
+        {
+            HasError = true;
+            ProgressDisplayText = "Local renderer unavailable";
+            StatusMessageChanged?.Invoke(this, "The local DiffusionNexus core renderer is not available.");
+            OnFinished();
+            return;
+        }
+
+        string? alignedBase = null;
+        string? alignedMask = null;
+        try
+        {
+            Status = "Loading local renderer...";
+            var backend = await _backendProvider.TryGetAsync();
+            if (backend is null)
+            {
+                HasError = true;
+                ProgressDisplayText = "No ComfyUI models folder found";
+                StatusMessageChanged?.Invoke(this,
+                    "The local renderer needs a ComfyUI installation's models folder (where the inpaint " +
+                    "models are downloaded). Add one in the Installer Manager, then install the Inpaint workload.");
+                OnFinished();
+                return;
+            }
+
+            // Qwen-Image needs /16-aligned dimensions and inpaint requires the init image, mask and
+            // output to share one size — so resize the base + mask to the aligned size. The View
+            // resizes the result back to the canvas size on ResultReady.
+            var (width, height) = ComputeAlignedDimensions(baseImagePath);
+            alignedBase = ResizeToTempPng(baseImagePath, width, height);
+            alignedMask = ResizeToTempPng(maskImagePath, width, height);
+
+            var loras = new List<LoraReference>();
+            var lightning = await Task.Run(FindLightningLora);
+            if (lightning is not null)
+                loras.Add(new LoraReference(lightning, 1.0f));
+            else
+                Logger.Warning(
+                    "Qwen-Image Lightning 4-step LoRA ({File}) not found under the models roots; " +
+                    "local inpaint will run without it (results may need more steps).", LightningLoraFileName);
+
+            // Mirrors the ComfyUI inpaint graph: Qwen-Image-2512 + InstantX inpainting ControlNet
+            // (loaded with the model context) + Lightning LoRA, 4 steps, cfg 1, euler/simple. The
+            // base image is both the img2img init and the ControlNet's control image; the mask
+            // confines regeneration to the painted region.
+            var request = new DiffusionRequest
+            {
+                ModelKey = ModelKeys.QwenImageInpaint,
+                Prompt = _positivePrompt,
+                NegativePrompt = _negativePrompt,
+                Width = width,
+                Height = height,
+                Steps = 4,
+                Cfg = 1.0f,
+                Sampler = "euler",
+                Scheduler = "simple",
+                InitImage = new DiffusionReferenceImage(alignedBase, _denoise),
+                MaskImage = new DiffusionReferenceImage(alignedMask),
+                ControlNets = [new DiffusionReferenceImage(alignedBase, 1.0f)],
+                Loras = loras,
+                Seed = (long)(_random.NextDouble() * long.MaxValue),
+            };
+
+            Status = "Generating (local)...";
+            var maskHidden = false;
+            byte[]? png = null;
+
+            await foreach (var item in backend.GenerateAsync(request))
+            {
+                Status = MapLocalProgress(item.Progress);
+
+                // Hide the mask once the sampler is actively running (the result will replace it).
+                if (!maskHidden && item.Progress.Phase == DiffusionPhase.Sampling)
+                {
+                    maskHidden = true;
+                    HideMaskRequested?.Invoke(this, EventArgs.Empty);
+                }
+
+                if (item.Result is { } result)
+                    png = result.PngBytes;
+            }
+
+            if (png is not null)
+            {
+                ResultReady?.Invoke(this, png);
+                StatusMessageChanged?.Invoke(this, "Inpainting completed successfully.");
+                await HandleLocalCompareAsync(png);
+            }
+            else
+            {
+                HasError = true;
+                ProgressDisplayText = "No image produced";
+                StatusMessageChanged?.Invoke(this,
+                    "Local inpainting finished without an image. Check the Unified Console for native engine errors.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessageChanged?.Invoke(this, "Inpainting was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            ProgressDisplayText = "Local generation failed";
+            StatusMessageChanged?.Invoke(this, $"Local inpainting failed: {ex.Message}");
+            Logger.Error(ex, "Local inpaint generation failed");
+        }
+        finally
+        {
+            TryDeleteTemp(alignedBase);
+            TryDeleteTemp(alignedMask);
+            OnFinished();
+        }
+    }
+
     #endregion
 
     #region Private Methods
+
+    /// <summary>Publishes the before/after pair to the Image Comparer when a compare run is pending.</summary>
+    private async Task HandleLocalCompareAsync(byte[] resultPng)
+    {
+        if (string.IsNullOrEmpty(_pendingCompareBeforeImagePath))
+            return;
+
+        var afterPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_after_{Guid.NewGuid():N}.png");
+        await File.WriteAllBytesAsync(afterPath, resultPng);
+
+        CompareRequested?.Invoke(this, new InpaintCompareEventArgs
+        {
+            BeforeImagePath = _pendingCompareBeforeImagePath,
+            AfterImagePath = afterPath
+        });
+
+        _eventAggregator?.PublishNavigateToImageComparer(
+            new NavigateToImageComparerEventArgs
+            {
+                ImagePaths = [_pendingCompareBeforeImagePath, afterPath]
+            });
+    }
+
+    /// <summary>Maps a local backend progress item onto the existing ComfyUI-style status strings.</summary>
+    private static string MapLocalProgress(DiffusionProgress p) => p.Phase switch
+    {
+        DiffusionPhase.Loading => string.IsNullOrWhiteSpace(p.Message) ? "Loading model..." : p.Message,
+        DiffusionPhase.Encoding => "Running...",
+        DiffusionPhase.Sampling => p.TotalSteps > 0 ? $"Progress: {p.Step}/{p.TotalSteps}" : "Generating...",
+        DiffusionPhase.Decoding => "Downloading result...",
+        DiffusionPhase.Completed => "Downloading result...",
+        _ => "Generating...",
+    };
+
+    /// <summary>Computes the nearest /16-aligned output dimensions for the supplied image.</summary>
+    private static (int Width, int Height) ComputeAlignedDimensions(string imagePath)
+    {
+        int width = 1024, height = 1024;
+        try
+        {
+            using var codec = SKCodec.Create(imagePath);
+            if (codec?.Info is { Width: > 0, Height: > 0 } info)
+            {
+                width = info.Width;
+                height = info.Height;
+            }
+        }
+        catch
+        {
+            // keep 1024² fallback
+        }
+
+        return (Align(width), Align(height));
+
+        static int Align(int value)
+        {
+            var clamped = Math.Clamp(value, 256, 2048);
+            var rounded = (int)(Math.Round(clamped / 16.0) * 16);
+            return Math.Max(16, rounded);
+        }
+    }
+
+    /// <summary>Resizes a PNG to the given dimensions and writes it to a fresh temp file; returns the path.</summary>
+    private static string ResizeToTempPng(string sourcePath, int width, int height)
+    {
+        using var src = SKBitmap.Decode(sourcePath)
+            ?? throw new InvalidOperationException($"Could not decode image: {sourcePath}");
+
+        var outPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_aligned_{Guid.NewGuid():N}.png");
+
+        if (src.Width == width && src.Height == height)
+        {
+            File.Copy(sourcePath, outPath, overwrite: true);
+            return outPath;
+        }
+
+        using var resized = src.Resize(new SKImageInfo(width, height), SKFilterQuality.High)
+            ?? throw new InvalidOperationException("Image resize failed.");
+        using var img = SKImage.FromBitmap(resized);
+        using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+        File.WriteAllBytes(outPath, data.ToArray());
+        return outPath;
+    }
+
+    /// <summary>Finds the Lightning 4-step LoRA across the local renderer's models roots, or null.</summary>
+    private string? FindLightningLora()
+    {
+        var roots = _backendProvider?.ResolvedModelsRoots ?? [];
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            MatchCasing = MatchCasing.CaseInsensitive,
+        };
+
+        foreach (var root in roots)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                continue;
+            try
+            {
+                var hit = Directory.EnumerateFiles(root, LightningLoraFileName, options).FirstOrDefault();
+                if (hit is not null)
+                    return hit;
+            }
+            catch
+            {
+                // skip inaccessible roots
+            }
+        }
+
+        return null;
+    }
+
+    private static void TryDeleteTemp(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return;
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+            // best-effort cleanup
+        }
+    }
+
+    /// <summary>Whether the user has selected the local DiffusionNexus core backend in the readiness panel.</summary>
+    private bool IsLocalBackendSelected =>
+        Readiness.SelectedBackend?.Kind == BackendKind.LocalInference;
 
     private async Task ExecuteGenerateAsync()
     {
@@ -570,7 +853,7 @@ public partial class InpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (!IsLocalBackendSelected && _comfyUiService is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available. Check ComfyUI server settings.");
             return;
@@ -597,7 +880,7 @@ public partial class InpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (!IsLocalBackendSelected && _comfyUiService is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available. Check ComfyUI server settings.");
             return;

@@ -182,7 +182,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ColorDistributionAnalyzer? colorDistributionAnalyzer = null,
         IDownloadCoordinator? downloadCoordinator = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        Services.Diffusion.LocalDiffusionBackendProvider? backendProvider = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -210,7 +211,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             duplicateDetector,
             colorDistributionAnalyzer,
             baseModelCatalog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService, backendProvider);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);

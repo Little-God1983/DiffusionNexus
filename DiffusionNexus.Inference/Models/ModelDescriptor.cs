@@ -31,6 +31,14 @@ public sealed class ModelDescriptor
     /// <summary>Path to the standalone VAE file. Optional when the checkpoint already contains one.</summary>
     public string? VaePath { get; init; }
 
+    /// <summary>
+    /// Path to a ControlNet model loaded with this context (e.g. the InstantX Qwen-Image inpainting
+    /// ControlNet). ControlNet is a <b>load-time</b> parameter in stable-diffusion.cpp, so an
+    /// inpaint-capable model is a distinct descriptor/context from the plain generation model.
+    /// Null when the model has no ControlNet.
+    /// </summary>
+    public string? ControlNetPath { get; init; }
+
     /// <summary>Map of text-encoder slot → file path. Different architectures use different slots.</summary>
     public IReadOnlyDictionary<TextEncoderSlot, string> TextEncoders { get; init; }
         = new Dictionary<TextEncoderSlot, string>();
@@ -46,6 +54,13 @@ public sealed class ModelDescriptor
 
     /// <summary>Recommended default scheduler name (e.g. "simple", "karras").</summary>
     public string DefaultScheduler { get; init; } = "simple";
+
+    /// <summary>
+    /// Optional flow-matching timestep shift applied per generation (stable-diffusion.cpp
+    /// <c>WithFlowShift</c>). Mirrors ComfyUI's <c>ModelSamplingAuraFlow</c> shift for Qwen-Image
+    /// (3.1). Null = leave the engine default.
+    /// </summary>
+    public float? DefaultFlowShift { get; init; }
 
     /// <summary>Native-aligned width (must be a multiple of this) for txt2img generations.</summary>
     public int DimensionAlignment { get; init; } = 64;

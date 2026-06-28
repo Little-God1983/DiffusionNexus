@@ -19,13 +19,18 @@ public sealed class LocalInferenceFeatureBackend : IFeatureBackend
 
     private readonly ICaptioningBackend? _captioning;
     private readonly IDiffusionBackend? _diffusion;
+    private readonly Func<CancellationToken, Task<IDiffusionBackend?>>? _diffusionAccessor;
 
     public LocalInferenceFeatureBackend(
         ICaptioningBackend? captioning = null,
-        IDiffusionBackend? diffusion = null)
+        IDiffusionBackend? diffusion = null,
+        Func<CancellationToken, Task<IDiffusionBackend?>>? diffusionAccessor = null)
     {
         _captioning = captioning;
         _diffusion = diffusion;
+        // The local diffusion backend is built lazily (it probes ComfyUI installs + the native lib),
+        // so accept an async accessor that resolves it on demand rather than forcing eager construction.
+        _diffusionAccessor = diffusionAccessor;
     }
 
     /// <inheritdoc />
@@ -43,15 +48,18 @@ public sealed class LocalInferenceFeatureBackend : IFeatureBackend
             {
                 Feature.Captioning => await CheckCaptioningAsync(feature, ct),
 
-                // Image-generation features. Today none of these are routed to the local backend
-                // by FeatureBackendRouter.DefaultRouting, but the wiring is in place so a future
-                // router change can flip Outpaint / Inpainting / BatchUpscale to local without
-                // touching view-models.
-                Feature.Inpainting or
+                // Inpainting has a real local execution path (the Image Editor's Inpaint tool routes
+                // to the stable-diffusion.cpp backend), so report its true model readiness.
+                Feature.Inpainting => await CheckDiffusionAsync(feature, ct),
+
+                // The other image features expose the backend picker but DON'T yet have a local
+                // execution path — they still run on ComfyUI. Report "not available locally" so the
+                // picker is honest (picking the local engine greys out Generate) instead of showing
+                // "Ready" for an engine that never runs the job.
                 Feature.Outpaint or
                 Feature.OutpaintVision or
                 Feature.BatchUpscale or
-                Feature.BatchUpscaleVision => await CheckDiffusionAsync(feature, ct),
+                Feature.BatchUpscaleVision => LocalExecutionNotWired(feature),
 
                 _ => NotSupported(feature)
             };
@@ -111,7 +119,11 @@ public sealed class LocalInferenceFeatureBackend : IFeatureBackend
 
     private async Task<FeatureReadinessResult> CheckDiffusionAsync(Feature feature, CancellationToken ct)
     {
-        if (_diffusion is null)
+        var diffusion = _diffusion;
+        if (diffusion is null && _diffusionAccessor is not null)
+            diffusion = await _diffusionAccessor(ct);
+
+        if (diffusion is null)
         {
             return new FeatureReadinessResult
             {
@@ -120,22 +132,23 @@ public sealed class LocalInferenceFeatureBackend : IFeatureBackend
                 IsBackendOnline = false,
                 IsReady = false,
                 ActiveBackendName = DisplayName,
-                MissingRequirements = ["Local diffusion backend is not registered."],
+                MissingRequirements =
+                    ["No local renderer is available — add a ComfyUI installation (its models folder is the local renderer's library)."],
                 Warnings = []
             };
         }
 
-        var available = await _diffusion.IsAvailableAsync(ct);
+        var available = await diffusion.IsAvailableAsync(ct);
 
         return new FeatureReadinessResult
         {
             Feature = feature,
             Backend = Kind,
-            IsBackendOnline = available || _diffusion.MissingRequirements.Count == 0,
+            IsBackendOnline = available || diffusion.MissingRequirements.Count == 0,
             IsReady = available,
-            ActiveBackendName = _diffusion.DisplayName,
-            MissingRequirements = _diffusion.MissingRequirements,
-            Warnings = _diffusion.Warnings
+            ActiveBackendName = diffusion.DisplayName,
+            MissingRequirements = diffusion.MissingRequirements,
+            Warnings = diffusion.Warnings
         };
     }
 
@@ -147,6 +160,23 @@ public sealed class LocalInferenceFeatureBackend : IFeatureBackend
         IsReady = false,
         ActiveBackendName = DisplayName,
         MissingRequirements = [$"Local inference backend does not handle feature '{feature}'."],
+        Warnings = []
+    };
+
+    /// <summary>
+    /// Result for an image feature whose backend picker is exposed but whose local execution path
+    /// isn't wired yet (only Inpainting is, currently). Reports not-ready so Generate greys out
+    /// instead of silently running the job on ComfyUI.
+    /// </summary>
+    private FeatureReadinessResult LocalExecutionNotWired(Feature feature) => new()
+    {
+        Feature = feature,
+        Backend = Kind,
+        IsBackendOnline = false,
+        IsReady = false,
+        ActiveBackendName = DisplayName,
+        MissingRequirements =
+            [$"Local rendering for {feature} isn't available yet — switch to ComfyUI to run it, or use the Inpaint tool for local rendering."],
         Warnings = []
     };
 }

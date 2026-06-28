@@ -24,11 +24,41 @@ internal static class StableDiffusionCppLoader
         {
             ModelKind.ZImageTurbo => BuildZImageTurbo(descriptor),
             ModelKind.Flux2Klein => BuildFlux2Klein(descriptor),
+            ModelKind.QwenImageInpaint => BuildQwenImageInpaint(descriptor),
 
-            // TODO(v2-models): add SDXL/QwenImageEdit cases here.
+            // TODO(v2-models): add SDXL cases here.
             _ => throw new NotSupportedException(
                 $"ModelKind '{descriptor.Kind}' is not supported by the v1 loader.")
         };
+    }
+
+    /// <summary>
+    /// Qwen-Image inpaint wiring: GGUF diffusion model + Qwen2.5-VL text encoder (WithLLMPath) +
+    /// Qwen-Image VAE + the InstantX inpainting ControlNet (load-time WithControlNet), with
+    /// <c>Prediction.Flow</c>. The mask + control image are supplied per generation. Mirrors the
+    /// ComfyUI inpaint graph (UnetLoaderGGUF + CLIPLoader qwen_image + ControlNetLoader).
+    /// </summary>
+    private static SDNet.DiffusionModelParameter BuildQwenImageInpaint(ModelDescriptor d)
+    {
+        if (string.IsNullOrWhiteSpace(d.DiffusionModelPath))
+            throw new InvalidOperationException("Qwen-Image inpaint requires DiffusionModelPath (the GGUF diffusion model).");
+        if (!d.TextEncoders.TryGetValue(TextEncoderSlot.Llm, out var llmPath))
+            throw new InvalidOperationException("Qwen-Image inpaint requires a Qwen2.5-VL text encoder (TextEncoderSlot.Llm).");
+        if (string.IsNullOrWhiteSpace(d.VaePath))
+            throw new InvalidOperationException("Qwen-Image inpaint requires a VAE file.");
+        if (string.IsNullOrWhiteSpace(d.ControlNetPath))
+            throw new InvalidOperationException("Qwen-Image inpaint requires the InstantX inpainting ControlNet (ControlNetPath).");
+
+        return SDNet.DiffusionModelParameter.Create()
+            .WithDiffusionModelPath(d.DiffusionModelPath)
+            .WithLLMPath(llmPath)
+            .WithVae(d.VaePath)
+            .WithControlNet(d.ControlNetPath)
+            .WithPrediction(SDNet.Prediction.Flow)
+            // Qwen-Image is large; tile the VAE decode so the decode buffer doesn't OOM at 1024px.
+            .WithVaeTiling()
+            .WithMultithreading()
+            .WithFlashAttention();
     }
 
     /// <summary>

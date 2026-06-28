@@ -192,6 +192,17 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         if (selected.Count == 0)
             throw new InvalidOperationException($"{asset.Name}: no download link matched the selected {vramGb} GB profile.");
 
+        // Some assets are published on HF under a generic filename but the workflow references them
+        // by a specific name (e.g. the InstantX ControlNet ships as "diffusion_pytorch_model.safetensors"
+        // yet ComfyUI/the local renderer load "Qwen-Image-InstantX-ControlNet-Inpainting.safetensors").
+        // For a single-file, non-LoRA asset that declares an ExpectedFileName, save under that name —
+        // mirroring the rename the SDK ComfyUI workload performs.
+        var renameTo = asset.Kind != PipelineAssetKind.Lora
+                       && !string.IsNullOrWhiteSpace(asset.ExpectedFileName)
+                       && links.Count == 1
+            ? asset.ExpectedFileName
+            : null;
+
         foreach (var link in selected)
         {
             ct.ThrowIfCancellationRequested();
@@ -200,7 +211,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
             if (string.IsNullOrEmpty(url))
                 continue;
 
-            var fileName = HuggingFaceUrl.GetFileName(url);
+            var fileName = renameTo ?? HuggingFaceUrl.GetFileName(url);
             if (string.IsNullOrEmpty(fileName))
                 throw new InvalidOperationException($"{asset.Name}: could not determine a filename from '{link.Url}'.");
 

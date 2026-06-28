@@ -33,6 +33,14 @@ public sealed class PipelineManifest
 
     /// <summary>The models and LoRAs this pipeline needs in order to run locally.</summary>
     public List<PipelineAsset> Assets { get; init; } = new();
+
+    /// <summary>
+    /// When <c>true</c>, the gallery tile is a model-installation + launcher only: once its assets
+    /// are present, clicking it points the user to the Image Editor (where the interactive tool —
+    /// e.g. mask painting for inpaint — lives) instead of opening an in-gallery batch run screen.
+    /// Defaults to <c>false</c> (the tile opens its own run UI, like Anime-To-Real).
+    /// </summary>
+    public bool OpensInImageEditor { get; init; }
 }
 
 /// <summary>The role a <see cref="PipelineAsset"/> plays in the pipeline.</summary>
@@ -49,6 +57,13 @@ public enum PipelineAssetKind
 
     /// <summary>A LoRA applied over the base model at generation time.</summary>
     Lora,
+
+    /// <summary>
+    /// A ControlNet model (e.g. the InstantX Qwen-Image inpainting ControlNet). Downloaded like a
+    /// HuggingFace asset into the <c>controlnet</c> models subfolder; honoured by the inference
+    /// backend's ControlNet path at generation time.
+    /// </summary>
+    ControlNet,
 }
 
 /// <summary>

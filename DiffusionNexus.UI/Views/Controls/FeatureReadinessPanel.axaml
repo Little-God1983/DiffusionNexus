@@ -3,11 +3,28 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:models="using:DiffusionNexus.Domain.Models"
              mc:Ignorable="d"
              x:Class="DiffusionNexus.UI.Views.Controls.FeatureReadinessPanel"
              x:DataType="vm:FeatureReadinessViewModel">
 
   <StackPanel Spacing="8">
+    <!-- Backend picker: choose which engine runs this feature (only when the host opts in) -->
+    <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding AllowBackendSelection}">
+      <TextBlock Grid.Column="0" Text="Run on:" VerticalAlignment="Center"
+                 Margin="0,0,8,0" Foreground="#CCCCCC"/>
+      <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                ItemsSource="{Binding AvailableBackends}"
+                SelectedItem="{Binding SelectedBackend, Mode=TwoWay}"
+                ToolTip.Tip="Pick the engine that runs this tool (ComfyUI or the local Diffusion Nexus Core)">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="models:BackendInfo">
+            <TextBlock Text="{Binding DisplayName}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+    </Grid>
+
     <!-- Status row: indicator dot + text + Check button -->
     <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
       <!-- Status indicator dot -->

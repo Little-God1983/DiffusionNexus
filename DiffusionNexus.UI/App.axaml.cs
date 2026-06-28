@@ -897,7 +897,11 @@ public partial class App : Application
         services.AddSingleton<IFeatureBackend>(sp =>
             new Inference.LocalInferenceFeatureBackend(
                 sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
-                diffusion: null));
+                diffusion: null,
+                // Resolve the local diffusion backend lazily so the "Diffusion Nexus Core" readiness
+                // option reports real model availability (e.g. for inpaint) instead of "not registered".
+                diffusionAccessor: ct =>
+                    sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>().TryGetAsync(ct)));
 
         services.AddSingleton<IFeatureBackendRouter>(sp =>
             new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
@@ -1081,7 +1085,8 @@ public partial class App : Application
             sp.GetService<ColorDistributionAnalyzer>(),
             sp.GetService<IDownloadCoordinator>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<Services.Diffusion.LocalDiffusionBackendProvider>()));
     }
 
     /// <summary>

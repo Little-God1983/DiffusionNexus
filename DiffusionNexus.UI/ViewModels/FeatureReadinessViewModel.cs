@@ -1,6 +1,8 @@
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using Serilog;
 
@@ -27,26 +29,69 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     private IReadOnlyList<string> _missingRequirements = [];
     private IReadOnlyList<string> _warnings = [];
     private string? _statusMessage;
+    private BackendInfo? _selectedBackend;
+    private int _checkGeneration;
 
     /// <summary>
     /// Creates a new readiness ViewModel for the specified feature.
     /// </summary>
     /// <param name="readinessService">The unified readiness service. May be <c>null</c> if no backend is configured.</param>
     /// <param name="feature">The feature to check prerequisites for.</param>
-    public FeatureReadinessViewModel(IFeatureReadinessService? readinessService, Feature feature)
+    /// <param name="allowBackendSelection">
+    /// When <c>true</c>, the panel shows a backend picker (e.g. "ComfyUI" vs "Diffusion Nexus
+    /// Core") and readiness is evaluated against the chosen backend. Defaults to <c>false</c>
+    /// so existing single-backend tools are unaffected.
+    /// </param>
+    public FeatureReadinessViewModel(
+        IFeatureReadinessService? readinessService,
+        Feature feature,
+        bool allowBackendSelection = false)
     {
         _readinessService = readinessService;
         _feature = feature;
+        AllowBackendSelection = allowBackendSelection;
 
         CheckReadinessCommand = new AsyncRelayCommand(CheckReadinessAsync);
 
         FeatureDisplayName = readinessService?.GetRequirements(feature)?.DisplayName ?? feature.ToString();
+
+        AvailableBackends = readinessService?.GetAvailableBackends() ?? [];
+
+        // Seed the picker with the feature's default backend (kept current behaviour). Set the
+        // backing field directly so seeding does not kick off a redundant readiness check before
+        // the panel is even shown.
+        var defaultKind = readinessService?.GetDefaultBackend(feature);
+        _selectedBackend = AvailableBackends.FirstOrDefault(b => b.Kind == defaultKind)
+                           ?? AvailableBackends.FirstOrDefault();
     }
 
     #region Properties
 
     /// <summary>Human-readable name of the feature (from the registry).</summary>
     public string FeatureDisplayName { get; }
+
+    /// <summary>Whether the backend picker is shown for this feature.</summary>
+    public bool AllowBackendSelection { get; }
+
+    /// <summary>The backends the user may pick from (empty when selection is unavailable).</summary>
+    public IReadOnlyList<BackendInfo> AvailableBackends { get; }
+
+    /// <summary>
+    /// The backend the user has picked to run this feature on. Changing it re-runs the readiness
+    /// check against the newly selected backend.
+    /// </summary>
+    public BackendInfo? SelectedBackend
+    {
+        get => _selectedBackend;
+        set
+        {
+            if (SetProperty(ref _selectedBackend, value) && value is not null)
+            {
+                // Re-evaluate readiness for the newly chosen backend.
+                _ = CheckReadinessAsync();
+            }
+        }
+    }
 
     /// <summary>Whether a readiness check is currently in progress.</summary>
     public bool IsChecking
@@ -162,12 +207,20 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             return;
         }
 
+        // Switching the backend dropdown (or pressing Check) fires a fresh check while a prior one
+        // may still be awaiting a slow ComfyUI probe. Stamp each run so a stale result that completes
+        // out of order can't overwrite the newest selection's result. (All runs on the UI thread, so
+        // a plain counter is safe.)
+        var generation = ++_checkGeneration;
         IsChecking = true;
         StatusMessage = "Checking…";
 
         try
         {
-            var result = await _readinessService.CheckAsync(_feature, ct);
+            var result = await _readinessService.CheckAsync(_feature, SelectedBackend?.Kind, ct);
+
+            if (generation != _checkGeneration)
+                return; // superseded by a newer check
 
             IsBackendOnline = result.IsBackendOnline;
             IsReady = result.IsReady;
@@ -183,10 +236,14 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "Check cancelled";
+            if (generation == _checkGeneration)
+                StatusMessage = "Check cancelled";
         }
         catch (Exception ex)
         {
+            if (generation != _checkGeneration)
+                return; // superseded — don't clobber the newer result with this one's error
+
             Logger.Warning(ex, "Readiness check failed for {Feature}", _feature);
             IsReady = false;
             IsBackendOnline = false;
@@ -196,8 +253,13 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         }
         finally
         {
-            IsChecking = false;
-            HasChecked = true;
+            // Only the newest check owns the IsChecking/HasChecked flags; an older superseded run
+            // must not flip IsChecking off while the newer one is still in flight.
+            if (generation == _checkGeneration)
+            {
+                IsChecking = false;
+                HasChecked = true;
+            }
         }
     }
 
