@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -14,6 +14,7 @@ using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Diffusion;
 using DiffusionNexus.UI.Services.Pipelines;
+using DiffusionNexus.UI.ViewModels.Controls;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
@@ -37,6 +38,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
     private readonly IPipelineOutputWriter _outputWriter;
     private readonly IDatasetState _datasetState;
     private CancellationTokenSource? _cts;
+    private string? _lastTempPreviewPath;
 
     public PipelineManifest Manifest { get; }
     public abstract string Title { get; }
@@ -76,14 +78,24 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private double _imageInfluence;
 
     // ── Progress ────────────────────────────────────────────────────────────────
-    [ObservableProperty] private bool _isProcessing;
+    // NotifyCanExecuteChangedFor: while one generate command runs, IsProcessing=true must disable
+    // BOTH buttons (CanGenerate checks !IsProcessing) — otherwise a second click clobbers the shared
+    // _cts (breaking Cancel) and races the Outputs collection.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(GenerateTestCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateAllCommand))]
+    private bool _isProcessing;
     [ObservableProperty] private double _totalProgress;
     [ObservableProperty] private string _currentProcessingStatus = string.Empty;
     [ObservableProperty] private int _completedCount;
     [ObservableProperty] private int _totalImageCount;
 
-    /// <summary>The most recent test render, shown in the run UI so the user can tune strength.</summary>
-    [ObservableProperty] private Bitmap? _testResultImage;
+    // ── Outputs (drive the reusable status strip + before/after comparison) ──────
+    /// <summary>One entry per produced image, with input/output paths + live status (colours the strip).</summary>
+    public ObservableCollection<ImageStatusItemViewModel> Outputs { get; } = [];
+
+    /// <summary>The output tile selected in the strip; its input/output paths feed the comparison view.</summary>
+    [ObservableProperty] private ImageStatusItemViewModel? _selectedOutput;
 
     protected PipelineRunViewModel(
         PipelineManifest manifest,
@@ -219,21 +231,37 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         if (backend is null)
             return;
 
+        var item = new ImageStatusItemViewModel
+        {
+            FileName = Path.GetFileName(input),
+            InputPath = input,
+            Status = ImageProcessingStatus.Processing,
+        };
+        Outputs.Clear();
+        Outputs.Add(item);
+        SelectedOutput = item;
+        _ = LoadThumbnailAsync(item);
+
         _cts = new CancellationTokenSource();
         IsProcessing = true;
         CurrentProcessingStatus = "Generating test image…";
         try
         {
             var png = await ProcessOneImageAsync(input, isTestRun: true, backend, _cts.Token).ConfigureAwait(true);
-            TestResultImage = DecodeBitmap(png);
-            CurrentProcessingStatus = "Test image ready — adjust the strength and try again.";
+            // The test isn't written to the chosen destination; stash it in temp so the comparison
+            // control (which loads from a path) can show the before/after.
+            item.OutputPath = WriteTempPng(png, input);
+            item.Status = ImageProcessingStatus.Done;
+            CurrentProcessingStatus = "Test image ready — adjust the settings and try again.";
         }
         catch (OperationCanceledException)
         {
+            item.Status = ImageProcessingStatus.Failed;
             CurrentProcessingStatus = "Cancelled.";
         }
         catch (Exception ex)
         {
+            item.Status = ImageProcessingStatus.Failed;
             Log.Error(ex, "Pipeline test generation failed.");
             UnifiedLogger?.Error(LogCategory.General, "Pipelines", $"Test generation failed: {ex.Message}", ex);
             CurrentProcessingStatus = $"Failed: {ex.Message}";
@@ -286,25 +314,60 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         TotalImageCount = inputs.Count;
         TotalProgress = 0;
 
+        // Pre-populate the strip with one pending tile per input, then update each as it runs.
+        Outputs.Clear();
+        SelectedOutput = null;
+        var items = inputs
+            .Select(p => new ImageStatusItemViewModel { FileName = Path.GetFileName(p), InputPath = p })
+            .ToList();
+        foreach (var it in items)
+            Outputs.Add(it);
+        _ = LoadThumbnailsAsync(items);
+
         try
         {
-            for (var i = 0; i < inputs.Count; i++)
+            for (var i = 0; i < items.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var input = inputs[i];
-                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Generating {Path.GetFileName(input)}…";
+                var item = items[i];
+                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Generating {item.FileName}…";
+                item.Status = ImageProcessingStatus.Processing;
 
-                var png = await ProcessOneImageAsync(input, isTestRun: false, backend, ct).ConfigureAwait(true);
-                var outputPath = await _outputWriter.WriteAsync(target, input, png, ct).ConfigureAwait(true);
+                try
+                {
+                    var png = await ProcessOneImageAsync(item.InputPath, isTestRun: false, backend, ct).ConfigureAwait(true);
+                    var outputPath = await _outputWriter.WriteAsync(target, item.InputPath, png, ct).ConfigureAwait(true);
 
-                TestResultImage = DecodeBitmap(png);
+                    item.OutputPath = outputPath;
+                    item.Status = ImageProcessingStatus.Done;
+                    // Auto-show the FIRST completed result, then leave selection to the user so the
+                    // strip/compare don't yank away a tile they clicked to inspect mid-batch.
+                    SelectedOutput ??= item;
+                    UnifiedLogger?.Info(LogCategory.General, "Pipelines", $"Generated {Path.GetFileName(outputPath)}");
+                }
+                catch (OperationCanceledException)
+                {
+                    item.Status = ImageProcessingStatus.Failed;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // One failure marks its tile red but does not abort the rest of the batch.
+                    item.Status = ImageProcessingStatus.Failed;
+                    Log.Error(ex, "Pipeline generation failed for {Input}.", item.InputPath);
+                    UnifiedLogger?.Error(LogCategory.General, "Pipelines", $"Failed {item.FileName}: {ex.Message}", ex);
+                }
+
                 CompletedCount = i + 1;
                 TotalProgress = (i + 1) * 100.0 / TotalImageCount;
-                UnifiedLogger?.Info(LogCategory.General, "Pipelines", $"Generated {Path.GetFileName(outputPath)}");
             }
 
-            CurrentProcessingStatus = $"Done — {CompletedCount} image(s) generated.";
+            var done = Outputs.Count(o => o.Status == ImageProcessingStatus.Done);
+            var failed = Outputs.Count(o => o.Status == ImageProcessingStatus.Failed);
+            CurrentProcessingStatus = failed > 0
+                ? $"Done — {done} generated, {failed} failed."
+                : $"Done — {done} image(s) generated.";
         }
         catch (OperationCanceledException)
         {
@@ -343,17 +406,55 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         return backend;
     }
 
-    private static Bitmap? DecodeBitmap(byte[] png)
+    /// <summary>Loads a small input thumbnail for each tile (best-effort, off the UI thread for decode).</summary>
+    private static async Task LoadThumbnailsAsync(IReadOnlyList<ImageStatusItemViewModel> items)
+    {
+        foreach (var item in items)
+            await LoadThumbnailAsync(item).ConfigureAwait(true);
+    }
+
+    private static async Task LoadThumbnailAsync(ImageStatusItemViewModel item)
     {
         try
         {
-            using var ms = new MemoryStream(png);
-            return new Bitmap(ms);
+            var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(item.InputPath, 120)).ConfigureAwait(false);
+            if (bitmap is not null)
+            {
+                // Assign the bound Bitmap on the UI thread regardless of which thread called us
+                // (call-site-independent, matching the Batch Upscale loader this was extracted from).
+                await Dispatcher.UIThread.InvokeAsync(() => item.Thumbnail = bitmap);
+            }
         }
         catch
         {
-            return null;
+            // Thumbnail is decorative — never let it break a run.
         }
+    }
+
+    /// <summary>
+    /// Writes a generated PNG to a temp file so the path-based comparison control can display the test
+    /// result. A fresh file name each call forces the control to re-decode; the previous one is deleted
+    /// so repeated "Generate test" clicks don't leak PNGs (the rest are cleaned up in <see cref="Dispose"/>).
+    /// </summary>
+    private string WriteTempPng(byte[] png, string inputPath)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "pipeline-preview");
+        Directory.CreateDirectory(dir);
+        var name = $"{Path.GetFileNameWithoutExtension(inputPath)}_{Guid.NewGuid():N}.png";
+        var path = Path.Combine(dir, name);
+        File.WriteAllBytes(path, png);
+
+        TryDeleteTempPreview();
+        _lastTempPreviewPath = path;
+        return path;
+    }
+
+    private void TryDeleteTempPreview()
+    {
+        if (_lastTempPreviewPath is null)
+            return;
+        try { File.Delete(_lastTempPreviewPath); } catch { /* best-effort temp cleanup */ }
+        _lastTempPreviewPath = null;
     }
 
     /// <summary>
@@ -368,5 +469,6 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = null;
+        TryDeleteTempPreview();
     }
 }

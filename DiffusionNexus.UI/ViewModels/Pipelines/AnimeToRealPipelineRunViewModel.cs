@@ -25,7 +25,6 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
     private const string DefaultPrompt = "turn this image into a photorealistic image";
 
     // Generation config proven against the reference workflow (FLUX.2-klein + the 2 A2R LoRAs).
-    private const int Steps = 8;
     private const float Cfg = 1.0f;
     private const string Sampler = "euler";
 
@@ -34,6 +33,9 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
 
     /// <summary>Multiplier applied to both anime-to-real LoRAs (bound to a slider). Workflow uses 0.75.</summary>
     [ObservableProperty] private double _loraStrength = 0.75;
+
+    /// <summary>Sampling steps (bound to a 4–30 slider). Reference workflow uses 8.</summary>
+    [ObservableProperty] private int _steps = 8;
 
     public override string Title => "Anime to Real";
 

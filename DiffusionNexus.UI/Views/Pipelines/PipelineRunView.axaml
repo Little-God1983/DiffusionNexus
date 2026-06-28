@@ -89,6 +89,11 @@
                     <StackPanel Spacing="6">
                       <TextBlock Text="{Binding LoraStrength, StringFormat='LoRA strength: {0:F2}'}"/>
                       <Slider Minimum="0" Maximum="1.5" Value="{Binding LoraStrength}"/>
+
+                      <TextBlock Text="{Binding Steps, StringFormat='Steps: {0}'}"/>
+                      <Slider Minimum="4" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True"
+                              Value="{Binding Steps}"
+                              ToolTip.Tip="Sampling steps. More = slower but can be cleaner; the reference workflow uses 8."/>
                     </StackPanel>
                   </DataTemplate>
                 </ContentControl.DataTemplates>
@@ -121,16 +126,29 @@
       </Border>
     </Grid>
 
-    <!-- Right: preview -->
-    <Grid Grid.Column="1" RowDefinitions="Auto,*" Margin="16">
-      <TextBlock Grid.Row="0" Text="Preview" FontWeight="SemiBold" Foreground="#AAA" Margin="0,0,0,8"/>
-      <Border Grid.Row="1" Background="#141414" CornerRadius="8">
+    <!-- Right: before/after comparison (top) + colored status strip of all outputs (bottom) -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="16">
+      <TextBlock Grid.Row="0" Text="Before / After" FontWeight="SemiBold" Foreground="#AAA" Margin="0,0,0,8"/>
+
+      <Border Grid.Row="1" Background="#141414" CornerRadius="8" ClipToBounds="True">
         <Panel>
-          <TextBlock Text="Press “Generate test image” to preview."
-                     Foreground="#666" HorizontalAlignment="Center" VerticalAlignment="Center"
-                     IsVisible="{Binding TestResultImage, Converter={x:Static ObjectConverters.IsNull}}"/>
-          <Image Source="{Binding TestResultImage}" Stretch="Uniform" Margin="12"/>
+          <TextBlock Text="Select a finished image below to see before / after."
+                     Foreground="#666" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNullOrEmpty}, FallbackValue=True}"/>
+          <controls:ImageCompareControl
+              LeftImagePath="{Binding SelectedOutput.InputPath}"
+              RightImagePath="{Binding SelectedOutput.OutputPath}"
+              SliderValue="50"
+              IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}, FallbackValue=False}"/>
         </Panel>
+      </Border>
+
+      <!-- Output gallery: one colored tile per image (orange=running, green=done, red=failed) -->
+      <Border Grid.Row="2" Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8,0,0"
+              MaxHeight="210">
+        <controls:ImageStatusStrip ItemsSource="{Binding Outputs}"
+                                   SelectedItem="{Binding SelectedOutput, Mode=TwoWay}"/>
       </Border>
     </Grid>
   </Grid>
