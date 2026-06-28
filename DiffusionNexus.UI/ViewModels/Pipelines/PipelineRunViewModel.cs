@@ -534,14 +534,38 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in Loras.Where(l => l.IsEnabled))
         {
+            var kind = item.IsMandatory ? "required" : "custom";
+
             var path = item.FilePath;
             if (string.IsNullOrWhiteSpace(path) && item.CivitaiModelId is { } modelId)
                 path = await Installer.FindLoraPathByModelIdAsync(modelId, cancellationToken).ConfigureAwait(true);
 
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                // Enabled but unresolved — usually a custom row where no LoRA was picked from the dropdown.
+                Log.Warning("LoRA row '{Name}' ({Kind}) is enabled but has no file selected — skipped.", item.DisplayName, kind);
+                UnifiedLogger?.Warn(LogCategory.General, "Workflows",
+                    $"LoRA '{item.DisplayName}' ({kind}) is enabled but no file is selected — skipped.");
+                continue;
+            }
+
             // Never apply the same LoRA file twice (e.g. a required LoRA also picked in an optional row).
-            if (!string.IsNullOrWhiteSpace(path) && seenPaths.Add(path))
-                result.Add(new LoraReference(path, (float)item.Strength));
+            if (!seenPaths.Add(path))
+            {
+                Log.Information("LoRA '{Name}' ({Kind}) skipped — same file already applied: {Path}", item.DisplayName, kind, path);
+                continue;
+            }
+
+            result.Add(new LoraReference(path, (float)item.Strength));
+            Log.Information("LoRA applied ({Kind}) @ {Strength:F2}: {Path}", kind, item.Strength, path);
         }
+
+        var summary = result.Count == 0
+            ? "No LoRAs applied."
+            : $"Applying {result.Count} LoRA(s): " + string.Join(", ",
+                result.ConvertAll(l => $"{System.IO.Path.GetFileName(l.FilePath)}@{l.Strength:F2}"));
+        UnifiedLogger?.Info(LogCategory.General, "Workflows", summary);
+
         return result;
     }
 

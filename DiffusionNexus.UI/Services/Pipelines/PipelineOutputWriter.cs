@@ -64,24 +64,45 @@ public sealed class PipelineOutputWriter : IPipelineOutputWriter
 
         // In-place must not clobber the source; the other modes write into a dedicated folder so the
         // original name is preserved (keeps a dataset version aligned with its source filenames).
-        var fileName = target.Mode == PipelineOutputMode.InputFolderInPlace
-            ? $"{baseName}_real.png"
-            : $"{baseName}.png";
+        var stem = target.Mode == PipelineOutputMode.InputFolderInPlace
+            ? $"{baseName}_real"
+            : baseName;
 
-        var outputPath = Path.Combine(directory, fileName);
+        // Never overwrite: if the name is taken, fall back to "-2", "-3", … (e.g. re-running the
+        // same input into the same folder).
+        var outputPath = MakeUniquePath(directory, stem, ".png");
         await File.WriteAllBytesAsync(outputPath, pngBytes, cancellationToken).ConfigureAwait(false);
 
-        // For a new dataset version, carry over the sibling caption so the version stays a complete dataset.
+        // For a new dataset version, carry over the sibling caption so the version stays a complete
+        // dataset (named to match the actual output file, which may have a "-N" suffix).
         if (target.Mode == PipelineOutputMode.NewDatasetVersion)
         {
             var srcCaption = Path.ChangeExtension(inputPath, ".txt");
             if (File.Exists(srcCaption))
             {
-                var dstCaption = Path.Combine(directory, baseName + ".txt");
-                try { File.Copy(srcCaption, dstCaption, overwrite: true); } catch { /* non-fatal */ }
+                var dstCaption = Path.Combine(directory, Path.GetFileNameWithoutExtension(outputPath) + ".txt");
+                try { File.Copy(srcCaption, dstCaption, overwrite: false); } catch { /* non-fatal */ }
             }
         }
 
         return outputPath;
+    }
+
+    /// <summary>
+    /// Returns a path that does not yet exist: <c>{stem}{ext}</c>, then <c>{stem}-2{ext}</c>,
+    /// <c>{stem}-3{ext}</c>, … so an output never overwrites an existing file.
+    /// </summary>
+    private static string MakeUniquePath(string directory, string stem, string extension)
+    {
+        var candidate = Path.Combine(directory, stem + extension);
+        if (!File.Exists(candidate))
+            return candidate;
+
+        for (var n = 2; ; n++)
+        {
+            candidate = Path.Combine(directory, $"{stem}-{n}{extension}");
+            if (!File.Exists(candidate))
+                return candidate;
+        }
     }
 }

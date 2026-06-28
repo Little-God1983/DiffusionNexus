@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 
 namespace DiffusionNexus.UI.Services.Lora;
 
@@ -8,7 +9,8 @@ namespace DiffusionNexus.UI.Services.Lora;
 /// <param name="DisplayName">Human-readable model name (falls back to the file name).</param>
 /// <param name="FilePath">Absolute path to the LoRA weights file on disk.</param>
 /// <param name="BaseModel">The raw Civitai base-model string (e.g. "Flux.2 Klein 9B"), or null if unknown.</param>
-public sealed record AvailableLora(string DisplayName, string FilePath, string? BaseModel);
+/// <param name="Thumbnail">Preview image (the LoRA's primary image), or null if none is cached.</param>
+public sealed record AvailableLora(string DisplayName, string FilePath, string? BaseModel, Bitmap? Thumbnail);
 
 /// <summary>
 /// Lists installed LoRAs for the reusable Multi-LoRA Picker, drawing from the SAME sources the
