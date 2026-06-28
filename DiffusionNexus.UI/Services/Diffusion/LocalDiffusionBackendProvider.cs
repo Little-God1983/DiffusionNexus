@@ -71,6 +71,16 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
     /// <summary>All models roots (one per discovered ComfyUI installation) the backend will search.</summary>
     public IReadOnlyList<string> ResolvedModelsRoots => _resolvedRoots;
 
+    /// <summary>Keys of the models currently resident in VRAM (empty when the backend isn't initialized).</summary>
+    public IReadOnlyList<string> LoadedModelKeys => _backend?.LoadedModelKeys ?? [];
+
+    /// <summary>
+    /// Unloads every resident diffusion model, freeing its VRAM. No-op if the backend has not been
+    /// initialized yet. The next generation reloads the requested model on demand.
+    /// </summary>
+    public Task UnloadAllAsync(CancellationToken cancellationToken = default)
+        => _backend?.UnloadAllAsync(cancellationToken) ?? Task.CompletedTask;
+
     /// <summary>
     /// Resolves the ComfyUI <c>models/</c> roots without constructing the (heavier) diffusion
     /// backend or loading any native library. The first entry is the default ComfyUI installation

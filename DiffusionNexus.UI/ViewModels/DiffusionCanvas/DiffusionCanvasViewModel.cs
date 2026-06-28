@@ -140,15 +140,43 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         });
     }
 
-    public DiffusionCanvasViewModel(LocalDiffusionBackendProvider backendProvider)
+    /// <summary>GPU/RAM monitor widget shown in the canvas toolbar (null at design time).</summary>
+    public ResourceMonitorViewModel? ResourceMonitor { get; }
+
+    public DiffusionCanvasViewModel(LocalDiffusionBackendProvider backendProvider, ResourceMonitorViewModel? resourceMonitor = null)
     {
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
+        ResourceMonitor = resourceMonitor;
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
 
         // Populate the model dropdown in the background. Uses a lightweight catalog built directly
         // from the resolved model roots, so it does NOT load the native CUDA library at startup —
         // that happens only on the first Generate.
         _ = LoadModelsAsync();
+    }
+
+    /// <summary>
+    /// Unloads the resident diffusion model, freeing its VRAM. The next Generate reloads on demand.
+    /// (Switching models already auto-unloads the previous one; this is a manual "free VRAM" action.)
+    /// </summary>
+    [RelayCommand]
+    private async Task UnloadModelAsync()
+    {
+        if (_backendProvider is null)
+            return;
+
+        try
+        {
+            StatusText = "Unloading model…";
+            await _backendProvider.UnloadAllAsync().ConfigureAwait(true);
+            StatusText = "Model unloaded — VRAM freed.";
+            ResourceMonitor?.RefreshCommand.Execute(null);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to unload diffusion model.");
+            StatusText = $"Unload failed: {ex.Message}";
+        }
     }
 
     /// <summary>

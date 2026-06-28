@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:m="using:DiffusionNexus.UI.Markup"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.PipelinesView"
@@ -12,17 +13,23 @@
     <vm:PipelinesViewModel/>
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,*" Margin="24">
+  <Grid RowDefinitions="Auto,Auto,*" Margin="24">
+
+    <!-- GPU/RAM monitor strip -->
+    <ContentControl Grid.Row="0" HorizontalAlignment="Left" Margin="0,0,0,16"
+                    IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}" />
+    </ContentControl>
 
     <!-- Header -->
-    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,20">
+    <StackPanel Grid.Row="1" Spacing="4" Margin="0,0,0,20">
       <TextBlock Text="Image Pipelines" FontSize="26" FontWeight="Bold" Foreground="White"/>
       <TextBlock Text="Pick a guided pipeline to start working"
                  FontSize="13" Foreground="#A0A0A0"/>
     </StackPanel>
 
     <!-- Tile gallery -->
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
       <ItemsControl ItemsSource="{Binding Pipelines}">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>

@@ -29,6 +29,9 @@ public partial class PipelinesViewModel : ViewModelBase
     /// <summary>The pipeline tiles displayed in the gallery.</summary>
     public ObservableCollection<PipelineTileViewModel> Pipelines { get; } = new();
 
+    /// <summary>GPU/RAM monitor widget shown atop the gallery (null at design time).</summary>
+    public ResourceMonitorViewModel? ResourceMonitor { get; }
+
     /// <summary>Design-time constructor (also used as a safe fallback).</summary>
     public PipelinesViewModel()
     {
@@ -38,11 +41,13 @@ public partial class PipelinesViewModel : ViewModelBase
     public PipelinesViewModel(
         IPipelineManifestProvider manifestProvider,
         IPipelineAssetInstaller installer,
+        ResourceMonitorViewModel? resourceMonitor = null,
         IDialogService? dialogService = null,
         IUnifiedLogger? unifiedLogger = null)
     {
         _manifestProvider = manifestProvider ?? throw new ArgumentNullException(nameof(manifestProvider));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
+        ResourceMonitor = resourceMonitor;
         _dialogService = dialogService;
         _unifiedLogger = unifiedLogger;
 

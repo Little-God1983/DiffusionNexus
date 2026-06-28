@@ -813,6 +813,10 @@ public partial class App : Application
         // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
 
+        // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
+        services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
+        services.AddTransient<ResourceMonitorViewModel>();
+
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
         services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
 
@@ -1015,6 +1019,7 @@ public partial class App : Application
         services.AddScoped<PipelinesViewModel>(sp => new PipelinesViewModel(
             sp.GetRequiredService<Services.Pipelines.IPipelineManifestProvider>(),
             sp.GetRequiredService<Services.Pipelines.IPipelineAssetInstaller>(),
+            sp.GetService<ResourceMonitorViewModel>(),
             sp.GetService<IDialogService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(

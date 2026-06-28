@@ -53,6 +53,12 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     /// <summary>The catalog of models discovered under the configured ComfyUI root.</summary>
     public IModelCatalog Catalog => _catalog;
 
+    /// <summary>Keys of the models currently resident in VRAM (empty when nothing is loaded).</summary>
+    public IReadOnlyList<string> LoadedModelKeys => _host.LoadedModelKeys;
+
+    /// <summary>Unloads all resident models, freeing the VRAM they hold.</summary>
+    public Task UnloadAllAsync(CancellationToken cancellationToken = default) => _host.UnloadAllAsync(cancellationToken);
+
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
 
