@@ -1,6 +1,8 @@
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.Models.Pipelines;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -32,9 +34,23 @@ public partial class PipelineTileViewModel : ViewModelBase
     /// <summary>The manifest describing this pipeline and its required assets.</summary>
     public PipelineManifest Manifest { get; }
 
+    private const string FallbackIcon = "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png";
+
     public string Id => Manifest.Id;
     public string Title => Manifest.Title;
     public string Description => Manifest.Description;
+
+    /// <summary>True when the manifest supplies its own preview image (vs. the generic placeholder).</summary>
+    public bool HasCustomIcon => !string.IsNullOrWhiteSpace(Manifest.Icon);
+
+    /// <summary>
+    /// The tile's icon/preview bitmap: the manifest's <see cref="PipelineManifest.Icon"/> when set
+    /// (resolved under <c>Assets/Pipelines/</c>), otherwise a generic placeholder.
+    /// </summary>
+    public Bitmap? IconBitmap => SafeAssetBitmap.Load(
+        HasCustomIcon
+            ? $"avares://DiffusionNexus.UI/Assets/Pipelines/{Manifest.Icon}"
+            : FallbackIcon);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StatusBrush))]

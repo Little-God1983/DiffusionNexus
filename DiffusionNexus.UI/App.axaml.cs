@@ -1249,7 +1249,7 @@ public partial class App : Application
         var pipelinesView = new PipelinesView { DataContext = pipelinesVm };
 
         var pipelinesModule = new ModuleItem(
-            "Pipelines",
+            "Workflows",
             "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
             pipelinesView)
         {

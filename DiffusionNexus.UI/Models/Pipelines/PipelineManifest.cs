@@ -24,6 +24,13 @@ public sealed class PipelineManifest
     /// <summary>Short description shown on the tile / as its tooltip.</summary>
     public string Description { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Optional tile icon/preview image — a path relative to <c>Assets/Pipelines/</c>
+    /// (e.g. "Icons/anime-to-real.jpg"). When set, it fills the tile's preview area; otherwise a
+    /// generic placeholder icon is shown.
+    /// </summary>
+    public string? Icon { get; init; }
+
     /// <summary>The models and LoRAs this pipeline needs in order to run locally.</summary>
     public List<PipelineAsset> Assets { get; init; } = new();
 }
