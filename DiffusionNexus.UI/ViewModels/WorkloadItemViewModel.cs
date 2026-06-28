@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -44,9 +45,19 @@ public partial class WorkloadItemViewModel : ViewModelBase
     };
 
     /// <summary>
-    /// The full check result, populated after the checker runs.
+    /// The full check result, populated after the checker runs (SDK workloads only).
     /// </summary>
     public ConfigurationCheckResult? CheckResult { get; set; }
+
+    /// <summary>
+    /// When non-null, this row represents an app-side <b>pipeline</b> workload (e.g. Anime-To-Real)
+    /// rather than an SDK <c>InstallationConfiguration</c>. Its check/install are backed by
+    /// <see cref="Services.Pipelines.IPipelineAssetInstaller"/> instead of the SDK services.
+    /// </summary>
+    public PipelineManifest? PipelineManifest { get; init; }
+
+    /// <summary>Latest readiness result for a pipeline workload (see <see cref="PipelineManifest"/>).</summary>
+    public PipelineReadiness? PipelineReadiness { get; set; }
 
     /// <summary>
     /// VRAM profile values (in GB) configured for this workload.

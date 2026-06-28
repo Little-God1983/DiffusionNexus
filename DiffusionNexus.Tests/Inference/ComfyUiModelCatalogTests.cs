@@ -92,6 +92,41 @@ public class ComfyUiModelCatalogTests : IDisposable
         d.DefaultHeight.Should().Be(1024);
     }
 
+    [Theory]
+    [InlineData("flux-2-klein-9b-Q4_K_M.gguf")]
+    [InlineData("flux-2-klein-9b-Q5_K_S.gguf")]
+    [InlineData("flux-2-klein-9b-Q6_K.gguf")]
+    [InlineData("flux-2-klein-9b-Q8_0.gguf")]
+    [InlineData("flux-2-klein-9b-BF16.gguf")]
+    public void ListAvailable_AnyFlux2KleinGgufVariant_ReturnsDescriptor(string ggufFileName)
+    {
+        var unet = CreateFile(Path.Combine("diffusion_models", ggufFileName));
+        var llm = CreateFile(Path.Combine("text_encoders", "Qwen3-8B-Q4_K_M.gguf"));
+        var vae = CreateFile(Path.Combine("vae", "flux2-vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        var d = sut.TryGet(ModelKeys.Flux2Klein);
+        d.Should().NotBeNull();
+        d!.Kind.Should().Be(ModelKind.Flux2Klein);
+        d.DiffusionModelPath.Should().Be(unet);
+        d.VaePath.Should().Be(vae);
+        d.TextEncoders[TextEncoderSlot.Llm].Should().Be(llm);
+        d.DimensionAlignment.Should().Be(16);
+    }
+
+    [Fact]
+    public void ListAvailable_Flux2Klein_MissingEncoder_NotIncluded()
+    {
+        CreateFile(Path.Combine("diffusion_models", "flux-2-klein-9b-Q4_K_M.gguf"));
+        CreateFile(Path.Combine("vae", "flux2-vae.safetensors"));
+        // missing qwen_3_8b_fp8mixed.safetensors
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.Flux2Klein).Should().BeNull();
+    }
+
     [Fact]
     public void ListAvailable_IsCachedAcrossCalls()
     {

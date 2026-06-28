@@ -19,6 +19,13 @@ public class AppSettings
     /// </summary>
     public string? EncryptedCivitaiApiKey { get; set; }
 
+    /// <summary>
+    /// Encrypted HuggingFace access token. Required for downloading gated /
+    /// private HuggingFace repositories (sent as an <c>Authorization: Bearer</c>
+    /// header). Use ISecureStorage to encrypt/decrypt.
+    /// </summary>
+    public string? EncryptedHuggingfaceApiKey { get; set; }
+
     #endregion
 
     #region LoRA Helper Settings

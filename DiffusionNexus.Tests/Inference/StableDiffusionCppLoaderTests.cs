@@ -144,4 +144,67 @@ public class StableDiffusionCppLoaderTests
         result.Error.Should().BeNull();
         result.Value.Should().NotBeNull();
     }
+
+    [Fact]
+    public void Build_Flux2Klein_MissingDiffusionModelPath_Throws()
+    {
+        var descriptor = new ModelDescriptor
+        {
+            Key = ModelKeys.Flux2Klein,
+            DisplayName = "FLUX.2-klein",
+            Kind = ModelKind.Flux2Klein,
+            DiffusionModelPath = "  ",
+            VaePath = "flux2-vae.safetensors",
+            TextEncoders = new Dictionary<TextEncoderSlot, string>
+            {
+                [TextEncoderSlot.Llm] = "qwen_3_8b_fp8mixed.safetensors"
+            }
+        };
+
+        var result = InvokeBuild(descriptor);
+
+        result.Error.Should().BeOfType<InvalidOperationException>();
+        result.Error!.Message.Should().Contain("DiffusionModelPath");
+    }
+
+    [Fact]
+    public void Build_Flux2Klein_MissingLlmTextEncoder_Throws()
+    {
+        var descriptor = new ModelDescriptor
+        {
+            Key = ModelKeys.Flux2Klein,
+            DisplayName = "FLUX.2-klein",
+            Kind = ModelKind.Flux2Klein,
+            DiffusionModelPath = "flux-2-klein-9b-Q4_K_M.gguf",
+            VaePath = "flux2-vae.safetensors",
+            TextEncoders = new Dictionary<TextEncoderSlot, string>()
+        };
+
+        var result = InvokeBuild(descriptor);
+
+        result.Error.Should().BeOfType<InvalidOperationException>();
+        result.Error!.Message.Should().Contain("LLM");
+    }
+
+    [Fact]
+    public void Build_Flux2Klein_AllSlotsPresent_ReturnsParameterObject()
+    {
+        var descriptor = new ModelDescriptor
+        {
+            Key = ModelKeys.Flux2Klein,
+            DisplayName = "FLUX.2-klein",
+            Kind = ModelKind.Flux2Klein,
+            DiffusionModelPath = "flux-2-klein-9b-Q4_K_M.gguf",
+            VaePath = "flux2-vae.safetensors",
+            TextEncoders = new Dictionary<TextEncoderSlot, string>
+            {
+                [TextEncoderSlot.Llm] = "qwen_3_8b_fp8mixed.safetensors"
+            }
+        };
+
+        var result = InvokeBuild(descriptor);
+
+        result.Error.Should().BeNull();
+        result.Value.Should().NotBeNull();
+    }
 }

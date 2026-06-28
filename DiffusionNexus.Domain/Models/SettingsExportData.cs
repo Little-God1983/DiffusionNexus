@@ -31,6 +31,11 @@ public sealed record SettingsExportData
     /// </summary>
     public string? EncryptedCivitaiApiKey { get; init; }
 
+    /// <summary>
+    /// Encrypted HuggingFace access token. Machine-specific; may need re-entry after import.
+    /// </summary>
+    public string? EncryptedHuggingfaceApiKey { get; init; }
+
     // ?? LoRA Helper ??????????????????????????????????????????
 
     public List<LoraSourceExport> LoraSources { get; init; } = [];

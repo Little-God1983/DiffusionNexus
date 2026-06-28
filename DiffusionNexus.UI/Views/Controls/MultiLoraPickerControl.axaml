@@ -1,0 +1,80 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:vmc="using:DiffusionNexus.UI.ViewModels.Controls"
+             xmlns:lora="using:DiffusionNexus.UI.Services.Lora"
+             x:Class="DiffusionNexus.UI.Views.Controls.MultiLoraPickerControl"
+             x:DataType="local:MultiLoraPickerControl">
+
+  <StackPanel Spacing="6">
+
+    <ItemsControl ItemsSource="{Binding Loras, RelativeSource={RelativeSource AncestorType=local:MultiLoraPickerControl}}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vmc:LoraPickerItemViewModel">
+          <Border Background="#2A2A2A" CornerRadius="6" Padding="8" Margin="0,0,0,6">
+            <StackPanel Spacing="6">
+
+              <!-- Row 1: enable toggle, name/dropdown, remove -->
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" IsEnabled="{Binding !IsMandatory}"
+                          VerticalAlignment="Center" Margin="0,0,8,0"
+                          ToolTip.Tip="Enable / disable this LoRA"/>
+
+                <!-- Mandatory: static name + 'required' chip -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center" IsVisible="{Binding IsMandatory}">
+                  <TextBlock Text="{Binding DisplayName}" Foreground="White" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis"/>
+                  <Border Background="#3D3D3D" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                    <TextBlock Text="required" FontSize="9" Foreground="#BBBBBB"/>
+                  </Border>
+                </StackPanel>
+
+                <!-- Optional: LoRA dropdown (ComboBox — the app's stable searchable-select pattern;
+                     Avalonia's AutoCompleteBox crashes on selection). Items are already base-model filtered. -->
+                <ComboBox Grid.Column="1" IsVisible="{Binding !IsMandatory}"
+                          HorizontalAlignment="Stretch"
+                          MaxDropDownHeight="320"
+                          PlaceholderText="Pick a LoRA…"
+                          ItemsSource="{Binding AvailableLoras, RelativeSource={RelativeSource AncestorType=local:MultiLoraPickerControl}}"
+                          SelectedItem="{Binding SelectedLora, Mode=TwoWay}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="lora:AvailableLora">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border Width="40" Height="40" CornerRadius="4" Background="#1A1A1A" ClipToBounds="True">
+                          <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                        </Border>
+                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Optional: remove -->
+                <Button Grid.Column="2" Content="✕" Margin="8,0,0,0" Padding="8,2"
+                        IsVisible="{Binding !IsMandatory}"
+                        Command="{Binding RemoveLoraCommand, RelativeSource={RelativeSource AncestorType=local:MultiLoraPickerControl}}"
+                        CommandParameter="{Binding}"
+                        ToolTip.Tip="Remove this LoRA"/>
+              </Grid>
+
+              <!-- Row 2: strength -->
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" Text="Strength" Foreground="#AAAAAA"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Slider Grid.Column="1" Minimum="-2.0" Maximum="2.0" Value="{Binding Strength}"
+                        TickFrequency="0.05"/>
+                <TextBlock Grid.Column="2" Text="{Binding Strength, StringFormat='{}{0:F2}'}"
+                           Width="42" TextAlignment="Right" VerticalAlignment="Center"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <Button Content="＋  Add a LoRA" HorizontalAlignment="Left"
+            Command="{Binding AddLoraCommand, RelativeSource={RelativeSource AncestorType=local:MultiLoraPickerControl}}"/>
+  </StackPanel>
+</UserControl>

@@ -51,6 +51,12 @@ internal sealed class DiffusionContextHost : IDisposable
         {
             if (entry.Model is null)
             {
+                // Single-resident policy: free any OTHER loaded model first. On a single GPU two
+                // models (e.g. Z-Image-Turbo + FLUX.2-klein) won't fit at once, so without this the
+                // second load hangs/OOMs and the app has to be restarted to switch models.
+                onLoading?.Invoke("Freeing previous model…");
+                await UnloadAllExceptAsync(descriptor.Key, cancellationToken).ConfigureAwait(false);
+
                 onLoading?.Invoke($"Loading {descriptor.DisplayName}…");
                 var parameters = StableDiffusionCppLoader.Build(descriptor);
                 // Native load is synchronous + CPU/disk-bound. Run it off the calling thread.
@@ -65,6 +71,70 @@ internal sealed class DiffusionContextHost : IDisposable
             throw;
         }
     }
+
+    /// <summary>Keys of every model currently resident (loaded) in memory/VRAM.</summary>
+    public IReadOnlyList<string> LoadedModelKeys
+    {
+        get
+        {
+            _registryLock.Wait();
+            try
+            {
+                return _contexts.Values
+                    .Where(e => e.Model is not null)
+                    .Select(e => e.Descriptor.Key)
+                    .ToList();
+            }
+            finally
+            {
+                _registryLock.Release();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Disposes every loaded model except <paramref name="keepKey"/>, freeing its VRAM. Waits for
+    /// each model's per-context lock first so an in-flight generation is never torn down mid-run.
+    /// (The app generates one image at a time, so this never contends in practice.)
+    /// </summary>
+    public async Task UnloadAllExceptAsync(string? keepKey, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        List<ContextEntry> toEvict;
+        await _registryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            toEvict = _contexts.Values
+                .Where(e => e.Model is not null && !string.Equals(e.Descriptor.Key, keepKey, StringComparison.Ordinal))
+                .ToList();
+        }
+        finally
+        {
+            _registryLock.Release();
+        }
+
+        foreach (var entry in toEvict)
+        {
+            await entry.UseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (entry.Model is not null)
+                {
+                    try { entry.Model.Dispose(); } catch { /* native cleanup swallowed by design */ }
+                    entry.Model = null;
+                }
+            }
+            finally
+            {
+                entry.UseLock.Release();
+            }
+        }
+    }
+
+    /// <summary>Unloads every resident model, freeing all VRAM the backend holds.</summary>
+    public Task UnloadAllAsync(CancellationToken cancellationToken = default)
+        => UnloadAllExceptAsync(null, cancellationToken);
 
     public void Dispose()
     {

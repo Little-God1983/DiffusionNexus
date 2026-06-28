@@ -49,7 +49,10 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
 
             Logger.Information("Initializing local diffusion backend with {Count} models root(s): {Roots}",
                 roots.Count, string.Join(" | ", roots));
-            _backend = new StableDiffusionCppBackend(roots);
+            // Pass the Unified Logger so native engine logs + generation failures surface in the
+            // Unified Console (singleton, resolved from the root provider).
+            var unifiedLogger = _serviceProvider.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>();
+            _backend = new StableDiffusionCppBackend(roots, unifiedLogger);
             _resolvedRoots = roots;
             return _backend;
         }
@@ -67,6 +70,25 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
 
     /// <summary>All models roots (one per discovered ComfyUI installation) the backend will search.</summary>
     public IReadOnlyList<string> ResolvedModelsRoots => _resolvedRoots;
+
+    /// <summary>Keys of the models currently resident in VRAM (empty when the backend isn't initialized).</summary>
+    public IReadOnlyList<string> LoadedModelKeys => _backend?.LoadedModelKeys ?? [];
+
+    /// <summary>
+    /// Unloads every resident diffusion model, freeing its VRAM. No-op if the backend has not been
+    /// initialized yet. The next generation reloads the requested model on demand.
+    /// </summary>
+    public Task UnloadAllAsync(CancellationToken cancellationToken = default)
+        => _backend?.UnloadAllAsync(cancellationToken) ?? Task.CompletedTask;
+
+    /// <summary>
+    /// Resolves the ComfyUI <c>models/</c> roots without constructing the (heavier) diffusion
+    /// backend or loading any native library. The first entry is the default ComfyUI installation
+    /// — the canonical download target for pipeline assets. Returns an empty list when no usable
+    /// ComfyUI installation is registered; callers should surface a friendly message in that case.
+    /// </summary>
+    public Task<IReadOnlyList<string>> GetComfyUiModelsRootsAsync(CancellationToken cancellationToken = default)
+        => ResolveModelsRootsAsync(cancellationToken);
 
     private async Task<IReadOnlyList<string>> ResolveModelsRootsAsync(CancellationToken ct)
     {
@@ -98,14 +120,16 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
                 return [];
             }
 
-            var roots = new List<string>(comfyInstalls.Count);
+            var roots = new List<string>();
             foreach (var pkg in comfyInstalls)
             {
-                var root = ResolveSingleRoot(pkg);
-                if (root is not null && !roots.Contains(root, StringComparer.OrdinalIgnoreCase))
+                foreach (var root in ResolveRootsForPackage(pkg))
                 {
-                    roots.Add(root);
-                    Logger.Information("ComfyUI installation '{Name}' → models root: {Root}", pkg.Name, root);
+                    if (!roots.Contains(root, StringComparer.OrdinalIgnoreCase))
+                    {
+                        roots.Add(root);
+                        Logger.Information("ComfyUI installation '{Name}' → models search root: {Root}", pkg.Name, root);
+                    }
                 }
             }
 
@@ -124,36 +148,24 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
     }
 
     /// <summary>
-    /// Resolves a single ComfyUI installation's models folder, accounting for the same
-    /// portable-vs-manual layouts the Installer's ConfigurationCheckerService recognizes.
+    /// Resolves every models search root for a ComfyUI installation using the <b>same</b> resolver
+    /// the rest of the Diffusion Nexus core uses (<see cref="ComfyUiPathDiscovery"/>, shared with the
+    /// captioning model manager and the Installer Manager's configuration checker): the install's own
+    /// <c>models/</c> folder plus every <c>base_path</c>/model-type entry in <c>extra_model_paths.yaml</c>
+    /// (e.g. a shared <c>D:\Models</c> library) plus the portable root fallback. Using the shared
+    /// resolver guarantees the local renderer + pipeline check see exactly the paths shown in the
+    /// "Search paths (scanned recursively)" list.
     /// </summary>
-    private static string? ResolveSingleRoot(InstallerPackage pkg)
+    private static IEnumerable<string> ResolveRootsForPackage(InstallerPackage pkg)
     {
         if (string.IsNullOrWhiteSpace(pkg.InstallationPath) || !Directory.Exists(pkg.InstallationPath))
         {
             Logger.Warning("ComfyUI '{Name}' (ID={Id}) has no valid InstallationPath: '{Path}'.",
                 pkg.Name, pkg.Id, pkg.InstallationPath);
-            return null;
+            return [];
         }
 
-        // Probe both layouts:
-        //   Manual:   <root>/models/
-        //   Portable: <root>/ComfyUI/models/  (some installers also keep <root>/models/ at the parent level)
-        var candidates = new[]
-        {
-            Path.Combine(pkg.InstallationPath, "models"),
-            Path.Combine(pkg.InstallationPath, "ComfyUI", "models"),
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (Directory.Exists(candidate))
-                return candidate;
-        }
-
-        Logger.Warning("ComfyUI '{Name}' has no models folder under {Root}. Probed: [{Candidates}].",
-            pkg.Name, pkg.InstallationPath, string.Join(", ", candidates));
-        return null;
+        return ComfyUiPathDiscovery.EnumerateModelSearchPaths(pkg.InstallationPath);
     }
 
     public ValueTask DisposeAsync()

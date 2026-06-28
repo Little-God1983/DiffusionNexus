@@ -1,0 +1,162 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Pipelines"
+             xmlns:models="using:DiffusionNexus.UI.Models.Pipelines"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="720"
+             x:Class="DiffusionNexus.UI.Views.Pipelines.PipelineRunView"
+             x:DataType="vm:PipelineRunViewModel">
+
+  <Grid ColumnDefinitions="500,*" Background="#252526">
+
+    <!-- Left: settings -->
+    <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto" Background="#1E1E1E">
+
+      <!-- Header + live GPU/RAM monitor (always visible while running a pipeline) -->
+      <StackPanel Grid.Row="0" Spacing="10" Margin="16,16,16,8">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Content="←  Back" Command="{Binding BackCommand}" Padding="10,6"/>
+          <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="White"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+        <ContentControl IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}"/>
+        </ContentControl>
+      </StackPanel>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" Margin="16">
+
+          <!-- Input Source -->
+          <Border Background="#333333" CornerRadius="8" Padding="16">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Input Source" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+              <ToggleSwitch IsChecked="{Binding IsSingleImageMode}"
+                            OnContent="Image(s)" OffContent="Dataset" HorizontalAlignment="Left"/>
+
+              <StackPanel IsVisible="{Binding !IsSingleImageMode}">
+                <TextBlock Text="Select dataset" Margin="0,0,0,4"/>
+                <controls:DatasetVersionSelectorControl
+                    Datasets="{Binding AvailableDatasets}"
+                    SelectedDataset="{Binding SelectedDataset, Mode=TwoWay}"
+                    VersionItems="{Binding AvailableDatasetVersions}"
+                    SelectedVersion="{Binding SelectedDatasetVersion, Mode=TwoWay}"
+                    IsDatasetSearchable="False"
+                    DatasetPlaceholderText="Choose a dataset..."/>
+              </StackPanel>
+
+              <StackPanel IsVisible="{Binding IsSingleImageMode}" Spacing="8">
+                <controls:ImageListInputControl ImagePaths="{Binding SingleImagePaths}"
+                                                SelectedImagePath="{Binding SelectedInputImagePath, Mode=TwoWay}"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <!-- Output -->
+          <Border Background="#333333" CornerRadius="8" Padding="16">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Output" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+              <ComboBox HorizontalAlignment="Stretch"
+                        ItemsSource="{Binding AvailableOutputOptions}"
+                        SelectedItem="{Binding SelectedOutputOption}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="models:PipelineOutputOption">
+                    <TextBlock Text="{Binding DisplayName}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
+          </Border>
+
+          <!-- Generation settings -->
+          <Border Background="#333333" CornerRadius="8" Padding="16">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+
+              <TextBlock Text="Prompt"/>
+              <TextBox Text="{Binding Prompt}" AcceptsReturn="True" MaxHeight="90" TextWrapping="Wrap"/>
+
+              <TextBlock Text="{Binding ImageInfluence, StringFormat='Denoise: {0:F2}'}"/>
+              <Slider Minimum="0.2" Maximum="1.0" Value="{Binding ImageInfluence}"
+                      ToolTip.Tip="1.0 = full generation guided by the reference image (recommended for Anime → Real)."/>
+
+              <!-- Pipeline-specific controls (e.g. Steps for Anime-To-Real) -->
+              <ContentControl Content="{Binding}">
+                <ContentControl.DataTemplates>
+                  <DataTemplate DataType="vm:AnimeToRealPipelineRunViewModel">
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="{Binding Steps, StringFormat='Steps: {0}'}"/>
+                      <Slider Minimum="4" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True"
+                              Value="{Binding Steps}"
+                              ToolTip.Tip="Sampling steps. More = slower but can be cleaner; the reference workflow uses 8."/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ContentControl.DataTemplates>
+              </ContentControl>
+            </StackPanel>
+          </Border>
+
+          <!-- LoRAs (reusable multi-LoRA picker; required LoRAs come from the workflow) -->
+          <Border Background="#333333" CornerRadius="8" Padding="16"
+                  IsVisible="{Binding SupportsLoras}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="LoRAs" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+              <controls:MultiLoraPickerControl Loras="{Binding Loras}"
+                                               AvailableLoras="{Binding AvailableLoras}"/>
+            </StackPanel>
+          </Border>
+
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Action bar -->
+      <Border Grid.Row="2" Background="#2A2A2A" Padding="16" BorderBrush="#333" BorderThickness="0,1,0,0">
+        <StackPanel Spacing="8">
+          <ProgressBar IsVisible="{Binding IsProcessing}" Minimum="0" Maximum="100"
+                       Value="{Binding TotalProgress}" Height="6"/>
+          <TextBlock Text="{Binding CurrentProcessingStatus}" Foreground="#CCC" FontSize="12"
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding CurrentProcessingStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <Grid ColumnDefinitions="*,*,Auto">
+            <Button Grid.Column="0" Content="Generate test image" Command="{Binding GenerateTestCommand}"
+                    Margin="0,0,4,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    ToolTip.Tip="Render one image to tune the strength before processing everything."/>
+            <Button Grid.Column="1" Content="Generate all" Command="{Binding GenerateAllCommand}"
+                    Margin="4,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Background="#0E639C" Foreground="White" FontWeight="SemiBold"/>
+            <Button Grid.Column="2" Content="Cancel" Command="{Binding CancelGenerateCommand}"
+                    IsVisible="{Binding IsProcessing}" Margin="4,0,0,0"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- Right: before/after comparison (top) + colored status strip of all outputs (bottom) -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="16">
+      <TextBlock Grid.Row="0" Text="Before / After" FontWeight="SemiBold" Foreground="#AAA" Margin="0,0,0,8"/>
+
+      <Border Grid.Row="1" Background="#141414" CornerRadius="8" ClipToBounds="True">
+        <Panel>
+          <TextBlock Text="Select a finished image below to see before / after."
+                     Foreground="#666" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNullOrEmpty}, FallbackValue=True}"/>
+          <controls:ImageCompareControl
+              LeftImagePath="{Binding SelectedOutput.InputPath}"
+              RightImagePath="{Binding SelectedOutput.OutputPath}"
+              SliderValue="50"
+              IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}, FallbackValue=False}"/>
+        </Panel>
+      </Border>
+
+      <!-- Output gallery: one colored tile per image (orange=running, green=done, red=failed) -->
+      <Border Grid.Row="2" Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8,0,0"
+              MaxHeight="210">
+        <controls:ImageStatusStrip ItemsSource="{Binding Outputs}"
+                                   SelectedItem="{Binding SelectedOutput, Mode=TwoWay}"/>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

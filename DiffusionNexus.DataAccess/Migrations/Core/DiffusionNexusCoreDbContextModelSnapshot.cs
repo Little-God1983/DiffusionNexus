@@ -15,7 +15,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
@@ -51,6 +51,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("EncryptedCivitaiApiKey")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EncryptedHuggingfaceApiKey")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
