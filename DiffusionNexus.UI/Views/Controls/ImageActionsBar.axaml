@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vmc="using:DiffusionNexus.UI.ViewModels.Controls"
+             x:Class="DiffusionNexus.UI.Views.Controls.ImageActionsBar"
+             x:DataType="vmc:ImageActionsViewModel">
+
+  <!-- Reusable "Add … To… / Send … To…" toolbar. DataContext = ImageActionsViewModel.
+       Each destination is hidden via its Show* flag (e.g. the Image Editor hides "Image Editor"). -->
+  <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+
+    <!-- Add Selected To... -->
+    <Button Content="{Binding AddButtonText}" Background="#2E7D32" Foreground="White"
+            Padding="12,6" FontWeight="SemiBold" IsVisible="{Binding ShowAddMenu}"
+            IsEnabled="{Binding CanAct}">
+      <Button.Flyout>
+        <MenuFlyout Placement="BottomEdgeAlignedLeft">
+          <MenuItem Header="Dataset" Command="{Binding AddToDatasetCommand}"
+                    IsVisible="{Binding ShowAddToDataset}"
+                    ToolTip.Tip="Add the selected images to an existing or new dataset"/>
+          <MenuItem Header="Training Run" Command="{Binding AddToTrainingRunCommand}"
+                    IsVisible="{Binding ShowAddToTrainingRun}"
+                    ToolTip.Tip="Add the selected images to a training run"/>
+        </MenuFlyout>
+      </Button.Flyout>
+    </Button>
+
+    <!-- Send Selected To... -->
+    <Button Content="{Binding SendButtonText}" Background="#1976D2" Foreground="White"
+            Padding="12,6" FontWeight="SemiBold" IsVisible="{Binding ShowSendMenu}"
+            IsEnabled="{Binding CanAct}">
+      <Button.Flyout>
+        <MenuFlyout Placement="BottomEdgeAlignedLeft">
+          <MenuItem Header="&#x270F; Image Editor" Command="{Binding SendToImageEditorCommand}"
+                    IsVisible="{Binding ShowSendToImageEditor}"
+                    ToolTip.Tip="Open the selected images in the Image Editor"/>
+          <MenuItem Header="&#x274F; Comparer" Command="{Binding SendToComparerCommand}"
+                    IsVisible="{Binding ShowSendToComparer}"
+                    ToolTip.Tip="Compare the selected images side by side"/>
+          <MenuItem Header="&#x2B06; Batch Upscale" Command="{Binding SendToBatchUpscaleCommand}"
+                    IsVisible="{Binding ShowSendToBatchUpscale}"
+                    ToolTip.Tip="Send the selected images to Batch Upscale"/>
+          <MenuItem Header="&#x2702; Batch Crop/Scale" Command="{Binding SendToBatchCropCommand}"
+                    IsVisible="{Binding ShowSendToBatchCrop}"
+                    ToolTip.Tip="Send the selected images to Batch Crop/Scale"/>
+          <MenuItem Header="&#x1F4AC; Captioning" Command="{Binding SendToCaptioningCommand}"
+                    IsVisible="{Binding ShowSendToCaptioning}"
+                    ToolTip.Tip="Send the selected images to Captioning"/>
+        </MenuFlyout>
+      </Button.Flyout>
+    </Button>
+  </StackPanel>
+</UserControl>

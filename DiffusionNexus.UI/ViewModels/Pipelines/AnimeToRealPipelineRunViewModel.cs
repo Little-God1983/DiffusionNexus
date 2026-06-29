@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.StableDiffusionCpp;
@@ -57,9 +58,13 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
         IPipelineOutputWriter outputWriter,
         IDatasetState datasetState,
         IDialogService dialogs,
+        IDatasetEventAggregator eventAggregator,
         ILoraCatalog loraCatalog,
-        IUnifiedLogger? unifiedLogger = null)
-        : base(manifest, installer, backendProvider, outputWriter, datasetState, dialogs, loraCatalog, unifiedLogger,
+        IUnifiedLogger? unifiedLogger = null,
+        IVideoThumbnailService? videoThumbnailService = null,
+        IAppSettingsService? settingsService = null)
+        : base(manifest, installer, backendProvider, outputWriter, datasetState, dialogs, eventAggregator,
+               loraCatalog, unifiedLogger, videoThumbnailService, settingsService,
                defaultPrompt: DefaultPrompt, defaultImageInfluence: 1.0)
     {
     }
