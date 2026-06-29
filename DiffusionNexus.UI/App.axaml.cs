@@ -10,6 +10,7 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
@@ -828,6 +829,22 @@ public partial class App : Application
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
 
+        // Gist-backed server message service (operator announcements shown in the main window banner).
+        // Edit the Gist to change what users see — no rebuild required. App id "app" filters targeting.
+        services.AddSingleton<IServerMessageService>(_ => new GistServerMessageService(
+            new ServerMessageServiceOptions
+            {
+                Url = "https://gist.githubusercontent.com/Little-God1983/358c5fccc6655f6e56aef8470bb17c1c/raw/messages.json"
+            },
+            new HttpClient(),
+            ownsHttpClient: true));
+        services.AddSingleton(_ =>
+        {
+            var settingsPath = DiffusionNexus.Installer.SDK.DataAccess.ServiceCollectionExtensions.GetUserSettingsFilePath();
+            var dir = System.IO.Path.GetDirectoryName(settingsPath) ?? AppContext.BaseDirectory;
+            return new DismissedMessageStore(System.IO.Path.Combine(dir, "dismissed_messages.json"));
+        });
+
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
 
@@ -1344,7 +1361,8 @@ public partial class App : Application
                 generationGalleryVm.LoadMediaCommand.ExecuteAsync(null),
                 installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null),
                 loraDatasetHelperVm.DatasetManagement
-                    .CheckStorageConfigurationCommand.ExecuteAsync(null));
+                    .CheckStorageConfigurationCommand.ExecuteAsync(null),
+                mainViewModel.LoadServerMessagesAsync());
         }
         catch (Exception ex)
         {

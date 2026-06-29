@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -130,9 +131,75 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 
     public ObservableCollection<ModuleItem> Modules { get; } = new();
 
+    /// <summary>
+    /// Operator-authored announcements shown in the banner above the main content.
+    /// </summary>
+    public ObservableCollection<ServerMessageItemViewModel> ServerMessages { get; } = new();
+
+    /// <summary>
+    /// Whether any server message is currently visible (drives the banner's visibility).
+    /// </summary>
+    public bool HasServerMessages => ServerMessages.Count > 0;
+
     public DiffusionNexusMainWindowViewModel()
     {
         // Disclaimer check is called externally after services are initialized
+    }
+
+    /// <summary>
+    /// Fetches applicable server messages (Gist-backed) and populates <see cref="ServerMessages"/>.
+    /// Resolves the service from <see cref="App.Services"/>; failures are logged and never disrupt startup.
+    /// </summary>
+    public async Task LoadServerMessagesAsync()
+    {
+        var service = App.Services?.GetService<IServerMessageService>();
+        if (service is null)
+        {
+            return;
+        }
+
+        var store = App.Services?.GetService<DismissedMessageStore>();
+
+        try
+        {
+            var dismissed = store?.Load();
+            var result = await service.GetMessagesAsync("app", dismissed);
+
+            if (!string.IsNullOrEmpty(result.ErrorMessage))
+            {
+                Serilog.Log.Information("Server message check failed: {Error}", result.ErrorMessage);
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                ServerMessages.Clear();
+                foreach (var msg in result.Messages)
+                {
+                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, OpenUrl));
+                }
+                OnPropertyChanged(nameof(HasServerMessages));
+            });
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Information(ex, "Server message check error");
+        }
+    }
+
+    private void DismissServerMessage(ServerMessageItemViewModel item)
+    {
+        ServerMessages.Remove(item);
+        OnPropertyChanged(nameof(HasServerMessages));
+
+        try
+        {
+            App.Services?.GetService<DismissedMessageStore>()?.Add(item.Id);
+        }
+        catch
+        {
+            // Best-effort: failing to persist a dismissal just means it may reappear next launch.
+        }
     }
 
     /// <summary>

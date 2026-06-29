@@ -139,13 +139,76 @@ x:Name="MainWin">
                 <!-- Main Content Area -->
                 <SplitView.Content>
                     <Border Background="#252526">
-                        <ContentControl Content="{Binding CurrentModuleView}">
-                            <ContentControl.ContentTemplate>
-                                <DataTemplate>
-                                    <ContentPresenter Content="{Binding}"/>
-                                </DataTemplate>
-                            </ContentControl.ContentTemplate>
-                        </ContentControl>
+                        <Grid RowDefinitions="Auto,*">
+                            <!-- Server Message Banner (operator announcements; hidden when none) -->
+                            <ItemsControl Grid.Row="0"
+                                          Margin="16,12,16,0"
+                                          IsVisible="{Binding HasServerMessages}"
+                                          ItemsSource="{Binding ServerMessages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ServerMessageItemViewModel">
+                                        <Border Margin="0,0,0,8"
+                                                CornerRadius="8"
+                                                Padding="14,10"
+                                                Background="{Binding BackgroundBrush}"
+                                                BorderBrush="{Binding AccentBrush}"
+                                                BorderThickness="1">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding Icon}"
+                                                           Foreground="{Binding AccentBrush}"
+                                                           FontSize="18"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,12,0"/>
+                                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}"
+                                                               IsVisible="{Binding HasTitle}"
+                                                               FontWeight="Bold"
+                                                               Foreground="White"
+                                                               FontSize="14"/>
+                                                    <TextBlock Text="{Binding Message}"
+                                                               Foreground="#DDDDDD"
+                                                               TextWrapping="Wrap"
+                                                               FontSize="13"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="2"
+                                                        Content="{Binding ActionLabel}"
+                                                        IsVisible="{Binding HasAction}"
+                                                        Command="{Binding OpenActionCommand}"
+                                                        Margin="12,0,0,0"
+                                                        Padding="12,6"
+                                                        CornerRadius="6"
+                                                        Cursor="Hand"
+                                                        Foreground="White"
+                                                        Background="{Binding AccentBrush}"
+                                                        VerticalAlignment="Center"/>
+                                                <Button Grid.Column="3"
+                                                        Content="✕"
+                                                        IsVisible="{Binding IsDismissible}"
+                                                        Command="{Binding DismissCommand}"
+                                                        ToolTip.Tip="Dismiss"
+                                                        Margin="8,0,0,0"
+                                                        Padding="8,4"
+                                                        CornerRadius="6"
+                                                        Cursor="Hand"
+                                                        Background="Transparent"
+                                                        Foreground="#AAAAAA"
+                                                        BorderThickness="0"
+                                                        VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <ContentControl Grid.Row="1" Content="{Binding CurrentModuleView}">
+                                <ContentControl.ContentTemplate>
+                                    <DataTemplate>
+                                        <ContentPresenter Content="{Binding}"/>
+                                    </DataTemplate>
+                                </ContentControl.ContentTemplate>
+                            </ContentControl>
+                        </Grid>
                     </Border>
                 </SplitView.Content>
             </SplitView>
