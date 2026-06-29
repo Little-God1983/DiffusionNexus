@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.UI.Models.Pipelines;
@@ -112,12 +113,17 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _completedCount;
     [ObservableProperty] private int _totalImageCount;
 
-    // ── Outputs (drive the reusable status strip + before/after comparison) ──────
-    /// <summary>One entry per produced image, with input/output paths + live status (colours the strip).</summary>
+    // ── Outputs (drive the reusable selectable result view + before/after comparison) ──────
+    /// <summary>One entry per produced image, with input/output paths + live status (colours the tiles).</summary>
     public ObservableCollection<ImageStatusItemViewModel> Outputs { get; } = [];
 
-    /// <summary>The output tile selected in the strip; its input/output paths feed the comparison view.</summary>
-    [ObservableProperty] private ImageStatusItemViewModel? _selectedOutput;
+    /// <summary>
+    /// The reusable multi-select result view over <see cref="Outputs"/>: Ctrl/Shift selection,
+    /// Ctrl+C clipboard, drag-out, and the "Add Selected To… / Send Selected To…" destinations. Its
+    /// <see cref="Controls.SelectableImageResultsViewModel.PrimaryItem"/> (the last-clicked tile)
+    /// feeds the before/after comparison.
+    /// </summary>
+    public SelectableImageResultsViewModel Results { get; }
 
     protected PipelineRunViewModel(
         PipelineManifest manifest,
@@ -126,8 +132,11 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         IPipelineOutputWriter outputWriter,
         IDatasetState datasetState,
         IDialogService dialogs,
+        IDatasetEventAggregator eventAggregator,
         ILoraCatalog loraCatalog,
         IUnifiedLogger? unifiedLogger,
+        IVideoThumbnailService? videoThumbnailService,
+        IAppSettingsService? settingsService,
         string defaultPrompt,
         double defaultImageInfluence)
     {
@@ -141,6 +150,14 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         UnifiedLogger = unifiedLogger;
         _prompt = defaultPrompt;
         _imageInfluence = defaultImageInfluence;
+
+        // The result view offers every destination (it shows finished generations the user may want to
+        // keep or push elsewhere). The injected (window-bound) dialog service drives the Add dialogs.
+        var actions = new ImageActionsViewModel(datasetState, eventAggregator, videoThumbnailService, settingsService)
+        {
+            DialogService = dialogs,
+        };
+        Results = new SelectableImageResultsViewModel(Outputs, actions);
 
         // ImageListInputControl mutates SingleImagePaths in place; subscribe so HasSingleImage + the
         // command CanExecute update (binding alone doesn't notify).
@@ -305,7 +322,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         };
         Outputs.Clear();
         Outputs.Add(item);
-        SelectedOutput = item;
+        Results.PrimaryItem = item;
         _ = LoadThumbnailAsync(item);
 
         _cts = new CancellationTokenSource();
@@ -382,7 +399,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
 
         // Pre-populate the strip with one pending tile per input, then update each as it runs.
         Outputs.Clear();
-        SelectedOutput = null;
+        Results.PrimaryItem = null;
         var items = inputs
             .Select(p => new ImageStatusItemViewModel { FileName = Path.GetFileName(p), InputPath = p })
             .ToList();
@@ -409,7 +426,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
                     item.Status = ImageProcessingStatus.Done;
                     // Auto-show the FIRST completed result, then leave selection to the user so the
                     // strip/compare don't yank away a tile they clicked to inspect mid-batch.
-                    SelectedOutput ??= item;
+                    Results.PrimaryItem ??= item;
                     UnifiedLogger?.Info(LogCategory.General, "Pipelines", $"Generated {Path.GetFileName(outputPath)}");
                 }
                 catch (OperationCanceledException)

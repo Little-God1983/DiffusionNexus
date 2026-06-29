@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using DiffusionNexus.UI.ViewModels.Controls;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -64,10 +65,21 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private bool _showTrash = true;
     private bool _showUnrated = true;
 
+    private IDialogService? _dialogService;
+
     /// <summary>
-    /// Gets or sets the dialog service for showing dialogs.
+    /// Gets or sets the dialog service for showing dialogs. Propagated to <see cref="ImageActions"/>
+    /// so its "Add To…" destinations can show their dialogs.
     /// </summary>
-    public IDialogService? DialogService { get; set; }
+    public IDialogService? DialogService
+    {
+        get => _dialogService;
+        set
+        {
+            _dialogService = value;
+            ImageActions.DialogService = value;
+        }
+    }
 
     #region Filter Properties
 
@@ -252,24 +264,19 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     public IRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
 
-    /// <summary>
-    /// Adds the current editor image to an existing or new dataset — mirrors the Generation
-    /// Gallery "Add Selected To… → Dataset" flow, operating on the single current image.
-    /// </summary>
-    public IAsyncRelayCommand AddCurrentToDatasetCommand { get; }
-
-    /// <summary>
-    /// Adds the current editor image to a training run — mirrors the Generation Gallery
-    /// "Add Selected To… → Training Run" flow, operating on the single current image.
-    /// </summary>
-    public IAsyncRelayCommand AddCurrentToTrainingRunCommand { get; }
-
     #endregion
 
     /// <summary>
     /// Gets the Image Editor ViewModel.
     /// </summary>
     public ImageEditorViewModel ImageEditor { get; }
+
+    /// <summary>
+    /// Reusable "Add To… / Send To…" actions operating on the current edited image — the same
+    /// component the pipeline result view uses, configured with "Image Editor" + "Comparer" hidden
+    /// (no point sending an image from the editor back to itself, and a single image can't be compared).
+    /// </summary>
+    public ImageActionsViewModel ImageActions { get; }
 
     #region Constructors
 
@@ -299,6 +306,20 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         // Create the image editor with background removal service
         ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger);
 
+        // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
+        // hidden; enablement tracks whether an image is loaded.
+        ImageActions = new ImageActionsViewModel(_state, _eventAggregator, _videoThumbnailService, _settingsService)
+        {
+            AddButtonText = "Add To...",
+            SendButtonText = "Send To...",
+            ShowSendToImageEditor = false,
+            ShowSendToComparer = false,
+            PathProvider = AcquireCurrentImagePathsAsync,
+        };
+        ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
+        ImageActions.PropertyChanged += OnImageActionsPropertyChanged;
+        UpdateImageActionsCanAct();
+
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;
         _eventAggregator.ImageSaved += OnImageSaved;
@@ -316,8 +337,6 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         // Initialize commands
         LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
-        AddCurrentToDatasetCommand = new AsyncRelayCommand(AddCurrentToDatasetAsync);
-        AddCurrentToTrainingRunCommand = new AsyncRelayCommand(AddCurrentToTrainingRunAsync);
     }
 
     /// <summary>
@@ -618,266 +637,60 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     #region Private Methods
 
     /// <summary>
-    /// Exports the current edited image to a temp file and adds it to an existing or new
-    /// dataset via the same dialog/import flow the Generation Gallery uses. The image is always
-    /// COPIED (never moved), so the original / temp export is left intact.
+    /// Supplies the current edited image to <see cref="ImageActions"/>: exports the in-memory edits to
+    /// a temp file (so destinations receive the edits, not the on-disk original) and returns a cleanup
+    /// that deletes it. The cleanup runs for the synchronous "Add To…" destinations; the deferred
+    /// "Send To…" destinations leave the temp for the OS (as the editor always has). Falls back to the
+    /// on-disk path when export isn't available.
     /// </summary>
-    private async Task AddCurrentToDatasetAsync()
+    private Task<ImageActionPaths> AcquireCurrentImagePathsAsync()
     {
-        if (DialogService is null || _settingsService is null) return;
-
         var currentPath = ImageEditor.CurrentImagePath;
         if (string.IsNullOrEmpty(currentPath) || !ImageEditor.HasImage)
-        {
-            StatusMessage = "No image to add.";
-            return;
-        }
+            return Task.FromResult(ImageActionPaths.Empty);
 
-        // Export the current edited state to a temp file so the dataset receives the edits,
-        // not the original on disk. Fall back to the on-disk path if export isn't available.
         var sourcePath = currentPath;
         string? tempPath = null;
         if (ImageEditor.SaveImageFunc is not null)
         {
             var ext = Path.GetExtension(currentPath);
-            tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_add_{Guid.NewGuid()}{ext}");
+            tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_act_{Guid.NewGuid()}{ext}");
             if (ImageEditor.SaveImageFunc(tempPath))
                 sourcePath = tempPath;
             else
                 tempPath = null;
         }
 
-        try
-        {
-            var dialogResult = await DialogService.ShowAddToDatasetDialogAsync(1, _state.Datasets);
-            if (!dialogResult.Confirmed) return;
+        var tempToDelete = tempPath;
+        Action? cleanup = tempToDelete is null
+            ? null
+            : () => { try { File.Delete(tempToDelete); } catch { /* best effort */ } };
 
-            var targetDataset = await ResolveTargetDatasetAsync(dialogResult);
-            if (targetDataset is null) return;
-
-            var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
-            var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
-
-            var importer = new DatasetFileImporter(new FileOperations());
-            var importResult = await importer.ImportWithDialogAsync(
-                [sourcePath],
-                destinationFolder,
-                DialogService,
-                _videoThumbnailService,
-                moveFiles: false);
-
-            if (importResult.Cancelled) return;
-
-            targetDataset.RefreshImageInfo();
-            _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
-            {
-                Dataset = targetDataset,
-                AddedImages = []
-            });
-
-            StatusMessage = importResult.TotalAdded > 0
-                ? $"Added image to {targetDataset.Name} (V{targetVersion})."
-                : "Image already present — nothing added.";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Failed to add image to dataset: {ex.Message}";
-        }
-        finally
-        {
-            if (tempPath is not null)
-            {
-                try { File.Delete(tempPath); } catch { /* best effort */ }
-            }
-        }
+        return Task.FromResult(new ImageActionPaths([sourcePath], cleanup));
     }
 
-    /// <summary>
-    /// Exports the current edited image to a temp file and adds it to a (new or existing)
-    /// training run's Presentation folder via the same dialog/import flow the Generation Gallery
-    /// uses. The image is always COPIED, so the original / temp export is left intact.
-    /// </summary>
-    private async Task AddCurrentToTrainingRunAsync()
+    private void OnImageEditorPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (DialogService is null) return;
-
-        var currentPath = ImageEditor.CurrentImagePath;
-        if (string.IsNullOrEmpty(currentPath) || !ImageEditor.HasImage)
+        if (e.PropertyName is nameof(ImageEditorViewModel.HasImage)
+            or nameof(ImageEditorViewModel.CurrentImagePath))
         {
-            StatusMessage = "No image to add.";
-            return;
-        }
-
-        // Export the current edited state to a temp file so the run receives the edits.
-        var sourcePath = currentPath;
-        string? tempPath = null;
-        if (ImageEditor.SaveImageFunc is not null)
-        {
-            var ext = Path.GetExtension(currentPath);
-            tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_run_{Guid.NewGuid()}{ext}");
-            if (ImageEditor.SaveImageFunc(tempPath))
-                sourcePath = tempPath;
-            else
-                tempPath = null;
-        }
-
-        try
-        {
-            var dialogResult = await DialogService.ShowAddToTrainingRunDialogAsync(1, _state.Datasets);
-            if (!dialogResult.Confirmed) return;
-
-            var dataset = dialogResult.SelectedDataset;
-            if (dataset is null || !dialogResult.SelectedVersion.HasValue) return;
-            var version = dialogResult.SelectedVersion.Value;
-
-            var trainingRunName = dialogResult.IsNewTrainingRun
-                ? dialogResult.NewTrainingRunName
-                : dialogResult.SelectedTrainingRunName;
-            if (string.IsNullOrWhiteSpace(trainingRunName)) return;
-
-            var versionPath = dataset.GetVersionFolderPath(version);
-
-            if (dialogResult.IsNewTrainingRun)
-            {
-                TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, trainingRunName);
-
-                var runInfo = new TrainingRunInfo
-                {
-                    Name = trainingRunName,
-                    CreatedAt = DateTimeOffset.Now
-                };
-
-                if (!dataset.TrainingRuns.ContainsKey(version))
-                    dataset.TrainingRuns[version] = [];
-
-                dataset.TrainingRuns[version].Add(runInfo);
-                dataset.SaveMetadata();
-            }
-
-            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, trainingRunName);
-            var destinationFolder = Path.Combine(runPath, "Presentation");
-            Directory.CreateDirectory(destinationFolder);
-
-            var importer = new DatasetFileImporter(new FileOperations());
-            var importResult = await importer.ImportWithDialogAsync(
-                [sourcePath],
-                destinationFolder,
-                DialogService,
-                _videoThumbnailService,
-                moveFiles: false);
-
-            if (importResult.Cancelled) return;
-
-            dataset.RefreshImageInfo();
-            _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
-            {
-                Dataset = dataset,
-                AddedImages = []
-            });
-
-            StatusMessage = importResult.TotalAdded > 0
-                ? $"Added image to training run '{trainingRunName}' ({dataset.Name} V{version})."
-                : "Image already present — nothing added.";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Failed to add image to training run: {ex.Message}";
-        }
-        finally
-        {
-            if (tempPath is not null)
-            {
-                try { File.Delete(tempPath); } catch { /* best effort */ }
-            }
+            UpdateImageActionsCanAct();
         }
     }
 
-    /// <summary>
-    /// Resolves the destination dataset from the dialog result, creating a new dataset when
-    /// requested. Mirrors the Generation Gallery flow.
-    /// </summary>
-    private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
+    // Surface the shared actions' status (e.g. "Added image to …") in the editor's status bar.
+    private void OnImageActionsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (dialogResult.DestinationOption == DatasetDestinationOption.ExistingDataset)
+        if (e.PropertyName == nameof(ImageActionsViewModel.StatusMessage)
+            && !string.IsNullOrEmpty(ImageActions.StatusMessage))
         {
-            if (dialogResult.SelectedDataset is null && DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Dataset Selected",
-                    "Please choose an existing dataset to continue.");
-            }
-            return dialogResult.SelectedDataset;
+            StatusMessage = ImageActions.StatusMessage;
         }
-
-        if (DialogService is null || _settingsService is null)
-            return null;
-
-        var createResult = await DialogService.ShowCreateDatasetDialogAsync(_state.AvailableCategories);
-        if (!createResult.Confirmed || string.IsNullOrWhiteSpace(createResult.Name))
-            return null;
-
-        var settings = await _settingsService.GetSettingsAsync();
-        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
-        {
-            await DialogService.ShowMessageAsync(
-                "Dataset Storage Not Configured",
-                "Please configure a dataset storage path in Settings before creating datasets.");
-            return null;
-        }
-
-        _state.SetStorageConfigured(true);
-
-        var datasetPath = Path.Combine(settings.DatasetStoragePath, createResult.Name);
-        if (Directory.Exists(datasetPath))
-        {
-            await DialogService.ShowMessageAsync(
-                "Dataset Already Exists",
-                $"A dataset named '{createResult.Name}' already exists.");
-            return null;
-        }
-
-        Directory.CreateDirectory(datasetPath);
-        Directory.CreateDirectory(Path.Combine(datasetPath, "V1"));
-
-        var newDataset = new DatasetCardViewModel
-        {
-            Name = createResult.Name,
-            FolderPath = datasetPath,
-            IsVersionedStructure = true,
-            CurrentVersion = 1,
-            TotalVersions = 1,
-            ImageCount = 0,
-            VideoCount = 0,
-            CategoryId = createResult.CategoryId,
-            CategoryOrder = createResult.CategoryOrder,
-            CategoryName = createResult.CategoryName,
-            Type = createResult.Type,
-            IsNsfw = createResult.IsNsfw
-        };
-
-        newDataset.VersionNsfwFlags[1] = createResult.IsNsfw;
-        newDataset.SaveMetadata();
-        _state.Datasets.Add(newDataset);
-
-        _eventAggregator.PublishDatasetCreated(new DatasetCreatedEventArgs { Dataset = newDataset });
-
-        return newDataset;
     }
 
-    /// <summary>
-    /// Resolves the destination version, creating a new empty version when requested.
-    /// Mirrors the Generation Gallery flow.
-    /// </summary>
-    private async Task<int> ResolveTargetVersionAsync(DatasetCardViewModel dataset, AddToDatasetResult dialogResult)
-    {
-        if (dialogResult.DestinationOption == DatasetDestinationOption.NewDataset)
-            return dataset.CurrentVersion;
-
-        if (dialogResult.VersionOption == DatasetVersionOption.CreateNewVersion)
-            return await DatasetVersionUtilities.CreateEmptyVersionAsync(dataset, dataset.CurrentVersion, _eventAggregator);
-
-        return dialogResult.SelectedVersion ?? dataset.CurrentVersion;
-    }
+    /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>
+    private void UpdateImageActionsCanAct()
+        => ImageActions.CanAct = ImageEditor.HasImage && !string.IsNullOrEmpty(ImageEditor.CurrentImagePath);
 
     /// <summary>
     /// Applies the current filter settings to update FilteredEditorImages.
@@ -1116,6 +929,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.ImageAdded -= OnImageAdded;
             _state.StateChanged -= OnStateChanged;
             _state.Datasets.CollectionChanged -= OnDatasetsCollectionChanged;
+            ImageEditor.PropertyChanged -= OnImageEditorPropertyChanged;
+            ImageActions.PropertyChanged -= OnImageActionsPropertyChanged;
         }
 
         _disposed = true;

@@ -142,20 +142,21 @@
           <TextBlock Text="Select a finished image below to see before / after."
                      Foreground="#666" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300"
                      HorizontalAlignment="Center" VerticalAlignment="Center"
-                     IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNullOrEmpty}, FallbackValue=True}"/>
+                     IsVisible="{Binding Results.PrimaryItem.OutputPath, Converter={x:Static StringConverters.IsNullOrEmpty}, FallbackValue=True}"/>
           <controls:ImageCompareControl
-              LeftImagePath="{Binding SelectedOutput.InputPath}"
-              RightImagePath="{Binding SelectedOutput.OutputPath}"
+              LeftImagePath="{Binding Results.PrimaryItem.InputPath}"
+              RightImagePath="{Binding Results.PrimaryItem.OutputPath}"
               SliderValue="50"
-              IsVisible="{Binding SelectedOutput.OutputPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}, FallbackValue=False}"/>
+              IsVisible="{Binding Results.PrimaryItem.OutputPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}, FallbackValue=False}"/>
         </Panel>
       </Border>
 
-      <!-- Output gallery: one colored tile per image (orange=running, green=done, red=failed) -->
+      <!-- Output gallery: multi-select tiles (Ctrl/Shift), Ctrl+C copies to the clipboard, drag-out to
+           Explorer, plus "Add Selected To… / Send Selected To…". Tile outline = status
+           (orange=running, green=done, red=failed). -->
       <Border Grid.Row="2" Background="#1A1A1A" CornerRadius="8" Padding="8" Margin="0,8,0,0"
-              MaxHeight="210">
-        <controls:ImageStatusStrip ItemsSource="{Binding Outputs}"
-                                   SelectedItem="{Binding SelectedOutput, Mode=TwoWay}"/>
+              MaxHeight="280">
+        <controls:SelectableImageResultsView DataContext="{Binding Results}"/>
       </Border>
     </Grid>
   </Grid>

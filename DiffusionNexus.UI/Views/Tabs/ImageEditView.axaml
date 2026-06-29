@@ -156,34 +156,10 @@
           <Border Grid.Column="8"/>
           <!-- Save / Export dropdown - hidden until image is loaded -->
           <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="4" IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=True}">
-            <!-- Add Current To... (mirrors the Generation Gallery button, for the current image) -->
-            <Button Content="Add To..." Background="#2E7D32" Foreground="White" Padding="12,6" FontWeight="SemiBold"
-                    IsEnabled="{Binding ImageEditor.HasImage}"
-                    ToolTip.Tip="Add the current image to a dataset">
-              <Button.Flyout>
-                <MenuFlyout Placement="BottomEdgeAlignedRight">
-                  <MenuItem Header="Dataset" Command="{Binding AddCurrentToDatasetCommand}"
-                            ToolTip.Tip="Add the current image to an existing or new dataset"/>
-                  <MenuItem Header="Training Run" Command="{Binding AddCurrentToTrainingRunCommand}"
-                            ToolTip.Tip="Add the current image to a training run"/>
-                </MenuFlyout>
-              </Button.Flyout>
-            </Button>
-            <!-- Send Current To... (mirrors the Generation Gallery button, for the current image) -->
-            <Button Content="Send To..." Background="#1976D2" Foreground="White" Padding="12,6" FontWeight="SemiBold"
-                    IsEnabled="{Binding ImageEditor.HasImage}"
-                    ToolTip.Tip="Send the current image to another tool">
-              <Button.Flyout>
-                <MenuFlyout Placement="BottomEdgeAlignedRight">
-                  <MenuItem Header="&#x2B06; Batch Upscale" Command="{Binding ImageEditor.SendToBatchUpscaleCommand}"
-                            ToolTip.Tip="Send the current image to Batch Upscale"/>
-                  <MenuItem Header="&#x2702; Batch Crop/Scale" Command="{Binding ImageEditor.SendToBatchCropCommand}"
-                            ToolTip.Tip="Send the current image to Batch Crop/Scale"/>
-                  <MenuItem Header="&#x1F4AC; Captioning" Command="{Binding ImageEditor.SendToCaptioningCommand}"
-                            ToolTip.Tip="Send the current image to Captioning"/>
-                </MenuFlyout>
-              </Button.Flyout>
-            </Button>
+            <!-- Add/Send via the reusable component, operating on the current edited image. The
+                 editor hides "Image Editor" + "Comparer" (single image, no point editing→editor);
+                 enablement and destinations come from the bound ImageActions VM. -->
+            <reusable:ImageActionsBar DataContext="{Binding ImageActions}"/>
             <Button Content="Save / Export" Background="#2D7D46" Padding="12,6" FontWeight="SemiBold">
               <Button.Flyout>
                 <MenuFlyout Placement="BottomEdgeAlignedRight">
