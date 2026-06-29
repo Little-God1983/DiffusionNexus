@@ -34,9 +34,17 @@ internal static class StableDiffusionCppLoader
 
     /// <summary>
     /// Qwen-Image inpaint wiring: GGUF diffusion model + Qwen2.5-VL text encoder (WithLLMPath) +
-    /// Qwen-Image VAE + the InstantX inpainting ControlNet (load-time WithControlNet), with
-    /// <c>Prediction.Flow</c>. The mask + control image are supplied per generation. Mirrors the
-    /// ComfyUI inpaint graph (UnetLoaderGGUF + CLIPLoader qwen_image + ControlNetLoader).
+    /// Qwen-Image VAE, with <c>Prediction.Flow</c>. Inpaint is done natively via the per-generation
+    /// init image + mask.
+    ///
+    /// IMPORTANT: the InstantX Qwen-Image inpainting ControlNet is NOT loaded. This stable-diffusion.cpp
+    /// build's ControlNet loader only understands the classic SD/SDXL UNet architecture
+    /// (<c>input_hint_block</c> / <c>zero_convs</c> / <c>input_blocks</c>); the InstantX model is a
+    /// Qwen-Image DiT ControlNet, so loading it fails with "load control net tensors from model loader
+    /// failed" and aborts model init. We therefore fall back to native masked inpaint (the masked
+    /// region is regenerated, unmasked pixels preserved). The control file is only used by the ComfyUI
+    /// path. If a future engine build supports Qwen-Image DiT ControlNets, set
+    /// <see cref="ModelDescriptor.ControlNetPath"/> in the catalog and it loads via the guard below.
     /// </summary>
     private static SDNet.DiffusionModelParameter BuildQwenImageInpaint(ModelDescriptor d)
     {
@@ -46,19 +54,23 @@ internal static class StableDiffusionCppLoader
             throw new InvalidOperationException("Qwen-Image inpaint requires a Qwen2.5-VL text encoder (TextEncoderSlot.Llm).");
         if (string.IsNullOrWhiteSpace(d.VaePath))
             throw new InvalidOperationException("Qwen-Image inpaint requires a VAE file.");
-        if (string.IsNullOrWhiteSpace(d.ControlNetPath))
-            throw new InvalidOperationException("Qwen-Image inpaint requires the InstantX inpainting ControlNet (ControlNetPath).");
 
-        return SDNet.DiffusionModelParameter.Create()
+        var p = SDNet.DiffusionModelParameter.Create()
             .WithDiffusionModelPath(d.DiffusionModelPath)
             .WithLLMPath(llmPath)
             .WithVae(d.VaePath)
-            .WithControlNet(d.ControlNetPath)
             .WithPrediction(SDNet.Prediction.Flow)
             // Qwen-Image is large; tile the VAE decode so the decode buffer doesn't OOM at 1024px.
             .WithVaeTiling()
             .WithMultithreading()
             .WithFlashAttention();
+
+        // Only load a ControlNet if the catalog supplied one (it deliberately does NOT for Qwen on
+        // this engine build — see the note above).
+        if (!string.IsNullOrWhiteSpace(d.ControlNetPath))
+            p = p.WithControlNet(d.ControlNetPath);
+
+        return p;
     }
 
     /// <summary>

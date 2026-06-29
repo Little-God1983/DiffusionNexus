@@ -78,24 +78,27 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
 
     private void TryAddQwenImageInpaint(List<ModelDescriptor> sink)
     {
-        // Mirrors the ComfyUI inpaint workflow (Inpaint-Qwen-2512.json): Qwen-Image-2512 GGUF DiT +
-        // Qwen2.5-VL text encoder + Qwen-Image VAE + the InstantX inpainting ControlNet. The 4-step
-        // Lightning LoRA is applied per-generation (via the request's Loras), not loaded here.
+        // Local Qwen-Image-2512 inpaint: GGUF DiT + Qwen2.5-VL text encoder + Qwen-Image VAE. Inpaint
+        // is done natively via the per-generation init image + mask. The InstantX inpainting ControlNet
+        // (which the ComfyUI workflow uses) is intentionally NOT wired here: this stable-diffusion.cpp
+        // build can't load a Qwen-Image DiT ControlNet (its loader is classic-SD only — it fails with
+        // "load control net tensors from model loader failed"). So the controlnet file is not required
+        // for discovery and ControlNetPath is left unset. The 4-step Lightning LoRA is applied
+        // per-generation via the request's Loras, not loaded here.
         var unet = FindFileByPattern("qwen-image-2512-*.gguf");
-        // Text encoder = Qwen2.5-VL-7B, loaded via WithLLMPath. Prefer a GGUF quant when present:
-        // ComfyUI loads the fp8-scaled safetensors, but — as with the Qwen3-8B encoder for FLUX.2
-        // (see TryAddFlux2Klein) — Comfy-Org's fp8-scaled safetensors can fail to load in
-        // stable-diffusion.cpp with a tensor-shape error. The fp8 file is the fallback (it is what
-        // the inpaint workload downloads), so it still works if it loads; discovery is purely
-        // existence-based (no header probing), so this is a best-effort preference, not a load-time
-        // retry. If the fp8 file fails to load, add a GGUF Qwen2.5-VL-7B to text_encoders/.
+        // Text encoder = Qwen2.5-VL-7B, loaded via WithLLMPath. It MUST be a GGUF (or plain bf16):
+        // Comfy-Org's "fp8_scaled" safetensors is KNOWN-BROKEN in this engine — stable-diffusion.cpp
+        // drops its per-tensor scale_weight/scale_input dequant scales ("unknown tensor ... in model
+        // file") and applies a raw fp8->f16 cast with NO scale, so the encoder is garbage and the
+        // generation renders a fully BLACK image (confirmed from sd.cpp model_loader.cpp). So we do
+        // NOT fall back to the fp8 file: without a GGUF Qwen2.5-VL the local inpaint model is simply
+        // not offered (a clear "not available" is far better than a silent black render). The inpaint
+        // workload downloads Qwen2.5-VL-7B-Instruct-Q8_0.gguf for exactly this.
         var llm = FindFileByPattern("Qwen2.5-VL-7B*.gguf")
-                  ?? FindFileByPattern("qwen2.5-vl-7b*.gguf")
-                  ?? FindFile("qwen_2.5_vl_7b_fp8_scaled.safetensors");
+                  ?? FindFileByPattern("qwen2.5-vl-7b*.gguf");
         var vae = FindFile("qwen_image_vae.safetensors");
-        var controlNet = FindFile("Qwen-Image-InstantX-ControlNet-Inpainting.safetensors");
 
-        if (unet is null || llm is null || vae is null || controlNet is null)
+        if (unet is null || llm is null || vae is null)
             return;
 
         sink.Add(new ModelDescriptor
@@ -105,7 +108,7 @@ public sealed class ComfyUiModelCatalog : IDiffusionBackendCatalog
             Kind = ModelKind.QwenImageInpaint,
             DiffusionModelPath = unet,
             VaePath = vae,
-            ControlNetPath = controlNet,
+            // ControlNetPath intentionally unset — this engine build can't load the Qwen DiT ControlNet.
             TextEncoders = new Dictionary<TextEncoderSlot, string>
             {
                 [TextEncoderSlot.Llm] = llm,

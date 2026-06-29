@@ -94,6 +94,22 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 
         ValidateRequest(request, descriptor);
 
+        // Log the request config + the exact files being loaded so a stuck/failed run is diagnosable
+        // from the Unified Console (the log the user can export) — not just from a final error.
+        _unifiedLogger?.Info(LogCategory.General, NativeSource,
+            $"Local request: {descriptor.Key} ({descriptor.DisplayName}) {request.Width}x{request.Height}, " +
+            $"steps={request.Steps ?? descriptor.DefaultSteps}, cfg={request.Cfg ?? descriptor.DefaultCfg}, " +
+            $"sampler={request.Sampler ?? descriptor.DefaultSampler}/{request.Scheduler ?? descriptor.DefaultScheduler}, " +
+            $"init={request.InitImage is not null}, mask={request.MaskImage is not null}, " +
+            $"refImgs={request.ReferenceImages.Count}, loras={request.Loras.Count}, controlNets={request.ControlNets.Count}");
+        _unifiedLogger?.Info(LogCategory.General, NativeSource,
+            $"Model files: diffusion='{System.IO.Path.GetFileName(descriptor.DiffusionModelPath) ?? "(none)"}', " +
+            $"vae='{System.IO.Path.GetFileName(descriptor.VaePath) ?? "(none)"}', " +
+            $"encoders=[{string.Join(", ", descriptor.TextEncoders.Values.Select(System.IO.Path.GetFileName))}], " +
+            $"controlNet='{(descriptor.ControlNetPath is null ? "(none)" : System.IO.Path.GetFileName(descriptor.ControlNetPath))}'");
+        Logger.Information("Local diffusion request: model={Model} dims={W}x{H} steps={Steps}",
+            descriptor.Key, request.Width, request.Height, request.Steps ?? descriptor.DefaultSteps);
+
         // Bounded channel: producer (native callbacks) → consumer (this enumerator).
         // Drop-oldest is fine for progress events; we don't want to back-pressure the native sampler.
         var channel = Channel.CreateBounded<DiffusionStreamItem>(new BoundedChannelOptions(64)
@@ -116,9 +132,26 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         {
             try
             {
+                // Model load is the most likely place to stall (a 20B GGUF can take a while / OOM).
+                // Time it and mirror every load milestone to the Unified Console + Serilog so a hang
+                // here is visible — not just a frozen "Loading…" with no detail.
+                var loadSw = System.Diagnostics.Stopwatch.StartNew();
+                _unifiedLogger?.Info(LogCategory.General, NativeSource,
+                    $"Loading model '{descriptor.Key}' (resident: [{string.Join(", ", _host.LoadedModelKeys)}])…");
+
                 using var lease = await _host.GetOrLoadAsync(descriptor,
-                    msg => TryWrite(channel, new DiffusionProgress { Phase = DiffusionPhase.Loading, Message = msg }),
+                    msg =>
+                    {
+                        TryWrite(channel, new DiffusionProgress { Phase = DiffusionPhase.Loading, Message = msg });
+                        _unifiedLogger?.Info(LogCategory.General, NativeSource, msg);
+                        Logger.Information("Load: {Message}", msg);
+                    },
                     cancellationToken).ConfigureAwait(false);
+
+                loadSw.Stop();
+                _unifiedLogger?.Info(LogCategory.General, NativeSource,
+                    $"Model '{descriptor.Key}' ready in {loadSw.ElapsedMilliseconds} ms — sampling {request.Steps ?? descriptor.DefaultSteps} step(s)…");
+                Logger.Information("Model {Model} ready in {Ms} ms", descriptor.Key, loadSw.ElapsedMilliseconds);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -138,6 +171,11 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
                 {
                     var result = RunGeneration(lease.Model, descriptor, request);
                     sw.Stop();
+
+                    _unifiedLogger?.Info(LogCategory.General, NativeSource,
+                        $"Image {result.Width}x{result.Height} produced in {sw.ElapsedMilliseconds} ms (seed {result.Seed}).");
+                    Logger.Information("Generated {W}x{H} in {Ms} ms (model {Model})",
+                        result.Width, result.Height, sw.ElapsedMilliseconds, descriptor.Key);
 
                     // Final item carries the result + a Completed progress marker.
                     await channel.Writer.WriteAsync(new DiffusionStreamItem(
@@ -257,8 +295,16 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
                     HPPH.SkiaSharp.ImageHelper.LoadImage(control.FilePath), control.Strength);
         }
 
+        // Last managed checkpoint before control passes into native code: if the log stops here with
+        // no subsequent native "sampling" lines, the stall is inside stable-diffusion.cpp itself.
+        _unifiedLogger?.Info(LogCategory.General, NativeSource,
+            $"Invoking native generator (mask={req.MaskImage is not null}, init={req.InitImage is not null}, loras={req.Loras.Count})…");
+
         var image = model.GenerateImage(genParams)
             ?? throw new InvalidOperationException("Native generator returned a null image.");
+
+        _unifiedLogger?.Info(LogCategory.General, NativeSource,
+            $"Native generator returned {image.Width}x{image.Height}; encoding PNG…");
 
         var png = image.ToPng();
         return new GenerationOutcome(png, image.Width, image.Height, seed, req.Steps ?? d.DefaultSteps);
@@ -338,7 +384,11 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
                 _unifiedLogger?.Warn(LogCategory.General, NativeSource, text);
                 break;
             case SDNet.LogLevel.Info:
+                // Route native Info to the Unified Console too (not just the Serilog file): during a
+                // hang the engine's own "loading / computing condition / sampling" lines are the most
+                // useful signal, and the user can only export the Unified Console.
                 NativeLog.Information("{NativeText}", text);
+                _unifiedLogger?.Info(LogCategory.General, NativeSource, text);
                 break;
             default:
                 NativeLog.Debug("{NativeText}", text);

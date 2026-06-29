@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.StableDiffusionCpp;
 using DiffusionNexus.UI.Services;
@@ -24,6 +25,7 @@ public partial class InpaintingViewModel : ObservableObject
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly LocalDiffusionBackendProvider? _backendProvider;
+    private readonly IUnifiedLogger? _unifiedLogger;
 
     /// <summary>On-disk name of the 4-step Qwen-Image Lightning LoRA (installed by the inpaint workload).</summary>
     private const string LightningLoraFileName = "Qwen-Image-Lightning-4steps-V1.0.safetensors";
@@ -87,7 +89,8 @@ public partial class InpaintingViewModel : ObservableObject
         IComfyUIWrapperService? comfyUiService,
         IDatasetEventAggregator? eventAggregator,
         IFeatureReadinessService? readinessService = null,
-        LocalDiffusionBackendProvider? backendProvider = null)
+        LocalDiffusionBackendProvider? backendProvider = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
@@ -96,6 +99,7 @@ public partial class InpaintingViewModel : ObservableObject
         _comfyUiService = comfyUiService;
         _eventAggregator = eventAggregator;
         _backendProvider = backendProvider;
+        _unifiedLogger = unifiedLogger;
 
         Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting, allowBackendSelection: true);
 
@@ -605,6 +609,7 @@ public partial class InpaintingViewModel : ObservableObject
         try
         {
             Status = "Loading local renderer...";
+            _unifiedLogger?.Info(LogCategory.General, "Inpaint (Local)", "Resolving local renderer…");
             var backend = await _backendProvider.TryGetAsync();
             if (backend is null)
             {
@@ -616,6 +621,9 @@ public partial class InpaintingViewModel : ObservableObject
                 OnFinished();
                 return;
             }
+
+            _unifiedLogger?.Info(LogCategory.General, "Inpaint (Local)",
+                $"Renderer ready (model roots: {string.Join(" | ", _backendProvider.ResolvedModelsRoots)}). Preparing image + mask…");
 
             // Qwen-Image needs /16-aligned dimensions and inpaint requires the init image, mask and
             // output to share one size — so resize the base + mask to the aligned size. The View
@@ -633,10 +641,22 @@ public partial class InpaintingViewModel : ObservableObject
                     "Qwen-Image Lightning 4-step LoRA ({File}) not found under the models roots; " +
                     "local inpaint will run without it (results may need more steps).", LightningLoraFileName);
 
-            // Mirrors the ComfyUI inpaint graph: Qwen-Image-2512 + InstantX inpainting ControlNet
-            // (loaded with the model context) + Lightning LoRA, 4 steps, cfg 1, euler/simple. The
-            // base image is both the img2img init and the ControlNet's control image; the mask
-            // confines regeneration to the painted region.
+            // sd.cpp pins unmasked pixels to the VAE-encoded init latent each step — but only when the
+            // init image is actually encoded. At strength 1.0 it starts from pure noise and the
+            // unmasked region isn't preserved, so cap the inpaint denoise below 1.0.
+            var inpaintStrength = Math.Min(_denoise, 0.85f);
+            if (inpaintStrength < _denoise)
+                _unifiedLogger?.Info(LogCategory.General, "Inpaint (Local)",
+                    $"Denoise capped {_denoise:F2}→{inpaintStrength:F2} so the mask preserves the unmasked area (use the Denoise slider to fine-tune).");
+
+            _unifiedLogger?.Info(LogCategory.General, "Inpaint (Local)",
+                $"Aligned base+mask to {width}x{height}; Lightning LoRA: {(lightning ?? "(not found — running without it)")}. Submitting to Qwen-Image…");
+
+            // Native Qwen-Image-2512 masked inpaint + the 4-step Lightning LoRA (4 steps, cfg 1,
+            // euler/simple). The base image is the img2img init; the mask confines regeneration to the
+            // painted region while unmasked pixels are preserved. NOTE: the ComfyUI workflow's InstantX
+            // inpainting ControlNet is NOT used here — this stable-diffusion.cpp build can't load a
+            // Qwen-Image DiT ControlNet, so we fall back to native mask inpaint (no ControlNets set).
             var request = new DiffusionRequest
             {
                 ModelKey = ModelKeys.QwenImageInpaint,
@@ -648,9 +668,8 @@ public partial class InpaintingViewModel : ObservableObject
                 Cfg = 1.0f,
                 Sampler = "euler",
                 Scheduler = "simple",
-                InitImage = new DiffusionReferenceImage(alignedBase, _denoise),
+                InitImage = new DiffusionReferenceImage(alignedBase, inpaintStrength),
                 MaskImage = new DiffusionReferenceImage(alignedMask),
-                ControlNets = [new DiffusionReferenceImage(alignedBase, 1.0f)],
                 Loras = loras,
                 Seed = (long)(_random.NextDouble() * long.MaxValue),
             };
