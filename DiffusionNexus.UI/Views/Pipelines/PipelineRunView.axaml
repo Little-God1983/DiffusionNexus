@@ -104,10 +104,14 @@
                       </StackPanel>
                       <StackPanel Spacing="6">
                         <TextBlock Text="Reference images (optional)"/>
-                        <TextBlock Text="Added to guide the result (e.g. a style, outfit or pose) alongside the input image. Up to 3 images total, so up to 2 extra here."
+                        <TextBlock Text="Two fixed slots — each is applied to every input image to guide the result (e.g. a style, outfit or pose). Input images, by contrast, are processed one per run."
                                    Foreground="#999" FontSize="11" TextWrapping="Wrap"/>
-                        <controls:ImageListInputControl ImagePaths="{Binding ReferenceImagePaths}"
-                                                        SelectedImagePath="{Binding SelectedReferenceImagePath, Mode=TwoWay}"/>
+                        <Grid ColumnDefinitions="*,*">
+                          <controls:SingleImageSlotControl Grid.Column="0" Margin="0,0,4,0"
+                              ImagePath="{Binding ReferenceImage1Path, Mode=TwoWay}" Placeholder="Reference 1"/>
+                          <controls:SingleImageSlotControl Grid.Column="1" Margin="4,0,0,0"
+                              ImagePath="{Binding ReferenceImage2Path, Mode=TwoWay}" Placeholder="Reference 2"/>
+                        </Grid>
                       </StackPanel>
                     </StackPanel>
                   </DataTemplate>

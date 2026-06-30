@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -42,17 +41,15 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
     /// reference Anime-To-Real workflow uses. Raise it for more detail, or lower it with a speed LoRA.</summary>
     [ObservableProperty] private int _steps = 8;
 
-    /// <summary>FLUX.2-klein reference conditioning accepts multiple reference images; cap the total at 3.</summary>
-    public const int MaxReferenceImages = 3;
-
     /// <summary>
-    /// Reference images that guide the generation (FLUX.2 kontext-style conditioning). The per-item input
-    /// image is reference #1; these add up to two more, capped at <see cref="MaxReferenceImages"/> total.
-    /// Bound to a second <c>ImageListInputControl</c> in the run view.
+    /// Two fixed reference-image slots (distinct from the input-image batch). Each holds one optional
+    /// reference that guides the result (FLUX.2 kontext-style conditioning) and is applied to <b>every</b>
+    /// input image. Together with the per-item input image (reference #1), that's up to 3 references —
+    /// the model's limit. Bound to two <c>SingleImageSlotControl</c>s in the run view.
     /// </summary>
-    public ObservableCollection<string> ReferenceImagePaths { get; } = [];
+    [ObservableProperty] private string? _referenceImage1Path;
 
-    [ObservableProperty] private string? _selectedReferenceImagePath;
+    [ObservableProperty] private string? _referenceImage2Path;
 
     // FLUX.2-klein base-model labels (raw Civitai strings) the optional-LoRA dropdown is filtered to.
     // Without a filter the picker eagerly loads EVERY installed LoRA (thousands), and only FLUX.2-klein
@@ -96,12 +93,11 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
         // Optional LoRAs the user picked (none are mandatory for this workflow).
         var loras = await ResolveLorasAsync(cancellationToken).ConfigureAwait(true);
 
-        // The input image is reference #1 (and sets the output size); any extra reference images the user
-        // added follow. Cap the total at MaxReferenceImages.
-        var referenceImages = new[] { inputPath }
-            .Concat(ReferenceImagePaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)))
-            .Take(MaxReferenceImages)
-            .Select(p => new DiffusionReferenceImage(p))
+        // The input image is reference #1 (and sets the output size), followed by whichever of the two
+        // fixed reference slots are filled. Missing slots / files are skipped.
+        var referenceImages = new[] { inputPath, ReferenceImage1Path, ReferenceImage2Path }
+            .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+            .Select(p => new DiffusionReferenceImage(p!))
             .ToList();
 
         var (width, height) = ComputeOutputDimensions(inputPath);
