@@ -5,7 +5,6 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Pipelines"
              xmlns:models="using:DiffusionNexus.UI.Models.Pipelines"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
-             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="720"
              x:Class="DiffusionNexus.UI.Views.Pipelines.PipelineRunView"
              x:DataType="vm:PipelineRunViewModel">
@@ -103,33 +102,7 @@
                                 Value="{Binding Steps}"
                                 ToolTip.Tip="Sampling steps. FLUX.2-klein is distilled; 8 matches the reference workflow. Lower it if you add a speed LoRA."/>
                       </StackPanel>
-                      <StackPanel Spacing="6">
-                        <TextBlock Text="Output resolution"/>
-                        <TextBlock Text="{Binding OutputResolutionText}" Foreground="#999" FontSize="11"/>
-                        <WrapPanel>
-                          <Button Content="Same" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.SameAsInput}"
-                                  Foreground="White" Margin="0,0,4,4" Padding="10,4"
-                                  Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.SameAsInput}}"/>
-                          <Button Content="16:9" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R16x9}"
-                                  Foreground="White" Margin="0,0,4,4" Padding="10,4"
-                                  Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R16x9}}"/>
-                          <Button Content="1:1" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R1x1}"
-                                  Foreground="White" Margin="0,0,4,4" Padding="10,4"
-                                  Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R1x1}}"/>
-                          <Button Content="4:3" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R4x3}"
-                                  Foreground="White" Margin="0,0,4,4" Padding="10,4"
-                                  Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R4x3}}"/>
-                          <Button Content="5:4" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R5x4}"
-                                  Foreground="White" Margin="0,0,4,4" Padding="10,4"
-                                  Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R5x4}}"/>
-                          <ToggleButton Content="Switch" IsChecked="{Binding SwitchOrientation}" Margin="8,0,4,4" Padding="10,4"
-                                        ToolTip.Tip="Flip the orientation (landscape ↔ portrait)"/>
-                        </WrapPanel>
-                        <TextBlock Text="{Binding OutputMegapixels, StringFormat='Megapixels: {0:0.##}'}"/>
-                        <Slider Minimum="0.25" Maximum="4" Value="{Binding OutputMegapixels}"
-                                TickFrequency="0.25" IsSnapToTickEnabled="True"
-                                ToolTip.Tip="Target output size in megapixels (up to 4). Larger needs more VRAM."/>
-                      </StackPanel>
+                      <controls:OutputResolutionControl DataContext="{Binding OutputResolution}"/>
                       <StackPanel Spacing="6">
                         <TextBlock Text="Reference images (optional)"/>
                         <TextBlock Text="Two fixed slots — each is applied to every input image to guide the result (e.g. a style, outfit or pose). Input images, by contrast, are processed one per run."
