@@ -33,6 +33,16 @@ public sealed class PipelineManifest
 
     /// <summary>The models and LoRAs this pipeline needs in order to run locally.</summary>
     public List<PipelineAsset> Assets { get; init; } = new();
+
+    /// <summary>
+    /// Whether this entry appears as a tile in the Workflows (Pipelines) gallery. <c>true</c> for
+    /// guided pipelines that have their own run screen (e.g. Anime-To-Real). <c>false</c> for
+    /// download-only model bundles whose payload is consumed by another surface — e.g.
+    /// Qwen-Image-2512, which is selected directly in the Diffusion Canvas model dropdown and has no
+    /// run screen. Either way the entry still appears in Installer Manager → Diffusion Nexus Core →
+    /// Workloads so its assets can be installed.
+    /// </summary>
+    public bool ShowInGallery { get; init; } = true;
 }
 
 /// <summary>The role a <see cref="PipelineAsset"/> plays in the pipeline.</summary>

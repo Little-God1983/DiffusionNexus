@@ -354,7 +354,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             Width = frame.Width,
             Height = frame.Height,
             // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the selected model's defaults
-            // (Z-Image-Turbo: 9 / 1.0 / euler / simple; FLUX.2-klein: 20 / 1.0 / euler / simple + Flux2Flow).
+            // (Z-Image-Turbo: 9 / 1.0 / euler / simple; FLUX.2-klein: 20 / 1.0 / euler / simple + Flux2Flow;
+            // Qwen-Image-2512: 4 / 1.0 / euler / simple + Flow, with its mandatory 4-step Lightning LoRA
+            // applied by the backend from the descriptor's DefaultLoras).
             // TODO(v2-advanced): pass through Steps / Cfg / SelectedSampler when advanced UI is enabled.
             // TODO(v2-seed):     pass UseRandomSeed ? null : Seed.
             // TODO(v2-negative-prompt): pass NegativePromptText.

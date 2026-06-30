@@ -1043,6 +1043,7 @@ public partial class App : Application
             tile.Id switch
             {
                 "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
+                "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
                 _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
             });
 
