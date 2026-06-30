@@ -18,8 +18,12 @@
         <TextBlock Text="{Binding Placeholder, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}}"
                    FontSize="12" Opacity="0.55" HorizontalAlignment="Center"
                    TextWrapping="Wrap" TextAlignment="Center"/>
-        <Button Content="+ Add" Click="OnAddClick" HorizontalAlignment="Center"
-                Background="#4CAF50" Foreground="White" Padding="10,5"/>
+        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+          <Button Content="+ Add" Click="OnAddClick"
+                  Background="#4CAF50" Foreground="White" Padding="10,5"/>
+          <Button Content="Paste" Click="OnPasteClick" Padding="10,5"
+                  ToolTip.Tip="Paste an image from the clipboard (e.g. a screenshot)"/>
+        </StackPanel>
       </StackPanel>
 
       <!-- Filled state: image preview -->
