@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
@@ -16,6 +17,17 @@ using DiffusionNexus.UI.Services.Lora;
 using DiffusionNexus.UI.Services.Pipelines;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
+
+/// <summary>Output aspect-ratio choice for the Image-to-Image workflow.</summary>
+public enum OutputAspectRatio
+{
+    /// <summary>Match each input image's own aspect ratio.</summary>
+    SameAsInput,
+    R16x9,
+    R1x1,
+    R4x3,
+    R5x4,
+}
 
 /// <summary>
 /// Image-to-Image pipeline: edits/transforms input images with <b>FLUX.2-klein</b> reference-image
@@ -66,6 +78,43 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
 
     protected override IReadOnlyList<string> LoraBaseModels => FluxKleinBaseModels;
 
+    // ── Output resolution ───────────────────────────────────────────────────────
+    private const double MinMegapixels = 0.25;
+    private const double MaxMegapixels = 4.0;
+
+    /// <summary>Output aspect ratio: the input's own ratio, or a common one scaled to the target MP.</summary>
+    [ObservableProperty] private OutputAspectRatio _selectedAspectRatio = OutputAspectRatio.SameAsInput;
+
+    /// <summary>Flip the chosen ratio's orientation (landscape ↔ portrait). No-op for 1:1.</summary>
+    [ObservableProperty] private bool _switchOrientation;
+
+    /// <summary>Target output size in megapixels (0.25–4). The aspect ratio is preserved at this budget.</summary>
+    [ObservableProperty] private double _outputMegapixels = 1.0;
+
+    /// <summary>A live "1360 × 768 (1 MP)" preview of the computed output size (for fixed ratios).</summary>
+    [ObservableProperty] private string _outputResolutionText = string.Empty;
+
+    /// <summary>Selects a common output aspect ratio (or "same as input"); bound by the ratio buttons.</summary>
+    [RelayCommand]
+    private void SelectAspectRatio(OutputAspectRatio ratio) => SelectedAspectRatio = ratio;
+
+    partial void OnSelectedAspectRatioChanged(OutputAspectRatio value) => UpdateOutputPreview();
+    partial void OnSwitchOrientationChanged(bool value) => UpdateOutputPreview();
+    partial void OnOutputMegapixelsChanged(double value) => UpdateOutputPreview();
+
+    private void UpdateOutputPreview()
+    {
+        if (SelectedAspectRatio == OutputAspectRatio.SameAsInput)
+        {
+            OutputResolutionText = $"Matches each input image ({OutputMegapixels:0.##} MP)";
+        }
+        else
+        {
+            var (w, h) = ScaleToMegapixels(OrientedAspect(FixedAspect()));
+            OutputResolutionText = $"{w} × {h} ({OutputMegapixels:0.##} MP)";
+        }
+    }
+
     public ImageToImagePipelineRunViewModel(
         PipelineManifest manifest,
         IPipelineAssetInstaller installer,
@@ -82,6 +131,7 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
                loraCatalog, unifiedLogger, videoThumbnailService, settingsService,
                defaultPrompt: DefaultPrompt, defaultImageInfluence: 1.0)
     {
+        UpdateOutputPreview();
     }
 
     protected override async Task<byte[]> ProcessOneImageAsync(
@@ -129,38 +179,67 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
         return png ?? throw new InvalidOperationException("No image was produced.");
     }
 
-    // Target output budget ≈ 1 megapixel (1024²). Keeps VRAM bounded while preserving aspect ratio.
-    private const double TargetPixels = 1024.0 * 1024.0;
+    /// <summary>
+    /// Computes the output dimensions for one input: the chosen aspect ratio (the input's own, or a
+    /// common one) scaled to the target megapixel budget, each side a multiple of 16. The reference
+    /// images themselves are auto-resized by the backend.
+    /// </summary>
+    private (int Width, int Height) ComputeOutputDimensions(string path)
+    {
+        double aspect;
+        if (SelectedAspectRatio == OutputAspectRatio.SameAsInput)
+        {
+            double width = 1024, height = 1024;
+            try
+            {
+                using var codec = SkiaSharp.SKCodec.Create(path);
+                if (codec is not null && codec.Info is { Width: > 0, Height: > 0 } info)
+                {
+                    width = info.Width;
+                    height = info.Height;
+                }
+            }
+            catch
+            {
+                // keep the 1:1 fallback
+            }
+            aspect = width / height;
+        }
+        else
+        {
+            aspect = FixedAspect();
+        }
+
+        return ScaleToMegapixels(OrientedAspect(aspect));
+    }
+
+    /// <summary>Width/height ratio for a chosen common aspect (1.0 fallback).</summary>
+    private double FixedAspect() => SelectedAspectRatio switch
+    {
+        OutputAspectRatio.R16x9 => 16.0 / 9.0,
+        OutputAspectRatio.R1x1 => 1.0,
+        OutputAspectRatio.R4x3 => 4.0 / 3.0,
+        OutputAspectRatio.R5x4 => 5.0 / 4.0,
+        _ => 1.0,
+    };
+
+    /// <summary>Applies the orientation toggle (landscape ↔ portrait) to a width/height ratio.</summary>
+    private double OrientedAspect(double aspect) => SwitchOrientation ? 1.0 / aspect : aspect;
 
     /// <summary>
-    /// Computes the output dimensions: the input image's aspect ratio scaled to ≈1 MP, each side
-    /// rounded to a multiple of 16 and clamped to a FLUX.2-klein-valid range. Falls back to 1024² if the
-    /// size can't be read. The reference images themselves are auto-resized by the backend.
+    /// Scales a width/height ratio to the target megapixel budget, each side rounded to a multiple of 16
+    /// and clamped to a FLUX.2-klein-valid range.
     /// </summary>
-    private static (int Width, int Height) ComputeOutputDimensions(string path)
+    private (int Width, int Height) ScaleToMegapixels(double aspect)
     {
-        double width = 1024, height = 1024;
-        try
-        {
-            using var codec = SkiaSharp.SKCodec.Create(path);
-            if (codec is not null && codec.Info is { Width: > 0, Height: > 0 } info)
-            {
-                width = info.Width;
-                height = info.Height;
-            }
-        }
-        catch
-        {
-            // keep 1024² fallback
-        }
-
-        var scale = Math.Sqrt(TargetPixels / (width * height));
-        return (Align(width * scale), Align(height * scale));
+        var targetPixels = Math.Clamp(OutputMegapixels, MinMegapixels, MaxMegapixels) * 1_000_000.0;
+        return (Align(Math.Sqrt(targetPixels * aspect)), Align(Math.Sqrt(targetPixels / aspect)));
 
         static int Align(double value)
         {
-            var v = (int)Math.Round(Math.Clamp(value, 512, 1536));
-            return v - (v % 16);
+            var v = (int)Math.Round(Math.Clamp(value, 256, 2816));
+            v -= v % 16;
+            return Math.Max(v, 256);
         }
     }
 }
