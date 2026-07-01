@@ -173,18 +173,35 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         _ = LoadAvailableLorasAsync();
     }
 
-    /// <summary>Seeds the picker with the workflow's mandatory LoRAs (from the manifest's LoRA assets).</summary>
+    /// <summary>
+    /// Seeds the picker with the workflow's mandatory LoRAs (from the manifest's LoRA assets). Civitai
+    /// LoRAs resolve at generation time via their model id; HuggingFace LoRAs (no Civitai id) resolve by
+    /// their expected on-disk filename.
+    /// </summary>
     private void SeedMandatoryLoras()
     {
-        foreach (var asset in Manifest.Assets.Where(a => a.Kind == PipelineAssetKind.Lora && a.CivitaiModelId.HasValue))
+        foreach (var asset in Manifest.Assets.Where(a => a.Kind == PipelineAssetKind.Lora))
         {
-            Loras.Add(new LoraPickerItemViewModel
+            if (asset.CivitaiModelId.HasValue)
             {
-                DisplayName = asset.Name,
-                CivitaiModelId = asset.CivitaiModelId,
-                IsMandatory = true,
-                Strength = DefaultLoraStrength,
-            });
+                Loras.Add(new LoraPickerItemViewModel
+                {
+                    DisplayName = asset.Name,
+                    CivitaiModelId = asset.CivitaiModelId,
+                    IsMandatory = true,
+                    Strength = DefaultLoraStrength,
+                });
+            }
+            else if (!string.IsNullOrWhiteSpace(asset.ExpectedFileName))
+            {
+                Loras.Add(new LoraPickerItemViewModel
+                {
+                    DisplayName = asset.Name,
+                    ExpectedFileName = asset.ExpectedFileName,
+                    IsMandatory = true,
+                    Strength = DefaultLoraStrength,
+                });
+            }
         }
     }
 
@@ -556,6 +573,8 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
             var path = item.FilePath;
             if (string.IsNullOrWhiteSpace(path) && item.CivitaiModelId is { } modelId)
                 path = await Installer.FindLoraPathByModelIdAsync(modelId, cancellationToken).ConfigureAwait(true);
+            if (string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(item.ExpectedFileName))
+                path = await Installer.FindLoraPathByFileNameAsync(item.ExpectedFileName, cancellationToken).ConfigureAwait(true);
 
             if (string.IsNullOrWhiteSpace(path))
             {

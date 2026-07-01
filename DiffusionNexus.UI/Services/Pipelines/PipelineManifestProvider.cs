@@ -19,7 +19,7 @@ public sealed class PipelineManifestProvider : IPipelineManifestProvider
 
     // Manifest ids to load. Add a new pipeline by dropping <id>.json under Assets/Pipelines/
     // and listing the id here.
-    private static readonly string[] ManifestIds = ["anime-to-real"];
+    private static readonly string[] ManifestIds = ["anime-to-real", "qwen-image-2512", "image-to-image"];
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

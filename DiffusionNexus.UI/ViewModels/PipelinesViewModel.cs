@@ -62,7 +62,10 @@ public partial class PipelinesViewModel : ViewModelBase
         _dialogService = dialogService;
         _unifiedLogger = unifiedLogger;
 
-        foreach (var manifest in _manifestProvider.All())
+        // Only guided pipelines with a run screen get a gallery tile. Download-only model bundles
+        // (e.g. Qwen-Image-2512, used directly in the Diffusion Canvas) set ShowInGallery=false; they
+        // are still installable from Installer Manager → Diffusion Nexus Core → Workloads.
+        foreach (var manifest in _manifestProvider.All().Where(m => m.ShowInGallery))
             Pipelines.Add(new PipelineTileViewModel(manifest));
 
         // Compute initial readiness badges without blocking construction.

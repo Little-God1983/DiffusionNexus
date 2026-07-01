@@ -16,5 +16,22 @@ public enum ModelKind
     /// </summary>
     Flux2Klein,
 
-    // TODO(v2-models): Add SDXL, SD15, QwenImageEdit, etc. as we extend the catalog.
+    /// <summary>
+    /// Qwen-Image-2512 (Qwen-Image flow DiT distributed as a GGUF, Qwen-2.5-VL-7B LLM text
+    /// encoder, Qwen-Image VAE). Loaded via the diffusion-model + LLM + VAE slots with
+    /// <c>Prediction.Flow</c> and a flow shift, and always run with its mandatory 4-step
+    /// Lightning LoRA (carried on the descriptor's <c>DefaultLoras</c>).
+    /// </summary>
+    QwenImage2512,
+
+    /// <summary>
+    /// Qwen-Image-Edit-2511 (Qwen-Image-Edit flow DiT as a GGUF, Qwen-2.5-VL-7B LLM text encoder +
+    /// its mmproj vision projector, Qwen-Image VAE). An image-editing model: the input image is fed
+    /// as a reference (VAE-encoded conditioning, like the FLUX.2 kontext / anime-to-real path) and
+    /// edited per the text prompt. Loaded with <c>Prediction.Flow</c> + a flow shift, run with the
+    /// mandatory 4-step Edit Lightning LoRA.
+    /// </summary>
+    QwenImageEdit2511,
+
+    // TODO(v2-models): Add SDXL, SD15, etc. as we extend the catalog.
 }

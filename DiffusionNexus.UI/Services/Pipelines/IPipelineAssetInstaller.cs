@@ -43,4 +43,11 @@ public interface IPipelineAssetInstaller
     /// Returns null if no matching weights file is present.
     /// </summary>
     Task<string?> FindLoraPathByModelIdAsync(int civitaiModelId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the on-disk path of a HuggingFace LoRA by its expected filename (e.g.
+    /// "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"), searching every model root
+    /// recursively. Used for mandatory HF LoRAs that have no Civitai sidecar. Returns null if absent.
+    /// </summary>
+    Task<string?> FindLoraPathByFileNameAsync(string fileName, CancellationToken cancellationToken = default);
 }

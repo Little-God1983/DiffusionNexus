@@ -32,6 +32,12 @@ public partial class LoraPickerItemViewModel : ObservableObject
     /// <summary>For mandatory rows: the Civitai model id used to resolve the file path on disk.</summary>
     public int? CivitaiModelId { get; init; }
 
+    /// <summary>
+    /// For mandatory HuggingFace LoRA rows (no Civitai id): the on-disk filename used to resolve the
+    /// weights path at generation time (e.g. "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors").
+    /// </summary>
+    public string? ExpectedFileName { get; init; }
+
     partial void OnSelectedLoraChanged(AvailableLora? value)
     {
         // AutoCompleteBox nulls SelectedItem when the typed text no longer matches a committed pick;

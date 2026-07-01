@@ -144,6 +144,23 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         return null;
     }
 
+    /// <inheritdoc />
+    public async Task<string?> FindLoraPathByFileNameAsync(string fileName, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        var roots = await _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var root in roots)
+        {
+            // Exact name first, then a substring match (tolerates quant/precision suffix drift).
+            var hit = FindExact(root, fileName) ?? FindBySubstring(root, Path.GetFileNameWithoutExtension(fileName));
+            if (hit is not null && hit.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+                return hit;
+        }
+        return null;
+    }
+
     private static PipelineReadiness BuildReadiness(PipelineManifest manifest, IReadOnlyList<string> roots)
     {
         var states = new List<PipelineAssetState>(manifest.Assets.Count);
@@ -405,14 +422,18 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
             }
         }
 
-        // Fallback: substring hint, for manually-placed LoRAs that have no Civitai sidecar.
+        // For manually-placed / HuggingFace LoRAs (no Civitai sidecar) matched by filename. Scope the
+        // scan to the LoRA subfolder and try an exact (OS-filtered) match first — a plain substring
+        // scan enumerates every file under loras/, which is very slow with thousands of installed LoRAs.
         if (!string.IsNullOrWhiteSpace(asset.ExpectedFileName))
         {
             var sub = string.IsNullOrWhiteSpace(asset.TargetSubfolder) ? "loras" : asset.TargetSubfolder;
             foreach (var root in roots)
             {
                 var dir = Path.Combine(root, sub);
-                var hit = FindBySubstring(Directory.Exists(dir) ? dir : root, asset.ExpectedFileName!);
+                var searchDir = Directory.Exists(dir) ? dir : root;
+                var hit = FindExact(searchDir, asset.ExpectedFileName!)
+                    ?? FindBySubstring(searchDir, asset.ExpectedFileName!);
                 if (hit is not null)
                     return hit;
             }

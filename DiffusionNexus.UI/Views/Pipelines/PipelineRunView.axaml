@@ -82,7 +82,8 @@
               <Slider Minimum="0.2" Maximum="1.0" Value="{Binding ImageInfluence}"
                       ToolTip.Tip="1.0 = full generation guided by the reference image (recommended for Anime → Real)."/>
 
-              <!-- Pipeline-specific controls (e.g. Steps for Anime-To-Real) -->
+              <!-- Pipeline-specific controls (e.g. Steps). Each derived run VM needs a DataTemplate here
+                   so the ContentControl doesn't fall through to the ViewLocator's "Not Found". -->
               <ContentControl Content="{Binding}">
                 <ContentControl.DataTemplates>
                   <DataTemplate DataType="vm:AnimeToRealPipelineRunViewModel">
@@ -91,6 +92,28 @@
                       <Slider Minimum="4" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True"
                               Value="{Binding Steps}"
                               ToolTip.Tip="Sampling steps. More = slower but can be cleaner; the reference workflow uses 8."/>
+                    </StackPanel>
+                  </DataTemplate>
+                  <DataTemplate DataType="vm:ImageToImagePipelineRunViewModel">
+                    <StackPanel Spacing="12">
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="{Binding Steps, StringFormat='Steps: {0}'}"/>
+                        <Slider Minimum="4" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True"
+                                Value="{Binding Steps}"
+                                ToolTip.Tip="Sampling steps. FLUX.2-klein is distilled; 8 matches the reference workflow. Lower it if you add a speed LoRA."/>
+                      </StackPanel>
+                      <controls:OutputResolutionControl DataContext="{Binding OutputResolution}"/>
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="Reference images (optional)"/>
+                        <TextBlock Text="Two fixed slots — each is applied to every input image to guide the result (e.g. a style, outfit or pose). Input images, by contrast, are processed one per run."
+                                   Foreground="#999" FontSize="11" TextWrapping="Wrap"/>
+                        <Grid ColumnDefinitions="*,*">
+                          <controls:SingleImageSlotControl Grid.Column="0" Margin="0,0,4,0"
+                              ImagePath="{Binding ReferenceImage1Path, Mode=TwoWay}" Placeholder="Reference 1"/>
+                          <controls:SingleImageSlotControl Grid.Column="1" Margin="4,0,0,0"
+                              ImagePath="{Binding ReferenceImage2Path, Mode=TwoWay}" Placeholder="Reference 2"/>
+                        </Grid>
+                      </StackPanel>
                     </StackPanel>
                   </DataTemplate>
                 </ContentControl.DataTemplates>

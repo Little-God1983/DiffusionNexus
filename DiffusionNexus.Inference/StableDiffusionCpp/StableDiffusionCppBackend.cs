@@ -212,6 +212,17 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             .WithScheduler(MapScheduler(req.Scheduler ?? d.DefaultScheduler))
             .WithSeed(seed);
 
+        // Flow-matching timestep shift for flow models (e.g. Qwen-Image uses 3.1). Models that don't
+        // set DefaultFlowShift keep the engine default, so this is a no-op for Z-Image / FLUX.2-klein.
+        if (d.DefaultFlowShift is { } flowShift)
+            genParams = genParams.WithFlowShift(flowShift);
+
+        // Tile the VAE at generation time for models with a heavy VAE (Qwen-Image's Wan VAE allocates
+        // ~7-8 GB at 1 MP). Without this the VAE encode/decode spike can exceed VRAM on top of the
+        // resident model and spill to system RAM (the generation then crawls / appears frozen).
+        if (d.TileVae)
+            genParams = genParams.WithVaeTiling(true);
+
         // FLUX.2 reference-image conditioning (kontext / edit). The reference image(s) are VAE-encoded
         // and injected into the conditioning while the latent stays empty — this is the "anime → real"
         // path. AutoResize fixes the size mismatch that otherwise crashes the native generator.
@@ -222,11 +233,19 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
                 .Where(r => !string.IsNullOrWhiteSpace(r.FilePath))
                 .Select(r => HPPH.SkiaSharp.ImageHelper.LoadImage(r.FilePath))
                 .ToArray();
+
+            // With more than one reference, increment each reference's position index so the model
+            // treats them as distinct images (image1/image2/image3) instead of collapsing them onto the
+            // same slot. No effect for a single reference (e.g. the Anime-To-Real path).
+            if (genParams.RefImages.Length > 1)
+                genParams = genParams.WithRefIndexIncrease(true);
         }
 
         // LoRAs are applied per-generation (stable-diffusion.cpp loads them at runtime for this
         // call only), so the cached base context is shared across requests with different LoRAs.
-        foreach (var lora in req.Loras)
+        // The descriptor's DefaultLoras (e.g. Qwen-Image-2512's mandatory 4-step Lightning LoRA) are
+        // applied first, then any per-request LoRAs stack on top.
+        foreach (var lora in d.DefaultLoras.Concat(req.Loras))
         {
             if (string.IsNullOrWhiteSpace(lora.FilePath))
                 continue;

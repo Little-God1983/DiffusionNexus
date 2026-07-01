@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.OutputResolutionControl"
+             x:DataType="vm:OutputResolutionViewModel">
+
+  <StackPanel Spacing="6">
+    <TextBlock Text="Output resolution"/>
+    <TextBlock Text="{Binding OutputResolutionText}" Foreground="#999" FontSize="11"/>
+
+    <!-- Aspect-ratio buttons (selected one highlighted via the brush converter) + orientation toggle -->
+    <WrapPanel>
+      <Button Content="Same" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.SameAsInput}"
+              Foreground="White" Margin="0,0,4,4" Padding="10,4"
+              Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.SameAsInput}}"/>
+      <Button Content="{Binding Label16x9}" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R16x9}"
+              Foreground="White" Margin="0,0,4,4" Padding="10,4"
+              Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R16x9}}"/>
+      <Button Content="1:1" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R1x1}"
+              Foreground="White" Margin="0,0,4,4" Padding="10,4"
+              Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R1x1}}"/>
+      <Button Content="{Binding Label4x3}" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R4x3}"
+              Foreground="White" Margin="0,0,4,4" Padding="10,4"
+              Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R4x3}}"/>
+      <Button Content="{Binding Label5x4}" Command="{Binding SelectAspectRatioCommand}" CommandParameter="{x:Static vm:OutputAspectRatio.R5x4}"
+              Foreground="White" Margin="0,0,4,4" Padding="10,4"
+              Background="{Binding SelectedAspectRatio, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static vm:OutputAspectRatio.R5x4}}"/>
+      <ToggleButton Content="Switch" IsChecked="{Binding SwitchOrientation}" Margin="8,0,4,4" Padding="10,4"
+                    ToolTip.Tip="Flip the orientation (landscape ↔ portrait)"/>
+    </WrapPanel>
+
+    <!-- Target megapixels -->
+    <TextBlock Text="{Binding OutputMegapixels, StringFormat='Megapixels: {0:0.##}'}"/>
+    <Slider Minimum="0.25" Maximum="4" Value="{Binding OutputMegapixels}"
+            TickFrequency="0.25" IsSnapToTickEnabled="True"
+            ToolTip.Tip="Target output size in megapixels (up to 4). Larger needs more VRAM."/>
+  </StackPanel>
+</UserControl>
