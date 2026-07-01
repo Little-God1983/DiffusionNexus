@@ -45,6 +45,17 @@
           <MenuItem Header="&#x1F4AC; Captioning" Command="{Binding SendToCaptioningCommand}"
                     IsVisible="{Binding ShowSendToCaptioning}"
                     ToolTip.Tip="Send the selected images to Captioning"/>
+          <!-- Workflows submenu: hand the selection to a guided pipeline (opens its run screen
+               pre-loaded with the images). One entry per current workflow. -->
+          <MenuItem Header="&#x2699; Workflows" IsVisible="{Binding ShowSendToWorkflows}"
+                    ToolTip.Tip="Send the selected images to a guided Workflow (pipeline)">
+            <MenuItem Header="Anime-To-Real"
+                      Command="{Binding SendToWorkflowCommand}" CommandParameter="anime-to-real"
+                      ToolTip.Tip="Convert the selected anime images into photoreal renders"/>
+            <MenuItem Header="Image Edit"
+                      Command="{Binding SendToWorkflowCommand}" CommandParameter="image-to-image"
+                      ToolTip.Tip="Edit/transform the selected images from a text prompt"/>
+          </MenuItem>
         </MenuFlyout>
       </Button.Flyout>
     </Button>

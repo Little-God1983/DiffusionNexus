@@ -10,6 +10,7 @@ using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using DiffusionNexus.UI.ViewModels.Controls;
 using Serilog;
 using System.Text.Json;
 
@@ -70,9 +71,31 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _favoritesService = favoritesService;
 
+        // Reusable "Send Selected To…" menu (incl. the Workflows submenu). The Add menu is left off —
+        // the gallery keeps its own richer "Add Selected To…" button (move + gallery removal + busy
+        // overlay). The provider hands over the currently-selected images (videos excluded, as the Send
+        // destinations are image-only). DialogService is propagated by the view once a window exists.
+        ImageActions = new ImageActionsViewModel(_datasetState, _eventAggregator, _videoThumbnailService, _settingsService)
+        {
+            ShowAddToDataset = false,
+            ShowAddToTrainingRun = false,
+            PathProvider = () => Task.FromResult(new ImageActionPaths(
+                MediaItems.Where(item => item.IsSelected && item.IsImage)
+                          .Select(item => item.FilePath)
+                          .Where(File.Exists)
+                          .ToList())),
+        };
+
         _eventAggregator.SettingsSaved += OnSettingsSaved;
         UpdateGroupingOptions();
     }
+
+    /// <summary>
+    /// The reusable "Send Selected To…" actions (Image Editor / Comparer / Batch Upscale / Batch
+    /// Crop / Captioning / Workflows). Null in the design-time constructor (no services). Enablement
+    /// tracks the current selection via <see cref="UpdateSelectionState"/>.
+    /// </summary>
+    public ImageActionsViewModel? ImageActions { get; }
 
     private void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
     {
@@ -1173,11 +1196,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(HasFavorites));
         AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
         AddSelectedToTrainingRunCommand.NotifyCanExecuteChanged();
-        SendSelectedToImageEditCommand.NotifyCanExecuteChanged();
-        SendSelectedToImageComparerCommand.NotifyCanExecuteChanged();
-        SendSelectedToBatchUpscaleCommand.NotifyCanExecuteChanged();
-        SendSelectedToBatchCropCommand.NotifyCanExecuteChanged();
-        SendSelectedToCaptioningCommand.NotifyCanExecuteChanged();
+        if (ImageActions is not null)
+            ImageActions.CanAct = HasSelection;
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
         ToggleSelectedFavoritesCommand.NotifyCanExecuteChanged();
@@ -1221,207 +1241,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         catch
         {
         }
-    }
-
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task SendSelectedToImageEditAsync()
-    {
-        if (_eventAggregator is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count == 0)
-        {
-            return;
-        }
-
-        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
-        if (imageItems.Count == 0)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Images Selected",
-                    "The Image Editor only supports images. Please select at least one image.");
-            }
-            return;
-        }
-
-        var editorImages = imageItems
-            .Select(item => DatasetImageViewModel.FromFile(item.FilePath, _eventAggregator))
-            .ToList();
-
-        var tempDataset = new DatasetCardViewModel
-        {
-            Name = "Gallery Selection",
-            FolderPath = "TEMP://GenerationGallery",
-            IsVersionedStructure = true,
-            CurrentVersion = 1,
-            TotalVersions = 1,
-            ImageCount = editorImages.Count,
-            TotalImageCountAllVersions = editorImages.Count,
-            IsTemporary = true
-        };
-
-        _eventAggregator.PublishNavigateToImageEditor(new NavigateToImageEditorEventArgs
-        {
-            Dataset = tempDataset,
-            Image = editorImages[0],
-            Images = editorImages
-        });
-    }
-
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task SendSelectedToImageComparerAsync()
-    {
-        if (_eventAggregator is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count < 2)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "Selection Required",
-                    "Please select at least 2 images to compare.");
-            }
-            return;
-        }
-
-        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
-        if (imageItems.Count < 2)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "Not Enough Images Selected",
-                    "The Image Comparer requires at least 2 images. Please select at least 2 images (videos are not supported).");
-            }
-            return;
-        }
-
-        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
-
-        _eventAggregator.PublishNavigateToImageComparer(new NavigateToImageComparerEventArgs
-        {
-            ImagePaths = imagePaths
-        });
-    }
-
-    /// <summary>
-    /// Sends the selected images to the Batch Upscale tab as a temporary dataset.
-    /// </summary>
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task SendSelectedToBatchUpscaleAsync()
-    {
-        if (_eventAggregator is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count == 0)
-        {
-            return;
-        }
-
-        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
-        if (imageItems.Count == 0)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Images Selected",
-                    "Batch Upscale only supports images. Please select at least one image.");
-            }
-            return;
-        }
-
-        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
-
-        _eventAggregator.PublishNavigateToBatchUpscale(new NavigateToBatchUpscaleEventArgs
-        {
-            ImagePaths = imagePaths
-        });
-    }
-
-    /// <summary>
-    /// Sends the selected images to the Batch Crop/Scale tab as a temporary dataset.
-    /// </summary>
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task SendSelectedToBatchCropAsync()
-    {
-        if (_eventAggregator is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count == 0)
-        {
-            return;
-        }
-
-        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
-        if (imageItems.Count == 0)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Images Selected",
-                    "Batch Crop/Scale only supports images. Please select at least one image.");
-            }
-            return;
-        }
-
-        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
-
-        _eventAggregator.PublishNavigateToBatchCropScale(new NavigateToBatchCropScaleEventArgs
-        {
-            ImagePaths = imagePaths
-        });
-    }
-
-    /// <summary>
-    /// Sends the selected images to the Captioning tab as a temporary dataset.
-    /// </summary>
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task SendSelectedToCaptioningAsync()
-    {
-        if (_eventAggregator is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count == 0)
-        {
-            return;
-        }
-
-        var imageItems = selectedItems.Where(item => item.IsImage).ToList();
-        if (imageItems.Count == 0)
-        {
-            if (DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Images Selected",
-                    "Captioning only supports images. Please select at least one image.");
-            }
-            return;
-        }
-
-        var imagePaths = imageItems.Select(item => item.FilePath).ToList();
-
-        _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
-        {
-            ImagePaths = imagePaths
-        });
     }
 
     /// <summary>

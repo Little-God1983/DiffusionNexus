@@ -84,6 +84,10 @@ public partial class GenerationGalleryView : UserControl
                 if (window is not null)
                 {
                     vm.DialogService = new DialogService(window);
+                    // Give the reusable Send-actions menu the same window-bound dialog service so its
+                    // destinations (e.g. the Comparer's "select 2 images" notice) can show dialogs.
+                    if (vm.ImageActions is not null)
+                        vm.ImageActions.DialogService = vm.DialogService;
                 }
             }
 

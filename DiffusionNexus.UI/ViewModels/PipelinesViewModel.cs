@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -114,7 +115,37 @@ public partial class PipelinesViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task OpenPipelineAsync(PipelineTileViewModel? tile)
+    private Task OpenPipelineAsync(PipelineTileViewModel? tile) => OpenPipelineInternalAsync(tile, null);
+
+    /// <summary>
+    /// Opens a workflow's run screen by manifest id, pre-loaded with <paramref name="inputImages"/>.
+    /// Drives the Generation Gallery / reusable "Send to → Workflows" flow: the host has already
+    /// switched to this module; here we locate the tile, run the same readiness gate as a tile click,
+    /// and hand the images to the run once it opens.
+    /// </summary>
+    public async Task OpenWorkflowAsync(string workflowId, IReadOnlyList<string>? inputImages)
+    {
+        if (string.IsNullOrWhiteSpace(workflowId))
+            return;
+
+        var tile = Pipelines.FirstOrDefault(
+            t => string.Equals(t.Id, workflowId, StringComparison.OrdinalIgnoreCase));
+        if (tile is null)
+        {
+            await ShowMessageAsync("Workflow unavailable",
+                $"The '{workflowId}' workflow isn't available. It may have been removed or hidden.");
+            return;
+        }
+
+        // Sending from one run's results into another workflow would otherwise leak the old run VM
+        // (OpenRun overwrites ActiveRun without disposing); close it first.
+        if (ActiveRun is not null)
+            CloseRun();
+
+        await OpenPipelineInternalAsync(tile, inputImages);
+    }
+
+    private async Task OpenPipelineInternalAsync(PipelineTileViewModel? tile, IReadOnlyList<string>? inputImages)
     {
         if (tile is null)
             return;
@@ -146,7 +177,7 @@ public partial class PipelinesViewModel : ViewModelBase
             if (readiness.IsComplete)
             {
                 SetStatus(tile, PipelineStatus.Ready, "Ready");
-                OpenRun(tile);
+                OpenRun(tile, inputImages);
                 return;
             }
 
@@ -165,8 +196,12 @@ public partial class PipelinesViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Opens the pipeline's run UI (replaces the gallery) via the registered factory.</summary>
-    private void OpenRun(PipelineTileViewModel tile)
+    /// <summary>
+    /// Opens the pipeline's run UI (replaces the gallery) via the registered factory. When
+    /// <paramref name="inputImages"/> is supplied (the "Send to → Workflows" flow), the run starts in
+    /// loose-image mode pre-loaded with those images.
+    /// </summary>
+    private void OpenRun(PipelineTileViewModel tile, IReadOnlyList<string>? inputImages = null)
     {
         if (_runFactory is null)
             return;
@@ -176,6 +211,8 @@ public partial class PipelinesViewModel : ViewModelBase
             var run = _runFactory(tile);
             run.ResourceMonitor = ResourceMonitor; // reuse the gallery's single nvidia-smi poller
             run.CloseRequested += OnRunCloseRequested;
+            if (inputImages is { Count: > 0 })
+                run.LoadInputImages(inputImages);
             ActiveRun = run;
         }
         catch (Exception ex)

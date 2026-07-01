@@ -290,6 +290,24 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         SelectedOutputOption = AvailableOutputOptions[0];
     }
 
+    /// <summary>
+    /// Switches the run to loose-image mode and loads <paramref name="paths"/> as the input batch.
+    /// Used when a host launches this workflow with a pre-selected set of images (e.g. the Generation
+    /// Gallery's "Send to → Workflows"). The first existing image becomes the test-render selection.
+    /// </summary>
+    public void LoadInputImages(IReadOnlyList<string> paths)
+    {
+        // Enter single-image mode first: its change handler clears SelectedDataset but leaves
+        // SingleImagePaths intact, so the images we add below survive.
+        IsSingleImageMode = true;
+
+        SingleImagePaths.Clear();
+        foreach (var path in paths.Where(File.Exists))
+            SingleImagePaths.Add(path);
+
+        SelectedInputImagePath = SingleImagePaths.FirstOrDefault();
+    }
+
     /// <summary>Resolves the selected input images uniformly across both input modes.</summary>
     protected IReadOnlyList<string> GetImagePaths()
     {

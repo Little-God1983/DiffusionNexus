@@ -91,13 +91,21 @@ public partial class ImageActionsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
     private bool _showSendToCaptioning = true;
 
+    /// <summary>
+    /// Whether the "Workflows" submenu (guided pipelines the selection can be handed off to, e.g.
+    /// Anime-To-Real / Image Edit) is shown under the Send menu.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
+    private bool _showSendToWorkflows = true;
+
     /// <summary>True when at least one "Add" destination is enabled (drives the Add button visibility).</summary>
     public bool ShowAddMenu => ShowAddToDataset || ShowAddToTrainingRun;
 
     /// <summary>True when at least one "Send" destination is enabled (drives the Send button visibility).</summary>
     public bool ShowSendMenu =>
         ShowSendToImageEditor || ShowSendToComparer || ShowSendToBatchUpscale
-        || ShowSendToBatchCrop || ShowSendToCaptioning;
+        || ShowSendToBatchCrop || ShowSendToCaptioning || ShowSendToWorkflows;
 
     /// <summary>
     /// Whether the actions can run (host gate, e.g. "has a selection" / "has a loaded image").
@@ -111,6 +119,7 @@ public partial class ImageActionsViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(SendToBatchUpscaleCommand))]
     [NotifyCanExecuteChangedFor(nameof(SendToBatchCropCommand))]
     [NotifyCanExecuteChangedFor(nameof(SendToCaptioningCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SendToWorkflowCommand))]
     private bool _canAct;
 
     public ImageActionsViewModel(
@@ -345,6 +354,26 @@ public partial class ImageActionsViewModel : ObservableObject
         if (paths.Count == 0) return;
         _eventAggregator.PublishNavigateToCaptioning(new NavigateToCaptioningEventArgs
         {
+            ImagePaths = paths.ToList()
+        });
+    }
+
+    /// <summary>
+    /// Hands the current selection off to a guided Workflow (pipeline). The host switches to the
+    /// Workflows module and opens the run screen for <paramref name="workflowId"/> (e.g. "anime-to-real",
+    /// "image-to-image") with these images as its loose-image input batch.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAct))]
+    private async Task SendToWorkflowAsync(string? workflowId)
+    {
+        if (string.IsNullOrWhiteSpace(workflowId)) return;
+
+        var paths = (await AcquirePathsAsync()).Paths;
+        if (paths.Count == 0) return;
+
+        _eventAggregator.PublishNavigateToWorkflow(new NavigateToWorkflowEventArgs
+        {
+            WorkflowId = workflowId,
             ImagePaths = paths.ToList()
         });
     }
