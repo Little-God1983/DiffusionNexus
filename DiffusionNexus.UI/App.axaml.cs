@@ -1324,6 +1324,12 @@ public partial class App : Application
             mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
         };
 
+        eventAggregator.NavigateToWorkflowRequested += (_, e) =>
+        {
+            mainViewModel.NavigateToModuleCommand.Execute(pipelinesModule);
+            _ = pipelinesVm.OpenWorkflowAsync(e.WorkflowId, e.ImagePaths);
+        };
+
         // Load startup data sequentially to avoid concurrent DbContext access.
         // All scoped services share a single DiffusionNexusCoreDbContext instance
         // which is NOT thread-safe; fire-and-forget Execute() calls run concurrently.

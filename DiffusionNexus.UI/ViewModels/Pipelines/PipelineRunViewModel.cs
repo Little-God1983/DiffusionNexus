@@ -153,9 +153,13 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
 
         // The result view offers every destination (it shows finished generations the user may want to
         // keep or push elsewhere). The injected (window-bound) dialog service drives the Add dialogs.
+        // The Workflows submenu hides the workflow we're already in — feeding a run's results straight
+        // back into the same workflow is pointless.
         var actions = new ImageActionsViewModel(datasetState, eventAggregator, videoThumbnailService, settingsService)
         {
             DialogService = dialogs,
+            ShowSendToAnimeToReal = manifest.Id != "anime-to-real",
+            ShowSendToImageEdit = manifest.Id != "image-to-image",
         };
         Results = new SelectableImageResultsViewModel(Outputs, actions);
 
@@ -288,6 +292,24 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
         }
 
         SelectedOutputOption = AvailableOutputOptions[0];
+    }
+
+    /// <summary>
+    /// Switches the run to loose-image mode and loads <paramref name="paths"/> as the input batch.
+    /// Used when a host launches this workflow with a pre-selected set of images (e.g. the Generation
+    /// Gallery's "Send to → Workflows"). The first existing image becomes the test-render selection.
+    /// </summary>
+    public void LoadInputImages(IReadOnlyList<string> paths)
+    {
+        // Enter single-image mode first: its change handler clears SelectedDataset but leaves
+        // SingleImagePaths intact, so the images we add below survive.
+        IsSingleImageMode = true;
+
+        SingleImagePaths.Clear();
+        foreach (var path in paths.Where(File.Exists))
+            SingleImagePaths.Add(path);
+
+        SelectedInputImagePath = SingleImagePaths.FirstOrDefault();
     }
 
     /// <summary>Resolves the selected input images uniformly across both input modes.</summary>

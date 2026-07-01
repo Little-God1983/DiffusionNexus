@@ -2,6 +2,7 @@
            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
            xmlns:vm="using:DiffusionNexus.UI.ViewModels"
            xmlns:converters="using:DiffusionNexus.UI.Converters"
+           xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
            x:Class="DiffusionNexus.UI.Views.GenerationGalleryView"
            x:DataType="vm:GenerationGalleryViewModel">
 <Design.DataContext>
@@ -198,35 +199,12 @@
                 Foreground="#FFD700" Padding="8,4" Margin="0,4,16,4"
                 ToolTip.Tip="Mark or unmark selected items as favorites. Mixed selection will unmark first."/>
 
-        <!-- Add Selected To... dropdown -->
-        <Button Content="Add Selected To..." Background="#2E7D32" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
-          <Button.Flyout>
-            <MenuFlyout Placement="BottomEdgeAlignedLeft">
-              <MenuItem Header="Dataset" Command="{Binding AddSelectedToDatasetCommand}"
-                        ToolTip.Tip="Add selected images to an existing or new dataset"/>
-              <MenuItem Header="Training Run" Command="{Binding AddSelectedToTrainingRunCommand}"
-                        ToolTip.Tip="Add selected images to a training run (coming soon)"/>
-            </MenuFlyout>
-          </Button.Flyout>
-        </Button>
-
-        <!-- Send Selected To... dropdown -->
-        <Button Content="Send Selected To..." Background="#1976D2" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
-          <Button.Flyout>
-            <MenuFlyout Placement="BottomEdgeAlignedLeft">
-              <MenuItem Header="&#x270F; Image Editor" Command="{Binding SendSelectedToImageEditCommand}"
-                        ToolTip.Tip="Open selected images in the Image Editor"/>
-              <MenuItem Header="&#x274F; Comparer" Command="{Binding SendSelectedToImageComparerCommand}"
-                        ToolTip.Tip="Compare selected images side by side"/>
-              <MenuItem Header="&#x2B06; Batch Upscale" Command="{Binding SendSelectedToBatchUpscaleCommand}"
-                        ToolTip.Tip="Send selected images to Batch Upscale as a temporary dataset"/>
-              <MenuItem Header="&#x2702; Batch Crop/Scale" Command="{Binding SendSelectedToBatchCropCommand}"
-                        ToolTip.Tip="Send selected images to Batch Crop/Scale as a temporary dataset"/>
-              <MenuItem Header="&#x1F4AC; Captioning" Command="{Binding SendSelectedToCaptioningCommand}"
-                        ToolTip.Tip="Send selected images to Captioning as a temporary dataset"/>
-            </MenuFlyout>
-          </Button.Flyout>
-        </Button>
+        <!-- Add / Send Selected To… — the SAME reusable component the workflow result strips use, so
+             both flows behave identically everywhere (Send also carries the Workflows submenu). -->
+        <controls:ImageActionsBar DataContext="{Binding AddActions}"
+                                  VerticalAlignment="Center" Margin="0,4,8,4"/>
+        <controls:ImageActionsBar DataContext="{Binding SendActions}"
+                                  VerticalAlignment="Center" Margin="0,4,8,4"/>
 
         <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
                 Background="#B22222" Padding="12,6" Margin="0,4,0,4"/>
