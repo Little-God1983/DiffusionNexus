@@ -153,9 +153,13 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
 
         // The result view offers every destination (it shows finished generations the user may want to
         // keep or push elsewhere). The injected (window-bound) dialog service drives the Add dialogs.
+        // The Workflows submenu hides the workflow we're already in — feeding a run's results straight
+        // back into the same workflow is pointless.
         var actions = new ImageActionsViewModel(datasetState, eventAggregator, videoThumbnailService, settingsService)
         {
             DialogService = dialogs,
+            ShowSendToAnimeToReal = manifest.Id != "anime-to-real",
+            ShowSendToImageEdit = manifest.Id != "image-to-image",
         };
         Results = new SelectableImageResultsViewModel(Outputs, actions);
 

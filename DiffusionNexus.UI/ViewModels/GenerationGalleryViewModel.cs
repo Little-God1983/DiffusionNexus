@@ -71,11 +71,29 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _favoritesService = favoritesService;
 
-        // Reusable "Send Selected To…" menu (incl. the Workflows submenu). The Add menu is left off —
-        // the gallery keeps its own richer "Add Selected To…" button (move + gallery removal + busy
-        // overlay). The provider hands over the currently-selected images (videos excluded, as the Send
-        // destinations are image-only). DialogService is propagated by the view once a window exists.
-        ImageActions = new ImageActionsViewModel(_datasetState, _eventAggregator, _videoThumbnailService, _settingsService)
+        // Both toolbars are the SAME reusable component the workflow result strips use, so "Add
+        // Selected To…" and "Send Selected To…" behave identically everywhere. They're split into two
+        // instances only because they need different source sets: Add takes ALL selected media (datasets
+        // hold videos too), while the Send destinations are image-only. DialogService is propagated by
+        // the view once a window exists.
+        AddActions = new ImageActionsViewModel(_datasetState, _eventAggregator, _videoThumbnailService, _settingsService)
+        {
+            ShowSendToImageEditor = false,
+            ShowSendToComparer = false,
+            ShowSendToBatchUpscale = false,
+            ShowSendToBatchCrop = false,
+            ShowSendToCaptioning = false,
+            ShowSendToWorkflows = false,
+            PathProvider = () => Task.FromResult(new ImageActionPaths(
+                MediaItems.Where(item => item.IsSelected)
+                          .Select(item => item.FilePath)
+                          .Where(File.Exists)
+                          .ToList())),
+        };
+        // A move relocates the files out of the gallery folder; drop those tiles from the view.
+        AddActions.FilesMoved += OnActionsFilesMoved;
+
+        SendActions = new ImageActionsViewModel(_datasetState, _eventAggregator, _videoThumbnailService, _settingsService)
         {
             ShowAddToDataset = false,
             ShowAddToTrainingRun = false,
@@ -91,11 +109,28 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     /// <summary>
-    /// The reusable "Send Selected To…" actions (Image Editor / Comparer / Batch Upscale / Batch
-    /// Crop / Captioning / Workflows). Null in the design-time constructor (no services). Enablement
-    /// tracks the current selection via <see cref="UpdateSelectionState"/>.
+    /// The reusable "Add Selected To…" actions (Dataset / Training Run). Operates on all selected media
+    /// (images and videos). Null in the design-time constructor (no services).
     /// </summary>
-    public ImageActionsViewModel? ImageActions { get; }
+    public ImageActionsViewModel? AddActions { get; }
+
+    /// <summary>
+    /// The reusable "Send Selected To…" actions (Image Editor / Comparer / Batch Upscale / Batch Crop /
+    /// Captioning / Workflows). Operates on selected images only. Null in the design-time constructor.
+    /// Enablement of both toolbars tracks the current selection via <see cref="UpdateSelectionState"/>.
+    /// </summary>
+    public ImageActionsViewModel? SendActions { get; }
+
+    /// <summary>Drops moved-away tiles from the view after an Add "Move" relocates them.</summary>
+    private void OnActionsFilesMoved(IReadOnlyList<string> movedPaths)
+    {
+        var moved = movedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in MediaItems.Where(item => moved.Contains(item.FilePath)).ToList())
+            RemoveMediaItem(item);
+
+        ClearSelectionSilent();
+        UpdateSelectionState();
+    }
 
     private void OnSettingsSaved(object? sender, SettingsSavedEventArgs e)
     {
@@ -469,169 +504,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         await OpenImageViewerAtIndexAsync(index);
     }
 
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task AddSelectedToDatasetAsync()
-    {
-        if (DialogService is null || _settingsService is null || _datasetState is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected).ToList();
-        if (selectedItems.Count == 0) return;
-
-        var dialogResult = await DialogService.ShowAddToDatasetDialogAsync(
-            selectedItems.Count,
-            _datasetState.Datasets);
-
-        if (!dialogResult.Confirmed) return;
-
-        await RunBusyAsync(async () =>
-        {
-            var targetDataset = await ResolveTargetDatasetAsync(dialogResult);
-            if (targetDataset is null)
-            {
-                return;
-            }
-
-            var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
-            var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
-
-            var importer = new DatasetFileImporter(new FileOperations());
-            var importResult = await importer.ImportWithDialogAsync(
-                selectedItems.Select(item => item.FilePath),
-                destinationFolder,
-                DialogService,
-                _videoThumbnailService,
-                moveFiles: dialogResult.ImportAction == DatasetImportAction.Move);
-
-            if (importResult.Cancelled)
-            {
-                return;
-            }
-
-            if (dialogResult.ImportAction == DatasetImportAction.Move)
-            {
-                var movedSet = importResult.ProcessedSourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var item in selectedItems.Where(item => movedSet.Contains(item.FilePath)).ToList())
-                {
-                    RemoveMediaItem(item);
-                }
-            }
-
-            targetDataset.RefreshImageInfo();
-            _eventAggregator?.PublishImageAdded(new ImageAddedEventArgs
-            {
-                Dataset = targetDataset,
-                AddedImages = []
-            });
-
-            ClearSelectionSilent();
-            UpdateSelectionState();
-        }, "Adding media to dataset...");
-    }
-
-    /// <summary>
-    /// Shows the Add to Training Run dialog and imports selected images into the
-    /// Presentation folder of the chosen training run, creating a new run when requested.
-    /// </summary>
-    [RelayCommand(CanExecute = nameof(HasSelection))]
-    private async Task AddSelectedToTrainingRunAsync()
-    {
-        if (DialogService is null || _datasetState is null)
-        {
-            return;
-        }
-
-        var selectedItems = MediaItems.Where(item => item.IsSelected && item.IsImage).ToList();
-        if (selectedItems.Count == 0)
-        {
-            await DialogService.ShowMessageAsync(
-                "No Images Selected",
-                "Please select at least one image to add to a training run.");
-            return;
-        }
-
-        var dialogResult = await DialogService.ShowAddToTrainingRunDialogAsync(
-            selectedItems.Count,
-            _datasetState.Datasets);
-
-        if (!dialogResult.Confirmed) return;
-
-        var dataset = dialogResult.SelectedDataset;
-        if (dataset is null || !dialogResult.SelectedVersion.HasValue) return;
-
-        var version = dialogResult.SelectedVersion.Value;
-
-        await RunBusyAsync(async () =>
-        {
-            // Ensure the training run exists
-            var trainingRunName = dialogResult.IsNewTrainingRun
-                ? dialogResult.NewTrainingRunName
-                : dialogResult.SelectedTrainingRunName;
-
-            if (string.IsNullOrWhiteSpace(trainingRunName)) return;
-
-            var versionPath = dataset.GetVersionFolderPath(version);
-
-            if (dialogResult.IsNewTrainingRun)
-            {
-                TrainingRunMigrationUtility.CreateTrainingRunFolder(versionPath, trainingRunName);
-
-                var runInfo = new TrainingRunInfo
-                {
-                    Name = trainingRunName,
-                    CreatedAt = DateTimeOffset.Now
-                };
-
-                if (!dataset.TrainingRuns.ContainsKey(version))
-                {
-                    dataset.TrainingRuns[version] = [];
-                }
-
-                dataset.TrainingRuns[version].Add(runInfo);
-                dataset.SaveMetadata();
-            }
-
-            // Copy or move images into the training run's Presentation folder
-            var runPath = TrainingRunMigrationUtility.GetTrainingRunPath(versionPath, trainingRunName);
-            var destinationFolder = Path.Combine(runPath, "Presentation");
-            Directory.CreateDirectory(destinationFolder);
-
-            var importer = new DatasetFileImporter(new FileOperations());
-            var importResult = await importer.ImportWithDialogAsync(
-                selectedItems.Select(item => item.FilePath),
-                destinationFolder,
-                DialogService!,
-                _videoThumbnailService,
-                moveFiles: dialogResult.ImportAction == DatasetImportAction.Move);
-
-            if (importResult.Cancelled)
-            {
-                return;
-            }
-
-            if (dialogResult.ImportAction == DatasetImportAction.Move)
-            {
-                var movedSet = importResult.ProcessedSourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var item in selectedItems.Where(item => movedSet.Contains(item.FilePath)).ToList())
-                {
-                    RemoveMediaItem(item);
-                }
-            }
-
-            dataset.RefreshImageInfo();
-            _eventAggregator?.PublishImageAdded(new ImageAddedEventArgs
-            {
-                Dataset = dataset,
-                AddedImages = []
-            });
-
-            ClearSelectionSilent();
-            UpdateSelectionState();
-        }, "Adding images to training run...");
-    }
-
     private async Task OpenImageViewerAtIndexAsync(int index)
     {
         if (DialogService is null || MediaItems.Count == 0) return;
@@ -676,98 +548,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             onToggleFavorite: toggleFavorite,
             isFavoriteCheck: isFavoriteCheck,
             videoThumbnailService: _videoThumbnailService);
-    }
-
-    private async Task<DatasetCardViewModel?> ResolveTargetDatasetAsync(AddToDatasetResult dialogResult)
-    {
-        if (dialogResult.DestinationOption == DatasetDestinationOption.ExistingDataset)
-        {
-            if (dialogResult.SelectedDataset is null && DialogService is not null)
-            {
-                await DialogService.ShowMessageAsync(
-                    "No Dataset Selected",
-                    "Please choose an existing dataset to continue.");
-            }
-            return dialogResult.SelectedDataset;
-        }
-
-        if (DialogService is null || _settingsService is null || _datasetState is null)
-        {
-            return null;
-        }
-
-        var createResult = await DialogService.ShowCreateDatasetDialogAsync(_datasetState.AvailableCategories);
-        if (!createResult.Confirmed || string.IsNullOrWhiteSpace(createResult.Name))
-        {
-            return null;
-        }
-
-        var settings = await _settingsService.GetSettingsAsync();
-        if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
-        {
-            await DialogService.ShowMessageAsync(
-                "Dataset Storage Not Configured",
-                "Please configure a dataset storage path in Settings before creating datasets.");
-            return null;
-        }
-
-        _datasetState.SetStorageConfigured(true);
-
-        var datasetPath = Path.Combine(settings.DatasetStoragePath, createResult.Name);
-        if (Directory.Exists(datasetPath))
-        {
-            await DialogService.ShowMessageAsync(
-                "Dataset Already Exists",
-                $"A dataset named '{createResult.Name}' already exists.");
-            return null;
-        }
-
-        Directory.CreateDirectory(datasetPath);
-        var v1Path = Path.Combine(datasetPath, "V1");
-        Directory.CreateDirectory(v1Path);
-
-        var newDataset = new DatasetCardViewModel
-        {
-            Name = createResult.Name,
-            FolderPath = datasetPath,
-            IsVersionedStructure = true,
-            CurrentVersion = 1,
-            TotalVersions = 1,
-            ImageCount = 0,
-            VideoCount = 0,
-            CategoryId = createResult.CategoryId,
-            CategoryOrder = createResult.CategoryOrder,
-            CategoryName = createResult.CategoryName,
-            Type = createResult.Type,
-            IsNsfw = createResult.IsNsfw
-        };
-
-        newDataset.VersionNsfwFlags[1] = createResult.IsNsfw;
-        newDataset.SaveMetadata();
-        _datasetState.Datasets.Add(newDataset);
-
-        _eventAggregator?.PublishDatasetCreated(new DatasetCreatedEventArgs
-        {
-            Dataset = newDataset
-        });
-
-        return newDataset;
-    }
-
-    private async Task<int> ResolveTargetVersionAsync(DatasetCardViewModel dataset, AddToDatasetResult dialogResult)
-    {
-        if (dialogResult.DestinationOption == DatasetDestinationOption.NewDataset)
-        {
-            return dataset.CurrentVersion;
-        }
-
-        if (dialogResult.VersionOption == DatasetVersionOption.CreateNewVersion)
-        {
-            var parentVersion = dataset.CurrentVersion;
-            return await DatasetVersionUtilities.CreateEmptyVersionAsync(dataset, parentVersion, _eventAggregator);
-        }
-
-        return dialogResult.SelectedVersion ?? dataset.CurrentVersion;
     }
 
     private static List<string> GetEnabledGalleryPaths(AppSettings settings)
@@ -1194,10 +974,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(HasMultipleImagesSelected));
         OnPropertyChanged(nameof(SelectionText));
         OnPropertyChanged(nameof(HasFavorites));
-        AddSelectedToDatasetCommand.NotifyCanExecuteChanged();
-        AddSelectedToTrainingRunCommand.NotifyCanExecuteChanged();
-        if (ImageActions is not null)
-            ImageActions.CanAct = HasSelection;
+        if (AddActions is not null)
+            AddActions.CanAct = HasSelection;
+        if (SendActions is not null)
+            SendActions.CanAct = HasSelection;
         OpenFolderInExplorerCommand.NotifyCanExecuteChanged();
         SelectAllFavoritesCommand.NotifyCanExecuteChanged();
         ToggleSelectedFavoritesCommand.NotifyCanExecuteChanged();

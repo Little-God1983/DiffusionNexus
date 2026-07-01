@@ -53,6 +53,13 @@ public partial class ImageActionsViewModel : ObservableObject
     /// </summary>
     public Func<Task<ImageActionPaths>>? PathProvider { get; set; }
 
+    /// <summary>
+    /// Raised after an Add destination <b>moves</b> (rather than copies) its source files into a
+    /// dataset/training run, carrying the source paths that were moved. A host showing those files
+    /// (e.g. the Generation Gallery) uses this to drop the now-relocated items from its view.
+    /// </summary>
+    public event Action<IReadOnlyList<string>>? FilesMoved;
+
     /// <summary>Optional status sink (e.g. the Image Editor surfaces this in its status bar).</summary>
     [ObservableProperty] private string? _statusMessage;
 
@@ -92,20 +99,40 @@ public partial class ImageActionsViewModel : ObservableObject
     private bool _showSendToCaptioning = true;
 
     /// <summary>
-    /// Whether the "Workflows" submenu (guided pipelines the selection can be handed off to, e.g.
-    /// Anime-To-Real / Image Edit) is shown under the Send menu.
+    /// Master toggle for the "Workflows" submenu (guided pipelines the selection can be handed off to).
+    /// The individual workflows are gated separately so a host can hide the one it <i>is</i> (e.g. the
+    /// Anime-To-Real run doesn't offer "Send to → Workflows → Anime-To-Real").
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowWorkflowsMenu))]
     [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
     private bool _showSendToWorkflows = true;
+
+    /// <summary>Whether the "Anime-To-Real" entry is shown in the Workflows submenu.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowWorkflowsMenu))]
+    [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
+    private bool _showSendToAnimeToReal = true;
+
+    /// <summary>Whether the "Image Edit" entry is shown in the Workflows submenu.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowWorkflowsMenu))]
+    [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
+    private bool _showSendToImageEdit = true;
 
     /// <summary>True when at least one "Add" destination is enabled (drives the Add button visibility).</summary>
     public bool ShowAddMenu => ShowAddToDataset || ShowAddToTrainingRun;
 
+    /// <summary>
+    /// True when the Workflows submenu should appear — its master toggle is on and at least one
+    /// individual workflow is visible (so a host that hides every workflow gets no empty submenu).
+    /// </summary>
+    public bool ShowWorkflowsMenu => ShowSendToWorkflows && (ShowSendToAnimeToReal || ShowSendToImageEdit);
+
     /// <summary>True when at least one "Send" destination is enabled (drives the Send button visibility).</summary>
     public bool ShowSendMenu =>
         ShowSendToImageEditor || ShowSendToComparer || ShowSendToBatchUpscale
-        || ShowSendToBatchCrop || ShowSendToCaptioning || ShowSendToWorkflows;
+        || ShowSendToBatchCrop || ShowSendToCaptioning || ShowWorkflowsMenu;
 
     /// <summary>
     /// Whether the actions can run (host gate, e.g. "has a selection" / "has a loaded image").
@@ -159,15 +186,19 @@ public partial class ImageActionsViewModel : ObservableObject
             var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
             var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
 
+            var moveFiles = dialogResult.ImportAction == DatasetImportAction.Move;
             var importer = new DatasetFileImporter(new FileOperations());
             var importResult = await importer.ImportWithDialogAsync(
                 acquired.Paths,
                 destinationFolder,
                 DialogService,
                 _videoThumbnailService,
-                moveFiles: false);
+                moveFiles: moveFiles);
 
             if (importResult.Cancelled) return;
+
+            if (moveFiles && importResult.ProcessedSourceFiles.Count > 0)
+                FilesMoved?.Invoke(importResult.ProcessedSourceFiles);
 
             targetDataset.RefreshImageInfo();
             _eventAggregator.PublishImageAdded(new ImageAddedEventArgs
@@ -237,15 +268,19 @@ public partial class ImageActionsViewModel : ObservableObject
             var destinationFolder = Path.Combine(runPath, "Presentation");
             Directory.CreateDirectory(destinationFolder);
 
+            var moveFiles = dialogResult.ImportAction == DatasetImportAction.Move;
             var importer = new DatasetFileImporter(new FileOperations());
             var importResult = await importer.ImportWithDialogAsync(
                 acquired.Paths,
                 destinationFolder,
                 DialogService,
                 _videoThumbnailService,
-                moveFiles: false);
+                moveFiles: moveFiles);
 
             if (importResult.Cancelled) return;
+
+            if (moveFiles && importResult.ProcessedSourceFiles.Count > 0)
+                FilesMoved?.Invoke(importResult.ProcessedSourceFiles);
 
             dataset.RefreshImageInfo();
             _eventAggregator.PublishImageAdded(new ImageAddedEventArgs

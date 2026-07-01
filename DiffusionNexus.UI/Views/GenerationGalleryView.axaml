@@ -199,20 +199,11 @@
                 Foreground="#FFD700" Padding="8,4" Margin="0,4,16,4"
                 ToolTip.Tip="Mark or unmark selected items as favorites. Mixed selection will unmark first."/>
 
-        <!-- Add Selected To... dropdown -->
-        <Button Content="Add Selected To..." Background="#2E7D32" Padding="12,6" Margin="0,4,8,4" FontWeight="SemiBold">
-          <Button.Flyout>
-            <MenuFlyout Placement="BottomEdgeAlignedLeft">
-              <MenuItem Header="Dataset" Command="{Binding AddSelectedToDatasetCommand}"
-                        ToolTip.Tip="Add selected images to an existing or new dataset"/>
-              <MenuItem Header="Training Run" Command="{Binding AddSelectedToTrainingRunCommand}"
-                        ToolTip.Tip="Add selected images to a training run (coming soon)"/>
-            </MenuFlyout>
-          </Button.Flyout>
-        </Button>
-
-        <!-- Send Selected To... dropdown (reusable component; carries the Workflows submenu) -->
-        <controls:ImageActionsBar DataContext="{Binding ImageActions}"
+        <!-- Add / Send Selected To… — the SAME reusable component the workflow result strips use, so
+             both flows behave identically everywhere (Send also carries the Workflows submenu). -->
+        <controls:ImageActionsBar DataContext="{Binding AddActions}"
+                                  VerticalAlignment="Center" Margin="0,4,8,4"/>
+        <controls:ImageActionsBar DataContext="{Binding SendActions}"
                                   VerticalAlignment="Center" Margin="0,4,8,4"/>
 
         <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}"
