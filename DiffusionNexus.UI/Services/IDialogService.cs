@@ -387,8 +387,8 @@ public interface IDialogService
     Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel);
 
     /// <summary>
-    /// Captures a screenshot of the main window and shows the in-app feedback dialog,
-    /// pre-filled with it and with the last 500 lines of the unified log.
+    /// Shows the in-app feedback dialog. The last 500 lines of the unified log are
+    /// attached when the user submits a bug report (not for feedback/feature requests).
     /// </summary>
     Task ShowFeedbackDialogAsync();
 }
