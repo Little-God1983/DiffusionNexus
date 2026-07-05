@@ -145,9 +145,10 @@
 
                     <StackPanel x:Name="SuccessPanel" Spacing="12" IsVisible="False">
                         <TextBlock Text="Thanks! Your feedback was submitted." FontSize="16" Foreground="White" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="IssueUrlText" Foreground="#88aaff" TextWrapping="Wrap"/>
-                        <Button x:Name="IssueUrlButton" Classes="secondary-btn" Content="Open Issue"/>
-                        <Button x:Name="CloseAfterSuccessButton" Classes="primary-btn" Content="Close"/>
+                        <Grid ColumnDefinitions="*,10,*">
+                            <Button x:Name="SubmitAnotherButton" Grid.Column="0" Classes="secondary-btn" Content="Submit another"/>
+                            <Button x:Name="CloseAfterSuccessButton" Grid.Column="2" Classes="primary-btn" Content="Close"/>
+                        </Grid>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

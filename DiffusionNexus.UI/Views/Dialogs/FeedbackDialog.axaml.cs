@@ -19,7 +19,6 @@ public partial class FeedbackDialog : Window
     private readonly string _appVersion;
     private readonly string _logTail;
     private byte[]? _screenshotBytes;
-    private string? _lastIssueUrl;
     private bool _isSubmitting;
 
     /// <summary>True once a report was successfully submitted.</summary>
@@ -68,10 +67,7 @@ public partial class FeedbackDialog : Window
         DisclaimerCheckBox.IsCheckedChanged += (_, _) => UpdateSubmitEnabled();
         UpdateSubmitEnabled();
         CloseAfterSuccessButton.Click += (_, _) => Close();
-        IssueUrlButton.Click += (_, _) =>
-        {
-            if (_lastIssueUrl is not null) OpenUrl(_lastIssueUrl);
-        };
+        SubmitAnotherButton.Click += OnSubmitAnotherClick;
     }
 
     private void UpdateScreenshotPreview()
@@ -184,13 +180,30 @@ public partial class FeedbackDialog : Window
 
         if (result.Success)
         {
-            ShowSuccess(result.IssueUrl!, email);
+            ShowSuccess(email);
         }
         else
         {
             StatusText.Text = $"Couldn't submit feedback: {result.ErrorMessage}. Your text hasn't been lost — try again.";
             StatusText.IsVisible = true;
         }
+    }
+
+    private void OnSubmitAnotherClick(object? sender, RoutedEventArgs e)
+    {
+        TitleBox.Text = string.Empty;
+        DescriptionBox.Text = string.Empty;
+        WhatHappenedBox.Text = string.Empty;
+        WhatShouldHaveHappenedBox.Text = string.Empty;
+        _screenshotBytes = null;
+        UpdateScreenshotPreview();
+        TypeBugRadio.IsChecked = true;
+        DisclaimerCheckBox.IsChecked = false;
+        StatusText.IsVisible = false;
+        UpdateSubmitEnabled();
+
+        SuccessPanel.IsVisible = false;
+        FormPanel.IsVisible = true;
     }
 
     private void UpdateSubmitEnabled()
@@ -206,32 +219,13 @@ public partial class FeedbackDialog : Window
         SubmittingIndicator.IsVisible = submitting;
     }
 
-    private void ShowSuccess(string issueUrl, string? email)
+    private void ShowSuccess(string? email)
     {
         WasSubmitted = true;
         SubmittedEmail = string.IsNullOrEmpty(email) ? null : email;
 
-        _lastIssueUrl = issueUrl;
         FormPanel.IsVisible = false;
         SuccessPanel.IsVisible = true;
-        IssueUrlText.Text = issueUrl;
-    }
-
-    private static void OpenUrl(string url)
-    {
-        try
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                Process.Start("xdg-open", url);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                Process.Start("open", url);
-        }
-        catch
-        {
-            // Ignore URL open failures
-        }
     }
 
     private static bool LooksLikeEmail(string email)
