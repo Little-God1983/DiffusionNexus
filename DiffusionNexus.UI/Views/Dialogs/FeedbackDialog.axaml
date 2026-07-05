@@ -1,0 +1,122 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.FeedbackDialog"
+        x:CompileBindings="False"
+        Title="Send Feedback"
+        Width="520"
+        Height="660"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+
+    <Window.Styles>
+        <Style Selector="Window">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                        <GradientStop Color="#1a1a2e" Offset="0"/>
+                        <GradientStop Color="#16213e" Offset="0.5"/>
+                        <GradientStop Color="#0f3460" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style Selector="Button.primary-btn">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                        <GradientStop Color="#4CAF50" Offset="0"/>
+                        <GradientStop Color="#45a049" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="24,12"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+
+        <Style Selector="Button.secondary-btn">
+            <Setter Property="Background" Value="#3a3a5a"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="20,10"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#2a2a4a"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3a3a5a"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="Foreground" Value="#ccccee"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Styles>
+
+    <Border Padding="24">
+        <Grid RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="Send Feedback" FontSize="22" FontWeight="Bold" Foreground="White" Margin="0,0,0,16"/>
+
+            <ScrollViewer Grid.Row="1">
+                <StackPanel Spacing="14">
+                    <StackPanel x:Name="FormPanel" Spacing="14">
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="Title *"/>
+                            <TextBox x:Name="TitleBox" Watermark="Short summary of the problem"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="Description *"/>
+                            <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="70" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="What happened (optional)"/>
+                            <TextBox x:Name="WhatHappenedBox" AcceptsReturn="True" Height="50" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="What should have happened (optional)"/>
+                            <TextBox x:Name="WhatShouldHaveHappenedBox" AcceptsReturn="True" Height="50" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="field-label" Text="Screenshot"/>
+                            <Border Background="#2a2a4a" CornerRadius="6" Padding="8">
+                                <Image x:Name="ScreenshotPreviewImage" MaxHeight="180" Stretch="Uniform"/>
+                            </Border>
+                            <Grid ColumnDefinitions="*,10,*">
+                                <Button x:Name="ReplaceScreenshotButton" Grid.Column="0" Classes="secondary-btn" Content="Replace Screenshot..."/>
+                                <Button x:Name="RemoveScreenshotButton" Grid.Column="2" Classes="secondary-btn" Content="Remove Screenshot"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <TextBlock x:Name="StatusText" Foreground="#ff8080" TextWrapping="Wrap" IsVisible="False"/>
+
+                        <TextBlock x:Name="SubmittingIndicator" Text="Submitting..." Foreground="#ccccee" IsVisible="False"/>
+
+                        <Grid ColumnDefinitions="*,10,*" Margin="0,10,0,0">
+                            <Button x:Name="CancelButton" Grid.Column="0" Classes="secondary-btn" Content="Cancel"/>
+                            <Button x:Name="SubmitButton" Grid.Column="2" Classes="primary-btn" Content="Submit"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel x:Name="SuccessPanel" Spacing="12" IsVisible="False">
+                        <TextBlock Text="Thanks! Your feedback was submitted." FontSize="16" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="IssueUrlText" Foreground="#88aaff" TextWrapping="Wrap"/>
+                        <Button x:Name="IssueUrlButton" Classes="secondary-btn" Content="Open Issue"/>
+                        <Button x:Name="CloseAfterSuccessButton" Classes="primary-btn" Content="Close"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>
