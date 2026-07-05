@@ -21,11 +21,18 @@ public partial class FeedbackDialog : Window
     private byte[]? _screenshotBytes;
     private string? _lastIssueUrl;
 
+    /// <summary>True once a report was successfully submitted.</summary>
+    public bool WasSubmitted { get; private set; }
+
+    /// <summary>The e-mail the user submitted with (null/empty allowed). Only meaningful when <see cref="WasSubmitted"/>.</summary>
+    public string? SubmittedEmail { get; private set; }
+
     public FeedbackDialog() : this(
         new FeedbackReportingService(new FeedbackReportingServiceOptions { RelayUrl = "https://example.com" }),
         FeedbackProduct.MainApp,
         "0.0.0",
         string.Empty,
+        null,
         null)
     {
     }
@@ -35,7 +42,8 @@ public partial class FeedbackDialog : Window
         FeedbackProduct product,
         string appVersion,
         string logTail,
-        byte[]? initialScreenshot)
+        byte[]? initialScreenshot,
+        string? initialEmail)
     {
         InitializeComponent();
 
@@ -44,6 +52,7 @@ public partial class FeedbackDialog : Window
         _appVersion = appVersion;
         _logTail = logTail;
         _screenshotBytes = initialScreenshot;
+        EmailBox.Text = initialEmail;
 
         UpdateScreenshotPreview();
 
@@ -136,15 +145,29 @@ public partial class FeedbackDialog : Window
             return;
         }
 
+        var email = EmailBox.Text?.Trim();
+        if (!string.IsNullOrEmpty(email) && !LooksLikeEmail(email))
+        {
+            StatusText.Text = "That e-mail address doesn't look valid — fix it or leave the field empty.";
+            StatusText.IsVisible = true;
+            return;
+        }
+
+        var reportType = TypeFeedbackRadio.IsChecked == true ? FeedbackReportType.Feedback
+            : TypeFeatureRadio.IsChecked == true ? FeedbackReportType.FeatureRequest
+            : FeedbackReportType.Bug;
+
         SetSubmitting(true);
 
         var report = new FeedbackReport
         {
             Product = _product,
+            ReportType = reportType,
             Title = title,
             Description = description,
             WhatHappened = string.IsNullOrWhiteSpace(WhatHappenedBox.Text) ? null : WhatHappenedBox.Text!.Trim(),
             WhatShouldHaveHappened = string.IsNullOrWhiteSpace(WhatShouldHaveHappenedBox.Text) ? null : WhatShouldHaveHappenedBox.Text!.Trim(),
+            Email = string.IsNullOrEmpty(email) ? null : email,
             ScreenshotPng = _screenshotBytes,
             LogTail = _logTail,
             AppVersion = _appVersion,
@@ -158,7 +181,7 @@ public partial class FeedbackDialog : Window
 
         if (result.Success)
         {
-            ShowSuccess(result.IssueUrl!);
+            ShowSuccess(result.IssueUrl!, email);
         }
         else
         {
@@ -174,8 +197,11 @@ public partial class FeedbackDialog : Window
         SubmittingIndicator.IsVisible = submitting;
     }
 
-    private void ShowSuccess(string issueUrl)
+    private void ShowSuccess(string issueUrl, string? email)
     {
+        WasSubmitted = true;
+        SubmittedEmail = string.IsNullOrEmpty(email) ? null : email;
+
         _lastIssueUrl = issueUrl;
         FormPanel.IsVisible = false;
         SuccessPanel.IsVisible = true;
@@ -197,5 +223,13 @@ public partial class FeedbackDialog : Window
         {
             // Ignore URL open failures
         }
+    }
+
+    private static bool LooksLikeEmail(string email)
+    {
+        var at = email.IndexOf('@');
+        if (at <= 0 || at != email.LastIndexOf('@')) return false;
+        var domain = email[(at + 1)..];
+        return domain.Length >= 3 && domain.Contains('.');
     }
 }

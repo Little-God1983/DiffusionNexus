@@ -645,14 +645,41 @@ public class DialogService : IDialogService
             // Screenshot capture is best-effort — the dialog works fine without one.
         }
 
+        var appSettings = App.Services?.GetService<IAppSettingsService>();
+        string? rememberedEmail = null;
+        if (appSettings is not null)
+        {
+            try
+            {
+                rememberedEmail = await appSettings.GetFeedbackReporterEmailAsync();
+            }
+            catch
+            {
+                // Prefill is best-effort.
+            }
+        }
+
         var dialog = new FeedbackDialog(
             feedbackService,
             DiffusionNexus.Installer.SDK.Shared.Services.Feedback.FeedbackProduct.MainApp,
             appVersion,
             logTail,
-            screenshot);
+            screenshot,
+            rememberedEmail);
 
         await dialog.ShowDialog(_window);
+
+        if (dialog.WasSubmitted && appSettings is not null)
+        {
+            try
+            {
+                await appSettings.SetFeedbackReporterEmailAsync(dialog.SubmittedEmail);
+            }
+            catch
+            {
+                // Remembering the e-mail is best-effort.
+            }
+        }
     }
 
     private static string BuildLogTail(Domain.Services.UnifiedLogging.IUnifiedLogger? logger)

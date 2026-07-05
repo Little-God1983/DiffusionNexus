@@ -4,8 +4,8 @@
         x:Class="DiffusionNexus.UI.Views.Dialogs.FeedbackDialog"
         x:DataType="local:FeedbackDialog"
         Title="Send Feedback"
-        Width="520"
-        Height="660"
+        Width="1040"
+        Height="800"
         WindowStartupLocation="CenterOwner"
         CanResize="False">
 
@@ -60,6 +60,10 @@
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
+
+        <Style Selector="RadioButton">
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
     </Window.Styles>
 
     <Border Padding="24">
@@ -69,36 +73,56 @@
             <ScrollViewer Grid.Row="1">
                 <StackPanel Spacing="14">
                     <StackPanel x:Name="FormPanel" Spacing="14">
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="field-label" Text="Title *"/>
-                            <TextBox x:Name="TitleBox" Watermark="Short summary of the problem"/>
-                        </StackPanel>
+                        <Grid ColumnDefinitions="*,24,*">
+                            <!-- Left column: report type + text fields + e-mail -->
+                            <StackPanel Grid.Column="0" Spacing="14">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Classes="field-label" Text="Report type"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="18">
+                                        <RadioButton x:Name="TypeFeedbackRadio" GroupName="ReportType" Content="Feedback"/>
+                                        <RadioButton x:Name="TypeBugRadio" GroupName="ReportType" Content="Bug report" IsChecked="True"/>
+                                        <RadioButton x:Name="TypeFeatureRadio" GroupName="ReportType" Content="Feature request"/>
+                                    </StackPanel>
+                                </StackPanel>
 
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="field-label" Text="Description *"/>
-                            <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="70" TextWrapping="Wrap"/>
-                        </StackPanel>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label" Text="Title *"/>
+                                    <TextBox x:Name="TitleBox" Watermark="Short summary of the problem"/>
+                                </StackPanel>
 
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="field-label" Text="What happened (optional)"/>
-                            <TextBox x:Name="WhatHappenedBox" AcceptsReturn="True" Height="50" TextWrapping="Wrap"/>
-                        </StackPanel>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label" Text="Description *"/>
+                                    <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="110" TextWrapping="Wrap"/>
+                                </StackPanel>
 
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="field-label" Text="What should have happened (optional)"/>
-                            <TextBox x:Name="WhatShouldHaveHappenedBox" AcceptsReturn="True" Height="50" TextWrapping="Wrap"/>
-                        </StackPanel>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label" Text="What happened (optional)"/>
+                                    <TextBox x:Name="WhatHappenedBox" AcceptsReturn="True" Height="70" TextWrapping="Wrap"/>
+                                </StackPanel>
 
-                        <StackPanel Spacing="6">
-                            <TextBlock Classes="field-label" Text="Screenshot"/>
-                            <Border Background="#2a2a4a" CornerRadius="6" Padding="8">
-                                <Image x:Name="ScreenshotPreviewImage" MaxHeight="180" Stretch="Uniform"/>
-                            </Border>
-                            <Grid ColumnDefinitions="*,10,*">
-                                <Button x:Name="ReplaceScreenshotButton" Grid.Column="0" Classes="secondary-btn" Content="Replace Screenshot..."/>
-                                <Button x:Name="RemoveScreenshotButton" Grid.Column="2" Classes="secondary-btn" Content="Remove Screenshot"/>
-                            </Grid>
-                        </StackPanel>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label" Text="What should have happened (optional)"/>
+                                    <TextBox x:Name="WhatShouldHaveHappenedBox" AcceptsReturn="True" Height="70" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label" Text="E-mail (optional — in case we have questions)"/>
+                                    <TextBox x:Name="EmailBox" Watermark="you@example.com"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Right column: screenshot -->
+                            <StackPanel Grid.Column="2" Spacing="6">
+                                <TextBlock Classes="field-label" Text="Screenshot"/>
+                                <Border Background="#2a2a4a" CornerRadius="6" Padding="8">
+                                    <Image x:Name="ScreenshotPreviewImage" MaxHeight="420" Stretch="Uniform"/>
+                                </Border>
+                                <Grid ColumnDefinitions="*,10,*">
+                                    <Button x:Name="ReplaceScreenshotButton" Grid.Column="0" Classes="secondary-btn" Content="Replace Screenshot..."/>
+                                    <Button x:Name="RemoveScreenshotButton" Grid.Column="2" Classes="secondary-btn" Content="Remove Screenshot"/>
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
 
                         <TextBlock x:Name="StatusText" Foreground="#ff8080" TextWrapping="Wrap" IsVisible="False"/>
 

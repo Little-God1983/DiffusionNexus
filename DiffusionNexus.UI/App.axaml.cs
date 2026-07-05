@@ -852,8 +852,7 @@ public partial class App : Application
         services.AddSingleton<IFeedbackReportingService>(_ => new FeedbackReportingService(
             new FeedbackReportingServiceOptions
             {
-                // TODO: replace with the real deployed relay URL from Plan A Task 5's output.
-                RelayUrl = "https://diffusionnexus-feedback-relay.example.workers.dev"
+                RelayUrl = "https://diffusionnexus-feedback-relay.diffusionnexus.workers.dev"
             }));
 
         // Configuration checker (singleton - accessible across the entire application)
