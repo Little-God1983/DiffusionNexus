@@ -1,10 +1,7 @@
 using System.Runtime.InteropServices;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
-using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
 
@@ -17,7 +14,6 @@ public partial class FeedbackDialog : Window
     private readonly FeedbackProduct _product;
     private readonly string _appVersion;
     private readonly string _logTail;
-    private byte[]? _screenshotBytes;
     private bool _isSubmitting;
 
     /// <summary>True once a report was successfully submitted.</summary>
@@ -31,7 +27,6 @@ public partial class FeedbackDialog : Window
         FeedbackProduct.MainApp,
         "0.0.0",
         string.Empty,
-        null,
         null)
     {
     }
@@ -41,7 +36,6 @@ public partial class FeedbackDialog : Window
         FeedbackProduct product,
         string appVersion,
         string logTail,
-        byte[]? initialScreenshot,
         string? initialEmail)
     {
         InitializeComponent();
@@ -50,85 +44,14 @@ public partial class FeedbackDialog : Window
         _product = product;
         _appVersion = appVersion;
         _logTail = logTail;
-        _screenshotBytes = initialScreenshot;
         EmailBox.Text = initialEmail;
-
-        UpdateScreenshotPreview();
 
         SubmitButton.Click += OnSubmitClick;
         CancelButton.Click += (_, _) => Close();
-        ReplaceScreenshotButton.Click += OnReplaceScreenshotClick;
-        RemoveScreenshotButton.Click += (_, _) =>
-        {
-            _screenshotBytes = null;
-            UpdateScreenshotPreview();
-        };
         DisclaimerCheckBox.IsCheckedChanged += (_, _) => UpdateSubmitEnabled();
         UpdateSubmitEnabled();
         CloseAfterSuccessButton.Click += (_, _) => Close();
         SubmitAnotherButton.Click += OnSubmitAnotherClick;
-    }
-
-    private void UpdateScreenshotPreview()
-    {
-        if (_screenshotBytes is { Length: > 0 })
-        {
-            try
-            {
-                using var stream = new MemoryStream(_screenshotBytes);
-                ScreenshotPreviewImage.Source = new Bitmap(stream);
-                ScreenshotPreviewImage.IsVisible = true;
-                RemoveScreenshotButton.IsVisible = true;
-                StatusText.IsVisible = false;
-            }
-            catch
-            {
-                // Image file is corrupted or invalid
-                _screenshotBytes = null;
-                ScreenshotPreviewImage.Source = null;
-                ScreenshotPreviewImage.IsVisible = false;
-                RemoveScreenshotButton.IsVisible = false;
-                StatusText.Text = "Couldn't load that image file — it may be corrupted or not a valid image.";
-                StatusText.IsVisible = true;
-            }
-        }
-        else
-        {
-            ScreenshotPreviewImage.Source = null;
-            ScreenshotPreviewImage.IsVisible = false;
-            RemoveScreenshotButton.IsVisible = false;
-        }
-    }
-
-    private async void OnReplaceScreenshotClick(object? sender, RoutedEventArgs e)
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Choose a screenshot",
-            AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Images") { Patterns = ["*.png", "*.jpg", "*.jpeg"] }]
-        });
-
-        var file = files.FirstOrDefault();
-        if (file is null) return;
-
-        await using var stream = await file.OpenReadAsync();
-        using var memoryStream = new MemoryStream();
-        await stream.CopyToAsync(memoryStream);
-
-        try
-        {
-            _screenshotBytes = ScreenshotCapture.DownscaleIfNeeded(memoryStream.ToArray());
-        }
-        catch
-        {
-            // Picked file is corrupted or not a valid image.
-            StatusText.Text = "Couldn't load that image file — it may be corrupted or not a valid image.";
-            StatusText.IsVisible = true;
-            return;
-        }
-
-        UpdateScreenshotPreview();
     }
 
     private async void OnSubmitClick(object? sender, RoutedEventArgs e)
@@ -166,8 +89,7 @@ public partial class FeedbackDialog : Window
             WhatHappened = string.IsNullOrWhiteSpace(WhatHappenedBox.Text) ? null : WhatHappenedBox.Text!.Trim(),
             WhatShouldHaveHappened = string.IsNullOrWhiteSpace(WhatShouldHaveHappenedBox.Text) ? null : WhatShouldHaveHappenedBox.Text!.Trim(),
             Email = string.IsNullOrEmpty(email) ? null : email,
-            ScreenshotPng = _screenshotBytes,
-            LogTail = _logTail,
+            LogTail = reportType == FeedbackReportType.Bug ? _logTail : null,
             AppVersion = _appVersion,
             Os = RuntimeInformation.OSDescription,
             TimestampUtc = DateTimeOffset.UtcNow
@@ -194,8 +116,6 @@ public partial class FeedbackDialog : Window
         DescriptionBox.Text = string.Empty;
         WhatHappenedBox.Text = string.Empty;
         WhatShouldHaveHappenedBox.Text = string.Empty;
-        _screenshotBytes = null;
-        UpdateScreenshotPreview();
         TypeBugRadio.IsChecked = true;
         DisclaimerCheckBox.IsChecked = false;
         StatusText.IsVisible = false;

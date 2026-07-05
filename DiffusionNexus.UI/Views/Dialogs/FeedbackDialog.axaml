@@ -74,7 +74,7 @@
                 <StackPanel Spacing="14">
                     <StackPanel x:Name="FormPanel" Spacing="14">
                         <Grid ColumnDefinitions="*,24,*">
-                            <!-- Left column: report type + text fields + e-mail -->
+                            <!-- Left column: report type + title + description -->
                             <StackPanel Grid.Column="0" Spacing="14">
                                 <StackPanel Spacing="6">
                                     <TextBlock Classes="field-label" Text="Report type"/>
@@ -92,9 +92,12 @@
 
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="field-label" Text="Description *"/>
-                                    <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="110" TextWrapping="Wrap"/>
+                                    <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="150" TextWrapping="Wrap"/>
                                 </StackPanel>
+                            </StackPanel>
 
+                            <!-- Right column: optional details + e-mail -->
+                            <StackPanel Grid.Column="2" Spacing="14">
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="field-label" Text="What happened (optional)"/>
                                     <TextBox x:Name="WhatHappenedBox" AcceptsReturn="True" Height="70" TextWrapping="Wrap"/>
@@ -110,24 +113,13 @@
                                     <TextBox x:Name="EmailBox" Watermark="you@example.com"/>
                                 </StackPanel>
                             </StackPanel>
-
-                            <!-- Right column: screenshot -->
-                            <StackPanel Grid.Column="2" Spacing="6">
-                                <TextBlock Classes="field-label" Text="Screenshot"/>
-                                <Border Background="#2a2a4a" CornerRadius="6" Padding="8">
-                                    <Image x:Name="ScreenshotPreviewImage" MaxHeight="420" Stretch="Uniform"/>
-                                </Border>
-                                <Grid ColumnDefinitions="*,10,*">
-                                    <Button x:Name="ReplaceScreenshotButton" Grid.Column="0" Classes="secondary-btn" Content="Replace Screenshot..."/>
-                                    <Button x:Name="RemoveScreenshotButton" Grid.Column="2" Classes="secondary-btn" Content="Remove Screenshot"/>
-                                </Grid>
-                            </StackPanel>
                         </Grid>
 
-                        <Border Background="#1E1E1E" CornerRadius="4" Padding="16">
+                        <Border Background="#1E1E1E" BorderBrush="#FF6B6B" BorderThickness="1" CornerRadius="4" Padding="16">
                             <StackPanel Spacing="12">
+                                <TextBlock Text="Before you submit" FontWeight="Bold" FontSize="14" Foreground="#FF6B6B"/>
                                 <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="#ccccee" LineHeight="20">
-                                    This report includes the last 500 lines of the application log, which may contain local file and folder names — for example downloaded LoRA or model filenames and their paths. If a screenshot is attached, it reflects whatever was on your screen at the time; please make sure it doesn't contain anything NSFW or otherwise sensitive before submitting.
+                                    Bug reports include the last 500 lines of the application log to help with debugging — these can contain local file and folder names, for example downloaded LoRA or model filenames. Feedback and feature requests don't include the log. Screenshots aren't supported, so no unintended images can end up in a report.
                                 </TextBlock>
                                 <CheckBox x:Name="DisclaimerCheckBox" Content="I understand and accept this" Foreground="White" FontSize="13"/>
                             </StackPanel>

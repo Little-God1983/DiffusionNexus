@@ -635,16 +635,6 @@ public class DialogService : IDialogService
             .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "0.0.0";
 
-        byte[]? screenshot = null;
-        try
-        {
-            screenshot = ScreenshotCapture.CaptureWindowPng(_window);
-        }
-        catch
-        {
-            // Screenshot capture is best-effort — the dialog works fine without one.
-        }
-
         var appSettings = App.Services?.GetService<IAppSettingsService>();
         string? rememberedEmail = null;
         if (appSettings is not null)
@@ -664,7 +654,6 @@ public class DialogService : IDialogService
             DiffusionNexus.Installer.SDK.Shared.Services.Feedback.FeedbackProduct.MainApp,
             appVersion,
             logTail,
-            screenshot,
             rememberedEmail);
 
         await dialog.ShowDialog(_window);
