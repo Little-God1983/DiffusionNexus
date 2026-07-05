@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10 / C#, Avalonia UI, CommunityToolkit.Mvvm (`[RelayCommand]`).
 
-This plan is **Plan C of 3** for the in-app feedback feature (spec: `DiffusionNexus.Installer.SDK/docs/superpowers/specs/2026-07-03-feedback-bug-report-design.md`, in the SDK repo). It depends on **Plan A** (SDK repo, `docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md`) being available as a referenced SDK NuGet version, since this app pins a specific SDK NuGet version rather than using a local project reference (per this app's own `.github/copilot-instructions.md` and prior project convention — check the SDK `PackageReference` version in `DiffusionNexus.UI.csproj` and bump it to Plan A's published version, e.g. `1.2.24`, before starting). It also needs **the deployed relay URL from Plan A Task 5** — this plan uses a placeholder that must be swapped for the real one (see Task 3, Step 1). Plan C is independent of **Plan B** (`DiffusionNexus.Installers` repo) — they can be implemented in either order or in parallel once Plan A is done.
+This plan is **Plan C of 3** for the in-app feedback feature (spec: `DiffusionNexus.Installer.SDK/docs/superpowers/specs/2026-07-03-feedback-bug-report-design.md`, in the SDK repo). **Plan A is now done and published**: `IFeedbackReportingService`/`FeedbackReportingService` shipped in SDK NuGet **v1.2.24** (Task 2, Step 1 below bumps this app's `PackageReference`s to that version). It still needs **the deployed relay URL from Plan A Task 5** — the Cloudflare Worker (`feedback-relay/`) has only been exercised from a dev worktree so far, not deployed to a real `*.workers.dev` URL, so this plan still uses a placeholder that must be swapped for the real one once that happens (see Task 3, Step 1). Plan C is independent of **Plan B** (`DiffusionNexus.Installers` repo) — they can be implemented in either order or in parallel.
 
 ## Global Constraints
 
@@ -113,7 +113,22 @@ git commit -m "feat: add ScreenshotCapture helper for the feedback dialog"
 - Consumes: `IFeedbackReportingService`, `FeedbackReport`, `FeedbackProduct` from `DiffusionNexus.Installer.SDK.Shared.Services.Feedback` (Plan A, referenced via the SDK NuGet package this app already pins).
 - Produces: `public partial class FeedbackDialog : Window` with constructor `FeedbackDialog(IFeedbackReportingService feedbackService, FeedbackProduct product, string appVersion, string logTail, byte[]? initialScreenshot)` — consumed by Task 3 (`DialogService.ShowFeedbackDialogAsync`).
 
-- [ ] **Step 1: Write the XAML**
+- [ ] **Step 1: Bump the SDK package references to 1.2.24**
+
+In `DiffusionNexus.UI/DiffusionNexus.UI.csproj`, bump all five `DiffusionNexus.Installer.SDK.*` `PackageReference` versions from `1.2.23` to `1.2.24`:
+
+```xml
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="1.2.24" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="1.2.24" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.24" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.24" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.24" />
+```
+
+Run: `dotnet restore DiffusionNexus.UI`
+Expected: restore succeeds and pulls `IFeedbackReportingService`/`FeedbackReportingService`/`FeedbackReport`/`FeedbackProduct` from `DiffusionNexus.Installer.SDK.Shared` 1.2.24.
+
+- [ ] **Step 2: Write the XAML**
 
 ```xml
 <!-- DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml -->
@@ -241,7 +256,7 @@ git commit -m "feat: add ScreenshotCapture helper for the feedback dialog"
 </Window>
 ```
 
-- [ ] **Step 2: Write the code-behind**
+- [ ] **Step 3: Write the code-behind**
 
 ```csharp
 // DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml.cs
@@ -421,15 +436,15 @@ public partial class FeedbackDialog : Window
 }
 ```
 
-- [ ] **Step 3: Build to verify it compiles**
+- [ ] **Step 4: Build to verify it compiles**
 
 Run: `dotnet build DiffusionNexus.UI`
-Expected: Build succeeded, 0 errors. (If `FeedbackReport`/`IFeedbackReportingService`/etc. are not found, the `DiffusionNexus.Installer.SDK.*` `PackageReference` versions in `DiffusionNexus.UI.csproj` need to be bumped to Plan A's published version first.)
+Expected: Build succeeded, 0 errors.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml.cs
+git add DiffusionNexus.UI/DiffusionNexus.UI.csproj DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml DiffusionNexus.UI/Views/Dialogs/FeedbackDialog.axaml.cs
 git commit -m "feat: add FeedbackDialog view for in-app bug reports"
 ```
 
@@ -557,22 +572,24 @@ In `DiffusionNexus.UI/ViewModels/DiffusionNexusMainWindowViewModel.cs`, add this
 
 - [ ] **Step 5: Add the button to the sidebar**
 
-In `DiffusionNexus.UI/Views/DiffusionNexusMainWindow.axaml`, add a new button to the "Bottom Social Links" `StackPanel`, right after the Civitai button (after line 81's closing `</Button>`, before line 82's closing `</StackPanel>`):
+In `DiffusionNexus.UI/Views/DiffusionNexusMainWindow.axaml`, add a new button to the "Bottom Social Links" `StackPanel`, directly **above the Patreon button** — i.e. right after the Youtube button's closing `</Button>` and before the Patreon `<Button Command="{Binding OpenPatreonCommand}" ...>` block:
 
 ```xml
-                                <Button Width="196" Height="48" Margin="2,2"
-                                        Command="{Binding OpenFeedbackCommand}"
-                                        HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
-                                            <TextBlock Text="💬" FontSize="18"
-                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <TextBlock Text="Feedback" VerticalAlignment="Center"
-                                                   IsVisible="{Binding IsMenuOpen}"/>
-                                    </StackPanel>
-                                </Button>
+    <Button Width="196" Height="48" Margin="2,2"
+            Command="{Binding OpenFeedbackCommand}"
+            HorizontalContentAlignment="Left">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
+                <TextBlock Text="💬" FontSize="18"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <TextBlock Text="Feedback" VerticalAlignment="Center"
+                       IsVisible="{Binding IsMenuOpen}"/>
+        </StackPanel>
+    </Button>
 ```
+
+Resulting order top-to-bottom: Youtube, **Feedback**, Patreon, Civitai.
 
 - [ ] **Step 6: Build to verify it compiles**
 
@@ -583,7 +600,7 @@ Expected: Build succeeded, 0 errors.
 
 Run: `dotnet run --project DiffusionNexus.UI`
 Expected, walking through by hand:
-1. Launch the app, confirm a "💬 Feedback" button appears in the sidebar directly below Civitai.
+1. Launch the app, confirm a "💬 Feedback" button appears in the sidebar directly below Youtube and above Patreon.
 2. Click it — the `FeedbackDialog` opens, pre-populated with a screenshot of the current window.
 3. Try submitting with an empty title — confirm the inline validation message appears and nothing is sent.
 4. Fill in Title + Description, click Submit — confirm the "Submitting..." indicator appears, then either a success panel with a clickable issue link (if the relay is deployed and reachable) or a friendly error message that preserves your typed text (if not).
