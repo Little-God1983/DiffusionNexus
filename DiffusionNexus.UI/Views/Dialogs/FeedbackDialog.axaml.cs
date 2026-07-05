@@ -56,6 +56,13 @@ public partial class FeedbackDialog : Window
 
     private async void OnSubmitClick(object? sender, RoutedEventArgs e)
     {
+        // Guard against re-entrancy: async void handlers can fire again before the
+        // first submission's await completes, which would post the report twice.
+        if (_isSubmitting)
+        {
+            return;
+        }
+
         var title = TitleBox.Text?.Trim() ?? string.Empty;
         var description = DescriptionBox.Text?.Trim() ?? string.Empty;
 
@@ -122,7 +129,10 @@ public partial class FeedbackDialog : Window
         UpdateSubmitEnabled();
 
         SuccessPanel.IsVisible = false;
+        SuccessFooter.IsVisible = false;
         FormPanel.IsVisible = true;
+        DisclaimerPanel.IsVisible = true;
+        FormFooter.IsVisible = true;
     }
 
     private void UpdateSubmitEnabled()
@@ -144,7 +154,10 @@ public partial class FeedbackDialog : Window
         SubmittedEmail = string.IsNullOrEmpty(email) ? null : email;
 
         FormPanel.IsVisible = false;
+        DisclaimerPanel.IsVisible = false;
+        FormFooter.IsVisible = false;
         SuccessPanel.IsVisible = true;
+        SuccessFooter.IsVisible = true;
     }
 
     private static bool LooksLikeEmail(string email)
