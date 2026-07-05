@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.Civitai;
@@ -8,6 +9,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Dialogs;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services;
@@ -621,4 +623,44 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
     }
 
+    public async Task ShowFeedbackDialogAsync()
+    {
+        var feedbackService = App.Services?.GetService<IFeedbackReportingService>();
+        if (feedbackService is null) return;
+
+        var unifiedLogger = App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>();
+        var logTail = BuildLogTail(unifiedLogger);
+
+        var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "0.0.0";
+
+        byte[]? screenshot = null;
+        try
+        {
+            screenshot = ScreenshotCapture.CaptureWindowPng(_window);
+        }
+        catch
+        {
+            // Screenshot capture is best-effort — the dialog works fine without one.
+        }
+
+        var dialog = new FeedbackDialog(
+            feedbackService,
+            DiffusionNexus.Installer.SDK.Shared.Services.Feedback.FeedbackProduct.MainApp,
+            appVersion,
+            logTail,
+            screenshot);
+
+        await dialog.ShowDialog(_window);
+    }
+
+    private static string BuildLogTail(Domain.Services.UnifiedLogging.IUnifiedLogger? logger)
+    {
+        if (logger is null) return string.Empty;
+
+        var entries = logger.GetEntries();
+        var tail = entries.Count <= 500 ? entries : entries.Skip(entries.Count - 500);
+        return string.Join('\n', tail.Select(e => e.ToDisplayString()));
+    }
     }

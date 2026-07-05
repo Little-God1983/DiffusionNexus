@@ -357,6 +357,15 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task OpenFeedbackAsync()
+    {
+        var dialogService = App.Services?.GetService<IDialogService>();
+        if (dialogService is null) return;
+
+        await dialogService.ShowFeedbackDialogAsync();
+    }
+
+    [RelayCommand]
     private void OpenAbout()
     {
         CurrentModuleView = new AboutView();
