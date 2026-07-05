@@ -20,6 +20,7 @@ public partial class FeedbackDialog : Window
     private readonly string _logTail;
     private byte[]? _screenshotBytes;
     private string? _lastIssueUrl;
+    private bool _isSubmitting;
 
     /// <summary>True once a report was successfully submitted.</summary>
     public bool WasSubmitted { get; private set; }
@@ -64,6 +65,8 @@ public partial class FeedbackDialog : Window
             _screenshotBytes = null;
             UpdateScreenshotPreview();
         };
+        DisclaimerCheckBox.IsCheckedChanged += (_, _) => UpdateSubmitEnabled();
+        UpdateSubmitEnabled();
         CloseAfterSuccessButton.Click += (_, _) => Close();
         IssueUrlButton.Click += (_, _) =>
         {
@@ -190,9 +193,15 @@ public partial class FeedbackDialog : Window
         }
     }
 
+    private void UpdateSubmitEnabled()
+    {
+        SubmitButton.IsEnabled = !_isSubmitting && DisclaimerCheckBox.IsChecked == true;
+    }
+
     private void SetSubmitting(bool submitting)
     {
-        SubmitButton.IsEnabled = !submitting;
+        _isSubmitting = submitting;
+        UpdateSubmitEnabled();
         CancelButton.IsEnabled = !submitting;
         SubmittingIndicator.IsVisible = submitting;
     }
