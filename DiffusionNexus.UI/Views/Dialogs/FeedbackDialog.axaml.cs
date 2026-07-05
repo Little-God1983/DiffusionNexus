@@ -65,10 +65,24 @@ public partial class FeedbackDialog : Window
     {
         if (_screenshotBytes is { Length: > 0 })
         {
-            using var stream = new MemoryStream(_screenshotBytes);
-            ScreenshotPreviewImage.Source = new Bitmap(stream);
-            ScreenshotPreviewImage.IsVisible = true;
-            RemoveScreenshotButton.IsVisible = true;
+            try
+            {
+                using var stream = new MemoryStream(_screenshotBytes);
+                ScreenshotPreviewImage.Source = new Bitmap(stream);
+                ScreenshotPreviewImage.IsVisible = true;
+                RemoveScreenshotButton.IsVisible = true;
+                StatusText.IsVisible = false;
+            }
+            catch
+            {
+                // Image file is corrupted or invalid
+                _screenshotBytes = null;
+                ScreenshotPreviewImage.Source = null;
+                ScreenshotPreviewImage.IsVisible = false;
+                RemoveScreenshotButton.IsVisible = false;
+                StatusText.Text = "Couldn't load that image file — it may be corrupted or not a valid image.";
+                StatusText.IsVisible = true;
+            }
         }
         else
         {
