@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
 
@@ -107,7 +108,19 @@ public partial class FeedbackDialog : Window
         await using var stream = await file.OpenReadAsync();
         using var memoryStream = new MemoryStream();
         await stream.CopyToAsync(memoryStream);
-        _screenshotBytes = memoryStream.ToArray();
+
+        try
+        {
+            _screenshotBytes = ScreenshotCapture.DownscaleIfNeeded(memoryStream.ToArray());
+        }
+        catch
+        {
+            // Picked file is corrupted or not a valid image.
+            StatusText.Text = "Couldn't load that image file — it may be corrupted or not a valid image.";
+            StatusText.IsVisible = true;
+            return;
+        }
+
         UpdateScreenshotPreview();
     }
 

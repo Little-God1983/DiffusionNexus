@@ -50,4 +50,32 @@ public static class ScreenshotCapture
         scaledBitmap.Save(outStream);
         return outStream.ToArray();
     }
+
+    /// <summary>
+    /// Decodes <paramref name="imageBytes"/> and, if either dimension exceeds
+    /// <paramref name="maxDimension"/>, downscales (preserving aspect ratio) and
+    /// re-encodes as PNG. Images already within bounds are returned unchanged.
+    /// </summary>
+    public static byte[] DownscaleIfNeeded(byte[] imageBytes, int maxDimension = MaxDimension)
+    {
+        ArgumentNullException.ThrowIfNull(imageBytes);
+
+        using var bitmap = new Bitmap(new MemoryStream(imageBytes));
+
+        var width = bitmap.PixelSize.Width;
+        var height = bitmap.PixelSize.Height;
+        if (width <= maxDimension && height <= maxDimension)
+        {
+            return imageBytes;
+        }
+
+        var largestSide = Math.Max(width, height);
+        var scale = (double)maxDimension / largestSide;
+        var scaledSize = new PixelSize((int)(width * scale), (int)(height * scale));
+
+        using var scaledBitmap = bitmap.CreateScaledBitmap(scaledSize);
+        using var outStream = new MemoryStream();
+        scaledBitmap.Save(outStream);
+        return outStream.ToArray();
+    }
 }
