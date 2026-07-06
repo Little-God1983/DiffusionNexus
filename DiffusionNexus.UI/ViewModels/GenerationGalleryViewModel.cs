@@ -287,8 +287,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             var settings = await _settingsService.GetSettingsAsync();
             var enabledPaths = GetEnabledGalleryPaths(settings);
+            var includeSubFolders = IncludeSubFolders;
 
-            var mediaItems = await CollectMediaItemsAsync(enabledPaths, IncludeSubFolders);
+            // Offload the recursive folder scan (per-file IO syscalls + item creation)
+            // to the thread pool so the UI thread stays responsive; with large auto-
+            // registered output folders the inline scan froze the window for ~20s at
+            // startup (issue #397). RunBusyAsync itself does not offload.
+            var mediaItems = await Task.Run(() => CollectMediaItemsAsync(enabledPaths, includeSubFolders));
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
 
             // Fire-and-forget: generate missing video thumbnails after gallery is displayed
@@ -614,17 +619,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             return;
         }
 
-        var videoItems = items
-            .Where(i => i.IsVideo && !File.Exists(MediaFileExtensions.GetVideoThumbnailPath(i.FilePath)))
-            .ToList();
-
-        if (videoItems.Count == 0)
-        {
-            return;
-        }
-
         _ = Task.Run(async () =>
         {
+            // The File.Exists probe per video is blocking IO, so it belongs on the
+            // thread pool too — not on the UI thread that calls this method (#397).
+            var videoItems = items
+                .Where(i => i.IsVideo && !File.Exists(MediaFileExtensions.GetVideoThumbnailPath(i.FilePath)))
+                .ToList();
+
+            if (videoItems.Count == 0)
+            {
+                return;
+            }
+
             // Limit concurrency to avoid saturating CPU/disk with FFmpeg processes
             using var semaphore = new SemaphoreSlim(2);
 

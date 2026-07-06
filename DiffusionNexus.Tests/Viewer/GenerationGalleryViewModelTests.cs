@@ -577,6 +577,66 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.ToggleFavoritesButtonText.Should().Contain("Unmark");
     }
 
+    [Fact]
+    public void LoadMediaAsync_DoesNotRunMediaScanOnCallingThread()
+    {
+        // Startup regression guard for issue #397: the media scan does synchronous
+        // per-file IO and must not run inline on the thread that invokes the
+        // command (the UI thread at startup).
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "img.png"), "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+        };
+
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        // The favorites lookup runs once per scanned folder inside the enumeration
+        // loop and completes synchronously (like the real service when no
+        // .favorites.json exists), so its callback records the scan thread.
+        var scanThreadIds = new List<int>();
+        var mockFavorites = new Mock<IImageFavoritesService>();
+        mockFavorites.Setup(service => service.GetFavoritesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => scanThreadIds.Add(Environment.CurrentManagedThreadId))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            favoritesService: mockFavorites.Object);
+
+        // Invoke the command from a dedicated non-pool thread standing in for the
+        // UI thread, so offloaded thread-pool work can never land back on it.
+        var callingThreadId = 0;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                callingThreadId = Environment.CurrentManagedThreadId;
+                viewModel.LoadMediaCommand.ExecuteAsync(null).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.Start();
+        thread.Join(TimeSpan.FromSeconds(30)).Should().BeTrue("the gallery load must complete");
+
+        failure.Should().BeNull();
+        viewModel.MediaItems.Should().ContainSingle();
+        scanThreadIds.Should().NotBeEmpty();
+        scanThreadIds.Should().NotContain(callingThreadId,
+            "the media scan does blocking file IO and must not run on the thread that invoked the command (issue #397)");
+    }
+
     public void Dispose()
     {
         foreach (var path in _tempPaths)
