@@ -98,4 +98,10 @@ public interface IAppSettingsService
     /// favorited LoRA source folder.
     /// </summary>
     Task SetFavoriteLoraSourceAsync(string? folderPath, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets the remembered feedback-reporter e-mail, or null if not set.</summary>
+    Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the feedback-reporter e-mail; whitespace/empty clears it to null.</summary>
+    Task SetFeedbackReporterEmailAsync(string? email, CancellationToken cancellationToken = default);
 }

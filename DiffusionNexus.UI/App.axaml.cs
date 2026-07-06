@@ -11,6 +11,7 @@ using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Installer.SDK.Shared.Services;
+using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
@@ -844,6 +845,15 @@ public partial class App : Application
             var dir = System.IO.Path.GetDirectoryName(settingsPath) ?? AppContext.BaseDirectory;
             return new DismissedMessageStore(System.IO.Path.Combine(dir, "dismissed_messages.json"));
         });
+
+        // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
+        // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
+        // in the DiffusionNexus.Installer.SDK repo).
+        services.AddSingleton<IFeedbackReportingService>(_ => new FeedbackReportingService(
+            new FeedbackReportingServiceOptions
+            {
+                RelayUrl = "https://diffusionnexus-feedback-relay.diffusionnexus.workers.dev"
+            }));
 
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();

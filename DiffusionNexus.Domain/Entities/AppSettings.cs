@@ -91,6 +91,12 @@ public class AppSettings
     public string? FavoriteLoraSourcePath { get; set; }
 
     /// <summary>
+    /// Reporter e-mail remembered by the in-app feedback dialog (optional; pre-fills the
+    /// dialog's e-mail field). Null when the user never entered one.
+    /// </summary>
+    public string? FeedbackReporterEmail { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }

@@ -406,6 +406,28 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return settings?.FeedbackReporterEmail;
+    }
+
+    /// <inheritdoc />
+    public async Task SetFeedbackReporterEmailAsync(string? email, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (settings is null) return;
+
+        settings.FeedbackReporterEmail = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default)
     {
         var settings = await _unitOfWork.AppSettings
