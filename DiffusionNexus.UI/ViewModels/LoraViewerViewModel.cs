@@ -41,6 +41,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private CancellationTokenSource? _updateCheckCts;
 
+    /// <summary>Cancels the in-flight "Download Metadata" sync; null when idle.</summary>
+    private CancellationTokenSource? _metadataSyncCts;
+
     /// <summary>
     /// Debounces search-text keystrokes. Every edit cancels the previous pending
     /// filter pass and schedules a new one, so <see cref="ApplyFilters"/> (which
@@ -117,6 +120,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     [ObservableProperty]
     private string? _syncStatus;
+
+    /// <summary>
+    /// True only while a metadata-download sync is running. Drives the Cancel button
+    /// in the busy overlay so it does not appear during the (non-cancellable) Refresh.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isCancellable;
 
     /// <summary>
     /// Whether any base model filter is currently active (for visual indicator on the filter button).
@@ -433,9 +443,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
+        _metadataSyncCts = new CancellationTokenSource();
+        var ct = _metadataSyncCts.Token;
         try
         {
             IsBusy = true;
+            IsCancellable = true;
             BusyMessage = "Syncing with Civitai...";
 
             // Get API key — use a fresh DI scope so we read the latest value
@@ -498,24 +511,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // ── Phase 1: Sync metadata via Civitai API hash lookup (freshly discovered models) ──
             // Must run before Phase 1b so the API gets first chance at providing rich metadata.
             // Phase 1 already falls back to local sidecar files when the API returns 404.
-            await SyncMetadataPhaseAsync(apiKey, statusParts);
+            await SyncMetadataPhaseAsync(apiKey, statusParts, ct);
 
             // ── Phase 1b: Re-process historical LocalFile models with sidecar fallback ──
             // Targets models synced before sidecar parsing was added (already have LastSyncedAt
             // but still have placeholder BaseModelRaw). Phase 1 handles fresh models.
-            await ReprocessLocalFileModelsPhaseAsync(statusParts);
+            await ReprocessLocalFileModelsPhaseAsync(statusParts, ct);
 
             // ── Phase 2: Re-fetch images for synced models that have no preview images ──
-            await RefetchMissingImagesPhaseAsync(apiKey, statusParts);
+            await RefetchMissingImagesPhaseAsync(apiKey, statusParts, ct);
 
             // ── Phase 3: Backfill tags for models synced before tag persistence was added ──
-            await BackfillMissingTagsPhaseAsync(apiKey, statusParts);
+            await BackfillMissingTagsPhaseAsync(apiKey, statusParts, ct);
 
             // ── Rebuild tiles so Phase 4 operates on fresh DB-backed tiles ──
             await RebuildTilesFromDatabaseAsync();
 
             // ── Phase 4: Download thumbnails for tiles still showing "No Preview" ──
-            await DownloadMissingThumbnailsPhaseAsync(statusParts);
+            await DownloadMissingThumbnailsPhaseAsync(statusParts, ct);
 
             // Final status
             if (statusParts.Count == 0)
@@ -525,6 +538,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             SyncStatus = statusText;
         }
+        catch (OperationCanceledException)
+        {
+            SyncStatus = "Metadata sync cancelled";
+            _logger?.Info(LogCategory.Network, "CivitaiSync", "Metadata sync cancelled by user");
+        }
         catch (Exception ex)
         {
             SyncStatus = $"Sync error: {ex.Message}";
@@ -533,9 +551,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         finally
         {
             IsBusy = false;
+            IsCancellable = false;
             BusyMessage = null;
+            _metadataSyncCts?.Dispose();
+            _metadataSyncCts = null;
         }
     }
+
+    /// <summary>
+    /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.
+    /// The sync stops after the current model finishes (cooperative cancellation).
+    /// </summary>
+    [RelayCommand]
+    private void CancelMetadataDownload()
+    {
+        if (_metadataSyncCts is null)
+        {
+            return;
+        }
+
+        _metadataSyncCts.Cancel();
+        SyncStatus = "Cancelling…";
+        // Hide the Cancel button immediately so the click reads as received; the
+        // sync itself unwinds up to one model later, where finally resets the rest.
+        IsCancellable = false;
+    }
+
+    /// <summary>
+    /// Test seam: injects a CTS to simulate an in-flight sync without standing up
+    /// the full App.Services/DI graph the real sync requires.
+    /// </summary>
+    internal void SetActiveMetadataSyncCtsForTest(CancellationTokenSource cts)
+        => _metadataSyncCts = cts;
 
     /// <summary>
     /// Opens the Civitai URL download dialog, lets the user preview the LoRA, and starts the download.
@@ -683,7 +730,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// already set (meaning Phase 1 already ran on them in a previous session but found no API match).
     /// Fresh models (LastSyncedAt=null) are handled by Phase 1 which includes its own sidecar fallback.
     /// </summary>
-    private async Task ReprocessLocalFileModelsPhaseAsync(List<string> statusParts)
+    private async Task ReprocessLocalFileModelsPhaseAsync(List<string> statusParts, CancellationToken ct)
     {
         var tilesNeedingReprocess = AllTiles
             .Where(t => t.ModelEntity is { CivitaiId: null, Source: DataSource.LocalFile, LastSyncedAt: not null }
@@ -705,6 +752,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         for (var i = 0; i < tilesNeedingReprocess.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
             var tile = tilesNeedingReprocess[i];
             var file = tile.SelectedVersion?.PrimaryFile;
             var localPath = file?.LocalPath;
@@ -745,7 +793,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <summary>
     /// Phase 1: Sync metadata for models that have never been synced.
     /// </summary>
-    private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts)
+    private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
     {
         var tilesNeedingMetadata = AllTiles
             .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null }
@@ -769,6 +817,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         for (var i = 0; i < tilesNeedingMetadata.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
             var tile = tilesNeedingMetadata[i];
             var file = tile.SelectedVersion?.PrimaryFile;
             if (file is null)
@@ -874,7 +923,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Phase 2: Re-fetch image data from Civitai for models that were synced but have no preview images.
     /// This happens when the initial sync didn't receive image data (empty images array from the API).
     /// </summary>
-    private async Task RefetchMissingImagesPhaseAsync(string? apiKey, List<string> statusParts)
+    private async Task RefetchMissingImagesPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
     {
         var tilesNeedingImages = AllTiles
             .Where(t => t.IsImageDataMissing)
@@ -894,6 +943,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         for (var i = 0; i < tilesNeedingImages.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
             var tile = tilesNeedingImages[i];
             var versionCivitaiId = tile.SelectedVersion?.CivitaiId;
             if (versionCivitaiId is null) continue;
@@ -925,7 +975,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 fetchErrors++;
             }
 
-            await Task.Delay(1500);
+            await Task.Delay(1500, ct);
         }
 
         if (fetched > 0 || fetchErrors > 0)
@@ -941,7 +991,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Uses the existing CivitaiId to fetch from Civitai — no file hashing needed.
     /// Once all models have tags this phase becomes a no-op.
     /// </summary>
-    private async Task BackfillMissingTagsPhaseAsync(string? apiKey, List<string> statusParts)
+    private async Task BackfillMissingTagsPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
     {
         var tilesNeedingTags = AllTiles
             .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
@@ -965,6 +1015,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         for (var i = 0; i < tilesNeedingTags.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
             var tile = tilesNeedingTags[i];
             var versionCivitaiId = tile.SelectedVersion!.CivitaiId!.Value;
 
@@ -988,7 +1039,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
 
             // Civitai rate limit pacing
-            await Task.Delay(1500);
+            await Task.Delay(1500, ct);
         }
 
         if (backfilled > 0 || errors > 0)
@@ -1002,7 +1053,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <summary>
     /// Phase 4: Download thumbnails for tiles still showing "No Preview" that have image URLs.
     /// </summary>
-    private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts)
+    private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts, CancellationToken ct)
     {
         var tilesNeedingThumbs = AllTiles
             .Where(t => t.IsThumbnailMissing)
@@ -1022,6 +1073,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         for (var i = 0; i < tilesNeedingThumbs.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
             var tile = tilesNeedingThumbs[i];
             Dispatcher.UIThread.Post(() =>
                 SyncStatus = $"Downloading thumbnail [{i + 1}/{tilesNeedingThumbs.Count}] {tile.DisplayName}...");
@@ -1042,7 +1094,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 thumbFailed++;
             }
 
-            await Task.Delay(500);
+            await Task.Delay(500, ct);
         }
 
         var thumbPart = $"Thumbnails: {thumbSuccess} downloaded";
