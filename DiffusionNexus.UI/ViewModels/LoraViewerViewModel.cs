@@ -907,7 +907,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
             // The CivitaiClient handles 429 retries internally, but we still pace requests.
-            await Task.Delay(1500);
+            await Task.Delay(1500, ct);
         }
 
         var parts = new List<string>();

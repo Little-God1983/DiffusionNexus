@@ -1,3 +1,4 @@
+using System.Threading;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -38,7 +39,7 @@ public class LoraViewerCancelMetadataTests
     public void CancelSignalsTheActiveSyncTokenAndFlipsStatus()
     {
         var vm = CreateViewModel();
-        using var cts = new System.Threading.CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
         vm.SetActiveMetadataSyncCtsForTest(cts); // simulates an in-flight sync
         vm.IsCancellable = true;
 
