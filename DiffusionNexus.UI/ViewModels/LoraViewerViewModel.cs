@@ -572,6 +572,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         _metadataSyncCts.Cancel();
         SyncStatus = "Cancelling…";
+        // Also update the busy-overlay message (not just the status bar) so the
+        // user gets clear in-overlay feedback during the unwind window.
+        BusyMessage = "Cancelling…";
         // Hide the Cancel button immediately so the click reads as received; the
         // sync itself unwinds up to one model later, where finally resets the rest.
         IsCancellable = false;
