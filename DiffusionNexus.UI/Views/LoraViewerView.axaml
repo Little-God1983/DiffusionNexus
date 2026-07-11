@@ -270,6 +270,12 @@
                 <TextBlock Text="{Binding BusyMessage}"
                            Foreground="White"
                            HorizontalAlignment="Center"/>
+                <Button Content="Cancel"
+                        Command="{Binding CancelMetadataDownloadCommand}"
+                        IsVisible="{Binding IsCancellable}"
+                        HorizontalAlignment="Center"
+                        Padding="20,6"
+                        ToolTip.Tip="Stop the metadata sync after the current model finishes"/>
               </StackPanel>
             </Border>
 
