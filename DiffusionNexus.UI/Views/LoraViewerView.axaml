@@ -24,15 +24,17 @@
                 BorderBrush="#333"
                 BorderThickness="0,0,0,1">
 
-          <Grid ColumnDefinitions="Auto,*,Auto">
+          <WrapPanel Orientation="Horizontal">
 
-            <!-- Left: Search and Filters -->
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
+            <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                     Watermark="Search models..."
+                     Width="300"
+                     VerticalAlignment="Center"
+                     Margin="0,4,12,4"/>
 
-              <TextBox Text="{Binding SearchText, Mode=TwoWay}"
-                       Watermark="Search models..."
-                       Width="300"/>
-
+            <StackPanel Orientation="Horizontal" Spacing="6"
+                        VerticalAlignment="Center"
+                        Margin="0,4,12,4">
               <TextBlock Text="Filter"
                          VerticalAlignment="Center"
                          Opacity="0.7"/>
@@ -110,21 +112,26 @@
                   </Flyout>
                 </Button.Flyout>
               </Button>
+            </StackPanel>
 
-              <CheckBox Content="Show NSFW"
-                        IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
-                        VerticalAlignment="Center"/>
-
-              <Button Command="{Binding ResetFiltersCommand}"
+            <CheckBox Content="Show NSFW"
+                      IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
                       VerticalAlignment="Center"
-                      ToolTip.Tip="Reset all filters">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x21BA;" FontSize="14" VerticalAlignment="Center"/>
-                  <TextBlock Text="Reset" VerticalAlignment="Center"/>
-                </StackPanel>
-              </Button>
+                      Margin="0,4,12,4"/>
 
-              <!-- Sort: field dropdown + ascending/descending toggle -->
+            <Button Command="{Binding ResetFiltersCommand}"
+                    VerticalAlignment="Center"
+                    ToolTip.Tip="Reset all filters"
+                    Margin="0,4,12,4">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x21BA;" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Text="Reset" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+
+            <StackPanel Orientation="Horizontal" Spacing="8"
+                        VerticalAlignment="Center"
+                        Margin="0,4,12,4">
               <TextBlock Text="Sort"
                          VerticalAlignment="Center"
                          Opacity="0.7"/>
@@ -145,59 +152,58 @@
                              IsVisible="{Binding SortDescending}"/>
                 </Panel>
               </ToggleButton>
-
             </StackPanel>
 
-            <!-- Center: Model Count -->
-            <StackPanel Grid.Column="1"
-                        Orientation="Horizontal"
-                        Spacing="8"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8"
+                        VerticalAlignment="Center"
+                        Margin="0,4,12,4">
               <TextBlock Text="{Binding FilteredModelCount}" FontWeight="SemiBold"/>
               <TextBlock Text="of" Opacity="0.6"/>
               <TextBlock Text="{Binding TotalModelCount}"/>
               <TextBlock Text="models" Opacity="0.6"/>
             </StackPanel>
 
-            <!-- Right: Actions -->
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+            <Button Command="{Binding DownloadLoraCommand}"
+                    ToolTip.Tip="Download a LoRA from Civitai"
+                    VerticalAlignment="Center"
+                    Margin="0,4,12,4">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x2B07;" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Text="Download LoRA" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
 
-              <Button Command="{Binding DownloadLoraCommand}"
-                      ToolTip.Tip="Download a LoRA from Civitai">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x2B07;" FontSize="14" VerticalAlignment="Center"/>
-                  <TextBlock Text="Download LoRA" VerticalAlignment="Center"/>
-                </StackPanel>
-              </Button>
+            <Button Command="{Binding RefreshCommand}"
+                    ToolTip.Tip="Rescan source folders and reload the model list"
+                    VerticalAlignment="Center"
+                    Margin="0,4,12,4">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
 
-              <Button Command="{Binding RefreshCommand}"
-                      ToolTip.Tip="Rescan source folders and reload the model list">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
-                  <TextBlock Text="Refresh" VerticalAlignment="Center"/>
-                </StackPanel>
-              </Button>
+            <Button Command="{Binding DownloadMissingMetadataCommand}"
+                    ToolTip.Tip="Fetch missing metadata from Civitai for already-imported LoRAs"
+                    VerticalAlignment="Center"
+                    Margin="0,4,12,4">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x21E9;" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Text="Download Metadata" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
 
-              <Button Command="{Binding DownloadMissingMetadataCommand}"
-                      ToolTip.Tip="Fetch missing metadata from Civitai for already-imported LoRAs">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x21E9;" FontSize="14" VerticalAlignment="Center"/>
-                  <TextBlock Text="Download Metadata" VerticalAlignment="Center"/>
-                </StackPanel>
-              </Button>
+            <Button Command="{Binding ScanDuplicatesCommand}"
+                    ToolTip.Tip="Scan all configured LoRA folders for byte-identical files"
+                    VerticalAlignment="Center"
+                    Margin="0,4,0,4">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x29C9;" FontSize="14" VerticalAlignment="Center"/>
+                <TextBlock Text="Find Duplicates" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
 
-              <Button Command="{Binding ScanDuplicatesCommand}"
-                      ToolTip.Tip="Scan all configured LoRA folders for byte-identical files">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x29C9;" FontSize="14" VerticalAlignment="Center"/>
-                  <TextBlock Text="Find Duplicates" VerticalAlignment="Center"/>
-                </StackPanel>
-              </Button>
-
-            </StackPanel>
-
-          </Grid>
+          </WrapPanel>
         </Border>
 
         <!-- Main Content: Tiles + Detail Panel (overlay) -->
