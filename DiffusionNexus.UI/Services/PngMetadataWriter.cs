@@ -21,6 +21,16 @@ internal static class PngMetadataWriter
     /// <param name="destPath">Path to write the modified PNG file.</param>
     /// <param name="metadata">Key-value pairs to embed as tEXt chunks.</param>
     public static void CopyWithMetadata(string sourcePath, string destPath, Dictionary<string, string> metadata)
+        => CopyWithMetadata(sourcePath, destPath, metadata, stripExisting: true);
+
+    /// <summary>
+    /// Copies a PNG, inserting <paramref name="metadata"/> as tEXt chunks. When
+    /// <paramref name="stripExisting"/> is true, ALL existing tEXt/iTXt/zTXt chunks are dropped
+    /// (removing the embedded ComfyUI prompt/workflow). When false, existing chunks are preserved
+    /// except any whose keyword collides with a key in <paramref name="metadata"/> (so a
+    /// "parameters" chunk is replaced rather than duplicated). Non-PNG files are copied verbatim.
+    /// </summary>
+    public static void CopyWithMetadata(string sourcePath, string destPath, Dictionary<string, string> metadata, bool stripExisting)
     {
         ArgumentNullException.ThrowIfNull(sourcePath);
         ArgumentNullException.ThrowIfNull(destPath);
@@ -75,9 +85,28 @@ internal static class PngMetadataWriter
 
             var type = Encoding.ASCII.GetString(typeBytes);
 
-            if (type is "tEXt" or "iTXt")
+            if (type is "tEXt" or "iTXt" or "zTXt")
             {
-                // Skip old metadata chunk (data + CRC)
+                bool drop = stripExisting;
+                if (!drop)
+                {
+                    // Keep the chunk unless its keyword collides with a new key we're writing.
+                    var data = reader.ReadBytes(length);
+                    var keyword = ReadChunkKeyword(type, data);
+                    if (keyword is not null && metadata.ContainsKey(keyword))
+                    {
+                        input.Seek(4, SeekOrigin.Current); // skip CRC of the dropped chunk
+                        continue;
+                    }
+
+                    // Not colliding — re-emit the chunk verbatim.
+                    writer.Write(lengthBytes);
+                    writer.Write(typeBytes);
+                    writer.Write(data);
+                    writer.Write(reader.ReadBytes(4)); // CRC
+                    continue;
+                }
+
                 if (input.Position + length + 4 > input.Length) break;
                 input.Seek(length + 4, SeekOrigin.Current);
                 continue;
@@ -245,5 +274,14 @@ internal static class PngMetadataWriter
         }
 
         return crc ^ 0xFFFFFFFF;
+    }
+
+    /// <summary>Reads the keyword (text up to the first NUL) from a tEXt/iTXt/zTXt chunk's data.</summary>
+    private static string? ReadChunkKeyword(string type, byte[] data)
+    {
+        int nul = Array.IndexOf(data, (byte)0);
+        if (nul < 0) return null;
+        var enc = type == "iTXt" ? Encoding.UTF8 : Encoding.Latin1;
+        return enc.GetString(data, 0, nul);
     }
 }
