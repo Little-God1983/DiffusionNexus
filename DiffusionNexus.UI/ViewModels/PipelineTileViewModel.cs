@@ -39,6 +39,7 @@ public partial class PipelineTileViewModel : ViewModelBase
     public string Id => Manifest.Id;
     public string Title => Manifest.Title;
     public string Description => Manifest.Description;
+    public string Category => Manifest.Category;
 
     /// <summary>True when the manifest supplies its own preview image (vs. the generic placeholder).</summary>
     public bool HasCustomIcon => !string.IsNullOrWhiteSpace(Manifest.Icon);

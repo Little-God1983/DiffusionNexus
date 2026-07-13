@@ -43,6 +43,19 @@ public sealed class PipelineManifest
     /// Workloads so its assets can be installed.
     /// </summary>
     public bool ShowInGallery { get; init; } = true;
+
+    /// <summary>
+    /// Gallery grouping. "Generation" (default) for guided render workflows; "Utilities" for
+    /// tools like the Batch Metadata Distiller. Drives the labelled divider in the gallery.
+    /// </summary>
+    public string Category { get; init; } = "Generation";
+
+    /// <summary>
+    /// Whether opening this workflow requires an installed ComfyUI models tree. <c>true</c> (default)
+    /// runs the readiness gate; <c>false</c> (e.g. the metadata distiller, which does no inference)
+    /// opens the run screen directly.
+    /// </summary>
+    public bool RequiresModels { get; init; } = true;
 }
 
 /// <summary>The role a <see cref="PipelineAsset"/> plays in the pipeline.</summary>
