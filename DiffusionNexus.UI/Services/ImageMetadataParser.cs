@@ -139,16 +139,18 @@ internal sealed partial class ImageMetadataParser
             positivePrompt = promptBlock.Length > 0 ? promptBlock : null;
         }
 
-        // Extract LoRA tags from prompts before returning them
+        // Extract LoRA tags into the list AND strip them from the stored prompt text, so a
+        // re-formatted A1111/AI2Go image does not double-append LoRA tokens (matches the ComfyUI
+        // trace path, whose prompts are already token-free).
         var loras = new List<LoraInfo>();
         if (positivePrompt is not null)
         {
-            ExtractLoraTagsFromPrompt(positivePrompt, loras);
+            positivePrompt = ExtractLoraTagsFromPrompt(positivePrompt, loras);
         }
 
         if (negativePrompt is not null)
         {
-            ExtractLoraTagsFromPrompt(negativePrompt, loras);
+            negativePrompt = ExtractLoraTagsFromPrompt(negativePrompt, loras);
         }
 
         // Parse settings key-value pairs from the last line
@@ -305,7 +307,7 @@ internal sealed partial class ImageMetadataParser
     /// <summary>
     /// Extracts &lt;lora:name:strength&gt; tags from A1111-style prompt text.
     /// </summary>
-    private static void ExtractLoraTagsFromPrompt(string prompt, List<LoraInfo> loras)
+    private static string ExtractLoraTagsFromPrompt(string prompt, List<LoraInfo> loras)
     {
         foreach (var match in LoraTagRegex().EnumerateMatches(prompt))
         {
@@ -334,6 +336,13 @@ internal sealed partial class ImageMetadataParser
                 });
             }
         }
+
+        // Remove the tokens from the prompt text and tidy the separators/whitespace left behind.
+        var cleaned = LoraTagRegex().Replace(prompt, "");
+        cleaned = Regex.Replace(cleaned, @"\s+", " ");
+        cleaned = Regex.Replace(cleaned, @"\s*,\s*", ", ");
+        cleaned = Regex.Replace(cleaned, @"(,\s*){2,}", ", ");
+        return cleaned.Trim().Trim(',').Trim();
     }
 
     #endregion
