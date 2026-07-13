@@ -98,26 +98,24 @@ ComfyUI models root and refuses to open when absent. Add an early branch: when
 `OpenRun(tile, inputImages)` directly. The readiness badge for such tiles is fixed to `Ready`
 (`RefreshAllStatusesAsync` short-circuits when `!RequiresModels`).
 
-**c. Shared run base (D8)** — extract a thin abstract base so the gallery's `ActiveRun` slot can
-host either run VM:
+**c. Shared run abstraction (D8)** — realized as a thin **interface** rather than a base class:
+`PipelineRunViewModel` already exposes `Title`, `CloseRequested`, `ResourceMonitor`,
+`LoadInputImages`, and `Dispose`, so it satisfies the interface with **zero member changes** (lower
+risk than re-parenting the large existing VM):
 ```csharp
-public abstract class PipelineRunViewModelBase : ViewModelBase, IDisposable
+public interface IPipelineRun : IDisposable
 {
-    public abstract string Title { get; }
-    public event EventHandler? CloseRequested;
-    protected void RaiseClose() => CloseRequested?.Invoke(this, EventArgs.Empty);
-    public ResourceMonitorViewModel? ResourceMonitor { get; set; }   // distiller ignores it
-    public virtual void LoadInputImages(IReadOnlyList<string> paths) { }
-    public abstract void Dispose();
-    // Back command raises CloseRequested
+    string Title { get; }
+    event EventHandler? CloseRequested;
+    ResourceMonitorViewModel? ResourceMonitor { get; set; }   // distiller accepts + ignores it
+    void LoadInputImages(IReadOnlyList<string> paths);
 }
 ```
-- `PipelineRunViewModel` (existing generation base) now derives from `PipelineRunViewModelBase`
-  (it already has `Title`, `CloseRequested`, `ResourceMonitor`, `LoadInputImages`, `Dispose` — this
-  is mostly a re-parenting, hoisting those members up).
-- `BatchMetadataDistillerViewModel` derives from `PipelineRunViewModelBase` directly.
+- `PipelineRunViewModel` gains `, IPipelineRun` on its declaration only (already has every member).
+- `BatchMetadataDistillerViewModel : ViewModelBase, IPipelineRun` implements it directly (no
+  generation machinery).
 - Retype `PipelinesViewModel.ActiveRun`, the DI factory delegate
-  (`Func<PipelineTileViewModel, PipelineRunViewModelBase>`), and `OpenRun` to the base.
+  (`Func<PipelineTileViewModel, IPipelineRun>`), and `OpenRun` to `IPipelineRun`.
 
 **d. View selection** — `PipelinesView.axaml` currently hosts the single `PipelineRunView` bound to
 `ActiveRun`. Replace with a `ContentControl Content="{Binding ActiveRun}"` resolved via DataTemplates
