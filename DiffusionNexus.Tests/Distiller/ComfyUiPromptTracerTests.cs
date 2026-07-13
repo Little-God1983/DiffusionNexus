@@ -1,0 +1,186 @@
+using System.Collections.Generic;
+using System.Text.Json;
+using DiffusionNexus.UI.Services.Distiller;
+using FluentAssertions;
+
+namespace DiffusionNexus.Tests.Distiller;
+
+public class ComfyUiPromptTracerTests
+{
+    private static Dictionary<string, JsonElement> Graph(string json) =>
+        JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+
+    [Fact]
+    public void Plain_checkpoint_no_lora()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{
+                 "model":["4",0],"positive":["6",0],"negative":["7",0],
+                 "steps":20,"cfg":7.0,"seed":123,"sampler_name":"euler","scheduler":"normal","denoise":1.0}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"sub/sd_xl.safetensors"}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "7": {"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+          "9": {"class_type":"SaveImage","inputs":{"images":["3",0]}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, "x.png", 512, 768);
+
+        r.HasData.Should().BeTrue();
+        r.Checkpoint.Should().Be("sd_xl");
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+        r.Steps.Should().Be(20);
+        r.Cfg.Should().Be(7.0);
+        r.Seed.Should().Be(123);
+        r.SamplerName.Should().Be("euler");
+        r.Scheduler.Should().Be("normal");
+        r.Loras.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LoraLoader_chain_is_in_load_order()
+    {
+        // sampler <- A <- B <- checkpoint  => load order [B, A] (B nearest checkpoint)
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["10",0],"positive":["6",0],"negative":["7",0]}},
+          "10":{"class_type":"LoraLoader","inputs":{"lora_name":"A.safetensors","strength_model":0.8,"model":["11",0]}},
+          "11":{"class_type":"LoraLoader","inputs":{"lora_name":"B.safetensors","strength_model":0.6,"model":["4",0]}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":"p"}},
+          "7": {"class_type":"CLIPTextEncode","inputs":{"text":"n"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Loras.Select(l => l.Name).Should().Equal("B", "A");
+        r.Loras[1].StrengthModel.Should().Be(0.8);
+        r.Loras[0].Source.Should().Be("LoraLoader");
+        r.Checkpoint.Should().Be("base");
+    }
+
+    [Fact]
+    public void PowerLoraLoader_skips_disabled_and_none()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["20",0]}},
+          "20":{"class_type":"Power Lora Loader (rgthree)","inputs":{
+                 "lora_1":{"on":true,"lora":"style.safetensors","strength":0.7},
+                 "lora_2":{"on":false,"lora":"off.safetensors","strength":1.0},
+                 "lora_3":{"on":true,"lora":"None","strength":1.0},
+                 "model":["4",0]}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Loras.Select(l => l.Name).Should().Equal("style");
+        r.Loras[0].StrengthModel.Should().Be(0.7);
+        r.Loras[0].Source.Should().Be("Power Lora");
+    }
+
+    [Fact]
+    public void LoraLoaderStack_skips_none_and_zero_strength()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["30",0]}},
+          "30":{"class_type":"Lora Loader Stack (rgthree)","inputs":{
+                 "lora_01":"a.safetensors","strength_01":0.5,
+                 "lora_02":"None","strength_02":1.0,
+                 "lora_03":"b.safetensors","strength_03":0,
+                 "model":["4",0]}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Loras.Select(l => l.Name).Should().Equal("a");
+        r.Loras[0].Source.Should().Be("Lora Stack");
+    }
+
+    [Fact]
+    public void Mixed_power_lora_and_stock_loader_load_order()
+    {
+        // sampler <- PowerLora(A,B) <- LoraLoader(C) <- checkpoint  => [C, A, B]
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["20",0]}},
+          "20":{"class_type":"Power Lora Loader (rgthree)","inputs":{
+                 "lora_1":{"on":true,"lora":"A.safetensors","strength":0.5},
+                 "lora_2":{"on":true,"lora":"B.safetensors","strength":0.6},
+                 "model":["21",0]}},
+          "21":{"class_type":"LoraLoader","inputs":{"lora_name":"C.safetensors","strength_model":0.7,"model":["4",0]}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Loras.Select(l => l.Name).Should().Equal("C", "A", "B");
+    }
+
+    [Fact]
+    public void KSamplerAdvanced_uses_noise_seed()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSamplerAdvanced","inputs":{"model":["4",0],"noise_seed":999,"steps":30,"cfg":5.0}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Seed.Should().Be(999);
+        r.Steps.Should().Be(30);
+    }
+
+    [Fact]
+    public void Linked_text_resolves_through_primitive_string_node()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["4",0],"positive":["6",0]}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":["8",0]}},
+          "8": {"class_type":"PrimitiveNode","inputs":{"value":"resolved text"}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.PositivePrompt.Should().Be("resolved text");
+    }
+
+    [Fact]
+    public void UNETLoader_diffusion_model_is_recognized()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["40",0]}},
+          "40":{"class_type":"UNETLoader","inputs":{"unet_name":"flux-klein.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Checkpoint.Should().Be("flux-klein");
+    }
+
+    [Fact]
+    public void No_sampler_returns_no_data()
+    {
+        var g = Graph("""{ "1": {"class_type":"LoadImage","inputs":{"image":"x.png"}} }""");
+
+        var r = ComfyUiPromptTracer.Trace(g, "x.png", 10, 10);
+
+        r.HasData.Should().BeFalse();
+    }
+}
