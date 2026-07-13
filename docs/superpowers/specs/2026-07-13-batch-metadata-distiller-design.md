@@ -35,6 +35,10 @@ This design ports that algorithm and wraps it in a run screen.
 - New gallery tile + bespoke three-column run screen.
 - ComfyUI `prompt`-chunk tracer with full rgthree Power Lora / Lora Stack support, save-node→sampler
   BFS, load-order reversal, and the disabled/`"None"`/zero-strength skip rules (per the spec).
+- Reading images already saved by the **AI2Go "Save Metadata (Civitai)"** node (and any A1111/Forge/
+  Civitai image): its output is a standard A1111 `parameters` chunk with LoRAs as `<lora:name:strength>`
+  tokens. The A1111 read path normalizes these — LoRA tokens are extracted into the LoRA list and
+  removed from the stored prompt — so re-distilling such an image does not duplicate the tokens.
 - Per-image editable metadata + per-LoRA include toggles.
 - Multiple named delete/replace rule sets applied batch-wide.
 - A1111 `parameters` formatter with `<lora:...>` tokens and Model, plus an optional `Hashes:` block.

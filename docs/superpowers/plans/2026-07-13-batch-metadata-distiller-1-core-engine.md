@@ -1564,6 +1564,213 @@ git commit -m "feat(distiller): AutoV2 resource hasher for loras and checkpoints
 
 ---
 
+### Task 9: Read AI2Go / A1111 output cleanly (normalize embedded LoRA tokens)
+
+**Files:**
+- Modify: `DiffusionNexus.UI/Services/ImageMetadataParser.cs`
+- Test: `DiffusionNexus.Tests/Distiller/A1111LoraNormalizationTests.cs`
+
+**Why:** The AI2Go "Save Metadata (Civitai)" ComfyUI node writes a standard A1111 `parameters`
+tEXt chunk with LoRAs embedded in the prompt as `<lora:name:strength>` tokens (and a
+`Lora hashes: "..."` field + `Version: ComfyUI`), stripping `prompt`/`workflow` by default. The
+existing A1111 path reads these, but `ExtractLoraTagsFromPrompt` collects the tokens into the LoRA
+list **without removing them from the stored prompt**. That means an A1111/AI2Go-sourced image's
+`PositivePrompt` still contains `<lora:...>`, so when the distiller re-appends LoRA tokens on output
+it **duplicates** them. This task normalizes the A1111 read path so `PositivePrompt`/`NegativePrompt`
+never contain LoRA tokens (matching the ComfyUI trace path, where prompts are already clean).
+
+**Interfaces:**
+- Consumes: `A1111MetadataFormatter.Build` (Task 6) for the round-trip test; `PngMetadataWriter`,
+  `PngChunkReader`, `ImageMetadataParser`, `ImageGenerationData`, `LoraInfo`.
+- Produces: A1111-parsed `ImageGenerationData` whose prompts are LoRA-token-free; LoRAs remain in
+  `Loras`. Public `Parse` signature unchanged.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `DiffusionNexus.Tests/Distiller/A1111LoraNormalizationTests.cs`:
+
+```csharp
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using DiffusionNexus.UI.Models;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Distiller;
+using FluentAssertions;
+
+namespace DiffusionNexus.Tests.Distiller;
+
+public class A1111LoraNormalizationTests
+{
+    // The exact golden string the AI2Go "Save Metadata (Civitai)" node writes (tests/test_a1111.py).
+    private const string AI2GoGolden =
+        "a red fox, 8k <lora:styleLora:0.8>\n" +
+        "Negative prompt: blurry\n" +
+        "Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 6.5, Seed: 12345, Size: 1024x1024, " +
+        "Model hash: a1b2c3d4e5, Model: myCkpt, Lora hashes: \"styleLora: 1122aabbcc\", Version: ComfyUI";
+
+    private static string WritePngWithParameters(string parameters)
+    {
+        var basePath = Path.Combine(Path.GetTempPath(), $"seed_{System.Guid.NewGuid():N}.png");
+        File.WriteAllBytes(basePath, MinimalPng());
+        var outPath = Path.Combine(Path.GetTempPath(), $"a1111_{System.Guid.NewGuid():N}.png");
+        PngMetadataWriter.CopyWithMetadata(basePath, outPath, new() { ["parameters"] = parameters });
+        File.Delete(basePath);
+        return outPath;
+    }
+
+    private static byte[] MinimalPng()
+    {
+        using var ms = new MemoryStream();
+        ms.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        WriteChunk(ms, "IHDR", new byte[13]);
+        WriteChunk(ms, "IEND", []);
+        return ms.ToArray();
+    }
+
+    private static void WriteChunk(Stream s, string type, byte[] data)
+    {
+        var len = System.BitConverter.GetBytes(data.Length);
+        if (System.BitConverter.IsLittleEndian) System.Array.Reverse(len);
+        s.Write(len); s.Write(System.Text.Encoding.ASCII.GetBytes(type)); s.Write(data); s.Write(new byte[4]);
+    }
+
+    [Fact]
+    public void Parses_ai2go_golden_with_clean_prompt_and_extracted_lora()
+    {
+        var path = WritePngWithParameters(AI2GoGolden);
+        try
+        {
+            var data = new ImageMetadataParser().Parse(path);
+
+            data.HasData.Should().BeTrue();
+            data.PositivePrompt.Should().Be("a red fox, 8k");     // <lora:...> removed
+            data.PositivePrompt.Should().NotContain("<lora:");
+            data.NegativePrompt.Should().Be("blurry");
+            data.Loras.Select(l => (l.Name, l.StrengthModel)).Should().Equal(("styleLora", 0.8));
+            data.Steps.Should().Be(30);
+            data.Cfg.Should().Be(6.5);
+            data.Seed.Should().Be(12345);
+            data.SamplerName.Should().Be("DPM++ 2M Karras");
+            data.Checkpoint.Should().Be("myCkpt");
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Round_trip_through_formatter_does_not_duplicate_lora_tokens()
+    {
+        var path = WritePngWithParameters(AI2GoGolden);
+        try
+        {
+            var data = new ImageMetadataParser().Parse(path);
+
+            var reformatted = A1111MetadataFormatter.Build(
+                data, data.PositivePrompt ?? "", data.NegativePrompt, data.Loras, hashes: null);
+
+            // Exactly one <lora:styleLora:...> token, not two.
+            System.Text.RegularExpressions.Regex.Matches(reformatted, @"<lora:styleLora:").Count.Should().Be(1);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~A1111LoraNormalizationTests"`
+Expected: FAIL — the first test's `PositivePrompt` still contains the `<lora:styleLora:0.8>` token; the round-trip test finds two tokens.
+
+- [ ] **Step 3: Strip LoRA tokens from the A1111 prompt after extraction**
+
+In `DiffusionNexus.UI/Services/ImageMetadataParser.cs`, change `ExtractLoraTagsFromPrompt` to RETURN the prompt with the tokens removed and whitespace tidied, and update its two call sites in `ParseA1111Parameters`.
+
+Change the two call sites from:
+
+```csharp
+        // Extract LoRA tags from prompts before returning them
+        var loras = new List<LoraInfo>();
+        if (positivePrompt is not null)
+        {
+            ExtractLoraTagsFromPrompt(positivePrompt, loras);
+        }
+
+        if (negativePrompt is not null)
+        {
+            ExtractLoraTagsFromPrompt(negativePrompt, loras);
+        }
+```
+
+to:
+
+```csharp
+        // Extract LoRA tags into the list AND strip them from the stored prompt text, so a
+        // re-formatted A1111/AI2Go image does not double-append LoRA tokens (matches the ComfyUI
+        // trace path, whose prompts are already token-free).
+        var loras = new List<LoraInfo>();
+        if (positivePrompt is not null)
+        {
+            positivePrompt = ExtractLoraTagsFromPrompt(positivePrompt, loras);
+        }
+
+        if (negativePrompt is not null)
+        {
+            negativePrompt = ExtractLoraTagsFromPrompt(negativePrompt, loras);
+        }
+```
+
+Then change the `ExtractLoraTagsFromPrompt` method signature and body from:
+
+```csharp
+    private static void ExtractLoraTagsFromPrompt(string prompt, List<LoraInfo> loras)
+    {
+        foreach (var match in LoraTagRegex().EnumerateMatches(prompt))
+        {
+```
+
+to return the cleaned prompt (keep the existing tag-collection loop unchanged; only change the signature line and add the strip + tidy + return at the end):
+
+```csharp
+    private static string ExtractLoraTagsFromPrompt(string prompt, List<LoraInfo> loras)
+    {
+        foreach (var match in LoraTagRegex().EnumerateMatches(prompt))
+        {
+```
+
+and at the very end of the method (replace its closing brace with the strip/tidy/return):
+
+```csharp
+        // Remove the tokens from the prompt text and tidy the separators/whitespace left behind.
+        var cleaned = LoraTagRegex().Replace(prompt, "");
+        cleaned = Regex.Replace(cleaned, @"\s+", " ");
+        cleaned = Regex.Replace(cleaned, @"\s*,\s*", ", ");
+        cleaned = Regex.Replace(cleaned, @"(,\s*){2,}", ", ");
+        return cleaned.Trim().Trim(',').Trim();
+    }
+```
+
+(`Regex` is already imported — the file uses `System.Text.RegularExpressions`.)
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~A1111LoraNormalizationTests"`
+Expected: PASS (both facts).
+
+- [ ] **Step 5: Guard against regressions in the existing A1111 path**
+
+Run the whole Distiller test group to confirm nothing else broke:
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Distiller"`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add DiffusionNexus.UI/Services/ImageMetadataParser.cs DiffusionNexus.Tests/Distiller/A1111LoraNormalizationTests.cs
+git commit -m "feat(distiller): read AI2Go/A1111 output cleanly (strip embedded lora tokens)"
+```
+
+---
+
 ## Part 1 done — engine complete
 
 At this point the entire metadata engine is implemented and unit-tested with no UI. Part 2 wires it into a gallery tile and run screen. The public surface Part 2 relies on:
