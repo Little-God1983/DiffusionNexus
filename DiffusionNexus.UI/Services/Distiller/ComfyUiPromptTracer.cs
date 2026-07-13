@@ -81,7 +81,11 @@ internal static class ComfyUiPromptTracer
             if (found is not null) return found;
         }
 
-        // Single-sampler fallback; otherwise best-effort first sampler.
+        // Single-sampler graphs resolve here. For multi-sampler graphs with no BFS-traceable save
+        // node we deliberately return a best-effort first sampler rather than leaving it unresolved
+        // (product decision 2026-07-13). This differs from tracer.py, which returns unresolved; the
+        // trade-off is accepted because the common hires/refiner topology links SaveImage to the
+        // final sampler and is resolved by the BFS above.
         return samplerIds[0];
     }
 

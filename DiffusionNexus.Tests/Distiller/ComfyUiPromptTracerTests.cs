@@ -106,6 +106,27 @@ public class ComfyUiPromptTracerTests
     }
 
     [Fact]
+    public void LoraLoaderStack_preserves_within_node_load_order()
+    {
+        // Two surviving entries; listed order lora_01=first, lora_02=second.
+        // Within-node reversal + global reversal must yield listed order [first, second].
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["30",0]}},
+          "30":{"class_type":"Lora Loader Stack (rgthree)","inputs":{
+                 "lora_01":"first.safetensors","strength_01":0.4,
+                 "lora_02":"second.safetensors","strength_02":0.6,
+                 "model":["4",0]}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.Loras.Select(l => l.Name).Should().Equal("first", "second");
+    }
+
+    [Fact]
     public void Mixed_power_lora_and_stock_loader_load_order()
     {
         // sampler <- PowerLora(A,B) <- LoraLoader(C) <- checkpoint  => [C, A, B]
