@@ -28,10 +28,22 @@ public partial class PipelinesViewModel : ViewModelBase
     private readonly IPipelineAssetInstaller? _installer;
     private readonly IDialogService? _dialogService;
     private readonly IUnifiedLogger? _unifiedLogger;
-    private readonly Func<PipelineTileViewModel, PipelineRunViewModel>? _runFactory;
+    private readonly Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>? _runFactory;
 
     /// <summary>The pipeline tiles displayed in the gallery.</summary>
     public ObservableCollection<PipelineTileViewModel> Pipelines { get; } = new();
+
+    /// <summary>Generation-category tiles (shown above the Utilities divider).</summary>
+    public IEnumerable<PipelineTileViewModel> GenerationPipelines => Pipelines.Where(t => !IsUtility(t));
+
+    /// <summary>Utility-category tiles (shown below the Utilities divider).</summary>
+    public IEnumerable<PipelineTileViewModel> UtilityPipelines => Pipelines.Where(IsUtility);
+
+    /// <summary>True when at least one utility tile exists (drives the divider's visibility).</summary>
+    public bool HasUtilityPipelines => Pipelines.Any(IsUtility);
+
+    private static bool IsUtility(PipelineTileViewModel t) =>
+        string.Equals(t.Manifest.Category, "Utilities", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>GPU/RAM monitor widget shown atop the gallery (null at design time).</summary>
     public ResourceMonitorViewModel? ResourceMonitor { get; }
@@ -40,7 +52,7 @@ public partial class PipelinesViewModel : ViewModelBase
     /// The pipeline currently being run (its run UI replaces the gallery). Null = showing the gallery.
     /// </summary>
     [ObservableProperty]
-    private PipelineRunViewModel? _activeRun;
+    private ViewModels.Pipelines.IPipelineRun? _activeRun;
 
     /// <summary>Design-time constructor (also used as a safe fallback).</summary>
     public PipelinesViewModel()
@@ -52,7 +64,7 @@ public partial class PipelinesViewModel : ViewModelBase
         IPipelineManifestProvider manifestProvider,
         IPipelineAssetInstaller installer,
         ResourceMonitorViewModel? resourceMonitor = null,
-        Func<PipelineTileViewModel, PipelineRunViewModel>? runFactory = null,
+        Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>? runFactory = null,
         IDialogService? dialogService = null,
         IUnifiedLogger? unifiedLogger = null)
     {
@@ -92,6 +104,12 @@ public partial class PipelinesViewModel : ViewModelBase
 
         foreach (var tile in Pipelines)
         {
+            if (!tile.Manifest.RequiresModels)
+            {
+                SetStatus(tile, PipelineStatus.Ready, "Ready");
+                continue;
+            }
+
             if (root is null)
             {
                 SetStatus(tile, PipelineStatus.NotInstalled, "No ComfyUI install");
@@ -157,6 +175,13 @@ public partial class PipelinesViewModel : ViewModelBase
 
         if (tile.IsBusy)
             return;
+
+        // Utility workflows (e.g. the metadata distiller) need no ComfyUI models — open directly.
+        if (!tile.Manifest.RequiresModels)
+        {
+            OpenRun(tile, inputImages);
+            return;
+        }
 
         try
         {
