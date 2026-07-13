@@ -906,7 +906,7 @@ internal static class PromptRuleEngine
 
         // 1. Pull LoRA tokens out so rules can't touch them.
         var tokens = new List<string>();
-        var body = LoraToken.Replace(prompt, m => { tokens.Add(m.Value); return ""; });
+        var body = LoraToken.Replace(prompt, m => { tokens.Add(m.Value); return " "; });
 
         // 2. Apply enabled sets in order.
         foreach (var set in sets)
@@ -921,7 +921,7 @@ internal static class PromptRuleEngine
         }
 
         // 3. Tidy separators, then re-append the tokens.
-        body = Tidy(body.Replace("", " ").Trim());
+        body = Tidy(body.Trim());
         if (tokens.Count == 0) return body;
 
         var sb = new StringBuilder(body);
