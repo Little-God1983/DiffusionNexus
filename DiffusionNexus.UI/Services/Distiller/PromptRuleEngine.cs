@@ -20,9 +20,9 @@ internal static class PromptRuleEngine
         if (string.IsNullOrEmpty(prompt) || sets is null || sets.Count == 0)
             return prompt ?? string.Empty;
 
-        // 1. Pull LoRA tokens out so rules can't touch them.
+        // 1. Pull LoRA tokens out so rules can't touch them (replace with a space to keep word separation).
         var tokens = new List<string>();
-        var body = LoraToken.Replace(prompt, m => { tokens.Add(m.Value); return ""; });
+        var body = LoraToken.Replace(prompt, m => { tokens.Add(m.Value); return " "; });
 
         // 2. Apply enabled sets in order.
         foreach (var set in sets)
@@ -37,7 +37,7 @@ internal static class PromptRuleEngine
         }
 
         // 3. Tidy separators, then re-append the tokens.
-        body = Tidy(body.Replace("", " ").Trim());
+        body = Tidy(body.Trim());
         if (tokens.Count == 0) return body;
 
         var sb = new StringBuilder(body);
