@@ -45,7 +45,7 @@ internal static class PngChunkReader
             // Stop at IEND chunk
             if (type == "IEND") break;
 
-            if (length > 0 && type is "tEXt" or "iTXt")
+            if (length > 0 && type is "tEXt" or "iTXt" or "zTXt")
             {
                 var data = reader.ReadBytes(length);
                 if (data.Length == length)
@@ -103,6 +103,30 @@ internal static class PngChunkReader
 
             var val = Encoding.UTF8.GetString(data, pos, data.Length - pos);
             result[key] = val;
+        }
+        else if (type == "zTXt")
+        {
+            int nullIdx = Array.IndexOf(data, (byte)0);
+            if (nullIdx < 0) return;
+
+            var key = Encoding.Latin1.GetString(data, 0, nullIdx);
+
+            // data[nullIdx+1] = compression method (0 = zlib). Compressed stream follows.
+            int pos = nullIdx + 2;
+            if (pos >= data.Length) return;
+
+            try
+            {
+                using var compressed = new MemoryStream(data, pos, data.Length - pos);
+                using var zlib = new System.IO.Compression.ZLibStream(compressed, System.IO.Compression.CompressionMode.Decompress);
+                using var outMs = new MemoryStream();
+                zlib.CopyTo(outMs);
+                result[key] = Encoding.Latin1.GetString(outMs.ToArray());
+            }
+            catch
+            {
+                // Corrupt/unsupported compression — skip this chunk, keep parsing the rest.
+            }
         }
     }
 }
