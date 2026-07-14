@@ -1284,8 +1284,20 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (primaryImage?.ThumbnailData is { Length: > 0 } data && !primaryImage.IsThumbnailDeferred)
         {
-            // Thumbnail BLOB already in memory — decode and display
-            DecodeThumbnailFromBytes(data);
+            // Thumbnail BLOB already in memory — decode off the UI thread (downscaled,
+            // no JPEG round-trip), then marshal only the property assignment back.
+            // Guard with `ct` since Activate/Deactivate/version-switch can make this
+            // in-flight decode stale before it reaches the UI thread.
+            _ = Task.Run(() =>
+            {
+                var bitmap = CreateTileBitmap(data);
+                if (ct.IsCancellationRequested) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (ct.IsCancellationRequested) return;
+                    ThumbnailImage = bitmap;
+                });
+            });
         }
         else if (primaryImage is not null && primaryImage.IsThumbnailDeferred)
         {
@@ -1308,29 +1320,37 @@ public partial class ModelTileViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Decode width for tile thumbnails: 250px tile at up to 200% display scaling.</summary>
+    private const int TileDecodeWidth = 500;
+
     /// <summary>
-    /// Decodes thumbnail bytes into a displayable Bitmap via SkiaSharp.
+    /// Decodes thumbnail bytes into a displayable Bitmap, downscaled to the tile
+    /// width. Safe to call from any thread — Avalonia Bitmaps are immutable and
+    /// may be created off the UI thread. Falls back to a Skia transcode for
+    /// formats Avalonia's decoder rejects.
     /// </summary>
-    private void DecodeThumbnailFromBytes(byte[] data)
+    internal static Bitmap? CreateTileBitmap(byte[] data)
     {
         try
         {
-            using var skBitmap = SKBitmap.Decode(data);
-            if (skBitmap is not null)
-            {
-                using var skImage = SKImage.FromBitmap(skBitmap);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
-                using var stream = new MemoryStream(encoded.ToArray());
-                ThumbnailImage = new Bitmap(stream);
-            }
-            else
-            {
-                ThumbnailImage = null;
-            }
+            using var stream = new MemoryStream(data);
+            return Bitmap.DecodeToWidth(stream, TileDecodeWidth);
         }
         catch
         {
-            ThumbnailImage = null;
+            try
+            {
+                using var skBitmap = SKBitmap.Decode(data);
+                if (skBitmap is null) return null;
+                using var skImage = SKImage.FromBitmap(skBitmap);
+                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+                using var stream = new MemoryStream(encoded.ToArray());
+                return new Bitmap(stream);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
@@ -1372,7 +1392,11 @@ public partial class ModelTileViewModel : ViewModelBase
                 image.ThumbnailData = data;
                 image.ThumbnailMimeType = mimeType;
 
-                await Dispatcher.UIThread.InvokeAsync(() => DecodeThumbnailFromBytes(data));
+                // Decode on this (pool) thread; only the bound-property
+                // assignment needs the UI thread.
+                var bitmap = CreateTileBitmap(data);
+                ct.ThrowIfCancellationRequested();
+                await Dispatcher.UIThread.InvokeAsync(() => ThumbnailImage = bitmap);
             }
             else
             {
