@@ -1054,6 +1054,7 @@ public partial class App : Application
             {
                 "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
                 "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
+                "batch-metadata-distiller" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
                 _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
             });
 
