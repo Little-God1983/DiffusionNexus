@@ -29,11 +29,17 @@ public static class BatchedListFiller
         {
             if (cancelled) return;
 
-            var batchEnd = Math.Min(next + batchSize, endExclusive);
+            // Re-clamp against source.Count on every tick: the source can
+            // shrink between posted batches (e.g. an item is deleted while the
+            // fill is still streaming). endExclusive was captured at Fill time,
+            // so trusting it alone would read past the new tail and throw.
+            var batchEnd = Math.Min(Math.Min(next + batchSize, endExclusive), source.Count);
             for (; next < batchEnd; next++)
                 target.Add(source[next]);
 
-            if (next < endExclusive)
+            // A shrink can also leave next at/past the new tail — that is
+            // terminal too: stop posting and complete cleanly.
+            if (next < endExclusive && next < source.Count)
                 post(AddBatch);
             else
                 onCompleted?.Invoke();

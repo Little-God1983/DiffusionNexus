@@ -2457,6 +2457,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 _windowStart = Math.Max(0, _allFiltered.Count - WindowSize);
             }
+            // A batched window fill may still be streaming when the delete lands.
+            // Its remaining batches would read the shrunk _allFiltered with stale
+            // indices (shifted/duplicate tiles in the window). Rebuild — which
+            // cancels the in-flight fill first — so the window refills from the
+            // post-delete list. The idle path (no fill running) is unchanged.
+            if (_windowFillInProgress)
+            {
+                RebuildFilteredTilesWindow();
+            }
             TotalModelCount = AllTiles.Count;
             FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
             OnPropertyChanged(nameof(HasMoreForward));
