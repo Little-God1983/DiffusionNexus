@@ -214,7 +214,7 @@ x:Name="MainWin">
                             </ItemsControl>
 
                             <Panel Grid.Row="1">
-                                <ContentControl Grid.Row="1" Content="{Binding CurrentModuleView}">
+                                <ContentControl Content="{Binding CurrentModuleView}">
                                     <ContentControl.ContentTemplate>
                                         <DataTemplate>
                                             <ContentPresenter Content="{Binding}"/>
@@ -249,7 +249,7 @@ x:Name="MainWin">
 
         <!-- Disclaimer Overlay - blocks interaction when not accepted -->
         <Border Background="#E0000000"
-                IsVisible="{Binding !IsDisclaimerAccepted}"
+                IsVisible="{Binding ShowDisclaimer}"
                 IsHitTestVisible="True"
                 ZIndex="1000">
             <Border Background="#2D2D30"

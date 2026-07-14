@@ -69,16 +69,29 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     /// finished. The main window shows a lightweight loading overlay while false.
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
     private bool _isStartupComplete;
 
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
     private bool _isDisclaimerAccepted;
 
     [ObservableProperty]
     private bool _disclaimerCheckboxChecked;
+
+    /// <summary>
+    /// Gates the disclaimer overlay so it can only appear after deferred startup
+    /// has finished. <see cref="CheckDisclaimerStatusAsync"/> reads the database
+    /// and now runs at the tail of deferred startup (Task 6), so showing the
+    /// disclaimer any earlier would cover the "Starting DiffusionNexus…" overlay
+    /// on every launch — even for users who accepted long ago — and would let the
+    /// Continue button issue a DB write concurrent with the pool-thread DB
+    /// migration on fresh installs.
+    /// </summary>
+    public bool ShowDisclaimer => IsStartupComplete && !IsDisclaimerAccepted;
 
     [ObservableProperty]
     private StatusBarViewModel? _statusBar;
