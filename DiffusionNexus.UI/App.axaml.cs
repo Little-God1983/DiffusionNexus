@@ -484,11 +484,21 @@ public partial class App : Application
                     break;
             }
 
-            // Apply any pending schema migrations on top of the (seed) data.
+            // Apply pending schema migrations on top of the (seed) data — but only
+            // when there are any; an unconditional Migrate() costs a full EF
+            // migration pass on every launch (mirrors the core-DB gating above).
             var sdkContext = Services!.GetRequiredService<SdkContext>();
-            Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
-            sdkContext.Database.Migrate();
-            Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+            var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
+            if (pendingSdkMigrations.Count > 0)
+            {
+                Serilog.Log.Information("InitializeSdkDatabase: Applying {Count} pending migration(s)...", pendingSdkMigrations.Count);
+                sdkContext.Database.Migrate();
+                Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+            }
+            else
+            {
+                Serilog.Log.Information("InitializeSdkDatabase: No pending migrations - SKIPPING Migrate()");
+            }
 
             activityLog?.LogInfo(logSource, $"Database loaded from: {runtimeDb}");
         }
