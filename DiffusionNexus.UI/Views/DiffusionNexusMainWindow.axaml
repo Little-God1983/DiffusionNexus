@@ -214,13 +214,7 @@ x:Name="MainWin">
                             </ItemsControl>
 
                             <Panel Grid.Row="1">
-                                <ContentControl Content="{Binding CurrentModuleView}">
-                                    <ContentControl.ContentTemplate>
-                                        <DataTemplate>
-                                            <ContentPresenter Content="{Binding}"/>
-                                        </DataTemplate>
-                                    </ContentControl.ContentTemplate>
-                                </ContentControl>
+                                <ContentControl Content="{Binding CurrentModuleView}"/>
 
                                 <!-- Startup overlay: shown until deferred startup (DB init + module
                                      registration) completes. Reuses the app's busy-overlay idiom
