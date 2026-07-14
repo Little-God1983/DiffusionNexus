@@ -992,13 +992,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
+            // Progress<T> captures the UI SynchronizationContext at construction
+            // (this runs on the UI thread), so the callback is already marshaled.
             var progress = new Progress<BackupProgress>(p =>
             {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
+                BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
             });
 
             // Run backup on a background thread with its own DI scope to avoid
@@ -1062,13 +1061,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
+            // Progress<T> captures the UI SynchronizationContext at construction
+            // (this runs on the UI thread), so the callback is already marshaled.
             var progress = new Progress<BackupProgress>(p =>
             {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
+                BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
             });
 
             // Run backup on a background thread with its own DI scope to avoid

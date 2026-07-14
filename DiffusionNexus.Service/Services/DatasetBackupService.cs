@@ -117,6 +117,8 @@ public class DatasetBackupService : IDatasetBackupService
                 var memBeforeMb = GC.GetTotalMemory(forceFullCollection: false) / 1024.0 / 1024.0;
                 Log.Information("Backup memory before: {MemBefore:F1} MB ({TotalFiles} files)", memBeforeMb, totalFiles);
 
+                var progressGate = new BackupProgressGate();
+
                 // Create ZIP archive with streaming FileStream to reduce memory pressure
                 using (var fileStream = new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1 << 20))
                 using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false))
@@ -136,9 +138,9 @@ public class DatasetBackupService : IDatasetBackupService
                             archive.CreateEntryFromFile(filePath, relativePath, compressionLevel);
                             processedFiles++;
 
-                            if (processedFiles % 10 == 0 || processedFiles == totalFiles)
+                            var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
+                            if (progressGate.ShouldReport(percent, "Creating backup"))
                             {
-                                var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
                                 progress?.Report(new BackupProgress
                                 {
                                     Phase = "Creating backup",
