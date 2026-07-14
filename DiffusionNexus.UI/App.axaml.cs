@@ -1044,7 +1044,11 @@ public partial class App : Application
         services.AddSingleton<IUserDictionaryService, UserDictionaryService>();
         services.AddSingleton<ISpellCheckService>(sp =>
             new SpellCheckService(sp.GetRequiredService<IUserDictionaryService>()));
-        services.AddSingleton<IAutoCompleteService, AutoCompleteService>();
+        services.AddSingleton(_ => new DiffusionNexus.UI.Services.Startup.StartupProgressService(
+            DiffusionNexus.UI.Services.Startup.StartupProgressService.BuildDefaultChecks(
+                DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)));
+        services.AddSingleton<IAutoCompleteService>(sp => new AutoCompleteService(
+            sp.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>().UiReady));
 
         // Bridge UI spell check into the domain contract used by dataset quality checks
         services.AddSingleton<ISpellChecker>(sp =>

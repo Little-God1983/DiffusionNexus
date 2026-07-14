@@ -12,18 +12,43 @@ public sealed class AutoCompleteService : IAutoCompleteService
     private readonly object _lock = new();
 
     /// <summary>
-    /// Creates an AutoCompleteService and seeds it from the Hunspell dictionary.
+    /// Creates an AutoCompleteService and seeds it from the Hunspell dictionary
+    /// immediately on a background task. Used by tests and non-startup callers.
     /// </summary>
     public AutoCompleteService(string? dictionaryDirectory = null)
+        : this(Task.CompletedTask, dictionaryDirectory)
+    {
+    }
+
+    /// <summary>
+    /// Defers the dictionary load until <paramref name="startSignal"/> completes,
+    /// then runs it on a dedicated BelowNormal-priority thread. The load costs
+    /// ~20s of CPU (Hunspell suffix expansion); at startup it must neither run
+    /// on the UI thread nor compete with startup work for cores — the app signals
+    /// StartupProgressService.UiReady after the overlay's drain sentinel, and the
+    /// load begins only then. GetSuggestions/RecordWord tolerate the not-yet-loaded
+    /// state (they briefly contend on _lock and see a partial trie).
+    /// </summary>
+    public AutoCompleteService(Task startSignal, string? dictionaryDirectory = null)
     {
         var dir = dictionaryDirectory ?? Path.Combine(AppContext.BaseDirectory, "Dictionaries");
+        LoadCompleted = LoadAfterSignalAsync(startSignal, dir);
+    }
 
-        // Background-load so the UI thread doesn't block on Hunspell's ~6s parse plus
-        // inflected-form generation. GetSuggestions/RecordWord called during the load
-        // window will briefly contend on _lock — acceptable because caption editors
-        // aren't visible during the first seconds of cold start.
-        // Tests (and any caller that needs to wait) can await LoadCompleted.
-        LoadCompleted = Task.Run(() => LoadFromDictionary(dir));
+    private async Task LoadAfterSignalAsync(Task startSignal, string dir)
+    {
+        try { await startSignal.ConfigureAwait(false); }
+        catch { /* a faulted signal must not kill autocomplete; load anyway */ }
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() => { LoadFromDictionary(dir); tcs.TrySetResult(); })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "AutoCompleteTrieLoad",
+        };
+        thread.Start();
+        await tcs.Task.ConfigureAwait(false);
     }
 
     /// <summary>
