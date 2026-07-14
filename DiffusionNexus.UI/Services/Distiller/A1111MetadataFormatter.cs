@@ -49,7 +49,8 @@ internal static class A1111MetadataFormatter
 
         var settings = new List<string>();
         if (data.Steps is { } steps) settings.Add($"Steps: {steps}");
-        settings.Add($"Sampler: {MapSampler(data.SamplerName, data.Scheduler)}");
+        if (!string.IsNullOrWhiteSpace(data.SamplerName))
+            settings.Add($"Sampler: {MapSampler(data.SamplerName, data.Scheduler)}");
         if (!string.IsNullOrWhiteSpace(data.Scheduler)) settings.Add($"Schedule type: {data.Scheduler}");
         if (data.Cfg is { } cfg) settings.Add($"CFG scale: {cfg.ToString("0.###", CultureInfo.InvariantCulture)}");
         if (data.Seed is { } seed) settings.Add($"Seed: {seed}");

@@ -81,8 +81,6 @@ public class MetadataDistillerServiceTests
     public async Task DistillAsync_deduplicates_output_names()
     {
         var a = MakePng();
-        var dir = Path.GetDirectoryName(a)!;
-        var sameName = Path.Combine(dir, Path.GetFileName(a)); // same file name, different source dir scenario simulated below
         var outDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"out_{System.Guid.NewGuid():N}")).FullName;
         try
         {

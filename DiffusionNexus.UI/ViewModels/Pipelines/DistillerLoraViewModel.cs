@@ -11,7 +11,6 @@ public partial class DistillerLoraViewModel : ViewModelBase
 
     [ObservableProperty] private double _strength;
     [ObservableProperty] private bool _include = true;
-    [ObservableProperty] private bool _foundLocally;
 
     public DistillerLoraViewModel(LoraInfo info)
     {

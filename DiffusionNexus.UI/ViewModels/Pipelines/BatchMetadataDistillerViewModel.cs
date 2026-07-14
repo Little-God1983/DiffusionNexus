@@ -84,7 +84,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     {
         if (e.Action == NotifyCollectionChangedAction.Reset)
         {
-            foreach (var it in Items) it.PropertyChanged -= OnItemPropertyChanged;
+            foreach (var it in Items) { it.PropertyChanged -= OnItemPropertyChanged; it.Dispose(); }
             Items.Clear();
             RecomputeCounts();
             return;
@@ -102,6 +102,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
                 {
                     existing.PropertyChanged -= OnItemPropertyChanged;
                     Items.Remove(existing);
+                    existing.Dispose();
                 }
             }
 
@@ -212,7 +213,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
     public void Dispose()
     {
-        foreach (var it in Items) it.PropertyChanged -= OnItemPropertyChanged;
+        foreach (var it in Items) { it.PropertyChanged -= OnItemPropertyChanged; it.Dispose(); }
         _cts?.Cancel();
         _cts?.Dispose();
         ImagePaths.CollectionChanged -= OnImagePathsChanged;

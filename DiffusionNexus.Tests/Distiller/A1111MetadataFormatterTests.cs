@@ -53,4 +53,12 @@ public class A1111MetadataFormatterTests
 
         s.Should().NotContain("Negative prompt:");
     }
+
+    [Fact]
+    public void Build_omits_sampler_line_when_sampler_name_missing()
+    {
+        var data = Data() with { SamplerName = null };
+        var s = A1111MetadataFormatter.Build(data, "p", null, [], hashes: null);
+        s.Should().NotContain("Sampler:");
+    }
 }

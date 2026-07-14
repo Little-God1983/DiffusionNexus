@@ -11,7 +11,7 @@ using DiffusionNexus.UI.Models;
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
 
 /// <summary>One input image: its parsed metadata, editable working copies, and detected LoRAs.</summary>
-public partial class DistillerItemViewModel : ViewModelBase
+public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
 {
     private readonly ImageGenerationData _data;
 
@@ -88,4 +88,10 @@ public partial class DistillerItemViewModel : ViewModelBase
 
     public IReadOnlyList<LoraInfo> IncludedLoras() =>
         Loras.Where(l => l.Include).Select(l => l.ToLoraInfo()).ToList();
+
+    public void Dispose()
+    {
+        Thumbnail?.Dispose();
+        Thumbnail = null;
+    }
 }
