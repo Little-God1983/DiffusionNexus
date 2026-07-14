@@ -111,43 +111,18 @@ public partial class App : Application
                 _appScope = rootProvider.CreateScope();
                 Services = _appScope.ServiceProvider;
 
-                // Initialize ThumbnailService for converters
-                Serilog.Log.Information("Initializing thumbnail service...");
-                InitializeThumbnailService();
-
-                // Initialize spell check and autocomplete for caption editors
-                Serilog.Log.Information("Initializing spell check services...");
-                InitializeSpellCheckServices();
-
-                // Initialize databases
-                Serilog.Log.Information("Initializing app database...");
-                InitializeDatabase();
-
-                Serilog.Log.Information("Initializing SDK database...");
-                InitializeSdkDatabase();
-
-                // Create main window with modules
+                // Create main window view model
                 Serilog.Log.Information("Creating main window view model...");
                 var mainViewModel = new DiffusionNexusMainWindowViewModel();
 
-                // Initialize status bar with activity log service
+                // Initialize status bar with activity log service. This only constructs
+                // the in-memory status-bar / unified-console view models (no DB access);
+                // DB-backed instance loading is wired later in CompleteStartupAsync.
                 Serilog.Log.Information("Initializing status bar...");
                 mainViewModel.InitializeStatusBar();
 
-                // Force-resolve the InstanceProcessManager singleton so its constructor
-                // wires PackageProcessManager.OutputReceived ? IUnifiedLogger.
-                // Without this, process stdout/stderr never reaches the Unified Console.
-                Serilog.Log.Information("Initializing instance process manager...");
-                _ = Services!.GetRequiredService<IInstanceProcessManager>();
-
-                // Wire the Civitai base-model catalog into the Unified Console:
-                // - log how old the on-disk definition is right now
-                // - log every refresh attempt (cache hit, live fetch + result, fallback)
-                Serilog.Log.Information("Initializing Civitai base-model catalog...");
-                InitializeCivitaiBaseModelCatalog();
-
-                // Create and assign the main window before registering modules,
-                // because module resolution requires IDialogService which needs MainWindow.
+                // Create and assign the main window before showing it. Module resolution
+                // (deferred to CompleteStartupAsync) requires IDialogService, which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
                 var mainWindow = new DiffusionNexusMainWindow
                 {
@@ -156,33 +131,8 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 Serilog.Log.Information("Main window assigned to desktop.MainWindow");
 
-                Serilog.Log.Information("Registering modules...");
-                RegisterModules(mainViewModel);
-
-                // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
-                // Fire-and-forget: failure to register must not block startup (registrar logs internally).
-                if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            using var scope = Services!.CreateScope();
-                            var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
-                            await registrar.EnsureRegisteredAsync();
-                        }
-                        catch (Exception ex)
-                        {
-                            Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
-                        }
-                    });
-                }
-
-                // Force show the window explicitly
-                mainWindow.Show();
-                Serilog.Log.Information("Main window Show() called");
-
-                // Cleanup on shutdown
+                // Cleanup on shutdown — registered before Show() so it is wired before
+                // anything can close the app.
                 desktop.ShutdownRequested += (_, _) =>
                 {
                     // Dispose the instance process manager (unwires events)
@@ -198,6 +148,14 @@ public partial class App : Application
                     Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
                 };
+
+                // Show FIRST: the window becomes visible and interactive immediately;
+                // databases, service warm-up and module registration follow asynchronously
+                // (CompleteStartupAsync). A lightweight overlay covers the module host until then.
+                mainWindow.Show();
+                Serilog.Log.Information("Main window Show() called");
+
+                _ = CompleteStartupAsync(mainViewModel);
             }
             catch (Exception ex)
             {
@@ -209,6 +167,90 @@ public partial class App : Application
         Serilog.Log.Information("Calling base.OnFrameworkInitializationCompleted...");
         base.OnFrameworkInitializationCompleted();
         Serilog.Log.Information("OnFrameworkInitializationCompleted finished");
+    }
+
+    /// <summary>
+    /// Deferred startup: everything that used to run before Show() but doesn't
+    /// need to. Database init runs on a pool thread; the UI-affine service warm-up
+    /// and module registration (which inflates XAML views) resume on the UI thread
+    /// afterwards. On completion (success or failure) the main window's startup
+    /// overlay is dismissed via <see cref="DiffusionNexusMainWindowViewModel.IsStartupComplete"/>.
+    /// </summary>
+    private async Task CompleteStartupAsync(DiffusionNexusMainWindowViewModel mainViewModel)
+    {
+        try
+        {
+            // Database initialization is pure logging + EF work — safe off the UI thread.
+            await Task.Run(() =>
+            {
+                Serilog.Log.Information("Initializing app database...");
+                InitializeDatabase();
+                Serilog.Log.Information("Initializing SDK database...");
+                InitializeSdkDatabase();
+            });
+
+            // Everything below resumes on the Avalonia UI thread (its SynchronizationContext
+            // was captured at the await above), which these steps require: they touch
+            // converter singletons, spell-check wiring and — via RegisterModules — inflate
+            // XAML views. Do NOT add ConfigureAwait(false) in this method.
+            Serilog.Log.Information("Initializing thumbnail service...");
+            InitializeThumbnailService();
+
+            Serilog.Log.Information("Initializing spell check services...");
+            InitializeSpellCheckServices();
+
+            // Force-resolve the InstanceProcessManager singleton so its constructor
+            // wires PackageProcessManager output -> IUnifiedLogger. Without this, process
+            // stdout/stderr never reaches the Unified Console.
+            Serilog.Log.Information("Initializing instance process manager...");
+            _ = Services!.GetRequiredService<IInstanceProcessManager>();
+
+            // Wire the Civitai base-model catalog into the Unified Console (age report +
+            // per-refresh logging), then kick off a background load.
+            Serilog.Log.Information("Initializing Civitai base-model catalog...");
+            InitializeCivitaiBaseModelCatalog();
+
+            // Wire DB-backed instance management now that the databases exist. Moved here
+            // from InitializeStatusBar because it triggers LoadInstancesAsync, which reads
+            // the core database's InstallerPackages table (see Step 4 of the perf plan).
+            Serilog.Log.Information("Initializing instance management...");
+            mainViewModel.InitializeInstanceManagement();
+
+            Serilog.Log.Information("Registering modules...");
+            RegisterModules(mainViewModel);
+
+            // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
+            // Fire-and-forget: failure to register must not block startup (registrar logs internally).
+            if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var scope = Services!.CreateScope();
+                        var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+                        await registrar.EnsureRegisteredAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Fatal(ex, "Deferred startup initialization failed");
+            Services?.GetService<IActivityLogService>()
+                ?.LogError("Startup", "Startup initialization failed — some features may be unavailable", ex);
+        }
+        finally
+        {
+            // Reached on the UI thread whether the await completed or Task.Run threw
+            // (the exception resumes on the captured UI SynchronizationContext), so this
+            // observable-property set — which dismisses the overlay — is UI-thread-safe.
+            mainViewModel.IsStartupComplete = true;
+        }
     }
 
     /// <summary>

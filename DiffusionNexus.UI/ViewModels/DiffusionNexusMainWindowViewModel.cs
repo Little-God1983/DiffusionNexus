@@ -64,6 +64,13 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private object? _currentModuleView;
 
+    /// <summary>
+    /// False until deferred startup (database init + module registration) has
+    /// finished. The main window shows a lightweight loading overlay while false.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isStartupComplete;
+
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 
@@ -224,13 +231,28 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             _activityLogService.DownloadProgressChanged += OnDownloadProgressChanged;
             IsDownloadInProgress = _activityLogService.IsDownloadInProgress;
             ActiveDownloadName = _activityLogService.DownloadOperationName;
+        }
+    }
 
-            // Wire instance management (Start/Stop/Restart) into the Unified Console
-            var processManager = App.Services?.GetService<Services.PackageProcessManager>();
-            if (processManager is not null && App.Services is not null)
-            {
-                StatusBar.InitializeInstanceManagement(processManager, App.Services);
-            }
+    /// <summary>
+    /// Wires instance management (Start/Stop/Restart) into the Unified Console.
+    /// Kept separate from <see cref="InitializeStatusBar"/> because it triggers
+    /// DB-backed instance loading — <c>UnifiedConsoleViewModel.LoadInstancesAsync</c>
+    /// reads the core database's <c>InstallerPackages</c> table — so it must run
+    /// only after the databases have been initialized. Invoked from
+    /// <c>App.CompleteStartupAsync</c> once DB init has completed.
+    /// </summary>
+    public void InitializeInstanceManagement()
+    {
+        if (StatusBar is null)
+        {
+            return;
+        }
+
+        var processManager = App.Services?.GetService<Services.PackageProcessManager>();
+        if (processManager is not null && App.Services is not null)
+        {
+            StatusBar.InitializeInstanceManagement(processManager, App.Services);
         }
     }
 

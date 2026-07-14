@@ -213,13 +213,30 @@ x:Name="MainWin">
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <ContentControl Grid.Row="1" Content="{Binding CurrentModuleView}">
-                                <ContentControl.ContentTemplate>
-                                    <DataTemplate>
-                                        <ContentPresenter Content="{Binding}"/>
-                                    </DataTemplate>
-                                </ContentControl.ContentTemplate>
-                            </ContentControl>
+                            <Panel Grid.Row="1">
+                                <ContentControl Grid.Row="1" Content="{Binding CurrentModuleView}">
+                                    <ContentControl.ContentTemplate>
+                                        <DataTemplate>
+                                            <ContentPresenter Content="{Binding}"/>
+                                        </DataTemplate>
+                                    </ContentControl.ContentTemplate>
+                                </ContentControl>
+
+                                <!-- Startup overlay: shown until deferred startup (DB init + module
+                                     registration) completes. Reuses the app's busy-overlay idiom
+                                     (dimming Border + centered indeterminate ProgressBar). -->
+                                <Border IsVisible="{Binding !IsStartupComplete}"
+                                        Background="#80000000">
+                                    <StackPanel HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Spacing="12">
+                                        <ProgressBar IsIndeterminate="True" Width="220"/>
+                                        <TextBlock Text="Starting DiffusionNexus…"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="White"/>
+                                    </StackPanel>
+                                </Border>
+                            </Panel>
                         </Grid>
                     </Border>
                 </SplitView.Content>
