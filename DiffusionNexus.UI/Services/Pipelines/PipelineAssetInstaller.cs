@@ -71,6 +71,10 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
     }
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<string>> ResolveModelsRootsAsync(CancellationToken cancellationToken = default)
+        => _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken);
+
+    /// <inheritdoc />
     public async Task<PipelineReadiness> CheckAsync(PipelineManifest manifest, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);

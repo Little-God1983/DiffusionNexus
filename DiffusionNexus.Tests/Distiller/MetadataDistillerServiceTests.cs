@@ -46,7 +46,7 @@ public class MetadataDistillerServiceTests
         var catalog = new Mock<ILoraCatalog>();
         catalog.Setup(c => c.GetInstalledLorasAsync(It.IsAny<IReadOnlyCollection<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AvailableLora>());
-        return new MetadataDistillerService(new ImageResourceHasher(catalog.Object, _ => Task.FromResult<string?>(null)));
+        return new MetadataDistillerService(new ImageResourceHasher(catalog.Object, _ => Task.FromResult<IReadOnlyList<string>>([])));
     }
 
     [Fact]

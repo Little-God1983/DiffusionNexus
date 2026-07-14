@@ -53,6 +53,10 @@ internal static class ComfyUiPromptTracer
         scheduler ??= FollowLinkedString(graph, s, "sigmas", "scheduler");
         steps ??= FollowLinkedInt(graph, s, "sigmas", "steps");
 
+        // A "Sampler Selector"/KSamplerSelect wired into a plain KSampler's sampler_name input
+        // (a link, not a literal) — follow it so the graph doesn't come out with an empty sampler.
+        samplerName ??= FollowLinkedString(graph, s, "sampler_name", "sampler_name");
+
         string? positive = ResolvePrompt(graph, s, "positive");
         string? negative = ResolvePrompt(graph, s, "negative");
 
@@ -77,24 +81,42 @@ internal static class ComfyUiPromptTracer
     {
         var samplerIds = graph.Where(kv => IsClass(kv.Value, SamplerClasses)).Select(kv => kv.Key).ToList();
         if (samplerIds.Count == 0) return null;
+        if (samplerIds.Count == 1) return samplerIds[0]; // unambiguous — no need to trace a save node
 
-        // Prefer the sampler reachable from a save node's images input.
+        // Multi-sampler graph (e.g. several aspect-ratio branches sharing one model): anchor on the
+        // node that saved/consumed the final image and BFS back to ITS sampler. Try the strongest
+        // signal first — a core save class (SaveImage/PreviewImage) — then any node whose class name
+        // looks like a saver (covers custom nodes such as AI2GoSaveCivitaiMetadata the core list
+        // misses), then, as a last resort, any node consuming an image link.
+        return FindSamplerViaImageConsumer(graph, cls => SaveClasses.Contains(cls))
+            ?? FindSamplerViaImageConsumer(graph, IsSaveLikeName)
+            ?? FindSamplerViaImageConsumer(graph, _ => true)
+            // No image-consuming node traces to a sampler: best-effort first sampler rather than
+            // leaving it unresolved (product decision 2026-07-13; differs from tracer.py).
+            ?? samplerIds[0];
+    }
+
+    // Finds the first sampler reachable (backward) from the images input of a node whose class
+    // satisfies <paramref name="classMatches"/>. Null when no such node traces to a sampler.
+    private static string? FindSamplerViaImageConsumer(
+        Dictionary<string, JsonElement> graph, Func<string, bool> classMatches)
+    {
         foreach (var (_, node) in graph)
         {
-            if (!IsClass(node, SaveClasses)) continue;
+            if (!node.TryGetProperty("class_type", out var c) || c.ValueKind != JsonValueKind.String) continue;
+            if (!classMatches(c.GetString()!)) continue;
             if (!node.TryGetProperty("inputs", out var ins)) continue;
             if (!ins.TryGetProperty("images", out var imgs) || !IsLink(imgs)) continue;
             var found = BfsBackward(graph, OriginId(imgs), cls => SamplerClasses.Contains(cls));
             if (found is not null) return found;
         }
-
-        // Single-sampler graphs resolve here. For multi-sampler graphs with no BFS-traceable save
-        // node we deliberately return a best-effort first sampler rather than leaving it unresolved
-        // (product decision 2026-07-13). This differs from tracer.py, which returns unresolved; the
-        // trade-off is accepted because the common hires/refiner topology links SaveImage to the
-        // final sampler and is resolved by the BFS above.
-        return samplerIds[0];
+        return null;
     }
+
+    private static bool IsSaveLikeName(string cls) =>
+        cls.Contains("Save", StringComparison.OrdinalIgnoreCase) ||
+        cls.Contains("Preview", StringComparison.OrdinalIgnoreCase) ||
+        cls.Contains("Output", StringComparison.OrdinalIgnoreCase);
 
     // BFS over input links; checks the start node itself first.
     private static string? BfsBackward(Dictionary<string, JsonElement> graph, string startId, Func<string, bool> match)

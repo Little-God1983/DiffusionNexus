@@ -75,7 +75,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     public ObservableCollection<PromptRuleSetViewModel> RuleSets { get; } = [];
 
     [ObservableProperty] private bool _stripWorkflow = true;
-    [ObservableProperty] private bool _computeHashes;
+    [ObservableProperty] private bool _computeHashes = true;
     [ObservableProperty] private string? _outputFolder;
 
     /// <summary>Optional output resize (longest side) and PNG recompression choices.</summary>
@@ -126,7 +126,27 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         _services = services;
         _selectedResize = ResizeChoices[0];
         _selectedCompression = CompressionChoices[0];
-        var hasher = new ImageResourceHasher(loraCatalog, async _ => await installer.ResolveModelsRootAsync());
+
+        // Checkpoint hashes are looked up in the library DB first (so a model in ANY registered
+        // install is found, reusing its stored hash), then via a disk scan across every models root;
+        // LoRAs resolve through the catalog inside the hasher. `services` is null in tests — then
+        // only the disk scan runs.
+        Func<CancellationToken, Task<IReadOnlyList<TrackedModelFile>>>? trackedModelFiles = services is null
+            ? null
+            : async ct =>
+            {
+                using var scope = services.CreateScope();
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                var files = await uow.ModelFiles.GetAllWithLocalPathAsync(ct).ConfigureAwait(false);
+                return files
+                    .Select(f => new TrackedModelFile(f.FileName, f.LocalPath, f.HashAutoV2, f.HashSHA256))
+                    .ToList();
+            };
+
+        var hasher = new ImageResourceHasher(
+            loraCatalog,
+            ct => installer.ResolveModelsRootsAsync(ct),
+            trackedModelFiles);
         _distiller = new MetadataDistillerService(hasher, unifiedLogger);
 
         ImagePaths.CollectionChanged += OnImagePathsChanged;
