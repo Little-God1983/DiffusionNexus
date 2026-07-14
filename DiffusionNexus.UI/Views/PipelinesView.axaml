@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:vmp="using:DiffusionNexus.UI.ViewModels.Pipelines"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:pipelines="using:DiffusionNexus.UI.Views.Pipelines"
              xmlns:m="using:DiffusionNexus.UI.Markup"
@@ -14,11 +15,63 @@
     <vm:PipelinesViewModel/>
   </Design.DataContext>
 
+  <UserControl.Resources>
+    <DataTemplate x:Key="PipelineTileTemplate" x:DataType="vm:PipelineTileViewModel">
+      <Button Width="240" Height="260" Margin="0,0,16,16"
+              Padding="0" CornerRadius="8" BorderThickness="0"
+              HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+              Cursor="Hand"
+              Command="{Binding $parent[ItemsControl].((vm:PipelinesViewModel)DataContext).OpenPipelineCommand}"
+              CommandParameter="{Binding}"
+              ToolTip.Tip="{Binding Description}">
+        <Button.Styles>
+          <Style Selector="Button"><Setter Property="Background" Value="Transparent"/></Style>
+          <Style Selector="Button:pointerover /template/ ContentPresenter"><Setter Property="Background" Value="Transparent"/></Style>
+          <Style Selector="Button:pressed /template/ ContentPresenter"><Setter Property="Background" Value="Transparent"/></Style>
+          <Style Selector="Button:pointerover Border#Card"><Setter Property="BorderBrush" Value="#0078D4"/></Style>
+        </Button.Styles>
+        <Border x:Name="Card" Background="#2D2D2D" CornerRadius="8" BorderBrush="#3D3D3D" BorderThickness="1" ClipToBounds="True">
+          <Grid RowDefinitions="*,Auto">
+            <Border Grid.Row="0" Background="#1A1A1A">
+              <Grid>
+                <Image Source="{Binding IconBitmap}" Stretch="UniformToFill"
+                       HorizontalAlignment="Stretch" VerticalAlignment="Stretch" IsVisible="{Binding HasCustomIcon}"/>
+                <Image Source="{Binding IconBitmap}" Width="96" Height="96"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding !HasCustomIcon}"/>
+                <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6"
+                        Background="{Binding StatusBrush}" CornerRadius="4" Padding="6,2">
+                  <TextBlock Text="{Binding StatusText}" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                </Border>
+                <Border IsVisible="{Binding IsBusy}" Background="#80000000">
+                  <ProgressBar IsIndeterminate="True" Width="120" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+              </Grid>
+            </Border>
+            <StackPanel Grid.Row="1" Background="#252525" Spacing="2">
+              <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" Foreground="White"
+                         Margin="12,8,12,0" TextTrimming="CharacterEllipsis"/>
+              <TextBlock Text="{Binding Description}" FontSize="11" Foreground="#A0A0A0"
+                         Margin="12,0,12,10" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Button>
+    </DataTemplate>
+  </UserControl.Resources>
+
   <Panel>
 
-  <!-- Active pipeline run (img2img etc.) — replaces the gallery while open -->
-  <ContentControl IsVisible="{Binding ActiveRun, Converter={x:Static ObjectConverters.IsNotNull}}">
-    <pipelines:PipelineRunView DataContext="{Binding ActiveRun}"/>
+  <!-- Active run (generation OR distiller) — replaces the gallery while open -->
+  <ContentControl Content="{Binding ActiveRun}"
+                  IsVisible="{Binding ActiveRun, Converter={x:Static ObjectConverters.IsNotNull}}">
+    <ContentControl.DataTemplates>
+      <DataTemplate DataType="vmp:PipelineRunViewModel">
+        <pipelines:PipelineRunView/>
+      </DataTemplate>
+      <DataTemplate DataType="vmp:BatchMetadataDistillerViewModel">
+        <pipelines:BatchMetadataDistillerView/>
+      </DataTemplate>
+    </ContentControl.DataTemplates>
   </ContentControl>
 
   <Grid RowDefinitions="Auto,Auto,*" Margin="24"
@@ -39,98 +92,31 @@
 
     <!-- Tile gallery -->
     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-      <ItemsControl ItemsSource="{Binding Pipelines}">
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <WrapPanel Orientation="Horizontal"/>
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="vm:PipelineTileViewModel">
-            <Button Width="240" Height="260" Margin="0,0,16,16"
-                    Padding="0"
-                    CornerRadius="8"
-                    BorderThickness="0"
-                    HorizontalContentAlignment="Stretch"
-                    VerticalContentAlignment="Stretch"
-                    Cursor="Hand"
-                    Command="{Binding $parent[ItemsControl].DataContext.OpenPipelineCommand}"
-                    CommandParameter="{Binding}"
-                    ToolTip.Tip="{Binding Description}">
+      <StackPanel Spacing="0">
 
-              <!-- Keep the button chrome flat so only the rounded card below is visible -->
-              <Button.Styles>
-                <Style Selector="Button">
-                  <Setter Property="Background" Value="Transparent"/>
-                </Style>
-                <Style Selector="Button:pointerover /template/ ContentPresenter">
-                  <Setter Property="Background" Value="Transparent"/>
-                </Style>
-                <Style Selector="Button:pressed /template/ ContentPresenter">
-                  <Setter Property="Background" Value="Transparent"/>
-                </Style>
-                <Style Selector="Button:pointerover Border#Card">
-                  <Setter Property="BorderBrush" Value="#0078D4"/>
-                </Style>
-              </Button.Styles>
+        <ItemsControl ItemsSource="{Binding GenerationPipelines}"
+                      ItemTemplate="{StaticResource PipelineTileTemplate}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
 
-              <Border x:Name="Card"
-                      Background="#2D2D2D"
-                      CornerRadius="8"
-                      BorderBrush="#3D3D3D"
-                      BorderThickness="1"
-                      ClipToBounds="True">
-                <Grid RowDefinitions="*,Auto">
+        <!-- Labelled Utilities divider (requested horizontal line) -->
+        <Grid ColumnDefinitions="Auto,*" Margin="0,6,0,14" IsVisible="{Binding HasUtilityPipelines}">
+          <TextBlock Text="UTILITIES" FontSize="11" FontWeight="SemiBold" Foreground="#808080"
+                     VerticalAlignment="Center" Margin="2,0,0,0"/>
+          <Border Grid.Column="1" Height="1" Background="#40FFFFFF" Margin="12,0,0,0" VerticalAlignment="Center"/>
+        </Grid>
 
-                  <!-- Icon / preview area -->
-                  <Border Grid.Row="0" Background="#1A1A1A">
-                    <Grid>
-                      <!-- Full-bleed preview when the manifest provides its own image -->
-                      <Image Source="{Binding IconBitmap}"
-                             Stretch="UniformToFill"
-                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                             IsVisible="{Binding HasCustomIcon}"/>
-                      <!-- Generic centered placeholder otherwise -->
-                      <Image Source="{Binding IconBitmap}"
-                             Width="96" Height="96"
-                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                             IsVisible="{Binding !HasCustomIcon}"/>
+        <ItemsControl ItemsSource="{Binding UtilityPipelines}"
+                      IsVisible="{Binding HasUtilityPipelines}"
+                      ItemTemplate="{StaticResource PipelineTileTemplate}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
 
-                      <!-- Readiness badge -->
-                      <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6"
-                              Background="{Binding StatusBrush}"
-                              CornerRadius="4" Padding="6,2">
-                        <TextBlock Text="{Binding StatusText}"
-                                   FontSize="10" FontWeight="SemiBold" Foreground="White"/>
-                      </Border>
-
-                      <!-- Busy overlay while downloading -->
-                      <Border IsVisible="{Binding IsBusy}" Background="#80000000">
-                        <ProgressBar IsIndeterminate="True" Width="120"
-                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                      </Border>
-                    </Grid>
-                  </Border>
-
-                  <!-- Caption -->
-                  <StackPanel Grid.Row="1" Background="#252525" Spacing="2">
-                    <TextBlock Text="{Binding Title}"
-                               FontSize="15" FontWeight="SemiBold" Foreground="White"
-                               Margin="12,8,12,0"
-                               TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding Description}"
-                               FontSize="11" Foreground="#A0A0A0"
-                               Margin="12,0,12,10"
-                               TextWrapping="Wrap" MaxLines="2"
-                               TextTrimming="CharacterEllipsis"/>
-                  </StackPanel>
-
-                </Grid>
-              </Border>
-            </Button>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+      </StackPanel>
     </ScrollViewer>
 
   </Grid>
