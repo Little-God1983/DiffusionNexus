@@ -6,8 +6,13 @@ public sealed class DistillOptions
     /// <summary>Remove the embedded ComfyUI workflow/prompt chunks from output (default on).</summary>
     public bool StripWorkflow { get; set; } = true;
 
-    /// <summary>Compute AutoV2 resource hashes for found LoRAs/checkpoints (slower).</summary>
-    public bool ComputeHashes { get; set; }
+    /// <summary>
+    /// Compute AutoV2 resource hashes for found LoRAs/checkpoints (default on). Civitai matches the
+    /// checkpoint, LoRAs, and derives the base model from these hashes — without them an uploaded
+    /// image shows only the plain settings (steps/CFG/sampler). Tracked models reuse the library's
+    /// stored hash, so this is cheap; only untracked files are hashed from disk (cached per run).
+    /// </summary>
+    public bool ComputeHashes { get; set; } = true;
 
     /// <summary>Destination folder for cleaned copies. Must be set before a run.</summary>
     public string? OutputFolder { get; set; }

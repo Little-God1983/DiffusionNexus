@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DiffusionNexus.UI.Models.Pipelines;
@@ -17,6 +18,14 @@ public interface IPipelineAssetInstaller
     /// <c>models/</c> folder), or <c>null</c> when no ComfyUI installation is registered.
     /// </summary>
     Task<string?> ResolveModelsRootAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves <b>every</b> models root the Diffusion Nexus core uses — each registered ComfyUI
+    /// install's <c>models/</c> folder plus any <c>extra_model_paths.yaml</c> bases — most-default
+    /// first. Empty when no ComfyUI installation is registered. Used to locate a checkpoint that may
+    /// live outside the primary install.
+    /// </summary>
+    Task<IReadOnlyList<string>> ResolveModelsRootsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Checks which of the manifest's assets are already present, searching <b>every</b> model

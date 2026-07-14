@@ -228,6 +228,49 @@ public class ComfyUiPromptTracerTests
     }
 
     [Fact]
+    public void Multi_branch_graph_picks_the_sampler_feeding_the_save_node()
+    {
+        // Two aspect-ratio branches share one checkpoint. A CUSTOM save node (not a core SaveImage)
+        // is wired to branch B's VAEDecode. The picked sampler must be B (feeding the saved image),
+        // NOT the first sampler in the graph (A) — that was the pre-fix behaviour.
+        var g = Graph("""
+        {
+          "1": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}},
+          "2": {"class_type":"KSampler","inputs":{"model":["1",0],"seed":111,"sampler_name":"euler","scheduler":"simple","steps":8,"cfg":1.0}},
+          "3": {"class_type":"KSampler","inputs":{"model":["1",0],"seed":222,"sampler_name":"dpmpp_2m","scheduler":"karras","steps":20,"cfg":7.0}},
+          "4": {"class_type":"VAEDecode","inputs":{"samples":["3",0]}},
+          "5": {"class_type":"AI2GoSaveCivitaiMetadata","inputs":{"images":["4",0]}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, "x.png", 1024, 1024);
+
+        r.Seed.Should().Be(222);
+        r.SamplerName.Should().Be("dpmpp_2m");
+        r.Steps.Should().Be(20);
+    }
+
+    [Fact]
+    public void Sampler_name_link_is_followed_to_a_selector_node()
+    {
+        // A plain KSampler whose sampler_name input is a LINK to a "Sampler Selector" node holding
+        // the literal — resolve it rather than leaving the sampler empty.
+        var g = Graph("""
+        {
+          "1": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}},
+          "2": {"class_type":"KSampler","inputs":{"model":["1",0],"seed":5,"sampler_name":["9",0],"scheduler":"karras","steps":8,"cfg":1.0}},
+          "9": {"class_type":"Sampler Selector","inputs":{"sampler_name":"dpmpp_2m"}},
+          "3": {"class_type":"SaveImage","inputs":{"images":["4",0]}},
+          "4": {"class_type":"VAEDecode","inputs":{"samples":["2",0]}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.SamplerName.Should().Be("dpmpp_2m");
+    }
+
+    [Fact]
     public void SamplerCustom_recovers_sampler_and_scheduler_from_linked_nodes()
     {
         // SamplerCustom has no sampler_name/scheduler widgets — they live on KSamplerSelect / BasicScheduler
