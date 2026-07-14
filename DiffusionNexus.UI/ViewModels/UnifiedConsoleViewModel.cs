@@ -30,6 +30,17 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     private IDisposable? _logSubscription;
     private bool _disposed;
 
+    private readonly System.Collections.Concurrent.ConcurrentQueue<LogEntry> _pendingEntries = new();
+    private int _flushScheduled;
+
+    /// <summary>
+    /// Test seam: how a pending log flush is scheduled onto the UI thread.
+    /// Background priority lets bursts of process output coalesce into one pass
+    /// instead of one dispatcher post per log line.
+    /// </summary>
+    internal Action<Action> ScheduleFlush { get; set; } =
+        action => Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+
     #region Observable Properties
 
     [ObservableProperty]
@@ -165,19 +176,33 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
 
     private void OnLogEntryReceived(LogEntry entry)
     {
-        Dispatcher.UIThread.Post(() =>
-        {
-            lock (_entriesLock)
-            {
-                _allEntries.Add(entry);
-            }
-            UpdateCounts();
+        _pendingEntries.Enqueue(entry);
+        if (Interlocked.CompareExchange(ref _flushScheduled, 1, 0) == 0)
+            ScheduleFlush(FlushPendingLogEntries);
+    }
 
+    private void FlushPendingLogEntries()
+    {
+        // Reset the gate BEFORE draining: an entry arriving mid-drain schedules
+        // the next flush instead of being stranded in the queue.
+        Interlocked.Exchange(ref _flushScheduled, 0);
+
+        var drained = new List<LogEntry>();
+        while (_pendingEntries.TryDequeue(out var entry))
+            drained.Add(entry);
+        if (drained.Count == 0) return;
+
+        lock (_entriesLock)
+        {
+            _allEntries.AddRange(drained);
+        }
+        UpdateCounts();
+
+        foreach (var entry in drained)
+        {
             if (ShouldInclude(entry))
-            {
                 FilteredEntries.Add(entry);
-            }
-        });
+        }
     }
 
     #endregion
