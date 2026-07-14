@@ -411,6 +411,11 @@ public partial class App : Application
             // Post-migration verification to catch schema gaps
             Serilog.Log.Information("InitializeDatabase: Post-migration schema verification...");
             CheckAndRepairSchema(dbContext);
+
+            // WAL: readers no longer block behind writers (e.g. the end-of-backup
+            // LastBackupAt write). Persistent — set once per launch is idempotent.
+            Serilog.Log.Information("InitializeDatabase: Ensuring WAL journal mode...");
+            dbContext.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {

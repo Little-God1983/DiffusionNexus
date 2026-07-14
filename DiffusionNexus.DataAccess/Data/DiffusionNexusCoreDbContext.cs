@@ -110,8 +110,10 @@ public class DiffusionNexusCoreDbContext : DbContext
         var dir = directory ?? GetDatabaseDirectory();
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, DatabaseFileName);
-        // Use default timeout and disable pooling to prevent connection locking issues
-        return $"Data Source={path};Mode=ReadWriteCreate;Cache=Shared;Pooling=False;Default Timeout=30";
+        // No shared cache: with WAL journaling (set at startup) private-cache
+        // connections let readers proceed while a writer commits — shared cache
+        // serialized them and stalled UI-thread reads behind background writes.
+        return $"Data Source={path};Mode=ReadWriteCreate;Pooling=False;Default Timeout=30";
     }
 
     /// <summary>
