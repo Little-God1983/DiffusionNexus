@@ -114,6 +114,8 @@ public partial class App : Application
                 // Create main window view model
                 Serilog.Log.Information("Creating main window view model...");
                 var mainViewModel = new DiffusionNexusMainWindowViewModel();
+                mainViewModel.StartupOverlay = new StartupOverlayViewModel(
+                    Services!.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>());
 
                 // Initialize status bar with activity log service. This only constructs
                 // the in-memory status-bar / unified-console view models (no DB access);

@@ -72,6 +72,10 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
     private bool _isStartupComplete;
 
+    /// <summary>Ready-check list shown by the startup overlay (null only in design mode).</summary>
+    [ObservableProperty]
+    private StartupOverlayViewModel? _startupOverlay;
+
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 

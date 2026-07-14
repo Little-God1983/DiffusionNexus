@@ -221,14 +221,50 @@ x:Name="MainWin">
                                      (dimming Border + centered indeterminate ProgressBar). -->
                                 <Border IsVisible="{Binding !IsStartupComplete}"
                                         Background="#80000000">
-                                    <StackPanel HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                Spacing="12">
-                                        <ProgressBar IsIndeterminate="True" Width="220"/>
-                                        <TextBlock Text="Starting DiffusionNexus…"
-                                                   HorizontalAlignment="Center"
-                                                   Foreground="White"/>
-                                    </StackPanel>
+                                    <Border Background="#E01E1E1E"
+                                            CornerRadius="8"
+                                            Padding="28,20"
+                                            MinWidth="320"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Text="Starting DiffusionNexus…"
+                                                       FontSize="16" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center"
+                                                       Margin="0,0,0,6"/>
+                                            <ItemsControl ItemsSource="{Binding StartupOverlay.Rows}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:StartupCheckRowViewModel">
+                                                        <Grid ColumnDefinitions="24,*" Margin="0,2">
+                                                            <Panel Grid.Column="0" Width="18" Height="18">
+                                                                <TextBlock Text="•" Opacity="0.35"
+                                                                           IsVisible="{Binding IsPending}"
+                                                                           HorizontalAlignment="Center"/>
+                                                                <ProgressBar IsIndeterminate="True"
+                                                                             IsVisible="{Binding IsRunning}"
+                                                                             Width="16" Height="16"/>
+                                                                <TextBlock Text="✓" Foreground="#4CAF50" FontWeight="Bold"
+                                                                           IsVisible="{Binding IsDone}"
+                                                                           HorizontalAlignment="Center">
+                                                                    <TextBlock.Transitions>
+                                                                        <Transitions>
+                                                                            <DoubleTransition Property="Opacity" Duration="0:0:0.25"/>
+                                                                        </Transitions>
+                                                                    </TextBlock.Transitions>
+                                                                </TextBlock>
+                                                                <TextBlock Text="✗" Foreground="#F44336" FontWeight="Bold"
+                                                                           IsVisible="{Binding IsFailed}"
+                                                                           ToolTip.Tip="{Binding Error}"
+                                                                           HorizontalAlignment="Center"/>
+                                                            </Panel>
+                                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
+                                                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
                                 </Border>
                             </Panel>
                         </Grid>
