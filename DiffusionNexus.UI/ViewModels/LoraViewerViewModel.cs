@@ -419,21 +419,26 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-
+            // Progress<T> captures the UI SynchronizationContext here (UI thread),
+            // so the callback is already marshaled — no nested Post needed.
             var progress = new Progress<SyncProgress>(p =>
             {
-                Dispatcher.UIThread.Post(() =>
+                if (p.Phase == "Verification complete")
                 {
-                    if (p.Phase == "Verification complete")
-                    {
-                        SyncStatus = null; // Clear status when done
-                    }
-                });
+                    SyncStatus = null; // Clear status when done
+                }
             });
 
-            await syncService.VerifyAndSyncFilesAsync(progress);
+            // The verify walks the library and SHA-hashes candidate files; its
+            // "async" service continuations otherwise resume on the UI thread
+            // (10s dispatcher hog on a cold cache — see 2026-07-15 startup trace).
+            // Run the whole thing on the pool with its own scope.
+            await Task.Run(async () =>
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+                await syncService.VerifyAndSyncFilesAsync(progress);
+            });
         }
         catch
         {
