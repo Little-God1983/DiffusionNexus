@@ -1,10 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Models.Distiller;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
+
+/// <summary>One search→replacement row inside a Replace rule set.</summary>
+public partial class ReplacePairViewModel : ViewModelBase
+{
+    [ObservableProperty] private string _from = "";
+    [ObservableProperty] private string _to = "";
+}
 
 /// <summary>Editable view of one named delete/replace rule set.</summary>
 public partial class PromptRuleSetViewModel : ViewModelBase
@@ -13,25 +22,29 @@ public partial class PromptRuleSetViewModel : ViewModelBase
     [ObservableProperty] private bool _isReplace;
     [ObservableProperty] private bool _enabled = true;
 
-    /// <summary>
-    /// Free-text editor content. Delete sets: words separated by commas/newlines. Replace sets:
-    /// one "from =&gt; to" (or "-&gt;" / "→") per line.
-    /// </summary>
+    /// <summary>Delete-set editor content: words separated by commas/newlines.</summary>
     [ObservableProperty] private string _wordsText = "";
+
+    /// <summary>Replace-set rows: each pair holds a search term and its replacement.</summary>
+    public ObservableCollection<ReplacePairViewModel> Pairs { get; } = [];
+
+    [RelayCommand]
+    private void AddPair() => Pairs.Add(new ReplacePairViewModel());
+
+    [RelayCommand]
+    private void RemovePair(ReplacePairViewModel? pair)
+    {
+        if (pair is not null) Pairs.Remove(pair);
+    }
 
     public PromptRuleSet ToModel()
     {
         if (IsReplace)
         {
-            var pairs = new List<ReplacePair>();
-            foreach (var line in WordsText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var idx = IndexOfArrow(line, out var arrowLen);
-                if (idx < 0) continue;
-                var from = line[..idx].Trim();
-                var to = line[(idx + arrowLen)..].Trim();
-                if (from.Length > 0) pairs.Add(new ReplacePair(from, to));
-            }
+            var pairs = Pairs
+                .Where(p => !string.IsNullOrWhiteSpace(p.From))
+                .Select(p => new ReplacePair(p.From.Trim(), p.To.Trim()))
+                .ToList();
             return new PromptRuleSet { Name = Name, Kind = RuleKind.Replace, Enabled = Enabled, ReplacePairs = pairs };
         }
 
@@ -39,15 +52,5 @@ public partial class PromptRuleSetViewModel : ViewModelBase
             .Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
         return new PromptRuleSet { Name = Name, Kind = RuleKind.Delete, Enabled = Enabled, DeleteWords = words };
-    }
-
-    private static int IndexOfArrow(string line, out int len)
-    {
-        foreach (var (arrow, l) in new[] { ("=>", 2), ("->", 2), ("→", 1) })
-        {
-            var i = line.IndexOf(arrow, StringComparison.Ordinal);
-            if (i >= 0) { len = l; return i; }
-        }
-        len = 0; return -1;
     }
 }

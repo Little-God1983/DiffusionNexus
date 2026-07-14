@@ -43,9 +43,36 @@ internal static class PngMetadataWriter
         }
 
         using var input = File.OpenRead(sourcePath);
-        using var reader = new BinaryReader(input);
         using var output = File.Create(destPath);
-        using var writer = new BinaryWriter(output);
+        TransformPng(input, output, metadata, stripExisting);
+    }
+
+    /// <summary>
+    /// Writes an in-memory PNG (e.g. a re-encoded image) to <paramref name="destPath"/>, inserting
+    /// <paramref name="metadata"/> as tEXt chunks after IHDR. Existing text chunks in the byte
+    /// stream are dropped (a fresh encode has none anyway).
+    /// </summary>
+    public static void WriteWithMetadata(byte[] pngBytes, string destPath, Dictionary<string, string> metadata)
+    {
+        ArgumentNullException.ThrowIfNull(pngBytes);
+        ArgumentNullException.ThrowIfNull(destPath);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        using var input = new MemoryStream(pngBytes, writable: false);
+        using var output = File.Create(destPath);
+        TransformPng(input, output, metadata, stripExisting: true);
+    }
+
+    /// <summary>
+    /// Core chunk pipeline shared by the file- and memory-based entry points: copies the PNG from
+    /// <paramref name="input"/> to <paramref name="output"/>, inserting <paramref name="metadata"/>
+    /// tEXt chunks after IHDR and dropping/keeping existing text chunks per <paramref name="stripExisting"/>.
+    /// A stream that fails the signature check is copied verbatim.
+    /// </summary>
+    private static void TransformPng(Stream input, Stream output, Dictionary<string, string> metadata, bool stripExisting)
+    {
+        using var reader = new BinaryReader(input, Encoding.Latin1, leaveOpen: true);
+        using var writer = new BinaryWriter(output, Encoding.Latin1, leaveOpen: true);
 
         // Validate and copy PNG signature
         var sig = reader.ReadBytes(PngSignature.Length);

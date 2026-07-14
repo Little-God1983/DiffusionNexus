@@ -78,6 +78,63 @@ public class MetadataDistillerServiceTests
     }
 
     [Fact]
+    public async Task DistillAsync_resize_option_downscales_and_updates_size_line()
+    {
+        // A real decodable PNG carrying ComfyUI chunks, 256x128 → capped at 64 → 64x32.
+        var seeded = PngReencoderTests.MakeRealPng(256, 128);
+        var src = Path.Combine(Path.GetTempPath(), $"in_{System.Guid.NewGuid():N}.png");
+        PngMetadataWriter.CopyWithMetadata(seeded, src, new() { ["prompt"] = "{...}", ["workflow"] = "{...}" });
+        File.Delete(seeded);
+        var outDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"out_{System.Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var data = new ImageGenerationData { Steps = 20, HasData = true, Width = 256, Height = 128 };
+            var item = new DistillItem(src, data, "a cat", null, []);
+            var options = new DistillOptions { OutputFolder = outDir, StripWorkflow = true, ResizeMaxDimension = 64 };
+
+            var result = await NewService().DistillAsync([item], [], options, null, CancellationToken.None);
+
+            result.Written.Should().Be(1);
+            var outFile = Path.Combine(outDir, Path.GetFileName(src));
+
+            using var decoded = SkiaSharp.SKBitmap.Decode(outFile);
+            (decoded!.Width, decoded.Height).Should().Be((64, 32));
+
+            var chunks = PngChunkReader.ReadTextChunks(outFile);
+            chunks["parameters"].Should().Contain("Size: 64x32"); // Size reflects the resized output
+            chunks.Should().NotContainKey("workflow");
+        }
+        finally { Directory.Delete(outDir, true); File.Delete(src); }
+    }
+
+    [Fact]
+    public async Task DistillAsync_reencode_preserves_workflow_chunks_when_not_stripping()
+    {
+        var seeded = PngReencoderTests.MakeRealPng(128, 128);
+        var src = Path.Combine(Path.GetTempPath(), $"in_{System.Guid.NewGuid():N}.png");
+        PngMetadataWriter.CopyWithMetadata(seeded, src, new() { ["prompt"] = "{p}", ["workflow"] = "{w}" });
+        File.Delete(seeded);
+        var outDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"out_{System.Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var data = new ImageGenerationData { HasData = true, Width = 128, Height = 128 };
+            var item = new DistillItem(src, data, "p", null, []);
+            // Recompress forces a fresh encode (which has no text chunks) — keeping the workflow
+            // must survive that by carrying the source's chunks over.
+            var options = new DistillOptions { OutputFolder = outDir, StripWorkflow = false, RecompressPng = true };
+
+            var result = await NewService().DistillAsync([item], [], options, null, CancellationToken.None);
+
+            result.Written.Should().Be(1);
+            var chunks = PngChunkReader.ReadTextChunks(Path.Combine(outDir, Path.GetFileName(src)));
+            chunks["workflow"].Should().Be("{w}");
+            chunks["prompt"].Should().Be("{p}");
+            chunks["parameters"].Should().Contain("p");
+        }
+        finally { Directory.Delete(outDir, true); File.Delete(src); }
+    }
+
+    [Fact]
     public async Task DistillAsync_deduplicates_output_names()
     {
         var a = MakePng();

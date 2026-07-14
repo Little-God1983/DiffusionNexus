@@ -11,4 +11,16 @@ public sealed class DistillOptions
 
     /// <summary>Destination folder for cleaned copies. Must be set before a run.</summary>
     public string? OutputFolder { get; set; }
+
+    /// <summary>
+    /// When set, output images larger than this on their longest side are downscaled to fit
+    /// (aspect preserved). Null keeps the original resolution. Forces a re-encode.
+    /// </summary>
+    public int? ResizeMaxDimension { get; set; }
+
+    /// <summary>
+    /// Re-encode the PNG at maximum zlib compression for a smaller file (lossless, slower).
+    /// When false and no resize is requested, pixels are copied byte-identical.
+    /// </summary>
+    public bool RecompressPng { get; set; }
 }

@@ -65,13 +65,39 @@ internal sealed class MetadataDistillerService
                 if (options.ComputeHashes)
                     hashes = await _hasher.ComputeAsync(item.Data.Checkpoint, item.Loras, ct).ConfigureAwait(false);
 
-                var parameters = A1111MetadataFormatter.Build(item.Data, positive, negative, item.Loras, hashes);
+                // Optional resize/recompress forces a full re-encode; otherwise pixels are copied byte-identical.
+                ReencodedPng? reencoded = null;
+                var dataForFormat = item.Data;
+                if (options.ResizeMaxDimension is not null || options.RecompressPng)
+                {
+                    var level = options.RecompressPng ? PngReencoder.MaxZlibLevel : PngReencoder.DefaultZlibLevel;
+                    reencoded = PngReencoder.Reencode(item.SourcePath, options.ResizeMaxDimension, level)
+                        ?? throw new InvalidOperationException("Could not decode the image for resizing/recompression.");
+                    if (reencoded.Width != item.Data.Width || reencoded.Height != item.Data.Height)
+                        dataForFormat = item.Data with { Width = reencoded.Width, Height = reencoded.Height };
+                }
+
+                var parameters = A1111MetadataFormatter.Build(dataForFormat, positive, negative, item.Loras, hashes);
+                var metadata = new Dictionary<string, string> { ["parameters"] = parameters };
 
                 var dest = UniquePath(options.OutputFolder!, Path.GetFileName(item.SourcePath));
-                PngMetadataWriter.CopyWithMetadata(
-                    item.SourcePath, dest,
-                    new Dictionary<string, string> { ["parameters"] = parameters },
-                    stripExisting: options.StripWorkflow);
+                if (reencoded is null)
+                {
+                    PngMetadataWriter.CopyWithMetadata(item.SourcePath, dest, metadata,
+                        stripExisting: options.StripWorkflow);
+                }
+                else
+                {
+                    // A fresh encode has no text chunks — when the user opted to KEEP the ComfyUI
+                    // workflow, carry the source's text chunks over (except the parameters we rewrite).
+                    if (!options.StripWorkflow)
+                    {
+                        foreach (var (key, value) in PngChunkReader.ReadTextChunks(item.SourcePath))
+                            if (!metadata.ContainsKey(key))
+                                metadata[key] = value;
+                    }
+                    PngMetadataWriter.WriteWithMetadata(reencoded.Bytes, dest, metadata);
+                }
 
                 written++;
             }

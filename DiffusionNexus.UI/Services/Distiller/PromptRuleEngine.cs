@@ -1,10 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using DiffusionNexus.UI.Models.Distiller;
 
 namespace DiffusionNexus.UI.Services.Distiller;
+
+/// <summary>One rule's effect in a dry run: which set it came from, what it does, how often it hit.</summary>
+internal sealed record RuleTestResult(string SetName, string Description, int Count);
+
+/// <summary>A whole-word match of a rule in the ORIGINAL prompt text, for editor highlighting.</summary>
+internal readonly record struct PromptMatch(int Start, int Length, bool IsReplace);
 
 /// <summary>
 /// Applies delete/replace <see cref="PromptRuleSet"/>s to a prompt. LoRA tokens (&lt;lora:...&gt;) are
@@ -47,6 +54,94 @@ internal static class PromptRuleEngine
             sb.Append(t);
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Dry-runs the enabled sets against <paramref name="prompt"/> exactly like <see cref="Apply"/>
+    /// (sequentially, on the LoRA-stripped body) and reports how many occurrences each rule would
+    /// hit. Rules with zero hits are included so the user sees them checked.
+    /// </summary>
+    public static IReadOnlyList<RuleTestResult> Simulate(string prompt, IReadOnlyList<PromptRuleSet> sets)
+    {
+        var results = new List<RuleTestResult>();
+        if (sets is null || sets.Count == 0) return results;
+
+        var body = LoraToken.Replace(prompt ?? string.Empty, " ");
+
+        foreach (var set in sets)
+        {
+            if (!set.Enabled) continue;
+
+            if (set.Kind == RuleKind.Delete)
+            {
+                foreach (var w in set.DeleteWords)
+                {
+                    if (string.IsNullOrWhiteSpace(w)) continue;
+                    var pattern = $@"\b{Regex.Escape(w.Trim())}\b";
+                    var count = Regex.Matches(body, pattern, RegexOptions.IgnoreCase).Count;
+                    results.Add(new RuleTestResult(set.Name, $"Delete \"{w.Trim()}\"", count));
+                    body = Regex.Replace(body, pattern, "", RegexOptions.IgnoreCase);
+                }
+            }
+            else if (set.Kind == RuleKind.Replace)
+            {
+                foreach (var p in set.ReplacePairs)
+                {
+                    if (string.IsNullOrWhiteSpace(p.From)) continue;
+                    var pattern = $@"\b{Regex.Escape(p.From.Trim())}\b";
+                    var count = Regex.Matches(body, pattern, RegexOptions.IgnoreCase).Count;
+                    results.Add(new RuleTestResult(set.Name, $"Replace \"{p.From.Trim()}\" → \"{p.To}\"", count));
+                    body = Regex.Replace(body, pattern, p.To ?? "", RegexOptions.IgnoreCase);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Finds every enabled rule's whole-word matches in the ORIGINAL prompt text (positions refer to
+    /// the text as displayed in the editor), skipping matches inside &lt;lora:...&gt; tokens. Each rule
+    /// matches against the original text — chained effects of earlier rules are not simulated here;
+    /// use <see cref="Simulate"/> for exact sequential counts.
+    /// </summary>
+    public static IReadOnlyList<PromptMatch> FindMatches(string prompt, IReadOnlyList<PromptRuleSet> sets)
+    {
+        var matches = new List<PromptMatch>();
+        if (string.IsNullOrEmpty(prompt) || sets is null || sets.Count == 0) return matches;
+
+        // Spans occupied by LoRA tokens — rule matches inside them are ignored (Apply never sees them).
+        var loraSpans = LoraToken.Matches(prompt).Select(m => (m.Index, m.Length)).ToList();
+
+        foreach (var set in sets)
+        {
+            if (!set.Enabled) continue;
+
+            if (set.Kind == RuleKind.Delete)
+            {
+                foreach (var w in set.DeleteWords)
+                    AddMatches(prompt, w, isReplace: false, loraSpans, matches);
+            }
+            else if (set.Kind == RuleKind.Replace)
+            {
+                foreach (var p in set.ReplacePairs)
+                    AddMatches(prompt, p.From, isReplace: true, loraSpans, matches);
+            }
+        }
+
+        return matches;
+    }
+
+    private static void AddMatches(string prompt, string word, bool isReplace,
+        List<(int Index, int Length)> loraSpans, List<PromptMatch> matches)
+    {
+        if (string.IsNullOrWhiteSpace(word)) return;
+        foreach (Match m in Regex.Matches(prompt, $@"\b{Regex.Escape(word.Trim())}\b", RegexOptions.IgnoreCase))
+        {
+            var insideLora = loraSpans.Any(s => m.Index < s.Index + s.Length && m.Index + m.Length > s.Index);
+            if (!insideLora)
+                matches.Add(new PromptMatch(m.Index, m.Length, isReplace));
+        }
     }
 
     private static string ApplyDelete(string text, IReadOnlyList<string> words)

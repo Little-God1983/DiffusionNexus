@@ -18,6 +18,23 @@ namespace DiffusionNexus.UI.Controls;
 /// </summary>
 public class SpellCheckTextBox : TextBox
 {
+    /// <summary>
+    /// Defines the <see cref="Highlights"/> property — character spans painted with a translucent
+    /// background (red for removals, amber for changes). Used by the Batch Metadata Distiller to
+    /// preview rule matches directly in the prompt editor.
+    /// </summary>
+    public static readonly StyledProperty<IReadOnlyList<TextHighlightRange>?> HighlightsProperty =
+        AvaloniaProperty.Register<SpellCheckTextBox, IReadOnlyList<TextHighlightRange>?>(nameof(Highlights));
+
+    /// <summary>
+    /// Gets or sets the spans to highlight in the text. Out-of-range spans are skipped.
+    /// </summary>
+    public IReadOnlyList<TextHighlightRange>? Highlights
+    {
+        get => GetValue(HighlightsProperty);
+        set => SetValue(HighlightsProperty, value);
+    }
+
     private static ISpellCheckService? s_spellCheckService;
     private static IAutoCompleteService? s_autoCompleteService;
 
@@ -233,6 +250,11 @@ public class SpellCheckTextBox : TextBox
                 Dispatcher.UIThread.Post(UpdateAutoComplete, DispatcherPriority.Input);
             }
         }
+        else if (change.Property == HighlightsProperty)
+        {
+            InvalidateVisual();
+            _overlay?.InvalidateVisual();
+        }
     }
 
     /// <inheritdoc />
@@ -303,7 +325,8 @@ public class SpellCheckTextBox : TextBox
         // If the overlay is active it handles all drawing — skip the fallback
         if (_overlay is not null) return;
 
-        if (_errors.Count == 0 || Text is null) return;
+        var highlights = Highlights;
+        if ((_errors.Count == 0 && highlights is not { Count: > 0 }) || Text is null) return;
 
         // Lazy lookup: _textPresenter may have been null during OnApplyTemplate
         var presenter = _textPresenter
@@ -312,6 +335,9 @@ public class SpellCheckTextBox : TextBox
         if (presenter?.TextLayout is null) return;
 
         var presenterOffset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+
+        if (highlights is { Count: > 0 })
+            SpellCheckOverlay.DrawHighlights(context, presenter, Text, highlights, presenterOffset);
 
         foreach (var error in _errors)
         {
@@ -687,7 +713,9 @@ public class SpellCheckTextBox : TextBox
         public override void Render(DrawingContext context)
         {
             var presenter = _owner._textPresenter;
-            if (presenter?.TextLayout is null || _owner._errors.Count == 0) return;
+            var highlights = _owner.Highlights;
+            var hasHighlights = highlights is { Count: > 0 };
+            if (presenter?.TextLayout is null || (_owner._errors.Count == 0 && !hasHighlights)) return;
 
             var text = _owner.Text;
             if (string.IsNullOrEmpty(text)) return;
@@ -695,6 +723,9 @@ public class SpellCheckTextBox : TextBox
             // The overlay and TextPresenter are siblings in the same Panel.
             // Translate to account for any margin/offset the TextPresenter has.
             var offset = presenter.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+
+            if (hasHighlights)
+                DrawHighlights(context, presenter, text, highlights!, offset);
 
             foreach (var error in _owner._errors)
             {
@@ -716,6 +747,38 @@ public class SpellCheckTextBox : TextBox
                     }
 
                     DrawSquiggly(context, startX, endX, y);
+                }
+                catch
+                {
+                    // Layout measurement can fail during rapid editing
+                }
+            }
+        }
+
+        private static readonly IBrush s_removalBrush = new SolidColorBrush(Color.FromArgb(70, 244, 67, 54));
+        private static readonly IBrush s_changeBrush = new SolidColorBrush(Color.FromArgb(70, 255, 193, 7));
+
+        /// <summary>
+        /// Paints a translucent background rectangle behind each highlight span. Multi-line spans
+        /// come back from <c>HitTestTextRange</c> as one rect per line.
+        /// </summary>
+        internal static void DrawHighlights(DrawingContext context, TextPresenter presenter, string text,
+            IReadOnlyList<TextHighlightRange> highlights, Point offset)
+        {
+            foreach (var h in highlights)
+            {
+                if (h.Start < 0 || h.Length <= 0 || h.Start + h.Length > text.Length)
+                    continue;
+
+                try
+                {
+                    var brush = h.Kind == TextHighlightKind.Change ? s_changeBrush : s_removalBrush;
+                    foreach (var rect in presenter.TextLayout.HitTestTextRange(h.Start, h.Length))
+                    {
+                        if (rect.Width <= 0 || rect.Height <= 0) continue;
+                        context.FillRectangle(brush, new Rect(
+                            rect.X + offset.X, rect.Y + offset.Y, rect.Width, rect.Height));
+                    }
                 }
                 catch
                 {

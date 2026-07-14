@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using DiffusionNexus.UI.Models.Distiller;
 using DiffusionNexus.UI.Services.Distiller;
 using FluentAssertions;
@@ -56,5 +57,51 @@ public class PromptRuleEngineTests
         var result = PromptRuleEngine.Apply("a cat", [set]);
 
         result.Should().Be("a cat");
+    }
+
+    [Fact]
+    public void Simulate_counts_occurrences_per_rule_including_zero_hits()
+    {
+        var del = new PromptRuleSet { Name = "D", Kind = RuleKind.Delete, DeleteWords = ["cloud", "missing"] };
+        var rep = new PromptRuleSet { Name = "R", Kind = RuleKind.Replace, ReplacePairs = [new("cat", "dog")] };
+
+        var results = PromptRuleEngine.Simulate("cloud, a cat, Cloud, cat and CLOUD", [del, rep]);
+
+        results.Should().HaveCount(3);
+        results[0].Description.Should().Be("Delete \"cloud\"");
+        results[0].Count.Should().Be(3);              // case-insensitive
+        results[1].Count.Should().Be(0);              // zero-hit rules are still reported
+        results[2].Description.Should().Be("Replace \"cat\" → \"dog\"");
+        results[2].Count.Should().Be(2);
+    }
+
+    [Fact]
+    public void Simulate_is_sequential_like_apply()
+    {
+        // First set replaces cat→dog; second set counts dogs — must see the produced dogs.
+        var r1 = new PromptRuleSet { Name = "1", Kind = RuleKind.Replace, ReplacePairs = [new("cat", "dog")] };
+        var r2 = new PromptRuleSet { Name = "2", Kind = RuleKind.Delete, DeleteWords = ["dog"] };
+
+        var results = PromptRuleEngine.Simulate("a cat and a dog", [r1, r2]);
+
+        results[0].Count.Should().Be(1); // cat→dog
+        results[1].Count.Should().Be(2); // the original dog + the produced one
+    }
+
+    [Fact]
+    public void FindMatches_reports_spans_on_original_text_and_skips_lora_tokens()
+    {
+        var del = new PromptRuleSet { Kind = RuleKind.Delete, DeleteWords = ["style"] };
+        var rep = new PromptRuleSet { Kind = RuleKind.Replace, ReplacePairs = [new("cat", "dog")] };
+        const string prompt = "a cat, style <lora:style:0.8>";
+
+        var matches = PromptRuleEngine.FindMatches(prompt, [del, rep]);
+
+        matches.Should().HaveCount(2); // "style" inside the lora token is NOT matched
+        var styleMatch = matches.Single(m => !m.IsReplace);
+        prompt.Substring(styleMatch.Start, styleMatch.Length).Should().Be("style");
+        styleMatch.Start.Should().Be(7);
+        var catMatch = matches.Single(m => m.IsReplace);
+        prompt.Substring(catMatch.Start, catMatch.Length).Should().Be("cat");
     }
 }

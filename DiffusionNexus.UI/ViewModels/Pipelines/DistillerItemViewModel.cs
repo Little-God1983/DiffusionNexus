@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Models;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
@@ -22,6 +24,17 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
 
     [ObservableProperty] private string? _positive;
     [ObservableProperty] private string? _negative;
+
+    /// <summary>The prompts as originally parsed from the image — the "undo edits" restore point.</summary>
+    public string? OriginalPositive { get; }
+    public string? OriginalNegative { get; }
+
+    [ObservableProperty] private bool _isPositiveModified;
+    [ObservableProperty] private bool _isNegativeModified;
+
+    /// <summary>Rule-match spans shown by the prompt editors after a rules "Test" run.</summary>
+    [ObservableProperty] private IReadOnlyList<TextHighlightRange>? _positiveHighlights;
+    [ObservableProperty] private IReadOnlyList<TextHighlightRange>? _negativeHighlights;
     [ObservableProperty] private string _stepsText = "";
     [ObservableProperty] private string _cfgText = "";
     [ObservableProperty] private string _seedText = "";
@@ -41,6 +54,9 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
         HasLoras = data.Loras.Count > 0;
         IncludeInRun = data.HasData && IsPng; // v1 writes PNG output only
 
+        // Originals must be set before Positive/Negative so the modified-flag comparison sees them.
+        OriginalPositive = data.PositivePrompt;
+        OriginalNegative = data.NegativePrompt;
         Positive = data.PositivePrompt;
         Negative = data.NegativePrompt;
         StepsText = data.Steps?.ToString(CultureInfo.InvariantCulture) ?? "";
@@ -53,6 +69,28 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
         foreach (var lora in data.Loras)
             Loras.Add(new DistillerLoraViewModel(lora));
     }
+
+    // Track divergence from the parsed original; any edit invalidates a previous rules-test highlight
+    // because the recorded match positions no longer line up with the text.
+    partial void OnPositiveChanged(string? value)
+    {
+        IsPositiveModified = !string.Equals(value ?? "", OriginalPositive ?? "", System.StringComparison.Ordinal);
+        PositiveHighlights = null;
+    }
+
+    partial void OnNegativeChanged(string? value)
+    {
+        IsNegativeModified = !string.Equals(value ?? "", OriginalNegative ?? "", System.StringComparison.Ordinal);
+        NegativeHighlights = null;
+    }
+
+    /// <summary>Restores the positive prompt to what was parsed from the image.</summary>
+    [RelayCommand]
+    private void UndoPositive() => Positive = OriginalPositive;
+
+    /// <summary>Restores the negative prompt to what was parsed from the image.</summary>
+    [RelayCommand]
+    private void UndoNegative() => Negative = OriginalNegative;
 
     /// <summary>Applies the user's numeric/text edits back onto a copy of the parsed data.</summary>
     public ImageGenerationData BuildEditedData() => _data with

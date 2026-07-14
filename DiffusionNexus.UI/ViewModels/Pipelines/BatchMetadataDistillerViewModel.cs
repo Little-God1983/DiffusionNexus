@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Models.Distiller;
 using DiffusionNexus.UI.Models.Pipelines;
@@ -20,6 +21,18 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
+
+/// <summary>A longest-side resize option offered by the distiller output card.</summary>
+public sealed record ResizeChoice(string Label, int? MaxDimension)
+{
+    public override string ToString() => Label;
+}
+
+/// <summary>A PNG compression option offered by the distiller output card.</summary>
+public sealed record CompressionChoice(string Label, bool Recompress)
+{
+    public override string ToString() => Label;
+}
 
 /// <summary>
 /// Run screen for the Batch Metadata Distiller: load loose images, auto-detect embedded prompts,
@@ -55,6 +68,32 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     [ObservableProperty] private bool _computeHashes;
     [ObservableProperty] private string? _outputFolder;
 
+    /// <summary>Optional output resize (longest side) and PNG recompression choices.</summary>
+    public IReadOnlyList<ResizeChoice> ResizeChoices { get; } =
+    [
+        new("Keep original size", null),
+        new("Max 4096 px", 4096),
+        new("Max 2048 px", 2048),
+        new("Max 1536 px", 1536),
+        new("Max 1024 px", 1024),
+    ];
+
+    public IReadOnlyList<CompressionChoice> CompressionChoices { get; } =
+    [
+        new("Keep original compression", false),
+        new("Maximum PNG compression (lossless, slower)", true),
+    ];
+
+    [ObservableProperty] private ResizeChoice _selectedResize;
+    [ObservableProperty] private CompressionChoice _selectedCompression;
+
+    /// <summary>"12.4 MB → ~5.8 MB (−53%)" preview for the selected image, or null when inactive.</summary>
+    [ObservableProperty] private string? _sizeEstimateText;
+    private CancellationTokenSource? _estimateCts;
+
+    /// <summary>Per-rule occurrence lines produced by the rules "Test" dry run.</summary>
+    public ObservableCollection<string> TestResults { get; } = [];
+
     [ObservableProperty] private int _totalCount;
     [ObservableProperty] private int _withMetadataCount;
     public string DetectionSummary => $"{WithMetadataCount} / {TotalCount} images have embedded metadata";
@@ -73,10 +112,13 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         _loraCatalog = loraCatalog;
         _dialogs = dialogs;
         _log = unifiedLogger;
+        _selectedResize = ResizeChoices[0];
+        _selectedCompression = CompressionChoices[0];
         var hasher = new ImageResourceHasher(loraCatalog, async _ => await installer.ResolveModelsRootAsync());
         _distiller = new MetadataDistillerService(hasher, unifiedLogger);
 
         ImagePaths.CollectionChanged += OnImagePathsChanged;
+        RuleSets.CollectionChanged += (_, _) => TestRulesCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnWithMetadataCountChanged(int value) => OnPropertyChanged(nameof(DetectionSummary));
@@ -84,6 +126,73 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
     partial void OnSelectedImagePathChanged(string? value) =>
         SelectedItem = Items.FirstOrDefault(i => string.Equals(i.Path, value, StringComparison.OrdinalIgnoreCase));
+
+    partial void OnSelectedItemChanged(DistillerItemViewModel? value)
+    {
+        TestRulesCommand.NotifyCanExecuteChanged();
+        UpdateSizeEstimate();
+    }
+
+    partial void OnSelectedResizeChanged(ResizeChoice value) => UpdateSizeEstimate();
+    partial void OnSelectedCompressionChanged(CompressionChoice value) => UpdateSizeEstimate();
+
+    /// <summary>
+    /// Recomputes the "original → estimated" file-size preview for the selected image by actually
+    /// re-encoding it in memory with the chosen settings (off the UI thread, superseding runs cancelled).
+    /// </summary>
+    private void UpdateSizeEstimate()
+    {
+        _estimateCts?.Cancel();
+
+        var item = SelectedItem;
+        var resize = SelectedResize?.MaxDimension;
+        var recompress = SelectedCompression?.Recompress == true;
+
+        if (item is null || !item.IsPng || (resize is null && !recompress))
+        {
+            SizeEstimateText = null;
+            return;
+        }
+
+        _estimateCts = new CancellationTokenSource();
+        _ = EstimateSizeAsync(item.Path, resize, recompress, _estimateCts.Token);
+    }
+
+    private async Task EstimateSizeAsync(string path, int? maxDimension, bool recompress, CancellationToken ct)
+    {
+        SizeEstimateText = "Estimating size…";
+        try
+        {
+            var level = recompress ? PngReencoder.MaxZlibLevel : PngReencoder.DefaultZlibLevel;
+            var reencoded = await Task.Run(() => PngReencoder.Reencode(path, maxDimension, level), ct);
+            if (ct.IsCancellationRequested) return;
+
+            if (reencoded is null)
+            {
+                SizeEstimateText = "Could not estimate (image not decodable).";
+                return;
+            }
+
+            var original = new FileInfo(path).Length;
+            var estimated = (long)reencoded.Bytes.Length;
+            var pct = original > 0 ? (double)(estimated - original) / original * 100 : 0;
+            SizeEstimateText =
+                $"Selected image: {FormatBytes(original)} → ~{FormatBytes(estimated)} ({pct:+0;−0}%), {reencoded.Width}×{reencoded.Height}";
+        }
+        catch (OperationCanceledException) { /* superseded */ }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Distiller: size estimate failed for {Path}", path);
+            if (!ct.IsCancellationRequested) SizeEstimateText = "Could not estimate size.";
+        }
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / (1024.0 * 1024.0):0.0} MB",
+        >= 1024 => $"{bytes / 1024.0:0.0} KB",
+        _ => $"{bytes} B",
+    };
 
     private void OnImagePathsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
@@ -163,10 +272,61 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     private void AddDeleteSet() => RuleSets.Add(new PromptRuleSetViewModel { Name = $"Delete set {RuleSets.Count + 1}", IsReplace = false });
 
     [RelayCommand]
-    private void AddReplaceSet() => RuleSets.Add(new PromptRuleSetViewModel { Name = $"Replace set {RuleSets.Count + 1}", IsReplace = true });
+    private void AddReplaceSet()
+    {
+        var set = new PromptRuleSetViewModel { Name = $"Replace set {RuleSets.Count + 1}", IsReplace = true };
+        set.Pairs.Add(new ReplacePairViewModel()); // start with one empty search→replacement row
+        RuleSets.Add(set);
+    }
 
     [RelayCommand]
     private void RemoveRuleSet(PromptRuleSetViewModel? set) { if (set is not null) RuleSets.Remove(set); }
+
+    public bool CanTestRules => SelectedItem is not null && RuleSets.Count > 0;
+
+    /// <summary>
+    /// Dry-runs the enabled rule sets against the selected image's prompts: reports per-rule
+    /// occurrence counts and highlights the matches directly in the prompt editors.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanTestRules))]
+    private void TestRules()
+    {
+        var item = SelectedItem;
+        if (item is null) return;
+
+        var sets = RuleSets.Select(r => r.ToModel()).ToList();
+        var positive = item.Positive ?? "";
+        var negative = item.Negative ?? "";
+
+        var posResults = PromptRuleEngine.Simulate(positive, sets);
+        var negResults = PromptRuleEngine.Simulate(negative, sets);
+
+        TestResults.Clear();
+        var any = false;
+        // Simulate returns the same rules in the same order for both prompts — merge by index.
+        for (var i = 0; i < posResults.Count; i++)
+        {
+            var p = posResults[i].Count;
+            var n = i < negResults.Count ? negResults[i].Count : 0;
+            any |= p + n > 0;
+            TestResults.Add(string.IsNullOrWhiteSpace(negative)
+                ? $"{posResults[i].Description} — {p} occurrence(s)"
+                : $"{posResults[i].Description} — {p} in positive, {n} in negative");
+        }
+        if (TestResults.Count == 0)
+            TestResults.Add("No enabled rules to test.");
+        else if (!any)
+            TestResults.Add("No occurrences found in the selected image.");
+
+        item.PositiveHighlights = ToHighlights(PromptRuleEngine.FindMatches(positive, sets));
+        item.NegativeHighlights = ToHighlights(PromptRuleEngine.FindMatches(negative, sets));
+    }
+
+    private static IReadOnlyList<TextHighlightRange>? ToHighlights(IReadOnlyList<PromptMatch> matches) =>
+        matches.Count == 0
+            ? null
+            : matches.Select(m => new TextHighlightRange(m.Start, m.Length,
+                m.IsReplace ? TextHighlightKind.Change : TextHighlightKind.Removal)).ToList();
 
     public bool CanDistill => !IsRunning && !string.IsNullOrWhiteSpace(OutputFolder) && Items.Any(i => i.IncludeInRun);
 
@@ -184,7 +344,14 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
                 .Select(i => new DistillItem(i.Path, i.BuildEditedData(), i.Positive ?? "", i.Negative, i.IncludedLoras()))
                 .ToList();
             var rules = RuleSets.Select(r => r.ToModel()).ToList();
-            var options = new DistillOptions { StripWorkflow = StripWorkflow, ComputeHashes = ComputeHashes, OutputFolder = OutputFolder };
+            var options = new DistillOptions
+            {
+                StripWorkflow = StripWorkflow,
+                ComputeHashes = ComputeHashes,
+                OutputFolder = OutputFolder,
+                ResizeMaxDimension = SelectedResize?.MaxDimension,
+                RecompressPng = SelectedCompression?.Recompress == true,
+            };
 
             var progress = new Progress<int>(done =>
                 Dispatcher.UIThread.Post(() =>
@@ -194,7 +361,8 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
                 }));
 
             _log?.Info(LogCategory.General, "Distiller",
-                $"Distilling {items.Count} image(s) → {OutputFolder} (strip workflow={StripWorkflow}, hashes={ComputeHashes})");
+                $"Distilling {items.Count} image(s) → {OutputFolder} (strip workflow={StripWorkflow}, hashes={ComputeHashes}, " +
+                $"resize={(options.ResizeMaxDimension?.ToString() ?? "off")}, recompress={options.RecompressPng})");
 
             // Run the batch on a background thread so the UI — and the progress bar — stays responsive.
             var result = await Task.Run(
@@ -242,6 +410,8 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         foreach (var it in Items) { it.PropertyChanged -= OnItemPropertyChanged; it.Dispose(); }
         _cts?.Cancel();
         _cts?.Dispose();
+        _estimateCts?.Cancel();
+        _estimateCts?.Dispose();
         ImagePaths.CollectionChanged -= OnImagePathsChanged;
     }
 }
