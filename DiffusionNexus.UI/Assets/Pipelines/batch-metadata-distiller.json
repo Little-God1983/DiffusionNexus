@@ -1,0 +1,9 @@
+{
+  "id": "batch-metadata-distiller",
+  "title": "Batch Metadata Distiller",
+  "description": "Recover ComfyUI generation data (prompt, sampler, CFG, LoRAs incl. Power Lora / Lora Stack) and re-save clean, CivitAI-readable copies.",
+  "showInGallery": true,
+  "category": "Utilities",
+  "requiresModels": false,
+  "assets": []
+}

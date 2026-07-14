@@ -48,4 +48,10 @@
     <Folder Include="LoraSort\ViewModels\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\DiffusionNexus.UI\Assets\Pipelines\batch-metadata-distiller.json" Link="TestData\batch-metadata-distiller.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

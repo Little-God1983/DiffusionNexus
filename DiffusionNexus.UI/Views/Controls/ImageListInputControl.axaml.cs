@@ -9,9 +9,12 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.Views.Controls;
 
@@ -25,13 +28,31 @@ namespace DiffusionNexus.UI.Views.Controls;
 /// <para>
 /// The control mutates the bound <see cref="ImagePaths"/> collection in place, so the
 /// owning ViewModel observes changes through that same <see cref="ObservableCollection{T}"/>.
-/// Used by the Captioning, Batch Upscale and Batch Crop/Scale tabs.
+/// Used by the Captioning, Batch Upscale, Batch Crop/Scale and Workflows (pipeline) screens.
+/// </para>
+/// <para>
+/// <b>Threading:</b> thumbnails and the large preview are decoded on background threads and
+/// assigned back on the UI thread, so adding a large batch of images never blocks the UI. The
+/// control mirrors <see cref="ImagePaths"/> (a collection of <see cref="string"/> paths) into
+/// <see cref="Thumbnails"/> (items carrying an async-loaded <see cref="Bitmap"/>); never bind a
+/// bare path through a synchronous converter here — that decodes on the UI thread and freezes it.
 /// </para>
 /// </summary>
 public partial class ImageListInputControl : UserControl
 {
     private static readonly string[] ImageExtensions =
         [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif"];
+
+    /// <summary>Pixel width thumbnails are decoded to (matches the 68px slot at ~2x for crispness).</summary>
+    private const int ThumbnailPixelWidth = 160;
+
+    /// <summary>
+    /// Bounds how many images decode at once so a large drop doesn't saturate the disk/CPU.
+    /// Decoding is off the UI thread regardless; this only paces how fast thumbnails fill in.
+    /// </summary>
+    private readonly SemaphoreSlim _decodeGate = new(4);
+
+    private CancellationTokenSource? _previewCts;
 
     /// <summary>
     /// Defines the <see cref="ImagePaths"/> property — the collection of selected image
@@ -59,6 +80,13 @@ public partial class ImageListInputControl : UserControl
     /// </summary>
     public static readonly StyledProperty<string> CountTextProperty =
         AvaloniaProperty.Register<ImageListInputControl, string>(nameof(CountText), string.Empty);
+
+    /// <summary>
+    /// Defines the <see cref="SelectedPreview"/> property — the decoded bitmap for the large
+    /// preview of <see cref="SelectedImagePath"/>. Loaded off the UI thread by the control.
+    /// </summary>
+    public static readonly StyledProperty<Bitmap?> SelectedPreviewProperty =
+        AvaloniaProperty.Register<ImageListInputControl, Bitmap?>(nameof(SelectedPreview));
 
     /// <summary>
     /// Gets or sets the collection of selected image paths. The control adds, removes and
@@ -96,6 +124,22 @@ public partial class ImageListInputControl : UserControl
         get => GetValue(CountTextProperty);
         private set => SetValue(CountTextProperty, value);
     }
+
+    /// <summary>
+    /// Gets the decoded bitmap for the large preview. Set by the control after an off-thread decode.
+    /// </summary>
+    public Bitmap? SelectedPreview
+    {
+        get => GetValue(SelectedPreviewProperty);
+        private set => SetValue(SelectedPreviewProperty, value);
+    }
+
+    /// <summary>
+    /// The thumbnail items shown in the list — one per entry in <see cref="ImagePaths"/>, each
+    /// carrying its own asynchronously decoded <see cref="Bitmap"/>. The XAML binds this instead of
+    /// binding paths through a converter, so decoding never happens on the UI thread.
+    /// </summary>
+    public ObservableCollection<ImageThumbnailItem> Thumbnails { get; } = [];
 
     /// <summary>
     /// Command bound by the per-thumbnail remove button.
@@ -138,11 +182,38 @@ public partial class ImageListInputControl : UserControl
             if (change.NewValue is INotifyCollectionChanged newCollection)
                 newCollection.CollectionChanged += OnImagePathsChanged;
 
+            RebuildThumbnails();
             UpdateState();
+        }
+        else if (change.Property == SelectedImagePathProperty)
+        {
+            LoadPreview(change.GetNewValue<string?>());
         }
     }
 
-    private void OnImagePathsChanged(object? sender, NotifyCollectionChangedEventArgs e) => UpdateState();
+    private void OnImagePathsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        switch (e.Action)
+        {
+            case NotifyCollectionChangedAction.Add when e.NewItems is not null:
+                foreach (string path in e.NewItems.OfType<string>())
+                    AddThumbnail(path);
+                break;
+
+            case NotifyCollectionChangedAction.Remove when e.OldItems is not null:
+                foreach (string path in e.OldItems.OfType<string>())
+                    RemoveThumbnail(path);
+                break;
+
+            // Replace / Move / Reset (Clear) and anything unexpected: rebuild from scratch. These are
+            // rare for this control (paths are appended or removed one at a time), so the cost is fine.
+            default:
+                RebuildThumbnails();
+                break;
+        }
+
+        UpdateState();
+    }
 
     /// <summary>
     /// Recomputes <see cref="HasImages"/>, <see cref="CountText"/> and keeps
@@ -166,6 +237,143 @@ public partial class ImageListInputControl : UserControl
         {
             SelectedImagePath = paths![0];
         }
+    }
+
+    #region Thumbnail mirroring (off-thread decode)
+
+    /// <summary>Clears and rebuilds <see cref="Thumbnails"/> from the current <see cref="ImagePaths"/>.</summary>
+    private void RebuildThumbnails()
+    {
+        foreach (var item in Thumbnails)
+        {
+            item.Cancel();
+            DeferDispose(item.Image);
+        }
+        Thumbnails.Clear();
+
+        var paths = ImagePaths;
+        if (paths is null) return;
+
+        foreach (var path in paths)
+            AddThumbnail(path);
+    }
+
+    private void AddThumbnail(string path)
+    {
+        var item = new ImageThumbnailItem(path);
+        Thumbnails.Add(item);
+        _ = LoadThumbnailAsync(item);
+    }
+
+    private void RemoveThumbnail(string path)
+    {
+        var item = Thumbnails.FirstOrDefault(t => string.Equals(t.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return;
+
+        item.Cancel();
+        Thumbnails.Remove(item);
+        DeferDispose(item.Image);
+    }
+
+    /// <summary>Decodes a single thumbnail off the UI thread and assigns it back on the UI thread.</summary>
+    private async Task LoadThumbnailAsync(ImageThumbnailItem item)
+    {
+        var ct = item.Token;
+        Bitmap? bmp = null;
+        try
+        {
+            await _decodeGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                bmp = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(item.Path, ThumbnailPixelWidth), ct)
+                                .ConfigureAwait(false);
+            }
+            finally
+            {
+                _decodeGate.Release();
+            }
+        }
+        catch (OperationCanceledException) { return; }
+        catch { return; } // undecodable image — leave the placeholder slot
+
+        if (ct.IsCancellationRequested)
+        {
+            DeferDispose(bmp);
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (ct.IsCancellationRequested)
+                DeferDispose(bmp);
+            else
+                item.Image = bmp;
+        });
+    }
+
+    #endregion
+
+    #region Preview (off-thread decode)
+
+    /// <summary>Starts an off-thread decode of the large preview for <paramref name="path"/>.</summary>
+    private void LoadPreview(string? path)
+    {
+        _previewCts?.Cancel();
+        _previewCts = new CancellationTokenSource();
+
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            SetPreview(null);
+            return;
+        }
+
+        _ = LoadPreviewAsync(path, _previewCts.Token);
+    }
+
+    private async Task LoadPreviewAsync(string path, CancellationToken ct)
+    {
+        Bitmap? bmp;
+        try
+        {
+            bmp = await Task.Run(() => EfficientImageDecoder.DecodeForDisplay(path), ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { return; }
+
+        if (ct.IsCancellationRequested)
+        {
+            DeferDispose(bmp);
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (ct.IsCancellationRequested)
+                DeferDispose(bmp);
+            else
+                SetPreview(bmp);
+        });
+    }
+
+    /// <summary>Swaps in a new preview bitmap on the UI thread, disposing the one it replaces.</summary>
+    private void SetPreview(Bitmap? bmp)
+    {
+        var previous = SelectedPreview;
+        SelectedPreview = bmp;
+        if (!ReferenceEquals(previous, bmp))
+            DeferDispose(previous);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Disposes a bitmap after the current render pass so a control still displaying it isn't torn
+    /// out from under the renderer. No-op for null.
+    /// </summary>
+    private static void DeferDispose(Bitmap? bmp)
+    {
+        if (bmp is null) return;
+        Dispatcher.UIThread.Post(bmp.Dispose, DispatcherPriority.Background);
     }
 
     private void RemoveImage(string? path)
@@ -298,5 +506,35 @@ public partial class ImageListInputControl : UserControl
 
             return Brushes.Transparent;
         }
+    }
+}
+
+/// <summary>
+/// A single thumbnail row for <see cref="ImageListInputControl"/>: the source path plus its
+/// asynchronously decoded <see cref="Image"/> (null until the background decode completes, which
+/// shows the placeholder slot). Each item owns a cancellation token so a removed/replaced image
+/// stops its in-flight decode instead of assigning a bitmap nobody is showing.
+/// </summary>
+public sealed partial class ImageThumbnailItem : ObservableObject
+{
+    private readonly CancellationTokenSource _cts = new();
+
+    [ObservableProperty]
+    private Bitmap? _image;
+
+    public string Path { get; }
+
+    public ImageThumbnailItem(string path) => Path = path;
+
+    /// <summary>Token that is cancelled when this item is removed; observed by the decode task.</summary>
+    public CancellationToken Token => _cts.Token;
+
+    /// <summary>Cancels this item's pending decode. Called when the item leaves the list.</summary>
+    public void Cancel()
+    {
+        // Not disposed: the decode task may still read Token briefly; a token-only CTS holds no
+        // unmanaged resources, so letting it be collected with the item is safe.
+        if (!_cts.IsCancellationRequested)
+            _cts.Cancel();
     }
 }

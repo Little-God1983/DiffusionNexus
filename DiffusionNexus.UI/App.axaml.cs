@@ -1049,11 +1049,12 @@ public partial class App : Application
 
         // Pipeline run UI: output writer + a tile-id -> run-ViewModel factory.
         services.AddScoped<Services.Pipelines.IPipelineOutputWriter, Services.Pipelines.PipelineOutputWriter>();
-        services.AddTransient<Func<PipelineTileViewModel, ViewModels.Pipelines.PipelineRunViewModel>>(sp => tile =>
+        services.AddTransient<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(sp => tile =>
             tile.Id switch
             {
                 "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
                 "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
+                "batch-metadata-distiller" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
                 _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
             });
 
@@ -1061,7 +1062,7 @@ public partial class App : Application
             sp.GetRequiredService<Services.Pipelines.IPipelineManifestProvider>(),
             sp.GetRequiredService<Services.Pipelines.IPipelineAssetInstaller>(),
             sp.GetService<ResourceMonitorViewModel>(),
-            sp.GetService<Func<PipelineTileViewModel, ViewModels.Pipelines.PipelineRunViewModel>>(),
+            sp.GetService<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(),
             sp.GetService<IDialogService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(

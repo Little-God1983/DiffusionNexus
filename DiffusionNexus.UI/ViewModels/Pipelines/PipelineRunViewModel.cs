@@ -27,7 +27,7 @@ namespace DiffusionNexus.UI.ViewModels.Pipelines;
 /// "Generate test image" / "Generate all" commands, progress + cancellation, and writing results.
 /// A concrete pipeline only supplies <see cref="ProcessOneImageAsync"/> (and any extra controls).
 /// </summary>
-public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable
+public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable, IPipelineRun
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<PipelineRunViewModel>();
     private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".webp"];

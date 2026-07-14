@@ -1,6 +1,5 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:sys="using:System"
              xmlns:local="using:DiffusionNexus.UI.Views.Controls"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.Controls.ImageListInputControl"
@@ -36,10 +35,11 @@
             IsVisible="{Binding HasImages, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}">
       <StackPanel Spacing="8">
 
-        <!-- Large preview of the selected image -->
+        <!-- Large preview of the selected image. Decoded off the UI thread by the control and
+             exposed as SelectedPreview — do NOT bind the path through a synchronous converter. -->
         <Border Background="#111111" CornerRadius="6" Height="180" ClipToBounds="True">
           <Image Stretch="Uniform"
-                 Source="{Binding SelectedImagePath, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"/>
+                 Source="{Binding SelectedPreview, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"/>
         </Border>
 
         <!-- Thumbnail list. Deliberately an ItemsControl (NOT a ListBox): a ListBox keeps a
@@ -48,35 +48,35 @@
              selection model, so removal is safe; preview selection is handled explicitly via
              SelectCommand. -->
         <ScrollViewer MaxHeight="150" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding ImagePaths, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}">
+          <ItemsControl ItemsSource="{Binding Thumbnails, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
                 <WrapPanel Orientation="Horizontal"/>
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="sys:String">
-                <Grid Width="68" Height="68" Margin="2" ToolTip.Tip="{Binding}">
+              <DataTemplate x:DataType="local:ImageThumbnailItem">
+                <Grid Width="68" Height="68" Margin="2" ToolTip.Tip="{Binding Path}">
                   <!-- Clicking the thumbnail selects it for the large preview -->
                   <Button Command="{Binding SelectCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
-                          CommandParameter="{Binding}"
+                          CommandParameter="{Binding Path}"
                           Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand"
                           HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                     <Border Background="#333" CornerRadius="4" ClipToBounds="True" BorderThickness="2">
                       <Border.BorderBrush>
                         <MultiBinding Converter="{x:Static local:ImageListInputControl.SelectedHighlightConverter}">
-                          <Binding/>
+                          <Binding Path="Path"/>
                           <Binding Path="SelectedImagePath" RelativeSource="{RelativeSource AncestorType=local:ImageListInputControl}"/>
                         </MultiBinding>
                       </Border.BorderBrush>
-                      <Image Stretch="UniformToFill"
-                             Source="{Binding Converter={x:Static converters:PathToBitmapConverter.Instance}}"/>
+                      <!-- Image is decoded off the UI thread; null until ready (shows the #333 slot). -->
+                      <Image Stretch="UniformToFill" Source="{Binding Image}"/>
                     </Border>
                   </Button>
                   <!-- Per-item remove button -->
                   <Button Content="&#x2715;"
                           Command="{Binding RemoveCommand, RelativeSource={RelativeSource AncestorType=local:ImageListInputControl}}"
-                          CommandParameter="{Binding}"
+                          CommandParameter="{Binding Path}"
                           HorizontalAlignment="Right" VerticalAlignment="Top"
                           Width="18" Height="18" Padding="0" Margin="0,2,2,0"
                           FontSize="10" FontWeight="Bold"
