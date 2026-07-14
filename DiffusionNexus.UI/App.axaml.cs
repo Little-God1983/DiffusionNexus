@@ -1426,18 +1426,35 @@ public partial class App : Application
     {
         try
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            static async Task Timed(System.Diagnostics.Stopwatch sw, string name, Func<Task> start)
+            {
+                var begin = sw.ElapsedMilliseconds;
+                Serilog.Log.Information("LoadStartupData: {Phase} starting at +{Start}ms", name, begin);
+                var task = start();
+                var headEnd = sw.ElapsedMilliseconds;
+                if (headEnd - begin > 50)
+                    Serilog.Log.Information("LoadStartupData: {Phase} synchronous head took {Head}ms ON THE UI THREAD", name, headEnd - begin);
+                await task;
+                Serilog.Log.Information("LoadStartupData: {Phase} finished at +{End}ms ({Duration}ms total)", name, sw.ElapsedMilliseconds, sw.ElapsedMilliseconds - begin);
+            }
+
             // Disclaimer + settings must complete first � other modules depend on them.
-            await mainViewModel.CheckDisclaimerStatusAsync();
-            await settingsVm.LoadCommand.ExecuteAsync(null);
+            await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
+            await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
             // Remaining modules are independent � load in parallel.
+            // NOTE: each command runs synchronously on the UI thread until its first
+            // real await — the per-phase "synchronous head" stamps expose which load
+            // is hogging the dispatcher.
             await Task.WhenAll(
-                loraViewerVm.RefreshCommand.ExecuteAsync(null),
-                generationGalleryVm.LoadMediaCommand.ExecuteAsync(null),
-                installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null),
-                loraDatasetHelperVm.DatasetManagement
-                    .CheckStorageConfigurationCommand.ExecuteAsync(null),
-                mainViewModel.LoadServerMessagesAsync());
+                Timed(sw, "loraViewer", () => loraViewerVm.RefreshCommand.ExecuteAsync(null)),
+                Timed(sw, "generationGallery", () => generationGalleryVm.LoadMediaCommand.ExecuteAsync(null)),
+                Timed(sw, "installerManager", () => installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null)),
+                Timed(sw, "datasetStorageCheck", () => loraDatasetHelperVm.DatasetManagement
+                    .CheckStorageConfigurationCommand.ExecuteAsync(null)),
+                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()));
+            Serilog.Log.Information("LoadStartupData: all phases complete at +{Total}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
