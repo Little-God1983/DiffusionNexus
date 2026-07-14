@@ -23,12 +23,32 @@ public class A1111MetadataFormatterTests
         s.Should().StartWith("cinematic portrait <lora:styleB:0.8>");
         s.Should().Contain("Negative prompt: blurry");
         s.Should().Contain("Sampler: DPM++ 2M Karras");
+        s.Should().NotContain("Schedule type:"); // scheduler is folded into the combined Sampler name
         s.Should().Contain("Steps: 28");
         s.Should().Contain("CFG scale: 4.5");
         s.Should().Contain("Size: 1024x1536");
         s.Should().Contain("Model: sd_xl_base");
+        s.Should().Contain("Version: ComfyUI");
         s.Should().NotContain("Hashes:");
         s.Should().NotContain("Model hash:");
+    }
+
+    [Theory]
+    [InlineData("euler", "normal", "Euler")]              // plain scheduler -> no suffix
+    [InlineData("euler", "simple", "Euler")]              // simple is also "plain"
+    [InlineData("euler_ancestral", "karras", "Euler a Karras")]
+    [InlineData("dpmpp_2m_sde", "karras", "DPM++ 2M SDE Karras")]
+    [InlineData("dpmpp_sde", "exponential", "DPM++ SDE Exponential")]
+    [InlineData("my_custom_sampler", "karras", "My Custom Sampler Karras")] // unmapped -> title-case
+    [InlineData("uni_pc", "sgm_uniform", "UniPC")]        // uni_pc -> UniPC, sgm_uniform is plain
+    public void Build_maps_sampler_and_scheduler_to_combined_a1111_name(string sampler, string scheduler, string expected)
+    {
+        var data = Data() with { SamplerName = sampler, Scheduler = scheduler };
+
+        var s = A1111MetadataFormatter.Build(data, "p", null, [], hashes: null);
+
+        s.Should().Contain($"Sampler: {expected}");
+        s.Should().NotContain("Schedule type:");
     }
 
     [Fact]

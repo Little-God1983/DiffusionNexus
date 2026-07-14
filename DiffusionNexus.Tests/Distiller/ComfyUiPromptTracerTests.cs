@@ -204,4 +204,50 @@ public class ComfyUiPromptTracerTests
 
         r.HasData.Should().BeFalse();
     }
+
+    [Fact]
+    public void AI2GoPromptBatch_resolves_positive_and_negative_by_output_slot()
+    {
+        // positive CLIPTextEncode.text -> [batch, slot 0]; negative -> [batch, slot 1].
+        // The batch node holds a JSON array of {positive,negative} + an index (1 here).
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{"model":["4",0],"positive":["6",0],"negative":["7",0],"sampler_name":"euler","scheduler":"normal","steps":20,"cfg":7.0}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":["9",0]}},
+          "7": {"class_type":"CLIPTextEncode","inputs":{"text":["9",1]}},
+          "9": {"class_type":"AI2GoPromptBatch","inputs":{"prompts_json":"[{\"positive\":\"a red fox\",\"negative\":\"blurry\"},{\"positive\":\"a blue cat\",\"negative\":\"lowres\"}]","index":1}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a blue cat");   // index 1, slot 0
+        r.NegativePrompt.Should().Be("lowres");        // index 1, slot 1 (NOT equal to positive)
+        r.PositivePrompt.Should().NotContain("{");     // not the raw prompts_json blob
+    }
+
+    [Fact]
+    public void SamplerCustom_recovers_sampler_and_scheduler_from_linked_nodes()
+    {
+        // SamplerCustom has no sampler_name/scheduler widgets — they live on KSamplerSelect / BasicScheduler
+        // wired into the sampler/sigmas link inputs.
+        var g = Graph("""
+        {
+          "3": {"class_type":"SamplerCustom","inputs":{"model":["4",0],"positive":["6",0],"negative":["7",0],"sampler":["10",0],"sigmas":["11",0]}},
+          "10":{"class_type":"KSamplerSelect","inputs":{"sampler_name":"dpmpp_2m"}},
+          "11":{"class_type":"BasicScheduler","inputs":{"scheduler":"karras","steps":28,"denoise":1.0,"model":["4",0]}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "7": {"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"base.safetensors"}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.SamplerName.Should().Be("dpmpp_2m");
+        r.Scheduler.Should().Be("karras");
+        r.Steps.Should().Be(28);
+        r.PositivePrompt.Should().Be("a cat");
+    }
 }

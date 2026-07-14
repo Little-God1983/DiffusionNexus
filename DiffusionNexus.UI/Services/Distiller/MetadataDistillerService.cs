@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Models.Distiller;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 
 namespace DiffusionNexus.UI.Services.Distiller;
 
@@ -25,8 +26,13 @@ internal sealed record DistillResult(int Written, IReadOnlyList<DistillFailure> 
 internal sealed class MetadataDistillerService
 {
     private readonly ImageResourceHasher _hasher;
+    private readonly IUnifiedLogger? _log;
 
-    public MetadataDistillerService(ImageResourceHasher hasher) => _hasher = hasher;
+    public MetadataDistillerService(ImageResourceHasher hasher, IUnifiedLogger? logger = null)
+    {
+        _hasher = hasher;
+        _log = logger;
+    }
 
     public async Task<DistillResult> DistillAsync(
         IReadOnlyList<DistillItem> items,
@@ -45,6 +51,7 @@ internal sealed class MetadataDistillerService
         foreach (var item in items)
         {
             ct.ThrowIfCancellationRequested();
+            _log?.Debug(LogCategory.General, "Distiller", $"[{done + 1}/{items.Count}] {Path.GetFileName(item.SourcePath)}");
             try
             {
                 if (!string.Equals(Path.GetExtension(item.SourcePath), ".png", StringComparison.OrdinalIgnoreCase))
@@ -72,6 +79,7 @@ internal sealed class MetadataDistillerService
             catch (Exception ex)
             {
                 failures.Add(new DistillFailure(item.SourcePath, ex.Message));
+                _log?.Warn(LogCategory.General, "Distiller", $"Failed {Path.GetFileName(item.SourcePath)}: {ex.Message}");
             }
             finally
             {

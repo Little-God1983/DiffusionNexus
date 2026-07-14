@@ -46,6 +46,13 @@ internal static class ComfyUiPromptTracer
         string? scheduler = ReadString(s, "scheduler");
         double? denoise = ReadDouble(s, "denoise");
 
+        // SamplerCustom / SamplerCustomAdvanced keep sampler_name/scheduler/steps on separate
+        // KSamplerSelect / BasicScheduler nodes wired into the sampler/sigmas link inputs — follow them
+        // so these graphs don't come out with an empty sampler.
+        samplerName ??= FollowLinkedString(graph, s, "sampler", "sampler_name");
+        scheduler ??= FollowLinkedString(graph, s, "sigmas", "scheduler");
+        steps ??= FollowLinkedInt(graph, s, "sigmas", "steps");
+
         string? positive = ResolvePrompt(graph, s, "positive");
         string? negative = ResolvePrompt(graph, s, "negative");
 
@@ -119,14 +126,106 @@ internal static class ComfyUiPromptTracer
         if (!enc.TryGetProperty("text", out var text)) return null;
         if (text.ValueKind == JsonValueKind.String) return text.GetString();
 
-        if (IsLink(text) && TryNode(graph, OriginId(text), out _, out var src))
+        if (IsLink(text) && TryNode(graph, OriginId(text), out var originCls, out var src))
         {
+            // AI2Go Prompt Batch: the CLIPTextEncode's text link carries the output SLOT
+            // (0 = positive, 1 = negative). Parse prompts_json + index and pick by slot, rather than
+            // grabbing the first string input (which would be the whole prompts_json blob, identical
+            // for positive and negative).
+            if (originCls.Equals("AI2GoPromptBatch", StringComparison.OrdinalIgnoreCase))
+                return ResolveBatchPrompt(src, LinkSlot(text));
+
             foreach (var prop in src.EnumerateObject())
                 if (prop.Value.ValueKind == JsonValueKind.String)
                     return prop.Value.GetString();
         }
         return null;
     }
+
+    // ── AI2Go Prompt Batch resolution ───────────────────────────────────────────
+    // Port of prompt_batch_core.parse_prompts/select_prompt: the node holds a JSON array of prompts
+    // (strings or {positive,negative} objects) plus an index; outputs are [positive(0), negative(1)].
+    private static string? ResolveBatchPrompt(JsonElement batchInputs, int slot)
+    {
+        var promptsJson = ReadString(batchInputs, "prompts_json");
+        if (promptsJson is null) return null;
+        var index = ReadInt(batchInputs, "index") ?? 0;
+        var selected = SelectBatchPrompt(promptsJson, index);
+        if (selected is null) return null;
+        return slot == 1 ? selected.Value.Negative : selected.Value.Positive;
+    }
+
+    private static (string Positive, string Negative)? SelectBatchPrompt(string promptsJson, int index)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(promptsJson);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("prompts", out var wrapped) && wrapped.ValueKind == JsonValueKind.Array)
+                root = wrapped;
+            if (root.ValueKind != JsonValueKind.Array) return null;
+
+            var list = new List<(string Positive, string Negative)>();
+            foreach (var entry in root.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.String)
+                {
+                    list.Add((entry.GetString() ?? "", ""));
+                }
+                else if (entry.ValueKind == JsonValueKind.Object)
+                {
+                    var pos = entry.TryGetProperty("positive", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString()
+                            : entry.TryGetProperty("prompt", out var pp) && pp.ValueKind == JsonValueKind.String ? pp.GetString()
+                            : "";
+                    var neg = entry.TryGetProperty("negative", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : "";
+                    list.Add((pos ?? "", neg ?? ""));
+                }
+            }
+            if (list.Count == 0) return null;
+            var idx = Math.Clamp(index, 0, list.Count - 1);
+            return list[idx];
+        }
+        catch
+        {
+            return null; // malformed JSON: treat as unresolved rather than guessing
+        }
+    }
+
+    // ── SamplerCustom follow-through (KSamplerSelect / BasicScheduler) ───────────
+    private static string? FollowLinkedString(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
+    {
+        var v = FollowLinkedField(graph, node, linkKey, fieldKey);
+        return v is { ValueKind: JsonValueKind.String } ? v.Value.GetString() : null;
+    }
+
+    private static int? FollowLinkedInt(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
+    {
+        var v = FollowLinkedField(graph, node, linkKey, fieldKey);
+        return v is { ValueKind: JsonValueKind.Number } && v.Value.TryGetInt32(out var i) ? i : null;
+    }
+
+    // Follows node[linkKey] (a link) backward to the nearest node carrying a literal fieldKey.
+    private static JsonElement? FollowLinkedField(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
+    {
+        if (!node.TryGetProperty(linkKey, out var link) || !IsLink(link)) return null;
+
+        var seen = new HashSet<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(OriginId(link));
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!seen.Add(id)) continue;
+            if (!TryNode(graph, id, out _, out var ins)) continue;
+            if (ins.TryGetProperty(fieldKey, out var val) && !IsLink(val)) return val;
+            foreach (var prop in ins.EnumerateObject())
+                if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
+        }
+        return null;
+    }
+
+    private static int LinkSlot(JsonElement link) => link[1].TryGetInt32(out var i) ? i : 0;
 
     // ── model chain + LoRAs (§3.4–3.5) ──────────────────────────────────────────
     private static string? WalkModelChain(Dictionary<string, JsonElement> graph, JsonElement sampler, List<LoraInfo> loras)

@@ -15,17 +15,39 @@ public readonly record struct ResourceHashes(string? ModelHash, IReadOnlyDiction
 /// </summary>
 internal static class A1111MetadataFormatter
 {
-    // ComfyUI (sampler_name, scheduler) -> A1111 combined sampler name. Unmapped names pass through.
-    private static readonly Dictionary<string, string> SamplerMap = new()
+    // ComfyUI sampler_name -> A1111 base label. Ported from the AI2Go civitai_metadata sampler_names.py
+    // so CivitAI recognizes the sampler. Unmapped names title-case as a fallback.
+    private static readonly Dictionary<string, string> SamplerLabels = new(System.StringComparer.OrdinalIgnoreCase)
     {
-        ["euler|normal"] = "Euler",
-        ["euler|karras"] = "Euler Karras",
-        ["euler_ancestral|normal"] = "Euler a",
-        ["dpmpp_2m|normal"] = "DPM++ 2M",
-        ["dpmpp_2m|karras"] = "DPM++ 2M Karras",
-        ["dpmpp_2m_sde|karras"] = "DPM++ 2M SDE Karras",
-        ["dpmpp_sde|karras"] = "DPM++ SDE Karras",
-        ["ddim|normal"] = "DDIM",
+        ["euler"] = "Euler",
+        ["euler_cfg_pp"] = "Euler",
+        ["euler_ancestral"] = "Euler a",
+        ["euler_ancestral_cfg_pp"] = "Euler a",
+        ["heun"] = "Heun",
+        ["heunpp2"] = "Heun",
+        ["dpm_2"] = "DPM2",
+        ["dpm_2_ancestral"] = "DPM2 a",
+        ["lms"] = "LMS",
+        ["dpm_fast"] = "DPM fast",
+        ["dpm_adaptive"] = "DPM adaptive",
+        ["dpmpp_2s_ancestral"] = "DPM++ 2S a",
+        ["dpmpp_sde"] = "DPM++ SDE",
+        ["dpmpp_sde_gpu"] = "DPM++ SDE",
+        ["dpmpp_2m"] = "DPM++ 2M",
+        ["dpmpp_2m_sde"] = "DPM++ 2M SDE",
+        ["dpmpp_2m_sde_gpu"] = "DPM++ 2M SDE",
+        ["dpmpp_3m_sde"] = "DPM++ 3M SDE",
+        ["dpmpp_3m_sde_gpu"] = "DPM++ 3M SDE",
+        ["ddim"] = "DDIM",
+        ["uni_pc"] = "UniPC",
+        ["uni_pc_bh2"] = "UniPC",
+        ["lcm"] = "LCM",
+    };
+
+    // Schedulers A1111/CivitAI treats as the plain sampler (no suffix).
+    private static readonly HashSet<string> PlainSchedulers = new(System.StringComparer.OrdinalIgnoreCase)
+    {
+        "normal", "simple", "sgm_uniform", "ddim_uniform", "beta",
     };
 
     public static string Build(
@@ -47,31 +69,42 @@ internal static class A1111MetadataFormatter
         if (!string.IsNullOrWhiteSpace(negative))
             sb.Append("\nNegative prompt: ").Append(negative.Trim());
 
+        // Order + fields mirror the AI2Go a1111.py format that CivitAI parses: the scheduler is folded
+        // into the combined Sampler name (no separate "Schedule type" field), and a trailing Version tag.
         var settings = new List<string>();
         if (data.Steps is { } steps) settings.Add($"Steps: {steps}");
         if (!string.IsNullOrWhiteSpace(data.SamplerName))
-            settings.Add($"Sampler: {MapSampler(data.SamplerName, data.Scheduler)}");
-        if (!string.IsNullOrWhiteSpace(data.Scheduler)) settings.Add($"Schedule type: {data.Scheduler}");
+            settings.Add($"Sampler: {ToA1111Sampler(data.SamplerName, data.Scheduler)}");
         if (data.Cfg is { } cfg) settings.Add($"CFG scale: {cfg.ToString("0.###", CultureInfo.InvariantCulture)}");
         if (data.Seed is { } seed) settings.Add($"Seed: {seed}");
         if (data.Width > 0 && data.Height > 0) settings.Add($"Size: {data.Width}x{data.Height}");
-        if (!string.IsNullOrWhiteSpace(data.Checkpoint)) settings.Add($"Model: {data.Checkpoint}");
 
-        if (hashes is { } h)
-        {
-            if (!string.IsNullOrEmpty(h.ModelHash)) settings.Add($"Model hash: {h.ModelHash}");
-            settings.Add($"Hashes: {BuildHashesJson(h)}");
-        }
+        if (hashes is { ModelHash: { Length: > 0 } modelHash }) settings.Add($"Model hash: {modelHash}");
+        if (!string.IsNullOrWhiteSpace(data.Checkpoint)) settings.Add($"Model: {data.Checkpoint}");
+        if (hashes is { } h) settings.Add($"Hashes: {BuildHashesJson(h)}");
+
+        settings.Add("Version: ComfyUI");
 
         sb.Append('\n').Append(string.Join(", ", settings));
         return sb.ToString();
     }
 
-    private static string MapSampler(string? samplerName, string? scheduler)
+    /// <summary>
+    /// Maps a ComfyUI (sampler_name, scheduler) pair to the combined A1111 sampler label CivitAI
+    /// recognizes (e.g. dpmpp_2m + karras -> "DPM++ 2M Karras"). Port of AI2Go's to_a1111_sampler.
+    /// </summary>
+    private static string ToA1111Sampler(string? samplerName, string? scheduler)
     {
-        if (string.IsNullOrWhiteSpace(samplerName)) return "Euler";
-        var key = $"{samplerName.ToLowerInvariant()}|{(scheduler ?? "normal").ToLowerInvariant()}";
-        return SamplerMap.TryGetValue(key, out var mapped) ? mapped : samplerName;
+        string @base = !string.IsNullOrEmpty(samplerName) && SamplerLabels.TryGetValue(samplerName, out var label)
+            ? label
+            : !string.IsNullOrEmpty(samplerName)
+                ? CultureInfo.InvariantCulture.TextInfo.ToTitleCase(samplerName.Replace("_", " ").ToLowerInvariant())
+                : "Unknown";
+
+        if (string.Equals(scheduler, "karras", System.StringComparison.OrdinalIgnoreCase)) return $"{@base} Karras";
+        if (string.Equals(scheduler, "exponential", System.StringComparison.OrdinalIgnoreCase)) return $"{@base} Exponential";
+        if (string.IsNullOrEmpty(scheduler) || PlainSchedulers.Contains(scheduler)) return @base;
+        return $"{@base} {scheduler}"; // unknown scheduler: append raw, lose nothing
     }
 
     private static string BuildHashesJson(ResourceHashes h)

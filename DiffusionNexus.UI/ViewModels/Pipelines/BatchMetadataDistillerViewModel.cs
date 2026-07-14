@@ -16,6 +16,7 @@ using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Distiller;
 using DiffusionNexus.UI.Services.Lora;
 using DiffusionNexus.UI.Services.Pipelines;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Pipelines;
@@ -32,8 +33,10 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
     private readonly ILoraCatalog _loraCatalog;
     private readonly IDialogService? _dialogs;
+    private readonly IUnifiedLogger? _log;
     private readonly MetadataDistillerService _distiller;
     private readonly ImageMetadataParser _parser = new();
+    private readonly HashSet<string> _knownPaths = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _cts;
 
     public string Title => "Batch Metadata Distiller";
@@ -64,12 +67,14 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         PipelineManifest manifest,
         ILoraCatalog loraCatalog,
         IPipelineAssetInstaller installer,
-        IDialogService? dialogs = null)
+        IDialogService? dialogs = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         _loraCatalog = loraCatalog;
         _dialogs = dialogs;
+        _log = unifiedLogger;
         var hasher = new ImageResourceHasher(loraCatalog, async _ => await installer.ResolveModelsRootAsync());
-        _distiller = new MetadataDistillerService(hasher);
+        _distiller = new MetadataDistillerService(hasher, unifiedLogger);
 
         ImagePaths.CollectionChanged += OnImagePathsChanged;
     }
@@ -86,6 +91,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         {
             foreach (var it in Items) { it.PropertyChanged -= OnItemPropertyChanged; it.Dispose(); }
             Items.Clear();
+            _knownPaths.Clear();
             RecomputeCounts();
             return;
         }
@@ -97,6 +103,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         if (e.OldItems is not null)
             foreach (string path in e.OldItems.OfType<string>())
             {
+                _knownPaths.Remove(path);
                 var existing = Items.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
                 if (existing is not null)
                 {
@@ -111,18 +118,29 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
     private async Task AddItemAsync(string path)
     {
-        if (Items.Any(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase))) return;
+        // O(1) dedupe; also reserves the path immediately so concurrent adds of the same file don't race.
+        if (!_knownPaths.Add(path)) return;
 
         ImageGenerationData data;
         try { data = await Task.Run(() => _parser.Parse(path)); }
-        catch (Exception ex) { Logger.Warning(ex, "Distiller: parse failed for {Path}", path); return; }
+        catch (Exception ex)
+        {
+            _knownPaths.Remove(path);
+            Logger.Warning(ex, "Distiller: parse failed for {Path}", path);
+            _log?.Warn(LogCategory.General, "Distiller", $"Failed to read {Path.GetFileName(path)}: {ex.Message}");
+            return;
+        }
 
         var item = new DistillerItemViewModel(path, data);
         Items.Add(item);
         item.PropertyChanged += OnItemPropertyChanged;
         if (SelectedItem is null && item.HasMetadata) { SelectedItem = item; SelectedImagePath = item.Path; }
         RecomputeCounts();
-        await item.LoadThumbnailAsync();
+
+        // Instrument the extraction result so the Unified Console shows what was recovered per image.
+        _log?.Info(LogCategory.General, "Distiller",
+            $"Loaded {Path.GetFileName(path)}: metadata={data.HasData}, sampler={data.SamplerName ?? "-"}, " +
+            $"steps={(data.Steps?.ToString() ?? "-")}, loras={data.Loras.Count}");
     }
 
     private void RecomputeCounts()
@@ -175,7 +193,15 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
                     StatusText = $"{done} / {items.Count}";
                 }));
 
-            var result = await _distiller.DistillAsync(items, rules, options, progress, _cts.Token);
+            _log?.Info(LogCategory.General, "Distiller",
+                $"Distilling {items.Count} image(s) → {OutputFolder} (strip workflow={StripWorkflow}, hashes={ComputeHashes})");
+
+            // Run the batch on a background thread so the UI — and the progress bar — stays responsive.
+            var result = await Task.Run(
+                () => _distiller.DistillAsync(items, rules, options, progress, _cts.Token), _cts.Token);
+
+            _log?.Info(LogCategory.General, "Distiller",
+                $"Distill finished: {result.Written} written, {result.Failures.Count} failed → {OutputFolder}");
 
             StatusText = result.Failures.Count == 0
                 ? $"Done — {result.Written} image(s) written to {OutputFolder}"
