@@ -14,6 +14,12 @@ internal sealed record RuleTestResult(string SetName, string Description, int Co
 internal readonly record struct PromptMatch(int Start, int Length, bool IsReplace);
 
 /// <summary>
+/// A term that appears BOTH in an enabled delete set and as an enabled replace search term —
+/// whichever rule runs first starves the other (a deleted word can't be replaced, and vice versa).
+/// </summary>
+internal sealed record RuleConflict(string Term, string DeleteSetName, string ReplaceSetName);
+
+/// <summary>
 /// Applies delete/replace <see cref="PromptRuleSet"/>s to a prompt. LoRA tokens (&lt;lora:...&gt;) are
 /// extracted before rules run and re-appended after, so a blacklist can never corrupt a LoRA name.
 /// Matching is whole-word and case-insensitive.
@@ -97,6 +103,43 @@ internal static class PromptRuleEngine
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Cross-checks enabled delete words against enabled replace search terms (case-insensitive,
+    /// trimmed). A collision means the two rules fight over the same term: if the delete runs first
+    /// the replace never matches; if the replace runs first the delete never matches.
+    /// </summary>
+    public static IReadOnlyList<RuleConflict> FindConflicts(IReadOnlyList<PromptRuleSet> sets)
+    {
+        var conflicts = new List<RuleConflict>();
+        if (sets is null || sets.Count == 0) return conflicts;
+
+        // First enabled delete set claiming a word wins the report (duplicates add no information).
+        var deleteWords = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var set in sets)
+        {
+            if (!set.Enabled || set.Kind != RuleKind.Delete) continue;
+            foreach (var w in set.DeleteWords)
+                if (!string.IsNullOrWhiteSpace(w))
+                    deleteWords.TryAdd(w.Trim(), set.Name);
+        }
+        if (deleteWords.Count == 0) return conflicts;
+
+        var reported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var set in sets)
+        {
+            if (!set.Enabled || set.Kind != RuleKind.Replace) continue;
+            foreach (var p in set.ReplacePairs)
+            {
+                if (string.IsNullOrWhiteSpace(p.From)) continue;
+                var term = p.From.Trim();
+                if (deleteWords.TryGetValue(term, out var deleteSet) && reported.Add(term))
+                    conflicts.Add(new RuleConflict(term, deleteSet, set.Name));
+            }
+        }
+
+        return conflicts;
     }
 
     /// <summary>

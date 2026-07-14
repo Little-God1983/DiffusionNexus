@@ -89,6 +89,44 @@ public class PromptRuleEngineTests
     }
 
     [Fact]
+    public void FindConflicts_flags_terms_that_are_both_deleted_and_replace_search_terms()
+    {
+        var del = new PromptRuleSet { Name = "D", Kind = RuleKind.Delete, DeleteWords = ["cloud", "sky"] };
+        var rep = new PromptRuleSet { Name = "R", Kind = RuleKind.Replace, ReplacePairs = [new("Cloud", "mist"), new("tree", "bush")] };
+
+        var conflicts = PromptRuleEngine.FindConflicts([del, rep]);
+
+        conflicts.Should().HaveCount(1); // case-insensitive: "cloud" vs "Cloud"; "tree" is fine
+        conflicts[0].Term.Should().Be("Cloud");
+        conflicts[0].DeleteSetName.Should().Be("D");
+        conflicts[0].ReplaceSetName.Should().Be("R");
+    }
+
+    [Fact]
+    public void FindConflicts_ignores_disabled_sets_and_reports_each_term_once()
+    {
+        var delOff = new PromptRuleSet { Name = "off", Kind = RuleKind.Delete, Enabled = false, DeleteWords = ["cat"] };
+        var del = new PromptRuleSet { Name = "D", Kind = RuleKind.Delete, DeleteWords = ["dog"] };
+        var rep1 = new PromptRuleSet { Name = "R1", Kind = RuleKind.Replace, ReplacePairs = [new("cat", "x"), new("dog", "wolf")] };
+        var rep2 = new PromptRuleSet { Name = "R2", Kind = RuleKind.Replace, ReplacePairs = [new("dog", "puppy")] };
+
+        var conflicts = PromptRuleEngine.FindConflicts([delOff, del, rep1, rep2]);
+
+        conflicts.Should().HaveCount(1);            // "cat" ignored (delete set disabled); "dog" reported once
+        conflicts[0].Term.Should().Be("dog");
+        conflicts[0].ReplaceSetName.Should().Be("R1");
+    }
+
+    [Fact]
+    public void FindConflicts_returns_empty_when_no_overlap()
+    {
+        var del = new PromptRuleSet { Name = "D", Kind = RuleKind.Delete, DeleteWords = ["cloud"] };
+        var rep = new PromptRuleSet { Name = "R", Kind = RuleKind.Replace, ReplacePairs = [new("tree", "bush")] };
+
+        PromptRuleEngine.FindConflicts([del, rep]).Should().BeEmpty();
+    }
+
+    [Fact]
     public void FindMatches_reports_spans_on_original_text_and_skips_lora_tokens()
     {
         var del = new PromptRuleSet { Kind = RuleKind.Delete, DeleteWords = ["style"] };

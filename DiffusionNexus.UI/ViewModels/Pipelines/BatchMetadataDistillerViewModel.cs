@@ -302,6 +302,11 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         var negResults = PromptRuleEngine.Simulate(negative, sets);
 
         TestResults.Clear();
+
+        // Cross-check delete words vs replace search terms: a deleted word can't be replaced.
+        foreach (var c in PromptRuleEngine.FindConflicts(sets))
+            TestResults.Add($"⚠ Conflict: \"{c.Term}\" is deleted by \"{c.DeleteSetName}\" and is a search term in \"{c.ReplaceSetName}\" — whichever set runs first, the other won't match this word.");
+
         var any = false;
         // Simulate returns the same rules in the same order for both prompts — merge by index.
         for (var i = 0; i < posResults.Count; i++)
