@@ -84,6 +84,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     {
         if (e.Action == NotifyCollectionChangedAction.Reset)
         {
+            foreach (var it in Items) it.PropertyChanged -= OnItemPropertyChanged;
             Items.Clear();
             RecomputeCounts();
             return;
@@ -97,7 +98,11 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
             foreach (string path in e.OldItems.OfType<string>())
             {
                 var existing = Items.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
-                if (existing is not null) Items.Remove(existing);
+                if (existing is not null)
+                {
+                    existing.PropertyChanged -= OnItemPropertyChanged;
+                    Items.Remove(existing);
+                }
             }
 
         RecomputeCounts();
@@ -113,6 +118,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
         var item = new DistillerItemViewModel(path, data);
         Items.Add(item);
+        item.PropertyChanged += OnItemPropertyChanged;
         if (SelectedItem is null && item.HasMetadata) { SelectedItem = item; SelectedImagePath = item.Path; }
         RecomputeCounts();
         await item.LoadThumbnailAsync();
@@ -122,6 +128,13 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     {
         TotalCount = Items.Count;
         WithMetadataCount = Items.Count(i => i.HasMetadata);
+        DistillCommand.NotifyCanExecuteChanged();
+    }
+
+    private void OnItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DistillerItemViewModel.IncludeInRun))
+            DistillCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand]
@@ -199,6 +212,7 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
 
     public void Dispose()
     {
+        foreach (var it in Items) it.PropertyChanged -= OnItemPropertyChanged;
         _cts?.Cancel();
         _cts?.Dispose();
         ImagePaths.CollectionChanged -= OnImagePathsChanged;
