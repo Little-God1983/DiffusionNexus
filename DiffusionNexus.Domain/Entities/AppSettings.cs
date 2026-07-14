@@ -97,6 +97,13 @@ public class AppSettings
     public string? FeedbackReporterEmail { get; set; }
 
     /// <summary>
+    /// The Batch Metadata Distiller's saved delete/replace rule sets, serialized as JSON
+    /// (a list of sets: name, kind, enabled, delete words / replace pairs). Null when the
+    /// user has never created any. Owned and (de)serialized by the distiller ViewModel.
+    /// </summary>
+    public string? DistillerRuleSetsJson { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }

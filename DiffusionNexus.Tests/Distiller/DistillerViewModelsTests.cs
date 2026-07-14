@@ -83,6 +83,62 @@ public class DistillerViewModelsTests
     }
 
     [Fact]
+    public void RuleSet_ToData_FromData_round_trips_losslessly()
+    {
+        var vm = new PromptRuleSetViewModel { Name = "Mine", IsReplace = true, Enabled = false };
+        vm.Pairs.Add(new ReplacePairViewModel { From = "1girl", To = "woman" });
+        vm.Pairs.Add(new ReplacePairViewModel { From = "cloud", To = "" });
+
+        var restored = PromptRuleSetViewModel.FromData(vm.ToData());
+
+        restored.Name.Should().Be("Mine");
+        restored.IsReplace.Should().BeTrue();
+        restored.Enabled.Should().BeFalse();
+        restored.Pairs.Select(p => (p.From, p.To)).Should().Equal(("1girl", "woman"), ("cloud", ""));
+    }
+
+    [Fact]
+    public void RuleSet_data_survives_json_round_trip_preserving_delete_formatting()
+    {
+        var delete = new PromptRuleSetViewModel { Name = "D", IsReplace = false, WordsText = "masterpiece, best quality\n4k" };
+        var replace = new PromptRuleSetViewModel { Name = "R", IsReplace = true };
+        replace.Pairs.Add(new ReplacePairViewModel { From = "a", To = "b" });
+
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new[] { delete.ToData(), replace.ToData() });
+        var restored = System.Text.Json.JsonSerializer.Deserialize<
+            System.Collections.Generic.List<PromptRuleSetData>>(json)!;
+
+        restored.Should().HaveCount(2);
+        restored[0].WordsText.Should().Be("masterpiece, best quality\n4k"); // raw formatting kept
+        restored[1].Pairs.Should().Equal(new ReplacePairData("a", "b"));
+    }
+
+    [Fact]
+    public void RuleSet_raises_Changed_for_every_kind_of_edit()
+    {
+        var vm = new PromptRuleSetViewModel { IsReplace = true };
+        var raised = 0;
+        vm.Changed += (_, _) => raised++;
+
+        vm.Name = "renamed";                                    // own property
+        raised.Should().Be(1);
+
+        vm.Pairs.Add(new ReplacePairViewModel());                // row added
+        raised.Should().Be(2);
+
+        vm.Pairs[0].From = "cat";                                // pair text edited
+        raised.Should().Be(3);
+
+        var pair = vm.Pairs[0];
+        vm.Pairs.Remove(pair);                                   // row removed
+        raised.Should().Be(4);
+
+        pair.To = "detached";                                    // removed pair no longer reports
+        raised.Should().Be(4);
+    }
+
+    [Fact]
     public void Item_builds_edited_data_and_included_loras()
     {
         var data = new ImageGenerationData

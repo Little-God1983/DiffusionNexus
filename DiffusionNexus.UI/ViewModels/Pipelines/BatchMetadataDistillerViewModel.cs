@@ -4,9 +4,12 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Controls;
@@ -47,10 +50,17 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     private readonly ILoraCatalog _loraCatalog;
     private readonly IDialogService? _dialogs;
     private readonly IUnifiedLogger? _log;
+    private readonly IServiceProvider? _services;
     private readonly MetadataDistillerService _distiller;
     private readonly ImageMetadataParser _parser = new();
     private readonly HashSet<string> _knownPaths = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _cts;
+
+    // Rule-set persistence (AppSettings.DistillerRuleSetsJson): suppressed while the saved sets are
+    // being loaded, then any edit re-serializes immediately and flushes to the DB after a short debounce.
+    private bool _suppressRuleSetSave;
+    private CancellationTokenSource? _saveDebounceCts;
+    private string? _pendingRuleSetsJson;
 
     public string Title => "Batch Metadata Distiller";
     public event EventHandler? CloseRequested;
@@ -107,18 +117,21 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         ILoraCatalog loraCatalog,
         IPipelineAssetInstaller installer,
         IDialogService? dialogs = null,
-        IUnifiedLogger? unifiedLogger = null)
+        IUnifiedLogger? unifiedLogger = null,
+        IServiceProvider? services = null)
     {
         _loraCatalog = loraCatalog;
         _dialogs = dialogs;
         _log = unifiedLogger;
+        _services = services;
         _selectedResize = ResizeChoices[0];
         _selectedCompression = CompressionChoices[0];
         var hasher = new ImageResourceHasher(loraCatalog, async _ => await installer.ResolveModelsRootAsync());
         _distiller = new MetadataDistillerService(hasher, unifiedLogger);
 
         ImagePaths.CollectionChanged += OnImagePathsChanged;
-        RuleSets.CollectionChanged += (_, _) => TestRulesCommand.NotifyCanExecuteChanged();
+        RuleSets.CollectionChanged += OnRuleSetsChanged;
+        _ = LoadRuleSetsAsync();
     }
 
     partial void OnWithMetadataCountChanged(int value) => OnPropertyChanged(nameof(DetectionSummary));
@@ -282,6 +295,103 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     [RelayCommand]
     private void RemoveRuleSet(PromptRuleSetViewModel? set) { if (set is not null) RuleSets.Remove(set); }
 
+    #region Rule-set persistence
+
+    private void OnRuleSetsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+            foreach (var set in e.OldItems.OfType<PromptRuleSetViewModel>())
+                set.Changed -= OnRuleSetEdited;
+        if (e.NewItems is not null)
+            foreach (var set in e.NewItems.OfType<PromptRuleSetViewModel>())
+                set.Changed += OnRuleSetEdited;
+
+        TestRulesCommand.NotifyCanExecuteChanged();
+        ScheduleSaveRuleSets();
+    }
+
+    private void OnRuleSetEdited(object? sender, EventArgs e) => ScheduleSaveRuleSets();
+
+    /// <summary>
+    /// Serializes the current rule sets (on the UI thread, so the collections aren't touched from a
+    /// worker) and schedules a debounced DB write. Rapid edits keep replacing the pending snapshot;
+    /// only the latest one is flushed.
+    /// </summary>
+    private void ScheduleSaveRuleSets()
+    {
+        if (_services is null || _suppressRuleSetSave) return;
+
+        _pendingRuleSetsJson = JsonSerializer.Serialize(RuleSets.Select(r => r.ToData()).ToList());
+        _saveDebounceCts?.Cancel();
+        _saveDebounceCts = new CancellationTokenSource();
+        _ = FlushRuleSetsAfterDelayAsync(_saveDebounceCts.Token);
+    }
+
+    private async Task FlushRuleSetsAfterDelayAsync(CancellationToken ct)
+    {
+        try { await Task.Delay(800, ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return; } // superseded by a newer edit or disposed
+
+        await SaveRuleSetsJsonAsync(_pendingRuleSetsJson).ConfigureAwait(false);
+    }
+
+    private async Task SaveRuleSetsJsonAsync(string? json)
+    {
+        if (_services is null || json is null) return;
+        try
+        {
+            using var scope = _services.CreateScope();
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var settings = await uow.AppSettings.GetSettingsWithIncludesAsync().ConfigureAwait(false);
+            settings.DistillerRuleSetsJson = json;
+            await uow.SaveChangesAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Distiller: failed to save rule sets");
+            _log?.Warn(LogCategory.General, "Distiller", $"Could not save rule sets: {ex.Message}");
+        }
+    }
+
+    /// <summary>Restores the saved rule sets from AppSettings when the screen opens.</summary>
+    private async Task LoadRuleSetsAsync()
+    {
+        if (_services is null) return;
+        try
+        {
+            string? json;
+            using (var scope = _services.CreateScope())
+            {
+                var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                var settings = await uow.AppSettings.GetSettingsAsync().ConfigureAwait(false);
+                json = settings?.DistillerRuleSetsJson;
+            }
+            if (string.IsNullOrWhiteSpace(json)) return;
+
+            var data = JsonSerializer.Deserialize<List<PromptRuleSetData>>(json);
+            if (data is null || data.Count == 0) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _suppressRuleSetSave = true;
+                try
+                {
+                    foreach (var d in data)
+                        RuleSets.Add(PromptRuleSetViewModel.FromData(d));
+                }
+                finally { _suppressRuleSetSave = false; }
+            });
+            _log?.Info(LogCategory.General, "Distiller", $"Loaded {data.Count} saved rule set(s).");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Distiller: failed to load saved rule sets");
+            _log?.Warn(LogCategory.General, "Distiller", $"Could not load saved rule sets: {ex.Message}");
+        }
+    }
+
+    #endregion
+
     public bool CanTestRules => SelectedItem is not null && RuleSets.Count > 0;
 
     /// <summary>
@@ -418,5 +528,13 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
         _estimateCts?.Cancel();
         _estimateCts?.Dispose();
         ImagePaths.CollectionChanged -= OnImagePathsChanged;
+        RuleSets.CollectionChanged -= OnRuleSetsChanged;
+
+        // Flush any pending rule-set snapshot immediately — don't lose an edit made just before closing.
+        if (_saveDebounceCts is { IsCancellationRequested: false })
+        {
+            _saveDebounceCts.Cancel();
+            _ = SaveRuleSetsJsonAsync(_pendingRuleSetsJson);
+        }
     }
 }

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -28,6 +30,38 @@ public partial class PromptRuleSetViewModel : ViewModelBase
     /// <summary>Replace-set rows: each pair holds a search term and its replacement.</summary>
     public ObservableCollection<ReplacePairViewModel> Pairs { get; } = [];
 
+    /// <summary>
+    /// Raised on ANY edit to this set — its own properties, pair rows added/removed, or a pair's
+    /// text. The owning ViewModel listens to schedule the auto-save of persisted rule sets.
+    /// </summary>
+    public event EventHandler? Changed;
+
+    public PromptRuleSetViewModel()
+    {
+        Pairs.CollectionChanged += OnPairsCollectionChanged;
+    }
+
+    /// <inheritdoc />
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnPairsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+            foreach (var p in e.OldItems.OfType<ReplacePairViewModel>())
+                p.PropertyChanged -= OnPairPropertyChanged;
+        if (e.NewItems is not null)
+            foreach (var p in e.NewItems.OfType<ReplacePairViewModel>())
+                p.PropertyChanged += OnPairPropertyChanged;
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnPairPropertyChanged(object? sender, PropertyChangedEventArgs e) =>
+        Changed?.Invoke(this, EventArgs.Empty);
+
     [RelayCommand]
     private void AddPair() => Pairs.Add(new ReplacePairViewModel());
 
@@ -35,6 +69,31 @@ public partial class PromptRuleSetViewModel : ViewModelBase
     private void RemovePair(ReplacePairViewModel? pair)
     {
         if (pair is not null) Pairs.Remove(pair);
+    }
+
+    /// <summary>Snapshot of the editor state for persistence.</summary>
+    public PromptRuleSetData ToData() => new()
+    {
+        Name = Name,
+        IsReplace = IsReplace,
+        Enabled = Enabled,
+        WordsText = WordsText,
+        Pairs = Pairs.Select(p => new ReplacePairData(p.From, p.To)).ToList(),
+    };
+
+    /// <summary>Rebuilds an editor view from a persisted snapshot.</summary>
+    public static PromptRuleSetViewModel FromData(PromptRuleSetData data)
+    {
+        var vm = new PromptRuleSetViewModel
+        {
+            Name = data.Name,
+            IsReplace = data.IsReplace,
+            Enabled = data.Enabled,
+            WordsText = data.WordsText,
+        };
+        foreach (var p in data.Pairs)
+            vm.Pairs.Add(new ReplacePairViewModel { From = p.From, To = p.To });
+        return vm;
     }
 
     public PromptRuleSet ToModel()
