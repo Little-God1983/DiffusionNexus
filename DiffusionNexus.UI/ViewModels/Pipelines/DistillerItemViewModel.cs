@@ -1,10 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.Models;
 
@@ -21,7 +18,6 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
     public bool HasLoras { get; }
     public bool IsPng { get; }
 
-    [ObservableProperty] private Bitmap? _thumbnail;
     [ObservableProperty] private bool _includeInRun;
 
     [ObservableProperty] private string? _positive;
@@ -58,21 +54,6 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
             Loras.Add(new DistillerLoraViewModel(lora));
     }
 
-    /// <summary>Loads a small preview off the UI thread. Safe to skip in tests.</summary>
-    public async Task LoadThumbnailAsync()
-    {
-        try
-        {
-            var bmp = await Task.Run(() =>
-            {
-                using var fs = File.OpenRead(Path);
-                return Bitmap.DecodeToWidth(fs, 200);
-            });
-            Thumbnail = bmp;
-        }
-        catch { /* undecodable — leave placeholder */ }
-    }
-
     /// <summary>Applies the user's numeric/text edits back onto a copy of the parsed data.</summary>
     public ImageGenerationData BuildEditedData() => _data with
     {
@@ -89,9 +70,7 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
     public IReadOnlyList<LoraInfo> IncludedLoras() =>
         Loras.Where(l => l.Include).Select(l => l.ToLoraInfo()).ToList();
 
-    public void Dispose()
-    {
-        Thumbnail?.Dispose();
-        Thumbnail = null;
-    }
+    // Thumbnails are rendered by ImageListInputControl (off the UI thread), not here; this type owns
+    // no unmanaged resources. Dispose is kept so the owning collection can dispose items uniformly.
+    public void Dispose() { }
 }
