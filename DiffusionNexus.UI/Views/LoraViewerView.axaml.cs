@@ -56,6 +56,11 @@ public partial class LoraViewerView : UserControl
         {
             _tileScrollViewer.ScrollChanged += OnTileScrollChanged;
         }
+
+        if (DataContext is LoraViewerViewModel vm)
+        {
+            vm.OnViewAttached();
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)

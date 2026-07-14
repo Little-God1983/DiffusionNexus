@@ -189,6 +189,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private const int WindowSize = 200;
     private const int SlideStep = 50;
 
+    /// <summary>
+    /// Number of items added to <see cref="FilteredTiles"/> synchronously before
+    /// the rest of the window fill hands off to the dispatcher. Keeps the first
+    /// paint instant while avoiding a single layout pass over the whole window.
+    /// </summary>
+    private const int FillBatchSize = 24;
+
+    /// <summary>Cancels the in-flight batched window fill, if any.</summary>
+    private Action? _cancelWindowFill;
+
+    /// <summary>
+    /// True while a batched window fill is running. Slide operations bail out
+    /// while this is set — they mutate <see cref="_windowStart"/> and splice
+    /// <see cref="FilteredTiles"/> directly, which would race with a fill still
+    /// appending to the same collection.
+    /// </summary>
+    private bool _windowFillInProgress;
+
+    /// <summary>Set on the first call to <see cref="OnViewAttached"/> so later re-attaches don't re-trigger the batched refill.</summary>
+    private bool _firstAttachHandled;
+
     /// <summary>True when the window can be slid forward (more items off the end).</summary>
     public bool HasMoreForward => _windowStart + FilteredTiles.Count < _allFiltered.Count;
 
@@ -2694,16 +2715,32 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>
     /// Recreates the items in <see cref="FilteredTiles"/> from the current window
-    /// position. Used after a filter change.
+    /// position. Used after a filter change. Fills in dispatcher-batched chunks
+    /// (first chunk synchronous for instant content, rest at <see cref="DispatcherPriority.Background"/>)
+    /// so realizing up to <see cref="WindowSize"/> tile containers never happens
+    /// in a single synchronous layout pass. A fill already in progress (from a
+    /// prior call) is cancelled first so its stale batches don't keep appending
+    /// after this rebuild has cleared and restarted the window.
     /// </summary>
     private void RebuildFilteredTilesWindow()
     {
+        _cancelWindowFill?.Invoke();
         FilteredTiles.Clear();
+
         var end = Math.Min(_windowStart + WindowSize, _allFiltered.Count);
-        for (var i = _windowStart; i < end; i++)
-        {
-            FilteredTiles.Add(_allFiltered[i]);
-        }
+        _windowFillInProgress = true;
+        _cancelWindowFill = Helpers.BatchedListFiller.Fill(
+            FilteredTiles,
+            _allFiltered,
+            _windowStart,
+            end,
+            FillBatchSize,
+            post: action => Dispatcher.UIThread.Post(action, DispatcherPriority.Background),
+            onCompleted: () =>
+            {
+                _windowFillInProgress = false;
+                TriggerVisibleUpdateCheck();
+            });
     }
 
     /// <summary>
@@ -2716,6 +2753,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     public void SlideForward()
     {
         LastSlideForwardCount = 0;
+        if (_windowFillInProgress) return;
         if (!HasMoreForward) return;
 
         // How many items can we actually add to the end?
@@ -2748,6 +2786,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     public void SlideBackward()
     {
         LastSlideBackwardCount = 0;
+        if (_windowFillInProgress) return;
         if (!HasMoreBackward) return;
 
         var step = Math.Min(SlideStep, _windowStart);
@@ -2768,6 +2807,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         LastSlideBackwardCount = step;
         OnPropertyChanged(nameof(HasMoreForward));
         OnPropertyChanged(nameof(HasMoreBackward));
+    }
+
+    /// <summary>
+    /// Called by the view when it enters the visual tree. On first attach the
+    /// window is already fully populated from the startup load — refill it in
+    /// batches so the initial navigation doesn't realize every tile container
+    /// in one synchronous layout pass. Subsequent attaches keep their already
+    /// generated containers, so no refill is needed (and refilling would reset
+    /// the user's scroll position).
+    /// </summary>
+    public void OnViewAttached()
+    {
+        if (_firstAttachHandled) return;
+        _firstAttachHandled = true;
+
+        if (FilteredTiles.Count > FillBatchSize)
+            RebuildFilteredTilesWindow();
     }
 
     /// <summary>
