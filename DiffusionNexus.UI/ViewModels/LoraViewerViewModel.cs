@@ -160,7 +160,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     public ObservableCollection<ModelTileViewModel> AllTiles { get; } = [];
 
     /// <summary>
-    /// Filtered model tiles for display.
+    /// The filtered, sorted tile set bound to the view. The view renders it through a
+    /// virtualizing <c>ItemsRepeater</c> (<c>UniformGridLayout</c>), so only the tiles
+    /// inside the scroll viewport are realized — the full set can hold thousands of
+    /// tiles without the UI thread paying to materialize (or load thumbnails for) them
+    /// all. Each realized <see cref="ModelTileViewModel"/> loads its thumbnail on
+    /// <see cref="ModelTileViewModel.Activate"/> and releases it on
+    /// <see cref="ModelTileViewModel.Deactivate"/> as its container recycles.
     /// </summary>
     public ObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
 
@@ -177,54 +183,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private IReadOnlyList<string>? _catalogBaseModels;
 
     /// <summary>
-    /// Full filtered set of tiles. <see cref="FilteredTiles"/> is a window into this
-    /// list (max <see cref="WindowSize"/> items) — the count / status bar / search
-    /// index all work against this full list, only rendering is windowed.
+    /// Upper bound on how many tiles the passive "new version available" check looks
+    /// at per filter pass. With the virtualizing grid the view no longer tracks a
+    /// scroll window, so this simply caps the opportunistic background check at the
+    /// same magnitude as the old visible window — preventing a request storm (and
+    /// Civitai rate-limiting) for libraries with thousands of LoRAs. The explicit
+    /// "Download Metadata" flow remains the way to sync the entire library.
     /// </summary>
-    private readonly List<ModelTileViewModel> _allFiltered = [];
-
-    /// <summary>First index of the current window into <see cref="_allFiltered"/>.</summary>
-    private int _windowStart;
-
-    private const int WindowSize = 200;
-    private const int SlideStep = 50;
-
-    /// <summary>
-    /// Number of items added to <see cref="FilteredTiles"/> synchronously before
-    /// the rest of the window fill hands off to the dispatcher. Keeps the first
-    /// paint instant while avoiding a single layout pass over the whole window.
-    /// </summary>
-    private const int FillBatchSize = 24;
-
-    /// <summary>Cancels the in-flight batched window fill, if any.</summary>
-    private Action? _cancelWindowFill;
-
-    /// <summary>
-    /// True while a batched window fill is running. Slide operations bail out
-    /// while this is set — they mutate <see cref="_windowStart"/> and splice
-    /// <see cref="FilteredTiles"/> directly, which would race with a fill still
-    /// appending to the same collection.
-    /// </summary>
-    private bool _windowFillInProgress;
-
-    /// <summary>Set on the first call to <see cref="OnViewAttached"/> so later re-attaches don't re-trigger the batched refill.</summary>
-    private bool _firstAttachHandled;
-
-    /// <summary>True when the window can be slid forward (more items off the end).</summary>
-    public bool HasMoreForward => _windowStart + FilteredTiles.Count < _allFiltered.Count;
-
-    /// <summary>True when the window can be slid backward (more items before the start).</summary>
-    public bool HasMoreBackward => _windowStart > 0;
-
-    /// <summary>
-    /// The size of the most recent forward slide. The view reads this after
-    /// <see cref="SlideForward"/> so it can compensate the scroll offset and keep
-    /// the same tiles visible. Reset to 0 between slides.
-    /// </summary>
-    public int LastSlideForwardCount { get; private set; }
-
-    /// <summary>Same purpose as <see cref="LastSlideForwardCount"/> but for backward slides.</summary>
-    public int LastSlideBackwardCount { get; private set; }
+    private const int PassiveUpdateCheckLimit = 200;
 
     #endregion
 
@@ -2452,29 +2418,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             AllTiles.Remove(tile);
-            // Keep the windowing backing store in sync. The tile may or may not be
-            // in the visible FilteredTiles window depending on scroll position.
-            _allFiltered.Remove(tile);
+            // Removing from the bound collection detaches the tile's container (if it
+            // was realized); the virtualizing grid reflows the rest automatically.
             FilteredTiles.Remove(tile);
-            // _windowStart may now point past the end if the user was at the bottom
-            // and the removed tile happened to be at the end of the window.
-            if (_windowStart > _allFiltered.Count)
-            {
-                _windowStart = Math.Max(0, _allFiltered.Count - WindowSize);
-            }
-            // A batched window fill may still be streaming when the delete lands.
-            // Its remaining batches would read the shrunk _allFiltered with stale
-            // indices (shifted/duplicate tiles in the window). Rebuild — which
-            // cancels the in-flight fill first — so the window refills from the
-            // post-delete list. The idle path (no fill running) is unchanged.
-            if (_windowFillInProgress)
-            {
-                RebuildFilteredTilesWindow();
-            }
             TotalModelCount = AllTiles.Count;
-            FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
-            OnPropertyChanged(nameof(HasMoreForward));
-            OnPropertyChanged(nameof(HasMoreBackward));
+            FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
         });
     }
@@ -2704,140 +2652,28 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var filtered = SortTiles(query.ToList());
 
         // Unchanged result set AND order (e.g. the extra keystroke matched the same
-        // tiles): keep the current window and scroll position, skip the expensive
-        // rebuild. A sort change reorders the list, so SequenceEqual is false and the
-        // rebuild runs. Refresh paths always create new tile instances, so they never hit this.
-        if (filtered.SequenceEqual(_allFiltered))
+        // tiles): keep the current tiles and scroll position, skip the rebuild. A sort
+        // change reorders the list, so SequenceEqual is false and the rebuild runs.
+        // Refresh paths always create new tile instances, so they never hit this.
+        if (filtered.SequenceEqual(FilteredTiles))
         {
             return;
         }
 
-        _allFiltered.Clear();
-        _allFiltered.AddRange(filtered);
+        // Populate the bound collection in place (one Reset from Clear, then Adds) so the
+        // stable ObservableCollection instance keeps its bindings. The view's ItemsRepeater
+        // virtualizes, so assigning the full filtered set here never realizes off-screen
+        // tiles — no manual scroll window is needed.
+        FilteredTiles.Clear();
+        foreach (var tile in filtered)
+        {
+            FilteredTiles.Add(tile);
+        }
 
-        // 2. Reset the window to the head and rebuild FilteredTiles.
-        _windowStart = 0;
-        RebuildFilteredTilesWindow();
-
-        // 3. Status / count reflects the FULL filtered set, not just the window.
-        FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
+        // Status / count reflects the full filtered set.
+        FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
 
         TriggerVisibleUpdateCheck();
-    }
-
-    /// <summary>
-    /// Recreates the items in <see cref="FilteredTiles"/> from the current window
-    /// position. Used after a filter change. Fills in dispatcher-batched chunks
-    /// (first chunk synchronous for instant content, rest at <see cref="DispatcherPriority.Background"/>)
-    /// so realizing up to <see cref="WindowSize"/> tile containers never happens
-    /// in a single synchronous layout pass. A fill already in progress (from a
-    /// prior call) is cancelled first so its stale batches don't keep appending
-    /// after this rebuild has cleared and restarted the window.
-    /// </summary>
-    private void RebuildFilteredTilesWindow()
-    {
-        _cancelWindowFill?.Invoke();
-        FilteredTiles.Clear();
-
-        var end = Math.Min(_windowStart + WindowSize, _allFiltered.Count);
-        _windowFillInProgress = true;
-        _cancelWindowFill = Helpers.BatchedListFiller.Fill(
-            FilteredTiles,
-            _allFiltered,
-            _windowStart,
-            end,
-            FillBatchSize,
-            post: action => Dispatcher.UIThread.Post(action, DispatcherPriority.Background),
-            onCompleted: () =>
-            {
-                _windowFillInProgress = false;
-                TriggerVisibleUpdateCheck();
-            });
-    }
-
-    /// <summary>
-    /// Slides the visible window forward by <see cref="SlideStep"/> items: removes
-    /// the first N from <see cref="FilteredTiles"/> and appends the next N from
-    /// <see cref="_allFiltered"/>. The removed tiles' containers detach from the
-    /// visual tree, which calls <see cref="ModelTileViewModel.Deactivate"/> and
-    /// releases their decoded thumbnail bitmaps.
-    /// </summary>
-    public void SlideForward()
-    {
-        LastSlideForwardCount = 0;
-        if (_windowFillInProgress) return;
-        if (!HasMoreForward) return;
-
-        // How many items can we actually add to the end?
-        var available = _allFiltered.Count - (_windowStart + FilteredTiles.Count);
-        var step = Math.Min(SlideStep, available);
-        if (step <= 0) return;
-
-        // Add to the END first, *then* remove from the start. The reverse order
-        // briefly shrinks the ItemsControl below the user's current scroll offset
-        // and the ScrollViewer clamps it — the subsequent offset compensation
-        // fights that clamp and the user gets "stuck" partway through the window.
-        var addStart = _windowStart + FilteredTiles.Count;
-        var addEnd = Math.Min(addStart + step, _allFiltered.Count);
-        for (var i = addStart; i < addEnd; i++)
-        {
-            FilteredTiles.Add(_allFiltered[i]);
-        }
-        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
-        {
-            FilteredTiles.RemoveAt(0);
-        }
-        _windowStart += step;
-
-        LastSlideForwardCount = step;
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
-    }
-
-    /// <summary>Mirror of <see cref="SlideForward"/> but in the opposite direction.</summary>
-    public void SlideBackward()
-    {
-        LastSlideBackwardCount = 0;
-        if (_windowFillInProgress) return;
-        if (!HasMoreBackward) return;
-
-        var step = Math.Min(SlideStep, _windowStart);
-        if (step <= 0) return;
-
-        // Same anti-clamp reasoning as SlideForward: prepend first, then drop the
-        // bottom. Total item count never dips below WindowSize during the slide.
-        for (var i = step - 1; i >= 0; i--)
-        {
-            FilteredTiles.Insert(0, _allFiltered[_windowStart - step + i]);
-        }
-        _windowStart -= step;
-        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
-        {
-            FilteredTiles.RemoveAt(FilteredTiles.Count - 1);
-        }
-
-        LastSlideBackwardCount = step;
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
-    }
-
-    /// <summary>
-    /// Called by the view when it enters the visual tree. On first attach the
-    /// window is already fully populated from the startup load — refill it in
-    /// batches so the initial navigation doesn't realize every tile container
-    /// in one synchronous layout pass. Subsequent attaches keep their already
-    /// generated containers, so no refill is needed (and refilling would reset
-    /// the user's scroll position).
-    /// </summary>
-    public void OnViewAttached()
-    {
-        if (_firstAttachHandled) return;
-        _firstAttachHandled = true;
-
-        if (FilteredTiles.Count > FillBatchSize)
-            RebuildFilteredTilesWindow();
     }
 
     /// <summary>
@@ -2867,9 +2703,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        // Snapshot the tiles so concurrent collection edits don't surface as
-        // InvalidOperationException inside the checker.
-        var snapshot = FilteredTiles.ToArray();
+        // Snapshot the tiles (Take also snapshots) so concurrent collection edits don't
+        // surface as InvalidOperationException inside the checker. Capped at
+        // PassiveUpdateCheckLimit — see the field's remarks — so a multi-thousand-LoRA
+        // library doesn't fire one Civitai request per tile on every filter pass.
+        var snapshot = FilteredTiles.Take(PassiveUpdateCheckLimit).ToArray();
 
         _ = Task.Run(async () =>
         {
