@@ -1358,10 +1358,21 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Lazy-loads a thumbnail BLOB from the database for a single image.
     /// Called when the bulk query deferred loading to save memory at scale.
     /// </summary>
+    /// <summary>
+    /// Delay between a tile scrolling into view and its thumbnail actually loading. Tiles
+    /// that scroll past within this window (deactivated → <paramref name="ct"/> cancelled)
+    /// never touch the DB or decoder, so flinging through the list doesn't fire a load per
+    /// tile it flies over. Awaiting with ConfigureAwait(false) also pushes the DI-scope /
+    /// DbContext / query setup off the UI thread — it used to run as this method's
+    /// synchronous head on the caller (the UI thread), one hit per realized tile.
+    /// </summary>
+    private const int ThumbnailSettleDelayMs = 100;
+
     private async Task LazyLoadThumbnailFromDbAsync(ModelImage image, CancellationToken ct)
     {
         try
         {
+            await Task.Delay(ThumbnailSettleDelayMs, ct).ConfigureAwait(false);
             using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
             var (data, mimeType) = await unitOfWork.Models

@@ -230,7 +230,7 @@
                 <air:ItemsRepeater.Layout>
                   <al:UniformGridLayout Orientation="Horizontal"
                                         MinItemWidth="262"
-                                        MinItemHeight="316"
+                                        MinItemHeight="276"
                                         MinColumnSpacing="0"
                                         MinRowSpacing="0"
                                         ItemsStretch="None"/>

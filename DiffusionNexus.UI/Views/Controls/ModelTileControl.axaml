@@ -16,9 +16,22 @@
           BorderBrush="#3D3D3D"
           BorderThickness="1"
           ClipToBounds="True"
-          Cursor="Hand">
+          Cursor="Hand"
+          Classes="tile">
+    <Border.Styles>
+      <!-- The action buttons are laid out only while the tile is hovered. During scroll
+           they are collapsed (IsVisible=False → not measured/arranged), which removes the
+           bulk of the per-tile layout cost that made fast scrolling stutter; they reveal
+           on pointer-over. -->
+      <Style Selector="Border.tile Grid.tileActions">
+        <Setter Property="IsVisible" Value="False"/>
+      </Style>
+      <Style Selector="Border.tile:pointerover Grid.tileActions">
+        <Setter Property="IsVisible" Value="True"/>
+      </Style>
+    </Border.Styles>
 
-    <Grid RowDefinitions="*,Auto">
+    <Grid>
 
       <!-- Thumbnail Area (clickable to open details) -->
       <Button Grid.Row="0"
@@ -115,23 +128,40 @@
         </ItemsControl>
       </Border>
 
-      <!-- Model Info: Name + Filename (overlay on thumbnail bottom) -->
+      <!-- Model Info (name + filename, always visible) with the action buttons stacked
+           directly below, revealed on hover. Kept as a single bottom-anchored overlay so
+           revealing the actions never reflows the tile. -->
       <Border Grid.Row="0"
               VerticalAlignment="Bottom"
               Background="#CC000000"
-              Padding="8,4">
-        <StackPanel Spacing="1">
-          <TextBlock Text="{Binding DisplayName}"
-                     FontSize="13"
-                     FontWeight="SemiBold"
-                     Foreground="White"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding DisplayName}"/>
-          <TextBlock Text="{Binding FileName}"
-                     FontSize="11"
-                     Foreground="#99FFFFFF"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding FileName}"/>
+              Padding="0">
+        <StackPanel>
+          <StackPanel Spacing="1" Margin="8,4">
+            <TextBlock Text="{Binding DisplayName}"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="White"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding DisplayName}"/>
+            <TextBlock Text="{Binding FileName}"
+                       FontSize="11"
+                       Foreground="#99FFFFFF"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding FileName}"/>
+          </StackPanel>
+
+          <!-- Action buttons: collapsed during scroll, shown on pointer-over (see .tileActions style). -->
+          <Grid Classes="tileActions"
+                ColumnDefinitions="*,*,*,*,*"
+                Background="#252525"
+                Margin="0"
+                Height="34">
+            <Button Grid.Column="0" Content="🌐" Command="{Binding OpenOnCivitaiCommand}" ToolTip.Tip="Open on Civitai" HorizontalAlignment="Center" Padding="6,4" FontSize="14"/>
+            <Button Grid.Column="1" Content="📋" Command="{Binding CopyTriggerWordsCommand}" ToolTip.Tip="Copy Trigger Words" HorizontalAlignment="Center" Padding="6,4" FontSize="14"/>
+            <Button Grid.Column="2" Content="🧾" Command="{Binding CopyFileNameCommand}" ToolTip.Tip="Copy Filename to Clipboard (for ComfyUI search)" HorizontalAlignment="Center" Padding="6,4" FontSize="14"/>
+            <Button Grid.Column="3" Content="📁" Command="{Binding OpenFolderCommand}" ToolTip.Tip="Open Folder" HorizontalAlignment="Center" Padding="6,4" FontSize="14"/>
+            <Button Grid.Column="4" Content="❌" FontWeight="Bold" Foreground="#FF6B6B" Command="{Binding DeleteCommand}" ToolTip.Tip="Delete Model" HorizontalAlignment="Center" Padding="6,4" FontSize="14"/>
+          </Grid>
         </StackPanel>
       </Border>
 
@@ -170,65 +200,6 @@
                      HorizontalAlignment="Center"/>
         </Border>
       </StackPanel>
-
-      <!-- Bottom Action Buttons -->
-      <Border Grid.Row="1"
-              Background="#252525"
-              Padding="8,6"
-              Margin="0"
-              CornerRadius="0,0,8,8">
-
-        <Grid ColumnDefinitions="*,*,*,*,*">
-
-          <!-- Open on Civitai -->
-          <Button Grid.Column="0"
-                  Content="🌐"
-                  Command="{Binding OpenOnCivitaiCommand}"
-                  ToolTip.Tip="Open on Civitai"
-                  HorizontalAlignment="Center"
-                  Padding="6,4"
-                  FontSize="14"/>
-
-          <!-- Copy Trigger Words -->
-          <Button Grid.Column="1"
-                  Content="📋"
-                  Command="{Binding CopyTriggerWordsCommand}"
-                  ToolTip.Tip="Copy Trigger Words"
-                  HorizontalAlignment="Center"
-                  Padding="6,4"
-                  FontSize="14"/>
-
-          <!-- Copy Real Filename -->
-          <Button Grid.Column="2"
-                  Content="🧾"
-                  Command="{Binding CopyFileNameCommand}"
-                  ToolTip.Tip="Copy Filename to Clipboard (for ComfyUI search)"
-                  HorizontalAlignment="Center"
-                  Padding="6,4"
-                  FontSize="14"/>
-
-          <!-- Open Folder -->
-          <Button Grid.Column="3"
-                  Content="📁"
-                  Command="{Binding OpenFolderCommand}"
-                  ToolTip.Tip="Open Folder"
-                  HorizontalAlignment="Center"
-                  Padding="6,4"
-                  FontSize="14"/>
-
-          <!-- Delete -->
-          <Button Grid.Column="4"
-                  Content="❌"
-                  FontWeight="Bold"
-                  Foreground="#FF6B6B"
-                  Command="{Binding DeleteCommand}"
-                  ToolTip.Tip="Delete Model"
-                  HorizontalAlignment="Center"
-                  Padding="6,4"
-                  FontSize="14"/>
-          
-        </Grid>
-      </Border>
 
     </Grid>
 
