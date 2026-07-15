@@ -245,8 +245,24 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
                     response.StatusCode);
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            try
+            {
+                return JsonSerializer.Deserialize<T>(responseBody, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                // Civitai periodically changes response shapes (see TolerantEnumConverterFactory
+                // above); when that breaks deserialization of a field this client isn't tolerant
+                // of yet, keep the offending payload so the failure is diagnosable from logs alone.
+                const int maxBodyLength = 4000;
+                var snippet = responseBody.Length > maxBodyLength
+                    ? responseBody[..maxBodyLength] + "... (truncated)"
+                    : responseBody;
+                throw new JsonException(
+                    $"Failed to deserialize Civitai response for {endpoint} as {typeof(T).Name}: {ex.Message} Raw response: {snippet}",
+                    ex);
+            }
         }
 
         // All retries exhausted on rate limiting

@@ -189,6 +189,66 @@ public class CivitaiClientTests
     }
 
     [Fact]
+    public async Task GetModelsAsync_ImageWithNullWidthAndHeight_DoesNotThrow()
+    {
+        // Civitai returns width/height as null for some preview media (e.g. videos
+        // whose dimensions haven't been probed yet) instead of omitting the field.
+        var (client, _) = CreateClient(_ => Json(HttpStatusCode.OK, new
+        {
+            items = new object[]
+            {
+                new
+                {
+                    id = 1,
+                    name = "m1",
+                    type = "LORA",
+                    modelVersions = new object[]
+                    {
+                        new
+                        {
+                            id = 10,
+                            images = new object[]
+                            {
+                                new { url = "https://example.com/preview.mp4", type = "video", width = (int?)null, height = (int?)null }
+                            }
+                        }
+                    }
+                }
+            },
+            metadata = new { totalItems = 1, currentPage = 1, pageSize = 1, totalPages = 1 }
+        }));
+
+        using (client)
+        {
+            var page = await client.GetModelsAsync();
+
+            var image = page.Items[0].ModelVersions[0].Images[0];
+            image.Width.Should().BeNull();
+            image.Height.Should().BeNull();
+        }
+    }
+
+    [Fact]
+    public async Task GetAsync_OnJsonException_IncludesRawResponseBodyInMessage()
+    {
+        // Any future Civitai response-shape drift (not just width/height) should
+        // leave a diagnosable trace instead of a bare "could not be converted" message.
+        const string badJson = "{\"items\":[{\"id\":\"not-a-number\"}]}";
+        var (client, _) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(badJson, Encoding.UTF8, "application/json")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelsAsync();
+
+            var ex = await act.Should().ThrowAsync<JsonException>();
+            ex.Which.Message.Should().Contain("not-a-number");
+        }
+    }
+
+    [Fact]
     public async Task GetModelVersionByHashAsync_NullOrWhitespace_Throws()
     {
         var (client, _) = CreateClient(_ => Json(HttpStatusCode.OK, new { }));
