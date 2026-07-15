@@ -151,20 +151,21 @@ public sealed class BackupScheduler : IBackupScheduler, IDisposable
 
             if (doDatasets)
             {
-                _unifiedLogger?.Info(LogCategory.Backup, Source, "Zipping dataset images…");
                 var r = await RunScopedAsync<IDatasetBackupService, BackupResult>(
                     (svc, p) => svc.BackupDatasetsAsync(p, cancellationToken),
-                    PhaseProgress("Datasets")).ConfigureAwait(false);
+                    DatasetProgress()).ConfigureAwait(false);
                 RecordResult("datasets", r, successes, failures, ref totalFiles, ref totalBytes,
                     okMessage: $"Dataset images backed up: {r.FilesBackedUp} files ({Mb(r.TotalSizeBytes)}).");
             }
 
             if (doDatabase)
             {
-                _unifiedLogger?.Info(LogCategory.Backup, Source, "Copying database…");
+                // VACUUM INTO can't report a percentage, so show an indeterminate "Copying database…"
+                // step immediately (the reporter keeps it indeterminate until cleanup/completion).
+                _activityLog.ReportBackupIndeterminate("Copying database…");
                 var r = await RunScopedAsync<IDatabaseBackupService, BackupResult>(
                     (svc, p) => svc.BackupDatabaseAsync(p, cancellationToken),
-                    PhaseProgress("Database")).ConfigureAwait(false);
+                    DatabaseProgress()).ConfigureAwait(false);
                 RecordResult("database", r, successes, failures, ref totalFiles, ref totalBytes,
                     okMessage: $"Database copied ({Mb(r.TotalSizeBytes)}).");
             }
@@ -234,20 +235,61 @@ public sealed class BackupScheduler : IBackupScheduler, IDisposable
     }
 
     /// <summary>
-    /// Builds a progress reporter that (a) forwards the percent to the status-bar backup progress and
-    /// (b) writes a Unified Console line whenever the phase text changes — so the user sees "Zipping…",
-    /// "Copying database…", "Cleaning up old backups…" as they happen, without a line per percent tick.
+    /// Progress reporter for the dataset-image backup: surfaces the live step and running file count
+    /// ("Zipping dataset images — 142/500") to the status-bar backup indicator, and writes a Unified
+    /// Console line whenever the phase changes (not once per percent tick).
     /// </summary>
-    private IProgress<BackupProgress> PhaseProgress(string label)
+    private IProgress<BackupProgress> DatasetProgress()
     {
         string? lastPhase = null;
         return new DelegateProgress<BackupProgress>(p =>
         {
-            _activityLog.ReportBackupProgress(p.ProgressPercent, $"{label}: {p.Phase}");
+            var label = p.Phase switch
+            {
+                "Scanning" => "Scanning dataset files…",
+                "Creating backup" => p.TotalFiles > 0
+                    ? $"Zipping dataset images — {p.FilesProcessed}/{p.TotalFiles}"
+                    : "Zipping dataset images…",
+                "Cleaning up old backups" => "Cleaning up old dataset backups…",
+                "Complete" => "Dataset images backed up",
+                _ => $"Datasets: {p.Phase}"
+            };
+
+            // Scanning enumerates the whole folder with no percentage — show it as indeterminate.
+            if (string.Equals(p.Phase, "Scanning", StringComparison.Ordinal))
+                _activityLog.ReportBackupIndeterminate(label);
+            else
+                _activityLog.ReportBackupProgress(p.ProgressPercent, label);
+
             if (!string.Equals(p.Phase, lastPhase, StringComparison.Ordinal))
             {
                 lastPhase = p.Phase;
-                _unifiedLogger?.Info(LogCategory.Backup, Source, $"{label}: {p.Phase}");
+                _unifiedLogger?.Info(LogCategory.Backup, Source, label);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Progress reporter for the database backup. VACUUM INTO gives no incremental progress, so the
+    /// bar stays indeterminate with a clear "Copying database…" label until cleanup/completion.
+    /// </summary>
+    private IProgress<BackupProgress> DatabaseProgress()
+    {
+        string? lastPhase = null;
+        return new DelegateProgress<BackupProgress>(p =>
+        {
+            var label = p.Phase switch
+            {
+                "Cleaning up old backups" => "Cleaning up old database backups…",
+                "Complete" => "Database copied",
+                _ => "Copying database…"
+            };
+            _activityLog.ReportBackupIndeterminate(label);
+
+            if (!string.Equals(p.Phase, lastPhase, StringComparison.Ordinal))
+            {
+                lastPhase = p.Phase;
+                _unifiedLogger?.Info(LogCategory.Backup, Source, label);
             }
         });
     }
