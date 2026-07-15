@@ -244,10 +244,13 @@ x:Name="MainWin">
                                                                              IsVisible="{Binding IsRunning}"
                                                                              Width="16" Height="16"/>
                                                                 <TextBlock Text="✓" Foreground="#4CAF50" FontWeight="Bold"
-                                                                           Opacity="0"
                                                                            Classes.done="{Binding IsDone}"
+                                                                           IsHitTestVisible="False"
                                                                            HorizontalAlignment="Center">
                                                                     <TextBlock.Styles>
+                                                                        <Style Selector="TextBlock">
+                                                                            <Setter Property="Opacity" Value="0"/>
+                                                                        </Style>
                                                                         <Style Selector="TextBlock.done">
                                                                             <Setter Property="Opacity" Value="1"/>
                                                                         </Style>
