@@ -277,8 +277,8 @@ command.CommandText = @"
     DELETE FROM [AppSettings];
 
     -- Seed minimal AppSettings row (required as FK parent for DatasetCategories)
-    INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, AutoBackupEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, ComfyUiServerUrl, UpdatedAt)
-    VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 10, 'http://127.0.0.1:8188/', datetime('now'));
+    INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, BackupDatasetImagesEnabled, BackupDatabaseEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, ComfyUiServerUrl, UpdatedAt)
+    VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 10, 'http://127.0.0.1:8188/', datetime('now'));
 
     -- Seed default DatasetCategories
     INSERT INTO [DatasetCategories] (Id, Name, Description, [Order], IsDefault, AppSettingsId, CreatedAt)

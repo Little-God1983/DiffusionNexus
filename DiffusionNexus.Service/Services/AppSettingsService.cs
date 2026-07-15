@@ -151,7 +151,8 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
         existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
         existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
-        existingSettings.AutoBackupEnabled = settings.AutoBackupEnabled;
+        existingSettings.BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled;
+        existingSettings.BackupDatabaseEnabled = settings.BackupDatabaseEnabled;
         existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
         existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
         existingSettings.AutoBackupLocation = settings.AutoBackupLocation;

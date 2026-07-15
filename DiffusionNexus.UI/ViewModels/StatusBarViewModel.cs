@@ -78,6 +78,13 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
     private string? _backupOperationName;
 
     /// <summary>
+    /// Whether the current backup step is indeterminate (percentage unknown, e.g. the database copy),
+    /// so the bar animates instead of showing a fixed percentage.
+    /// </summary>
+    [ObservableProperty]
+    private bool _backupIsIndeterminate;
+
+    /// <summary>
     /// Whether to show the backup progress bar (only when backup is in progress).
     /// </summary>
     public bool ShowBackupProgress => IsBackupInProgress;
@@ -342,6 +349,7 @@ public partial class StatusBarViewModel : ViewModelBase, IDisposable
             IsBackupInProgress = _logService.IsBackupInProgress;
             BackupProgressPercent = _logService.BackupProgressPercent ?? 0;
             BackupOperationName = _logService.BackupOperationName;
+            BackupIsIndeterminate = _logService.BackupProgressIsIndeterminate;
             OnPropertyChanged(nameof(ShowBackupProgress));
         });
     }

@@ -348,8 +348,18 @@ public interface IActivityLogService
     /// Updates the current backup progress percentage.
     /// </summary>
     /// <param name="percent">Progress percentage (0-100).</param>
-    /// <param name="statusMessage">Optional status message to display.</param>
+    /// <param name="statusMessage">
+    /// Optional live step label to show in the backup indicator (e.g. "Zipping dataset images — 142/500").
+    /// </param>
     void ReportBackupProgress(int percent, string? statusMessage = null);
+
+    /// <summary>
+    /// Switches the backup progress to indeterminate (a moving bar) with a live step label, for
+    /// steps that cannot report a percentage (e.g. the database copy). Clears when the next
+    /// <see cref="ReportBackupProgress"/> call arrives or the backup completes.
+    /// </summary>
+    /// <param name="statusMessage">Live step label to show in the backup indicator.</param>
+    void ReportBackupIndeterminate(string statusMessage);
 
     /// <summary>
     /// Completes the current backup operation.
@@ -369,9 +379,15 @@ public interface IActivityLogService
     int? BackupProgressPercent { get; }
 
     /// <summary>
-    /// Gets the current backup operation name, or null if no backup is running.
+    /// Gets the current backup operation name / live step label, or null if no backup is running.
     /// </summary>
     string? BackupOperationName { get; }
+
+    /// <summary>
+    /// Whether the current backup step is indeterminate (percentage unknown), so the UI should show
+    /// a moving/indeterminate bar rather than a fixed percentage.
+    /// </summary>
+    bool BackupProgressIsIndeterminate { get; }
 
     /// <summary>
     /// Event raised when backup progress state changes (started, progress updated, or completed).

@@ -194,27 +194,6 @@
                         ToolTip.Tip="Show individual cards for each version folder"/>
         </StackPanel>
         
-        <!-- Backup Status Button -->
-        <Button Grid.Column="8"
-                Command="{Binding GoToBackupSettingsCommand}"
-                IsVisible="{Binding !IsViewingDataset}"
-                Opacity="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToOpacity}}"
-                ToolTip.Tip="{Binding IsAutoBackupConfigured, Converter={x:Static converters:BoolConverters.BoolToBackupTooltip}}"
-                HorizontalAlignment="Right"
-                Margin="8,0,0,0">
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <!-- Spinning hourglass when backup is running -->
-            <TextBlock Text="⏳"
-                       FontSize="14"
-                       VerticalAlignment="Center"
-                       IsVisible="{Binding IsBackupInProgress}"
-                       Classes="spinning"/>
-            <!-- Button text -->
-            <TextBlock Text="{Binding BackupButtonContent}" 
-                       VerticalAlignment="Center"/>
-          </StackPanel>
-        </Button>
-        
         <!-- Action Buttons (Detail View) -->
         <Button Grid.Column="9" Content="Open Folder"
                 Command="{Binding OpenContainingFolderCommand}"
