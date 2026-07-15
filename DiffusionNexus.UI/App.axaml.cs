@@ -292,6 +292,7 @@ public partial class App : Application
                 static () => { }, Avalonia.Threading.DispatcherPriority.Background);
             mainViewModel.IsStartupComplete = true;
             startupProgress.SignalUiReady();
+            Serilog.Log.Information("Startup ready - overlay dismissed");
         }
     }
 
