@@ -46,13 +46,9 @@ public class DatasetBackupService : IDatasetBackupService
         {
             var settings = await _settingsService.GetSettingsAsync(cancellationToken);
 
-            // Validate configuration
-            if (!settings.AutoBackupEnabled)
-            {
-                _activityLog?.LogWarning("Backup", "Automatic backup is not enabled");
-                return BackupResult.Failed("Automatic backup is not enabled.");
-            }
-
+            // Validate configuration. Whether the dataset-image backup is *enabled* is decided by
+            // the app-level BackupScheduler (which orchestrates dataset + database backups); this
+            // service only performs the dataset-image backup itself.
             if (string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
             {
                 _activityLog?.LogError("Backup", "Dataset storage path is not configured");
@@ -281,38 +277,6 @@ public class DatasetBackupService : IDatasetBackupService
             Log.Warning(ex, "Failed to cleanup old backups");
             return 0;
         }
-    }
-
-    /// <inheritdoc />
-    public async Task<bool> IsBackupDueAsync(CancellationToken cancellationToken = default)
-    {
-        var nextBackupTime = await GetNextBackupTimeAsync(cancellationToken);
-        return nextBackupTime.HasValue && nextBackupTime.Value <= DateTimeOffset.UtcNow;
-    }
-
-    /// <inheritdoc />
-    public async Task<DateTimeOffset?> GetNextBackupTimeAsync(CancellationToken cancellationToken = default)
-    {
-        var settings = await _settingsService.GetSettingsAsync(cancellationToken);
-
-        if (!settings.AutoBackupEnabled ||
-            string.IsNullOrWhiteSpace(settings.AutoBackupLocation) ||
-            string.IsNullOrWhiteSpace(settings.DatasetStoragePath))
-        {
-            return null;
-        }
-
-        var intervalTicks = TimeSpan.FromDays(settings.AutoBackupIntervalDays).Ticks
-                          + TimeSpan.FromHours(settings.AutoBackupIntervalHours).Ticks;
-        var interval = TimeSpan.FromTicks(intervalTicks);
-
-        if (interval.TotalMinutes < 1)
-        {
-            interval = TimeSpan.FromHours(1); // Minimum 1 hour
-        }
-
-        var lastBackup = settings.LastBackupAt ?? DateTimeOffset.MinValue;
-        return lastBackup + interval;
     }
 
     /// <inheritdoc />

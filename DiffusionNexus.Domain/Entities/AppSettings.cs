@@ -128,35 +128,46 @@ public class AppSettings
     /// </summary>
     public ICollection<DatasetCategory> DatasetCategories { get; set; } = new List<DatasetCategory>();
 
-    /// <summary>
-    /// Whether automatic backup is enabled for datasets.
-    /// </summary>
-    public bool AutoBackupEnabled { get; set; }
+    #endregion
+
+    #region Backup Settings
 
     /// <summary>
-    /// Days component of the automatic backup interval (1-30).
+    /// Whether automatic backup of the dataset-image folders (zipped) is enabled.
+    /// (Formerly <c>AutoBackupEnabled</c> — the DB column keeps that history via a rename migration.)
+    /// </summary>
+    public bool BackupDatasetImagesEnabled { get; set; }
+
+    /// <summary>
+    /// Whether automatic backup of the core user database (<c>Diffusion_Nexus-core.db</c>) is enabled.
+    /// Defaults to <c>true</c> so a fresh install protects the user database by default.
+    /// </summary>
+    public bool BackupDatabaseEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Days component of the automatic backup interval (1-30). Shared by both backup types.
     /// </summary>
     public int AutoBackupIntervalDays { get; set; } = 1;
 
     /// <summary>
-    /// Hours component of the automatic backup interval (0-23).
+    /// Hours component of the automatic backup interval (0-23). Shared by both backup types.
     /// </summary>
     public int AutoBackupIntervalHours { get; set; }
 
     /// <summary>
-    /// Folder path where automatic backups are stored.
+    /// Folder path where automatic backups (dataset zips and database copies) are stored.
     /// Cannot be the same as or a subfolder of DatasetStoragePath.
     /// </summary>
     public string? AutoBackupLocation { get; set; }
 
     /// <summary>
-    /// When the last automatic backup was performed.
+    /// When the last automatic backup was performed (either type).
     /// </summary>
     public DateTimeOffset? LastBackupAt { get; set; }
 
     /// <summary>
-    /// Maximum number of backups to keep. Oldest backups are deleted when this limit is exceeded.
-    /// Default is 10.
+    /// Maximum number of backups to keep <b>per type</b>. Oldest are deleted when this limit is
+    /// exceeded (dataset zips and database copies are pruned independently). Default is 10.
     /// </summary>
     public int MaxBackups { get; set; } = 10;
 

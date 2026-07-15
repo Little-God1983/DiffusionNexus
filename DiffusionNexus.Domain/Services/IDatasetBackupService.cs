@@ -275,20 +275,6 @@ public interface IDatasetBackupService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Checks if a backup is due based on the configured interval.
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>True if a backup should be performed.</returns>
-    Task<bool> IsBackupDueAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the next scheduled backup time.
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The next backup time, or null if backup is not configured.</returns>
-    Task<DateTimeOffset?> GetNextBackupTimeAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Analyzes a backup ZIP file to get statistics about its contents.
     /// </summary>
     /// <param name="backupZipPath">Path to the backup ZIP file.</param>

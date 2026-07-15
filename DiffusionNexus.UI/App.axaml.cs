@@ -227,6 +227,12 @@ public partial class App : Application
             Serilog.Log.Information("Initializing instance management...");
             mainViewModel.InitializeInstanceManagement();
 
+            // Start the app-level backup scheduler now that the database is ready. It arms the
+            // auto-backup timer and runs a due-check in the background, independent of any module
+            // being open (this replaces the timer that used to live in the LoRA Dataset Helper).
+            Serilog.Log.Information("Starting backup scheduler...");
+            Services!.GetService<IBackupScheduler>()?.Start();
+
             Serilog.Log.Information("Registering modules...");
             await RegisterModulesAsync(mainViewModel, startupProgress);
 
@@ -885,6 +891,18 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetService<IActivityLogService>()));
 
+        // DatabaseBackupService - backs up the core user DB (Diffusion_Nexus-core.db) via VACUUM INTO.
+        // Source path resolved from the core DbContext (portable-first).
+        services.AddTransient<IDatabaseBackupService>(sp => new DatabaseBackupService(
+            sp.GetRequiredService<IAppSettingsService>()));
+
+        // BackupScheduler - app-level singleton owning the auto-backup timer; orchestrates dataset
+        // + database backups and narrates each step to the Unified Console.
+        services.AddSingleton<IBackupScheduler>(sp => new BackupScheduler(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<IActivityLogService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         services.AddTransient<IDisclaimerService, DisclaimerService>();
 
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
@@ -1121,8 +1139,9 @@ public partial class App : Application
             sp.GetService<IDatasetEventAggregator>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
-        
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<IBackupScheduler>()));
+
         services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
 
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
