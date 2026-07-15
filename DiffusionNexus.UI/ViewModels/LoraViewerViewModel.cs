@@ -267,8 +267,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     #region Commands
 
     /// <summary>
-    /// Refresh the model list.
-    /// Uses database-first approach: load cached data immediately, then discover new files.
+    /// Refresh the model list, database-first: show the cached tiles from the catalog DB
+    /// immediately (a lightweight projection query + in-memory grouping — no filesystem
+    /// walk), so the grid paints in well under a second even for thousands of LoRAs. The
+    /// slow work — scanning the source folders for new files and verifying that existing
+    /// files still exist on disk — then runs in the background via
+    /// <see cref="ReconcileLibraryInBackgroundAsync"/>, which rebuilds the grid only if it
+    /// finds a change (a new file appears, a deleted file drops out, a moved file relocates).
     /// </summary>
     [RelayCommand]
     private async Task RefreshAsync()
@@ -280,51 +285,36 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
+        var showedCachedTiles = false;
         try
         {
             IsBusy = true;
             BusyMessage = "Loading models...";
-            SyncStatus = "Starting refresh...";
+            SyncStatus = "Loading models from database...";
 
-            // Offload all heavy I/O (file discovery + DB reads + grouping) to a
-            // single background task so the UI thread stays responsive.
-            // DiscoverNewFilesAsync already marshals progress to the UI via Dispatcher.Post.
-            var (uniqueModelCount, tiles) = await Task.Run(async () =>
+            // 1. Show whatever is already cached — instantly.
+            var (uniqueModelCount, tiles) = await Task.Run(LoadCachedTilesAsync);
+
+            if (tiles.Count > 0)
             {
-                await DiscoverNewFilesAsync();
-                await BackfillCivitaiModelPageIdAsync();
-
-                Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
-
-                // Use a fresh DI scope so the DbContext sees the latest committed data
-                // (DiscoverNewFilesAsync and other operations write via their own scopes).
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-
-                // Issue #380: one tile per (Model, LoRA-source-location). A LoRA with files
-                // in two configured locations produces two tiles; each tile keeps its
-                // version switcher and exposes only the versions present in that location.
-                var files = await freshSyncService.LoadCachedFilesAsync();
-                var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
-                var perLocationTiles = BuildPerLocationTiles(files);
-                return (distinctModels, perLocationTiles);
-            });
-
-            // Back on UI thread after await — update observable collections
-            AllTiles.Clear();
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
+                ReplaceTiles(tiles);
+                SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
+                showedCachedTiles = true;
             }
-            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
-            RebuildAvailableBaseModels();
-            ApplyFilters();
-            SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
-
-            // Phase 3: Verify existing files in background (low priority)
-            _ = VerifyFilesInBackgroundAsync();
+            else
+            {
+                // Empty cache (first run / never scanned): discover inline so the grid fills
+                // in one pass instead of flashing the "No Models" empty state.
+                SyncStatus = "Discovering models...";
+                await Task.Run(async () =>
+                {
+                    await DiscoverNewFilesAsync();
+                    await BackfillCivitaiModelPageIdAsync();
+                });
+                var (freshCount, freshTiles) = await Task.Run(LoadCachedTilesAsync);
+                ReplaceTiles(freshTiles);
+                SyncStatus = $"Loaded {freshCount} models ({AllTiles.Count} tiles)";
+            }
         }
         catch (Exception ex)
         {
@@ -335,14 +325,107 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = false;
             BusyMessage = null;
         }
+
+        // 2. Reconcile against disk in the background (adds + deletions + moves). When the
+        //    cache was empty we already discovered inline above, so only verification remains.
+        if (showedCachedTiles)
+            _ = ReconcileLibraryInBackgroundAsync();
+        else
+            _ = VerifyFilesInBackgroundAsync();
     }
 
     /// <summary>
-    /// Discover new files and add them to the database.
+    /// Loads the installed-file rows from the catalog DB (a lightweight projection — no
+    /// thumbnail BLOBs, no filesystem access) and groups them into per-location tiles
+    /// (issue #380: one tile per (Model, LoRA-source root)). Runs on the thread pool.
+    /// </summary>
+    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles)> LoadCachedTilesAsync()
+    {
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        var files = await freshSyncService.LoadCachedFilesAsync();
+        var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
+        var tiles = BuildPerLocationTiles(files);
+        return (distinctModels, tiles);
+    }
+
+    /// <summary>
+    /// Swaps the tile set on the UI thread: unsubscribes the outgoing tiles, replaces
+    /// <see cref="AllTiles"/> with <paramref name="tiles"/>, and refreshes the counts,
+    /// base-model filter, and filtered view.
+    /// </summary>
+    private void ReplaceTiles(List<ModelTileViewModel> tiles)
+    {
+        foreach (var oldTile in AllTiles)
+        {
+            oldTile.Deleted -= OnTileDeleted;
+            oldTile.DetailRequested -= OnTileDetailRequested;
+        }
+
+        AllTiles.Clear();
+        foreach (var tile in tiles)
+        {
+            tile.Deleted += OnTileDeleted;
+            tile.DetailRequested += OnTileDetailRequested;
+            AllTiles.Add(tile);
+        }
+
+        TotalModelCount = AllTiles.Sum(t => t.ModelCount);
+        RebuildAvailableBaseModels();
+        ApplyFilters();
+    }
+
+    /// <summary>
+    /// Background reconciliation against the filesystem: discovers newly added files and
+    /// verifies existing ones (marking on-disk-deleted files invalid so they drop out of
+    /// the grid, and relocating moved files). Rebuilds the grid from the DB only when
+    /// something actually changed, so the common "nothing changed since last launch" case
+    /// leaves the visible tiles (and the scroll position) untouched.
+    /// </summary>
+    private async Task ReconcileLibraryInBackgroundAsync()
+    {
+        try
+        {
+            _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
+
+            var (added, missing, moved) = await Task.Run(async () =>
+            {
+                var newCount = await DiscoverNewFilesAsync();
+                await BackfillCivitaiModelPageIdAsync();
+
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+                var progress = new Progress<SyncProgress>(p =>
+                    Dispatcher.UIThread.Post(() =>
+                        SyncStatus = p.Phase == "Verification complete" ? null : p.Phase));
+
+                // MissingCount = files gone from disk (now filtered out of LoadCachedFilesAsync);
+                // MovedCount = files whose path changed. Either, or a new file, changes the grid.
+                var result = await syncService.VerifyAndSyncFilesAsync(progress);
+                return (newCount, result.MissingCount, result.MovedCount);
+            });
+
+            var changed = added > 0 || missing > 0 || moved > 0;
+            _logger?.Info(LogCategory.General, "LoraReconcile",
+                $"Reconcile done: {added} new, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+
+            if (changed)
+                await RebuildTilesFromDatabaseAsync();
+        }
+        catch (Exception ex)
+        {
+            // Background work — a discovery/verify failure must not disrupt the visible grid.
+            _logger?.Warn(LogCategory.General, "LoraReconcile", $"Reconcile failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Discover new files and add them to the database. Returns the number of new models
+    /// discovered so callers can decide whether the grid needs rebuilding.
     /// Uses a fresh DI scope so the DbContext sees the latest committed data
     /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
-    private async Task DiscoverNewFilesAsync()
+    private async Task<int> DiscoverNewFilesAsync()
     {
         try
         {
@@ -366,6 +449,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 SyncStatus = $"Discovered {newModels.Count} new files";
             });
+
+            return newModels.Count;
         }
         catch (Exception ex)
         {
@@ -373,6 +458,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 SyncStatus = $"Discovery error: {ex.Message}";
             });
+
+            return 0;
         }
     }
 
